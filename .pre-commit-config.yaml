@@ -3,11 +3,11 @@ repos:
     rev: v2.3.0
     hooks:
     - id: check-yaml
+      exclude: ^\.gitlab
     - id: end-of-file-fixer
     - id: trailing-whitespace
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: "v1.74.1"
+    rev: v1.74.1
     hooks:
       - id: terraform_fmt
       - id: terraform_tflint
-      - id: terraform_validate

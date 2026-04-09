@@ -1,11 +1,16 @@
 {
-  "tagFormat": "${version}",
+  "tagFormat": "v${version}",
   "plugins": [
-    "@semantic-release/gitlab",
+    "@semantic-release/github",
     [
       "@semantic-release/commit-analyzer",
       {
+        "preset": "conventionalcommits",
         "releaseRules": [
+          {
+            "breaking": true,
+            "release": "minor"
+          },
           {
             "type": "build",
             "release": "patch"

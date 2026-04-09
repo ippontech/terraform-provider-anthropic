@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(go mod:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)"
+    ]
+  }
+}

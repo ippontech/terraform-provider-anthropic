@@ -1,0 +1,4 @@
+[tools]
+go = "1"
+goreleaser = "2"
+terraform = "1"
