@@ -7,6 +7,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
@@ -23,10 +27,13 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 'lts/*'
+          node-version: '22'
+
+      - name: Install semantic-release and plugins
+        run: npm install --no-save semantic-release@24.2.3 @semantic-release/commit-analyzer@13.0.1 @semantic-release/release-notes-generator@14.0.1 @semantic-release/changelog@6.0.3 @semantic-release/git@10.0.1 @semantic-release/github@11.0.1 conventional-changelog-conventionalcommits@8.0.0
 
       - name: Run semantic-release
-        run: npx semantic-release
+        run: ./node_modules/.bin/semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_AUTHOR_NAME: github-actions[bot]

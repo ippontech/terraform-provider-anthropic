@@ -133,6 +133,10 @@ spring/
 *.obj
 *.lib
 
+# Claude Code
+.mcp.json
+.claude/settings.local.json
+
 # --- Terraform ---
 .terraform/
 *.tfstate

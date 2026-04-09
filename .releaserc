@@ -1,7 +1,6 @@
 {
   "tagFormat": "v${version}",
   "plugins": [
-    "@semantic-release/github",
     [
       "@semantic-release/commit-analyzer",
       {
@@ -79,6 +78,7 @@
         ],
         "message": "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}"
       }
-    ]
+    ],
+    "@semantic-release/github"
   ]
 }

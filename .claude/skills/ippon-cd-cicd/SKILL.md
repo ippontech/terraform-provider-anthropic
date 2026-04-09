@@ -1,6 +1,6 @@
 ---
 name: ippon-cd-cicd
-description: Maintains CICD pipeline templates. Use when creating or updating GitLab/GitHub Actions CICD pipelines/workflows/jobs.
+description: Maintains CICD pipeline templates, workflows or pipelines. Use when working with GitLab/GitHub Actions CICD tools.
 model: sonnet
 ---
 
@@ -10,7 +10,8 @@ model: sonnet
   - Docker images
   - GitLab includes blocks such as templates or components
   - GitHub Actions actions or reusable workflows
-  - any other dependency/tools needed
+  - NPM dependencies
+  - any other dependency/tools
 
 # GitHub actions
 
