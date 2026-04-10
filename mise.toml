@@ -1,4 +1,4 @@
 [tools]
-go = "1"
-goreleaser = "2"
-terraform = "1"
+go = "1.26.2"
+goreleaser = "2.15.2"
+terraform = "1.14.8"

@@ -9,7 +9,7 @@ import (
 	"log"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"gitlab.ippon.fr/accelerators/ialab/terraform-provider-anthropic/internal/provider"
+	"github.com/ippontech/terraform-provider-anthropic/internal/provider"
 )
 
 var (

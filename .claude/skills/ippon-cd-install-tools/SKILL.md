@@ -40,6 +40,27 @@ mise node@24.x.x ✓ installed
 v24.x.x
 ```
 
+## Version pinning
+
+Always pin tools to exact versions in `mise.toml` to prevent unexpected upgrades. Never use major-only (`"1"`) or minor-only (`"1.26"`) constraints:
+
+```toml
+# Correct — exact version, no surprises
+[tools]
+go = "1.26.2"
+terraform = "1.14.8"
+
+# Wrong — allows patch or minor upgrades
+[tools]
+go = "1.26"
+terraform = "1"
+```
+
+To find the currently installed version before pinning:
+```shell
+mise ls --current
+```
+
 ## Install tools
 
 ```sh-session

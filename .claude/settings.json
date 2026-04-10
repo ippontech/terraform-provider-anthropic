@@ -1,0 +1,19 @@
+{
+  "enabledPlugins": {
+    "terraform-skill@antonbabenko": true
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "OTEL_TRACES_EXPORTER= pre-commit run -a 2>&1",
+            "timeout": 120,
+            "statusMessage": "Running pre-commit hooks..."
+          }
+        ]
+      }
+    ]
+  }
+}
