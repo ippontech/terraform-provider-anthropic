@@ -1,6 +1,7 @@
 name: GoReleaser Snapshot
 
 on:
+  pull_request:
   merge_group:
 
 permissions: {}
@@ -8,12 +9,19 @@ permissions: {}
 jobs:
   goreleaser-snapshot:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0  # GoReleaser needs the full git history to detect the previous tag
+          persist-credentials: false
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -30,5 +38,3 @@ jobs:
 
       - name: Release snapshot
         run: goreleaser release --snapshot --clean --skip=sign
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

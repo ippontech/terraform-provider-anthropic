@@ -1,0 +1,10 @@
+rules:
+  - id: pull-request-target-usage
+    languages:
+      - yaml
+    message: Found pull_request_target usage
+    pattern: pull_request_target
+    severity: CRITICAL
+    paths:
+      include:
+        - ".github/"

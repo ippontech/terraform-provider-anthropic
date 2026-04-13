@@ -15,3 +15,34 @@ repos:
       - id: terraform_tflint
         args:
           - --envs=OTEL_TRACES_EXPORTER=
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+  - repo: local
+    hooks:
+      - id: poutine
+        name: poutine
+        language: system
+        entry: mise exec -- poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
+        pass_filenames: false
+        always_run: true
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.159.0
+    hooks:
+      - id: semgrep
+        args:
+          - --config=tools/semgrep.yml
+          - --error
+        files: ^\.github/
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 3.2.519
+    hooks:
+      - id: checkov
+        pass_filenames: false
+        args:
+          - --directory=.github/workflows
+          - --framework=github_actions
+          - --quiet
+          - --compact
+        files: ^\.github/workflows/

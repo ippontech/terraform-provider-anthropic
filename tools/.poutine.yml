@@ -1,0 +1,8 @@
+skip:
+  # Skip findings for specific packages
+  - rule: github_action_from_unverified_creator_used
+    purl:
+      - pkg:githubactions/crazy-max/ghaction-import-gpg
+      - pkg:githubactions/golangci/golangci-lint-action
+      - pkg:githubactions/rhysd/actionlint
+      - pkg:githubactions/semgrep/semgrep-action
