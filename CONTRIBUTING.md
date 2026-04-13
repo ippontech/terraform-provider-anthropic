@@ -24,7 +24,7 @@ Create or edit `~/.terraformrc` with the path found above:
 ```hcl
 provider_installation {
   dev_overrides {
-    "registry.terraform.io/ippon/anthropic" = "/path/to/your/go/bin"
+    "registry.terraform.io/ippontech/anthropic" = "/path/to/your/go/bin"
   }
   direct {}
 }

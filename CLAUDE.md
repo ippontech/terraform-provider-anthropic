@@ -31,7 +31,7 @@ pre-commit run -a
 
 This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework) v1.13.0.
 
-- `main.go` — entry point; serves the provider at `registry.terraform.io/ippon/anthropic`
+- `main.go` — entry point; serves the provider at `registry.terraform.io/ippontech/anthropic`
 - `internal/provider/provider.go` — provider registration; `Resources()` and `DataSources()` methods list all implemented resources and data sources
 - `internal/provider/` — all resources, data sources, and their tests live here
 - `examples/provider/` — example Terraform configs used by `terraform-plugin-docs` to generate `docs/`

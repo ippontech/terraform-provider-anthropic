@@ -3,6 +3,19 @@
     "terraform-skill@antonbabenko": true
   },
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in *_test.go) ;; *.go) make generate ;; esac; } 2>/dev/null || true",
+            "timeout": 60,
+            "statusMessage": "Regenerating docs..."
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

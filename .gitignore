@@ -142,3 +142,4 @@ spring/
 *.tfstate
 *.tfstate.backup
 *.terraform.lock.hcl
+.dev.tfrc
