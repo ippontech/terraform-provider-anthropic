@@ -1,0 +1,22 @@
+---
+page_title: "anthropic_message Resource - anthropic"
+subcategory: "Messages"
+description: |-
+  Sends a message to an Anthropic model via the Messages API and stores the response.
+---
+
+# anthropic_message (Resource)
+
+Sends a message to an Anthropic model via the Messages API and stores the response. All input attributes trigger resource replacement on change.
+
+~> **Note:** This resource implements an immutable, write-only pattern. There is no persistent storage of messages beyond Terraform state; the resource calls the Anthropic Messages API during `terraform apply` and stores the response. Modifying any input attribute causes the resource to be replaced (a new API call is made). There is no `terraform refresh` from a remote API state.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/message/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+This resource does not support import. The resource represents an ephemeral API call result; there is no remote state to import from.

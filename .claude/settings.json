@@ -1,7 +1,4 @@
 {
-  "enabledPlugins": {
-    "terraform-skill@antonbabenko": true
-  },
   "hooks": {
     "PostToolUse": [
       {
@@ -21,12 +18,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "OTEL_TRACES_EXPORTER= pre-commit run -a 2>&1",
+            "command": "set -a; . ./.env 2>/dev/null; set +a; pre-commit run -a",
             "timeout": 120,
             "statusMessage": "Running pre-commit hooks..."
           }
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "terraform-skill@antonbabenko": true,
+    "terraform@claude-plugins-official": true
   }
 }

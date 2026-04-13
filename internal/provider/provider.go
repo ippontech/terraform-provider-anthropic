@@ -77,7 +77,9 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 }
 
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {
-	return []func() resource.Resource{}
+	return []func() resource.Resource{
+		NewMessageResource,
+	}
 }
 
 func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource.DataSource {

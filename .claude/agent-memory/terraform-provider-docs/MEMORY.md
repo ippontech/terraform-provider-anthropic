@@ -1,0 +1,1 @@
+- [anthropic provider architecture](provider_architecture.md) — Key architectural decisions, resource patterns, and the anthropic_message write-only resource design
