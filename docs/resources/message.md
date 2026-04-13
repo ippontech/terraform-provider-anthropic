@@ -14,6 +14,17 @@ Sends a message to an Anthropic model via the Messages API and stores the respon
 ## Example Usage
 
 ```hcl
+terraform {
+  required_version = ">= 1.0"
+
+  required_providers {
+    anthropic = {
+      source  = "registry.terraform.io/ippontech/anthropic"
+      version = "~> 1.0"
+    }
+  }
+}
+
 resource "anthropic_message" "example" {
   model      = "claude-haiku-4-5-20251001"
   max_tokens = 1024
@@ -87,7 +98,7 @@ output "conversation_response" {
 
 ### Read-Only
 
-- `content` (String) The generated text response from the model.
+- `content` (String) The generated text response from the model. Only `text` content blocks are included; other block types (e.g., `thinking`) are omitted.
 - `id` (String) Unique message identifier assigned by the API.
 - `input_tokens` (Number) Number of input tokens used in the request.
 - `output_tokens` (Number) Number of output tokens generated in the response.

@@ -58,7 +58,29 @@ Read-Only:
 - `batch` (Boolean) Whether the model supports the Batch API.
 - `citations` (Boolean) Whether the model supports citation generation.
 - `code_execution` (Boolean) Whether the model supports code execution tools.
+- `context_management` (Attributes) Context management strategy support. (see [below for nested schema](#nestedatt--models--capabilities--context_management))
+- `effort` (Attributes) Reasoning effort (reasoning_effort) level support. (see [below for nested schema](#nestedatt--models--capabilities--effort))
 - `image_input` (Boolean) Whether the model accepts image content blocks.
 - `pdf_input` (Boolean) Whether the model accepts PDF content blocks.
 - `structured_outputs` (Boolean) Whether the model supports structured output / JSON mode.
 - `thinking` (Boolean) Whether the model supports extended thinking.
+
+<a id="nestedatt--models--capabilities--context_management"></a>
+### Nested Schema for `models.capabilities.context_management`
+
+Read-Only:
+
+- `clear_thinking_20251015` (Boolean) Whether the model supports the `clear_thinking_20251015` context management strategy.
+- `clear_tool_uses_20250919` (Boolean) Whether the model supports the `clear_tool_uses_20250919` context management strategy.
+- `compact_20260112` (Boolean) Whether the model supports the `compact_20260112` context management strategy.
+
+
+<a id="nestedatt--models--capabilities--effort"></a>
+### Nested Schema for `models.capabilities.effort`
+
+Read-Only:
+
+- `high` (Boolean) Whether the model supports `high` effort level.
+- `low` (Boolean) Whether the model supports `low` effort level.
+- `max` (Boolean) Whether the model supports `max` effort level.
+- `medium` (Boolean) Whether the model supports `medium` effort level.

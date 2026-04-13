@@ -1,7 +1,7 @@
 ---
 name: "terraform-provider-code-reviewer"
 description: "Use this agent proactively when you need to review recently written or modified code in the terraform-provider-anthropic repository for quality and security issues. This includes reviewing Go source files, GitHub Actions workflow files, and Terraform configuration files. Trigger this agent after writing new resources, data sources, tests, workflows, or Terraform examples. You must tell the agent precisely which files to review.\\n\\n<example>\\nContext: The user has just implemented a new Terraform resource in the provider.\\nuser: \"I've just written the new model resource in internal/provider/model_resource.go and added an example under examples/resources/anthropic_model/\"\\nassistant: \"Great, let me launch the code reviewer to check quality and security issues on your new resource.\"\\n<commentary>\\nSince new Go and Terraform code was written, use the Agent tool to launch the tf-provider-code-reviewer agent to review the code.\\n</commentary>\\nassistant: \"I'll use the tf-provider-code-reviewer agent to review the new model resource and its example.\"\\n</example>\\n\\n<example>\\nContext: The user has added a new GitHub Actions workflow.\\nuser: \"I added .github/workflows/release.yml to handle automated releases\"\\nassistant: \"Let me use the tf-provider-code-reviewer agent to audit the new workflow for security issues.\"\\n<commentary>\\nSince a GitHub Actions workflow was added, use the Agent tool to launch the tf-provider-code-reviewer agent to check for supply chain attack risks and credential leaks.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user has added Terraform example configurations under examples/.\\nuser: \"I created examples/resources/anthropic_model_alias/ with main.tf and variables.tf\"\\nassistant: \"I'll launch the tf-provider-code-reviewer to verify the example includes .tftest.hcl unit tests and follows conventions.\"\\n<commentary>\\nSince new Terraform example code was added, use the Agent tool to launch the tf-provider-code-reviewer agent to check for .tftest.hcl test files.\\n</commentary>\\n</example>"
-tools: Bash, CronCreate, CronDelete, CronList, EnterWorktree, ExitWorktree, Glob, Grep, ListMcpResourcesTool, Monitor, Read, ReadMcpResourceTool, RemoteTrigger, ScheduleWakeup, Skill, TaskCreate, TaskGet, TaskList, TaskUpdate, ToolSearch, WebFetch, WebSearch, mcp__claude_ai_Asana__authenticate, mcp__claude_ai_Asana__complete_authentication, mcp__claude_ai_Atlassian__authenticate, mcp__claude_ai_Atlassian__complete_authentication, mcp__claude_ai_Box__authenticate, mcp__claude_ai_Box__complete_authentication, mcp__claude_ai_Canva__authenticate, mcp__claude_ai_Canva__complete_authentication, mcp__claude_ai_Excalidraw__create_view, mcp__claude_ai_Excalidraw__export_to_excalidraw, mcp__claude_ai_Excalidraw__read_checkpoint, mcp__claude_ai_Excalidraw__read_me, mcp__claude_ai_Excalidraw__save_checkpoint, mcp__claude_ai_FFJ_-_Dossier_de_Financement__greet, mcp__claude_ai_Gamma__authenticate, mcp__claude_ai_Gamma__complete_authentication, mcp__claude_ai_Gmail__authenticate, mcp__claude_ai_Gmail__complete_authentication, mcp__claude_ai_Google_Calendar__authenticate, mcp__claude_ai_Google_Calendar__complete_authentication, mcp__claude_ai_HubSpot__authenticate, mcp__claude_ai_HubSpot__complete_authentication, mcp__claude_ai_Intercom__authenticate, mcp__claude_ai_Intercom__complete_authentication, mcp__claude_ai_Linear__authenticate, mcp__claude_ai_Linear__complete_authentication, mcp__claude_ai_Miro__authenticate, mcp__claude_ai_Miro__complete_authentication, mcp__claude_ai_monday_com__authenticate, mcp__claude_ai_monday_com__complete_authentication, mcp__claude_ai_Notion__authenticate, mcp__claude_ai_Notion__complete_authentication, mcp__claude_ai_Sentry__authenticate, mcp__claude_ai_Sentry__complete_authentication, mcp__claude_ai_Slack__authenticate, mcp__claude_ai_Slack__complete_authentication, mcp__github__authenticate, mcp__github__complete_authentication, mcp__ide__getDiagnostics
+tools: Bash, Glob, Grep, Read, mcp__ide__getDiagnostics
 model: opus
 color: pink
 memory: project
@@ -88,7 +88,10 @@ Apply the following security checks rigorously to prevent supply chain attacks a
 Structure your review as follows:
 
 ```
-## Code Review Summary
+## Code Review summary
+
+### 🔍 Overview
+- Brief overview of what you reviewed and overall assessment (e.g., "Good, minor issues found" or "Significant security concerns")
 
 ### 🔴 Critical Issues (must fix)
 - [File:Line] Issue description and recommended fix
@@ -101,6 +104,14 @@ Structure your review as follows:
 
 ### 📋 Recommendations (nice to have)
 - Suggestions for improvement
+
+### ✅ Approval status
+- Clear statement of whether the code is ready to merge/deploy or requires changes
+
+### 🚧 Obstacles encountered
+- Report any obstacle encountered during the code review process. This can be: setup issues, workarounds discovered or environment quirks.
+- Report commands that needed a special flag or configuration.
+- Report dependencies or imports that caused problems.
 ```
 
 Be specific: cite file names, line numbers when possible, and provide concrete fix examples. Do not pad the review with vague praise — focus on actionable findings.
