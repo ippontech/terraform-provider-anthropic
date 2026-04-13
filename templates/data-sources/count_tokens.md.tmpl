@@ -1,0 +1,16 @@
+---
+page_title: "anthropic_count_tokens Data Source - anthropic"
+subcategory: "Messages"
+description: |-
+  Counts the number of tokens in a message without creating it.
+---
+
+# anthropic_count_tokens (Data Source)
+
+The `anthropic_count_tokens` data source counts the number of tokens that would be consumed by a message request without actually creating the message. This is useful for estimating API costs and validating that requests fit within model context windows before sending them.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/count_tokens/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
