@@ -1,0 +1,7 @@
+{
+  "branchPrefix": "renovate/",
+  "onboarding": true,
+  "onboardingBranch": "renovate/configure",
+  "platform": "github",
+  "repositories": ["ippontech/terraform-provider-anthropic"]
+}
