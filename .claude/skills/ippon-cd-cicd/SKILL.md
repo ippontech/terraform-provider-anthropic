@@ -13,9 +13,6 @@ model: sonnet
   - NPM dependencies
   - any other dependency/tools
 
-# GitHub actions
+# GitHub Actions
 
-Refer to the [GitHub Actions workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax) guide if need be.
-
-- Always set up a permission block on each job with least privilege rights
-- Always set up a `permissions: {}` at the workflow level to disable permissions for all the available permissions
+For GitHub Actions workflows, apply the `ippon-cd-github-actions` skill.
