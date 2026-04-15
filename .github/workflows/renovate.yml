@@ -1,0 +1,29 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: '0 4 * * 1' # Every Monday at 4am UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  renovate:
+    name: Renovate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: renovatebot/github-action@eb932558ad942cccfd8211cf535f17ff183a9f74 # v46.1.9
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}

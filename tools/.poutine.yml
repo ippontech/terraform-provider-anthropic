@@ -6,3 +6,4 @@ skip:
       - pkg:githubactions/golangci/golangci-lint-action
       - pkg:githubactions/rhysd/actionlint
       - pkg:githubactions/semgrep/semgrep-action
+      - pkg:githubactions/renovatebot/github-action

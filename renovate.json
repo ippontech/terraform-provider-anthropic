@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "labels": ["dependencies"],
+  "schedule": ["before 6am on Monday"],
+  "prConcurrentLimit": 10,
+  "enabledManagers": [
+    "github-actions",
+    "gomod",
+    "mise",
+    "pre-commit",
+    "terraform"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Go dependencies",
+      "groupSlug": "go-deps"
+    },
+    {
+      "matchManagers": ["mise"],
+      "groupName": "mise tools",
+      "groupSlug": "mise-tools"
+    },
+    {
+      "matchManagers": ["pre-commit"],
+      "groupName": "pre-commit hooks",
+      "groupSlug": "pre-commit"
+    }
+  ]
+}
