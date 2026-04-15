@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.2.0...v1.3.0) (2026-04-15)
+
+### ✨ Features
+
+* add anthropic_model data source ([#10](https://github.com/ippontech/terraform-provider-anthropic/issues/10)) ([5fe9723](https://github.com/ippontech/terraform-provider-anthropic/commit/5fe9723cae93e4c5e394ef4f9061b1b686f0a5d3))
+
 ## [1.2.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.1.1...v1.2.0) (2026-04-13)
 
 ### ✨ Features
