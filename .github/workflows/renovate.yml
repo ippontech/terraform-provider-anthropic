@@ -24,6 +24,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Get token
+        id: get_token
+        uses: actions/create-github-app-token@df432ceedc7162793a195dd1713ff69aefc7379e # v2.0.6
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - uses: renovatebot/github-action@eb932558ad942cccfd8211cf535f17ff183a9f74 # v46.1.9
         with:
-          token: ${{ secrets.RENOVATE_TOKEN }}
+          configurationFile: .github/renovate-config.json
+          token: '${{ steps.get_token.outputs.token }}'
+        env:
+          RENOVATE_PLATFORM_COMMIT: 'enabled'

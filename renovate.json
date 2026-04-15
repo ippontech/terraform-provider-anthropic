@@ -8,6 +8,7 @@
   "labels": ["dependencies"],
   "schedule": ["before 6am on Monday"],
   "prConcurrentLimit": 10,
+  "platformAutomerge": true,
   "enabledManagers": [
     "github-actions",
     "gomod",
@@ -36,6 +37,10 @@
       "matchManagers": ["pre-commit"],
       "groupName": "pre-commit hooks",
       "groupSlug": "pre-commit"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
     }
   ]
 }
