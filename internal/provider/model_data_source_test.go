@@ -17,7 +17,7 @@ func TestAccModelDataSource(t *testing.T) {
 			{
 				Config: testAccModelDataSourceConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.anthropic_model.test", "model_id", "claude-3-5-haiku-20241022"),
+					resource.TestCheckResourceAttr("data.anthropic_model.test", "model_id", "claude-haiku-4-5-20251001"),
 					resource.TestCheckResourceAttrSet("data.anthropic_model.test", "id"),
 					resource.TestCheckResourceAttrSet("data.anthropic_model.test", "display_name"),
 					resource.TestCheckResourceAttrSet("data.anthropic_model.test", "created_at"),
@@ -41,6 +41,6 @@ func TestAccModelDataSource(t *testing.T) {
 
 const testAccModelDataSourceConfig = `
 data "anthropic_model" "test" {
-  model_id = "claude-3-5-haiku-20241022"
+  model_id = "claude-haiku-4-5-20251001"
 }
 `
