@@ -24,6 +24,12 @@ Key intentional design decisions:
 - All actions/checkout and actions/setup-go references are pinned to full SHA
 - Workflow-level `permissions: {}` is set on every workflow — good baseline
 
+`terraform-test` coverage pattern (as of April 2026):
+- `tests/` directory holds `.tftest.hcl` files that each point to `examples/data-sources/<name>/` via `module { source = ... }`
+- Every data source example needs: (a) a `data_source.tf` file under `examples/data-sources/<name>/`, (b) at least one output that the `.tftest.hcl` can assert against, (c) a corresponding `tests/<name>.tftest.hcl` file
+- When a new data source is added, both (b) and (c) must be created or the `terraform-test` job has no coverage of its example
+- As of April 2026, `anthropic_model` data source example (`examples/data-sources/model/data_source.tf`) has NO corresponding `tests/model.tftest.hcl` — gap confirmed
+
 Harden-runner status (updated April 2026):
 - `step-security/harden-runner` was absent from all 7 jobs across all 5 workflows; added in April 2026
 - Pinned to v2.17.0 @ SHA f808768d1510423e83855289c910610ca9b43176, with `egress-policy: audit` on every job
