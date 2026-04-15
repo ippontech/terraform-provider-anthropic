@@ -1,3 +1,9 @@
+## [1.4.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.3.0...v1.4.0) (2026-04-15)
+
+### ✨ Features
+
+* add anthropic_agent resource for Managed Agents ([#19](https://github.com/ippontech/terraform-provider-anthropic/issues/19)) ([f57ec94](https://github.com/ippontech/terraform-provider-anthropic/commit/f57ec94ae60db301058c5613b9713847d27687d3))
+
 ## [1.3.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.2.0...v1.3.0) (2026-04-15)
 
 ### ✨ Features
