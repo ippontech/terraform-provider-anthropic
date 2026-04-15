@@ -351,7 +351,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"archived_at": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Archive timestamp (RFC 3339). Empty string if not archived.",
+				MarkdownDescription: "Archive timestamp (RFC 3339). Null if the agent has not been archived.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
@@ -558,10 +558,13 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		params.MCPServers = []anthropic.BetaManagedAgentsURLMCPServerParams{}
 	}
 
-	// Skills
+	// Skills — explicitly send empty slice when null to clear API-side skills.
 	resp.Diagnostics.Append(buildSkillsParams(ctx, data.Skills, &params.Skills)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if params.Skills == nil {
+		params.Skills = []anthropic.BetaManagedAgentsSkillParamsUnion{}
 	}
 
 	// Tools
@@ -798,17 +801,19 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	data.UpdatedAt = types.StringValue(agent.UpdatedAt.Format(time.RFC3339))
 
 	if agent.ArchivedAt.IsZero() {
-		data.ArchivedAt = types.StringValue("")
+		data.ArchivedAt = types.StringNull()
 	} else {
 		data.ArchivedAt = types.StringValue(agent.ArchivedAt.Format(time.RFC3339))
 	}
 
-	// Model speed
+	// Model speed: when API returns "" (meaning "standard"), preserve whatever was
+	// already in data (from prior state or plan) to prevent perpetual diffs.
 	if agent.Model.Speed != "" {
 		data.ModelSpeed = types.StringValue(string(agent.Model.Speed))
-	} else {
+	} else if data.ModelSpeed.IsUnknown() || data.ModelSpeed.IsNull() {
 		data.ModelSpeed = types.StringNull()
 	}
+	// else: keep existing data.ModelSpeed (e.g. "standard") to avoid drift
 
 	// Description
 	if agent.Description != "" {
@@ -893,22 +898,20 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	}
 
 	// Agent toolset
-	if apiAgentToolset != nil && !data.AgentToolset.IsNull() {
+	if apiAgentToolset != nil {
 		toolsetObj, d := mapAgentToolsetToState(ctx, apiAgentToolset, data.AgentToolset)
 		diags.Append(d...)
 		data.AgentToolset = toolsetObj
-	} else if apiAgentToolset != nil && data.AgentToolset.IsNull() {
-		// Agent has toolset but user didn't specify one — leave null (don't import unmanaged config)
-	} else if apiAgentToolset == nil && !data.AgentToolset.IsNull() {
+	} else if !data.AgentToolset.IsNull() {
 		data.AgentToolset = types.ObjectNull(agentToolsetAttrTypes)
 	}
 
 	// MCP toolsets
-	if len(apiMCPToolsets) > 0 && !data.MCPToolsets.IsNull() {
+	if len(apiMCPToolsets) > 0 {
 		mcpList, d := mapMCPToolsetsToState(ctx, apiMCPToolsets, data.MCPToolsets)
 		diags.Append(d...)
 		data.MCPToolsets = mcpList
-	} else if len(apiMCPToolsets) == 0 && !data.MCPToolsets.IsNull() {
+	} else if !data.MCPToolsets.IsNull() {
 		data.MCPToolsets = types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes})
 	}
 
@@ -949,7 +952,7 @@ func mapAgentToolsetToState(ctx context.Context, apiToolset *anthropic.BetaManag
 	defaultEnabled := types.BoolValue(apiToolset.DefaultConfig.Enabled)
 	defaultPermPolicy := types.StringValue(apiToolset.DefaultConfig.PermissionPolicy.Type)
 
-	// Determine which config names are in current state.
+	// Determine which configs to include in state.
 	configsList := types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes})
 
 	if !currentState.IsNull() && !currentState.IsUnknown() {
@@ -1000,6 +1003,21 @@ func mapAgentToolsetToState(ctx context.Context, apiToolset *anthropic.BetaManag
 			diags.Append(d...)
 			configsList = list
 		}
+	} else if len(apiToolset.Configs) > 0 {
+		// Import case (null state): populate all API configs.
+		configObjs := make([]attr.Value, 0, len(apiToolset.Configs))
+		for _, c := range apiToolset.Configs {
+			obj, d := types.ObjectValue(agentToolConfigAttrTypes, map[string]attr.Value{
+				"name":              types.StringValue(string(c.Name)),
+				"enabled":           types.BoolValue(c.Enabled),
+				"permission_policy": types.StringValue(c.PermissionPolicy.Type),
+			})
+			diags.Append(d...)
+			configObjs = append(configObjs, obj)
+		}
+		list, d := types.ListValue(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}, configObjs)
+		diags.Append(d...)
+		configsList = list
 	}
 
 	obj, d := types.ObjectValue(agentToolsetAttrTypes, map[string]attr.Value{
@@ -1030,67 +1048,102 @@ func mapMCPToolsetsToState(ctx context.Context, apiToolsets []anthropic.BetaMana
 		}
 	}
 
-	toolsetObjs := make([]attr.Value, 0, len(stateToolsets))
-	for _, st := range stateToolsets {
-		serverName := st.MCPServerName.ValueString()
-		apiToolset, exists := apiByServer[serverName]
-		if !exists {
-			continue
+	toolsetObjs := make([]attr.Value, 0)
+
+	if len(stateToolsets) > 0 {
+		// Normal Read: iterate state toolsets to preserve order and filter configs.
+		for _, st := range stateToolsets {
+			serverName := st.MCPServerName.ValueString()
+			apiToolset, exists := apiByServer[serverName]
+			if !exists {
+				continue
+			}
+
+			defaultEnabled := types.BoolValue(apiToolset.DefaultConfig.Enabled)
+			defaultPermPolicy := types.StringValue(apiToolset.DefaultConfig.PermissionPolicy.Type)
+
+			configsList := types.ListNull(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes})
+
+			if !st.Configs.IsNull() {
+				var stateConfigs []agentToolConfigModel
+				diags.Append(st.Configs.ElementsAs(ctx, &stateConfigs, false)...)
+				if diags.HasError() {
+					return types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}), diags
+				}
+
+				apiCfgByName := map[string]anthropic.BetaManagedAgentsMCPToolConfig{}
+				for _, c := range apiToolset.Configs {
+					apiCfgByName[c.Name] = c
+				}
+
+				configObjs := make([]attr.Value, 0, len(stateConfigs))
+				for _, sc := range stateConfigs {
+					name := sc.Name.ValueString()
+					if apiCfg, ok := apiCfgByName[name]; ok {
+						enabled := types.BoolValue(apiCfg.Enabled)
+						permPolicy := types.StringValue(apiCfg.PermissionPolicy.Type)
+						if sc.Enabled.IsNull() {
+							enabled = types.BoolNull()
+						}
+						if sc.PermissionPolicy.IsNull() {
+							permPolicy = types.StringNull()
+						}
+						obj, d := types.ObjectValue(agentMCPToolConfigAttrTypes, map[string]attr.Value{
+							"name":              types.StringValue(name),
+							"enabled":           enabled,
+							"permission_policy": permPolicy,
+						})
+						diags.Append(d...)
+						configObjs = append(configObjs, obj)
+					}
+				}
+
+				list, d := types.ListValue(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes}, configObjs)
+				diags.Append(d...)
+				configsList = list
+			}
+
+			obj, d := types.ObjectValue(agentMCPToolsetAttrTypes, map[string]attr.Value{
+				"mcp_server_name":           types.StringValue(serverName),
+				"default_enabled":           defaultEnabled,
+				"default_permission_policy": defaultPermPolicy,
+				"configs":                   configsList,
+			})
+			diags.Append(d...)
+			toolsetObjs = append(toolsetObjs, obj)
 		}
+	} else {
+		// Import case (null/empty state): populate all API toolsets with all configs.
+		for _, apiToolset := range apiToolsets {
+			defaultEnabled := types.BoolValue(apiToolset.DefaultConfig.Enabled)
+			defaultPermPolicy := types.StringValue(apiToolset.DefaultConfig.PermissionPolicy.Type)
 
-		defaultEnabled := types.BoolValue(apiToolset.DefaultConfig.Enabled)
-		defaultPermPolicy := types.StringValue(apiToolset.DefaultConfig.PermissionPolicy.Type)
-
-		// Filter configs same as agent toolset.
-		configsList := types.ListNull(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes})
-
-		if !st.Configs.IsNull() {
-			var stateConfigs []agentToolConfigModel
-			diags.Append(st.Configs.ElementsAs(ctx, &stateConfigs, false)...)
-			if diags.HasError() {
-				return types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}), diags
-			}
-
-			apiCfgByName := map[string]anthropic.BetaManagedAgentsMCPToolConfig{}
-			for _, c := range apiToolset.Configs {
-				apiCfgByName[c.Name] = c
-			}
-
-			configObjs := make([]attr.Value, 0, len(stateConfigs))
-			for _, sc := range stateConfigs {
-				name := sc.Name.ValueString()
-				if apiCfg, ok := apiCfgByName[name]; ok {
-					enabled := types.BoolValue(apiCfg.Enabled)
-					permPolicy := types.StringValue(apiCfg.PermissionPolicy.Type)
-					if sc.Enabled.IsNull() {
-						enabled = types.BoolNull()
-					}
-					if sc.PermissionPolicy.IsNull() {
-						permPolicy = types.StringNull()
-					}
+			configsList := types.ListNull(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes})
+			if len(apiToolset.Configs) > 0 {
+				configObjs := make([]attr.Value, 0, len(apiToolset.Configs))
+				for _, c := range apiToolset.Configs {
 					obj, d := types.ObjectValue(agentMCPToolConfigAttrTypes, map[string]attr.Value{
-						"name":              types.StringValue(name),
-						"enabled":           enabled,
-						"permission_policy": permPolicy,
+						"name":              types.StringValue(c.Name),
+						"enabled":           types.BoolValue(c.Enabled),
+						"permission_policy": types.StringValue(c.PermissionPolicy.Type),
 					})
 					diags.Append(d...)
 					configObjs = append(configObjs, obj)
 				}
+				list, d := types.ListValue(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes}, configObjs)
+				diags.Append(d...)
+				configsList = list
 			}
 
-			list, d := types.ListValue(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes}, configObjs)
+			obj, d := types.ObjectValue(agentMCPToolsetAttrTypes, map[string]attr.Value{
+				"mcp_server_name":           types.StringValue(apiToolset.MCPServerName),
+				"default_enabled":           defaultEnabled,
+				"default_permission_policy": defaultPermPolicy,
+				"configs":                   configsList,
+			})
 			diags.Append(d...)
-			configsList = list
+			toolsetObjs = append(toolsetObjs, obj)
 		}
-
-		obj, d := types.ObjectValue(agentMCPToolsetAttrTypes, map[string]attr.Value{
-			"mcp_server_name":           types.StringValue(serverName),
-			"default_enabled":           defaultEnabled,
-			"default_permission_policy": defaultPermPolicy,
-			"configs":                   configsList,
-		})
-		diags.Append(d...)
-		toolsetObjs = append(toolsetObjs, obj)
 	}
 
 	list, d := types.ListValue(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}, toolsetObjs)

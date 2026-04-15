@@ -34,7 +34,7 @@ Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are
 
 ### Read-Only
 
-- `archived_at` (String) Archive timestamp (RFC 3339). Empty string if not archived.
+- `archived_at` (String) Archive timestamp (RFC 3339). Null if the agent has not been archived.
 - `created_at` (String) Creation timestamp (RFC 3339).
 - `id` (String) Unique agent identifier assigned by the API.
 - `updated_at` (String) Last update timestamp (RFC 3339).
