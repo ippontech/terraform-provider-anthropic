@@ -69,6 +69,8 @@ make generate       # Regenerate docs and format examples
 make                # Default: fmt lint install generate
 ```
 
+**After implementing any feature or bug fix, always run `make` (alias for `make default`) before committing.** It formats code, runs the linter, reinstalls the provider, and regenerates docs in one step.
+
 Run a single Go test:
 ```bash
 go test -run TestName -v ./internal/provider/
