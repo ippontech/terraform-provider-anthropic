@@ -1,3 +1,9 @@
+## [1.4.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.4.1...v1.4.2) (2026-04-20)
+
+### 📚 Documentation
+
+* add make default reminder after feature/bug fix implementation ([#24](https://github.com/ippontech/terraform-provider-anthropic/issues/24)) ([5f4275e](https://github.com/ippontech/terraform-provider-anthropic/commit/5f4275ef8c99128f6929cb871cc31647627272c1))
+
 ## [1.4.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.4.0...v1.4.1) (2026-04-20)
 
 ### 📚 Documentation

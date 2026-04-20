@@ -66,7 +66,7 @@ make test           # Run unit tests (120s timeout, 10 parallel workers)
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
 make generate       # Regenerate docs and format examples
-make                # Default: fmt lint install generate
+make                # Default: fmt lint test install generate
 ```
 
 **After implementing any feature or bug fix, always run `make` (alias for `make default`) before committing.** It formats code, runs the linter, reinstalls the provider, and regenerates docs in one step.
