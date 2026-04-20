@@ -1,4 +1,4 @@
-default: fmt lint install generate
+default: fmt lint test install generate
 
 build:
 	go build -v ./...
