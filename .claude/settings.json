@@ -12,6 +12,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); if [ -n \"$branch\" ] && [ \"$branch\" != \"main\" ] && [ \"$branch\" != \"HEAD\" ] && gh pr view \"$branch\" --json state -q '.state' 2>/dev/null | grep -q \"OPEN\"; then jq -n --arg b \"$branch\" '{\"decision\":\"block\",\"reason\":(\"Open PR on branch \" + $b + \" — please invoke /update-pr-description to update the PR description.\")}'; fi",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {
