@@ -25,6 +25,11 @@
       }
     ]
   },
+  "permissions": {
+    "allow": [
+      "Bash(touch /tmp/claude-pr-desc-done-*)"
+    ]
+  },
   "enabledPlugins": {
     "terraform-skill@antonbabenko": true,
     "terraform@claude-plugins-official": true
