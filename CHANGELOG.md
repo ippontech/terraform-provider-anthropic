@@ -1,3 +1,9 @@
+## [1.6.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.6.0...v1.6.1) (2026-04-20)
+
+### 🐛 Bug Fixes
+
+* pre-install Terraform in testacc job to bypass expired GPG key ([#30](https://github.com/ippontech/terraform-provider-anthropic/issues/30)) ([1aac9de](https://github.com/ippontech/terraform-provider-anthropic/commit/1aac9de704bc5bb6a8d952fba2d6deff18282f71))
+
 ## [1.6.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.5.0...v1.6.0) (2026-04-20)
 
 ### ✨ Features
