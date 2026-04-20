@@ -86,6 +86,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewAgentDataSource,
+		NewAgentsDataSource,
 		NewCountTokensDataSource,
 		NewModelDataSource,
 		NewModelsDataSource,
