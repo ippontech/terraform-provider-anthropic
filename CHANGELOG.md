@@ -1,3 +1,9 @@
+## [1.6.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.6.1...v1.6.2) (2026-04-20)
+
+### 📚 Documentation
+
+* add Agents subcategory, enforce template convention, ignore worktrees ([#31](https://github.com/ippontech/terraform-provider-anthropic/issues/31)) ([a77c683](https://github.com/ippontech/terraform-provider-anthropic/commit/a77c6838d59ea504bbedf94a7936a83ad4a46a5f))
+
 ## [1.6.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.6.0...v1.6.1) (2026-04-20)
 
 ### 🐛 Bug Fixes
