@@ -1,3 +1,9 @@
+## [1.4.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.4.2...v1.4.3) (2026-04-20)
+
+### 🐛 Bug Fixes
+
+* remove Stop hook to prevent vibe-kanban infinite loop ([#25](https://github.com/ippontech/terraform-provider-anthropic/issues/25)) ([da4bb99](https://github.com/ippontech/terraform-provider-anthropic/commit/da4bb99385bdd49f8487db798d23f6bc7d70909b))
+
 ## [1.4.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.4.1...v1.4.2) (2026-04-20)
 
 ### 📚 Documentation
