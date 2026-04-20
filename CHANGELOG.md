@@ -1,3 +1,9 @@
+## [1.4.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.4.0...v1.4.1) (2026-04-20)
+
+### 📚 Documentation
+
+* enrich CLAUDE.md with architecture-first layout and Terraform tests ([#23](https://github.com/ippontech/terraform-provider-anthropic/issues/23)) ([ea62cc2](https://github.com/ippontech/terraform-provider-anthropic/commit/ea62cc2d588b3d8f04f21c0d5405bc9770b2ec84))
+
 ## [1.4.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.3.0...v1.4.0) (2026-04-15)
 
 ### ✨ Features
