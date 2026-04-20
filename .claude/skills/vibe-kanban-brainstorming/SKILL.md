@@ -76,11 +76,26 @@ Priority guidelines:
 - Resources: `high`
 - Data sources: `medium`
 
-### Step 4 — Create GitHub issues and branches
+### Step 4 — Create issue relationships
 
-For each subtask, in a **single parallel message**:
+After all Vibe Kanban issues exist, analyze dependencies between them and call
+`mcp__vibe_kanban__create_issue_relationship` for each pair. Use these rules:
+
+| Situation | `relationship_type` |
+|---|---|
+| Issue A must be merged before work on B can start | `blocking` (A → B) |
+| Resource and its corresponding data source(s) | `related` |
+| Single-item data source and its list data source | `related` |
+
+Run all `create_issue_relationship` calls in a **single parallel message**.
+
+If no dependencies exist between the issues, skip this step.
+
+### Step 5 — Create GitHub issues and branches
+
+For each issue, in a **single parallel message**:
 - `mcp__github__issue_write` (method: `create`) — mirror the Kanban description as a GitHub issue
-- `mcp__github__create_branch` (from `main`) — one branch per subtask
+- `mcp__github__create_branch` (from `main`) — one branch per issue
 
 Branch naming convention:
 - `anthropic_skill` resource → `feat/skill-resource`
@@ -88,7 +103,7 @@ Branch naming convention:
 - `anthropic_skill_version` resource → `feat/skill-version-resource`
 - `anthropic_skill_versions` data source → `feat/skill-versions-data-source`
 
-### Step 5 — Cross-link everything
+### Step 6 — Cross-link everything
 
 Update each Vibe Kanban issue description to add at the top:
 
@@ -99,7 +114,7 @@ Branch: feat/<name>
 
 Run all `mcp__vibe_kanban__update_issue` calls in a **single parallel message**.
 
-### Step 6 — Note on PRs
+### Step 7 — Note on PRs
 
 GitHub requires at least one commit before a PR can be opened. Always inform the user:
 
@@ -120,6 +135,7 @@ Each subtask description should reference:
 |---|---|
 | Fetch API docs pages | One `WebFetch` per page in a single message |
 | Create Vibe Kanban issues | One `create_issue` per issue in a single message |
+| Create issue relationships | One `create_issue_relationship` per pair in a single message |
 | Create GitHub issues + branches | All `issue_write` + `create_branch` calls in a single message |
 | Update Kanban issues with links | One `update_issue` per issue in a single message |
 | Implementation | All issues are independent — can be parallelized across agents |
@@ -181,6 +197,7 @@ User: "I'd like to implement /v1/environments APIs"
 1. Fetch `https://platform.claude.com/docs/en/api/overview` + all Environments endpoint pages in parallel
 2. Identify: `anthropic_environment` resource + `anthropic_environment` data source + `anthropic_environments` data source
 3. Create 3 Kanban issues in parallel (all `create_issue` in one message, no `parent_issue_id`)
-4. Create 3 GitHub issues + 3 branches in parallel (all in one message)
-5. Update 3 Kanban issues with links in parallel (all `update_issue` in one message)
-6. Report summary table to the user and remind them to open draft PRs after first commits
+4. Create relationships in parallel: resource `related` to single data source, single data source `related` to list data source
+5. Create 3 GitHub issues + 3 branches in parallel (all in one message)
+6. Update 3 Kanban issues with links in parallel (all `update_issue` in one message)
+7. Report summary table to the user and remind them to open draft PRs after first commits
