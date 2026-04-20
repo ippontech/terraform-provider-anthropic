@@ -136,6 +136,7 @@ spring/
 # Claude Code
 .mcp.json
 .claude/settings.local.json
+.claude/worktrees/
 
 # --- Terraform ---
 .terraform/

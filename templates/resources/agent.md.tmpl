@@ -1,0 +1,24 @@
+---
+page_title: "anthropic_agent Resource - anthropic"
+subcategory: "Agents"
+description: |-
+  Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are persistent configurations that can be used to run sessions with tools, MCP servers, and skills.
+---
+
+# anthropic_agent (Resource)
+
+Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are persistent configurations that can be used to run sessions with tools, MCP servers, and skills.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/agent/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing agent using its ID:
+
+```shell
+terraform import anthropic_agent.example <agent_id>
+```

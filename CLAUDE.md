@@ -30,8 +30,9 @@ This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](h
 2. Implement the `resource.Resource` (or `datasource.DataSource`) interface
 3. Register the factory function in `Resources()` (or `DataSources()`) in `internal/provider/provider.go`
 4. Add an example config under `examples/resources/<name>/` (or `examples/data-sources/<name>/`)
-5. Add a Terraform native test under `tests/<name>.tftest.hcl`
-6. Run `make generate` to regenerate docs
+5. Add a template under `templates/resources/<name>.md.tmpl` (or `templates/data-sources/<name>.md.tmpl`) — **required** to set a non-empty `subcategory` (e.g. `"Agents"`, `"Messages"`, `"Models"`); without it `make generate` produces `subcategory: ""` and the resource appears ungrouped on the Terraform Registry
+6. Add a Terraform native test under `tests/<name>.tftest.hcl`
+7. Run `make generate` to regenerate docs
 
 ### Testing pattern
 
