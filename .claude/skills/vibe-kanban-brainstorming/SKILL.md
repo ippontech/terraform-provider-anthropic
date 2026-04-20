@@ -4,7 +4,7 @@ description: >
   Automates planning and scaffolding for implementing Anthropic API endpoints
   as Terraform resources and data sources. Use when starting work on a new API
   (e.g. /v1/skills, /v1/environments) to generate fully cross-linked Vibe Kanban
-  subtasks, GitHub issues, and branches — one per resource/data source — ready
+  issues, GitHub issues, and branches — one per resource/data source — ready
   for parallel implementation.
 model: sonnet
 ---
@@ -19,7 +19,7 @@ Anthropic API as Terraform resources and data sources in this provider.
 The user says something like:
 - "I'd like to implement /v1/environments APIs"
 - "Plan the work for the Files API"
-- "Create subtasks for the Sessions endpoints"
+- "Create issues for the Sessions endpoints"
 
 ## Workflow
 
@@ -52,9 +52,9 @@ Also check the Go SDK for existing types:
 find $(go env GOPATH)/pkg/mod/github.com/anthropics/anthropic-sdk-go* -name "beta*.go" | xargs grep -l "<Resource>"
 ```
 
-### Step 2 — Plan subtasks
+### Step 2 — Plan issues
 
-Create one subtask per resource/data source. Each subtask must include:
+Create one issue per resource/data source. Each issue must include:
 
 1. **API spec** — endpoint, SDK method signatures, request/response fields
 2. **Terraform schema** — attribute table with types and R/W annotations
@@ -62,12 +62,13 @@ Create one subtask per resource/data source. Each subtask must include:
 4. **Go acceptance tests** — list of `TestAcc*` function names with what they verify
 5. **Terraform native test** — `.tftest.hcl` snippet with `parallel = true` and assert blocks
 
-**Do NOT create a separate subtask for tests.** Tests are part of every subtask.
+**Do NOT create a separate issue for tests.** Tests are part of every issue.
 
-### Step 3 — Create Vibe Kanban subtasks
+### Step 3 — Create Vibe Kanban issues
 
-Use `mcp__vibe_kanban__create_issue` for each subtask as a child of the current
-issue. Set `parent_issue_id` to the current issue's ID from `mcp__vibe_kanban__get_context`.
+Use `mcp__vibe_kanban__create_issue` for each resource/data source as a
+top-level issue (no `parent_issue_id`). Top-level issues are visible on the
+kanban board; subtasks are not.
 
 Run all `create_issue` calls in a **single parallel message**.
 
@@ -89,7 +90,7 @@ Branch naming convention:
 
 ### Step 5 — Cross-link everything
 
-Update each Vibe Kanban subtask description to add at the top:
+Update each Vibe Kanban issue description to add at the top:
 
 ```
 GitHub Issue: https://github.com/ippontech/terraform-provider-anthropic/issues/<N>
@@ -118,10 +119,10 @@ Each subtask description should reference:
 | Step | Strategy |
 |---|---|
 | Fetch API docs pages | One `WebFetch` per page in a single message |
-| Create Vibe Kanban subtasks | One `create_issue` per subtask in a single message |
+| Create Vibe Kanban issues | One `create_issue` per issue in a single message |
 | Create GitHub issues + branches | All `issue_write` + `create_branch` calls in a single message |
-| Update Kanban subtasks with links | One `update_issue` per subtask in a single message |
-| Implementation | All subtasks are independent — can be parallelized across agents |
+| Update Kanban issues with links | One `update_issue` per issue in a single message |
+| Implementation | All issues are independent — can be parallelized across agents |
 
 ## Subtask description template
 
@@ -179,7 +180,7 @@ User: "I'd like to implement /v1/environments APIs"
 
 1. Fetch `https://platform.claude.com/docs/en/api/overview` + all Environments endpoint pages in parallel
 2. Identify: `anthropic_environment` resource + `anthropic_environment` data source + `anthropic_environments` data source
-3. Create 3 Kanban subtasks in parallel (all `create_issue` in one message)
+3. Create 3 Kanban issues in parallel (all `create_issue` in one message, no `parent_issue_id`)
 4. Create 3 GitHub issues + 3 branches in parallel (all in one message)
-5. Update 3 Kanban subtasks with links in parallel (all `update_issue` in one message)
+5. Update 3 Kanban issues with links in parallel (all `update_issue` in one message)
 6. Report summary table to the user and remind them to open draft PRs after first commits
