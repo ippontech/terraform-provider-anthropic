@@ -1,3 +1,9 @@
+## [1.6.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.5.0...v1.6.0) (2026-04-20)
+
+### ✨ Features
+
+* add anthropic_agents data source ([#29](https://github.com/ippontech/terraform-provider-anthropic/issues/29)) ([9a58c38](https://github.com/ippontech/terraform-provider-anthropic/commit/9a58c384099800d259f76087dc8ab8dba3ec2966)), closes [#27](https://github.com/ippontech/terraform-provider-anthropic/issues/27)
+
 ## [1.5.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.4.3...v1.5.0) (2026-04-20)
 
 ### ✨ Features
