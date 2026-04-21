@@ -1,5 +1,5 @@
 ---
-name: ippon-cd-github-actions
+name: github-actions
 description: GitHub Actions best practices for writing and reviewing workflows. Use when creating or modifying .github/workflows/ files.
 model: sonnet
 ---

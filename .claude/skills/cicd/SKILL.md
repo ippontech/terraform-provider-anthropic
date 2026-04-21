@@ -1,5 +1,5 @@
 ---
-name: ippon-cd-cicd
+name: cicd
 description: Maintains CICD pipeline templates, workflows or pipelines. Use when working with GitLab/GitHub Actions CICD tools.
 model: sonnet
 ---
@@ -15,4 +15,4 @@ model: sonnet
 
 # GitHub Actions
 
-For GitHub Actions workflows, apply the `ippon-cd-github-actions` skill.
+For GitHub Actions workflows, apply the `github-actions` skill.

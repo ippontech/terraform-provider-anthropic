@@ -34,7 +34,7 @@ You review **recently changed or added files** unless explicitly asked to review
 
 ## GitHub Actions Workflow Review Checklist
 
-### ippon-cd-cicd Security Skill Compliance
+### cicd Security Skill Compliance
 Apply the following security checks rigorously to prevent supply chain attacks and credential leaks:
 
 **Action Pinning (Supply Chain)**
