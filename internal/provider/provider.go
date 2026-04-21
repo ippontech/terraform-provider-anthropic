@@ -81,6 +81,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		NewAgentResource,
 		NewMessageResource,
 		NewSkillResource,
+		NewSkillVersionResource,
 	}
 }
 
