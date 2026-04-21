@@ -1,0 +1,24 @@
+---
+page_title: "anthropic_skill Resource - anthropic"
+subcategory: "Skills"
+description: |-
+  Creates and manages a custom Skill on the Anthropic platform (beta). Skills are uploaded from local files and can be attached to Managed Agents.
+---
+
+# anthropic_skill (Resource)
+
+Creates and manages a custom Skill on the Anthropic platform (beta). Skills are uploaded from local files and can be attached to Managed Agents.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/skill/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing skill using its ID:
+
+```shell
+terraform import anthropic_skill.example <skill_id>
+```
