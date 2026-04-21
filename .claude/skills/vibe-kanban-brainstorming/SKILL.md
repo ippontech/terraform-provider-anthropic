@@ -123,7 +123,7 @@ GitHub requires at least one commit before a PR can be opened. Always inform the
 ## Implementation guidance
 
 Each subtask description should reference:
-- **Skill for implementation**: `ippon-cd-terraform-provider` — follow its conventions
+- **Skill for implementation**: `terraform-provider` — follow its conventions
   for schema definition, CRUD methods, ForceNew attributes, nested objects, examples,
   templates (with non-empty `subcategory`), and Terraform native tests.
 - **Subagent for review**: after implementation is complete on a branch, launch the

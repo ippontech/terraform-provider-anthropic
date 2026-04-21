@@ -1,5 +1,5 @@
 ---
-name: ippon-cd-security
+name: security
 description: Security best practices for Claude Code configuration and CI/CD pipelines. Use when reviewing or modifying Claude settings, permissions, secrets handling, or security-sensitive configuration.
 model: sonnet
 ---

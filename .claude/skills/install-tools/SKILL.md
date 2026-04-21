@@ -1,5 +1,5 @@
 ---
-name: ippon-cd-install-tools
+name: install-tools
 description: Installs tools on your environment such as java, npm, node, terraform, go,. Use when installing a new tool, updating an existing one or uninstalling one.
 model: sonnet
 ---
