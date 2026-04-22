@@ -1,0 +1,24 @@
+---
+page_title: "anthropic_skill_version Resource - anthropic"
+subcategory: "Skills"
+description: |-
+  Creates and manages a Skill Version on the Anthropic platform (beta). A Skill Version is created by uploading local files to an existing Skill.
+---
+
+# anthropic_skill_version (Resource)
+
+Creates and manages a Skill Version on the Anthropic platform (beta). A Skill Version is created by uploading local files to an existing Skill.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/skill_version/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing skill version using its skill ID and version, separated by a slash:
+
+```shell
+terraform import anthropic_skill_version.example <skill_id>/<version>
+```
