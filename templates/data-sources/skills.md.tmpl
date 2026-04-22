@@ -1,0 +1,16 @@
+---
+page_title: "anthropic_skills Data Source - anthropic"
+subcategory: "Skills"
+description: |-
+  Lists available Skills on the Anthropic platform (beta). Supports optional filtering by source; all pages are fetched automatically.
+---
+
+# anthropic_skills (Data Source)
+
+Lists available Skills on the Anthropic platform (beta). Supports optional filtering by source (`"custom"` or `"anthropic"`); all pages are fetched automatically.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/skills/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
