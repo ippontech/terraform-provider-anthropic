@@ -91,6 +91,7 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		NewCountTokensDataSource,
 		NewModelDataSource,
 		NewModelsDataSource,
+		NewSkillDataSource,
 	}
 }
 
