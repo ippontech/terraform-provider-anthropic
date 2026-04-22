@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.8.0...v1.9.0) (2026-04-22)
+
+### ✨ Features
+
+* implement anthropic_skill_version resource ([#46](https://github.com/ippontech/terraform-provider-anthropic/issues/46)) ([6ad3980](https://github.com/ippontech/terraform-provider-anthropic/commit/6ad39802ecf113568f27b6c0f87db0755d840cf1)), closes [#43](https://github.com/ippontech/terraform-provider-anthropic/issues/43)
+
 ## [1.8.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.7.0...v1.8.0) (2026-04-22)
 
 ### ✨ Features
