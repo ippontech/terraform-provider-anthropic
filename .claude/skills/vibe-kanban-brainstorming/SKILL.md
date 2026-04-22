@@ -133,7 +133,7 @@ multiple tickets into one PR, even if the changes seem small or related. Reviewe
 need one PR per logical unit.
 
 ### Vibe Kanban ticket numbers must not appear outside Vibe Kanban
-`TAU-N` identifiers are local to Vibe Kanban and meaningless on GitHub.
+Vibe Kanban ticket identifiers (e.g. `TAU-N`, `ABC-N` — the prefix varies per installation) are local to Vibe Kanban and meaningless on GitHub.
 **Never** include them in:
 - Commit messages
 - PR titles
