@@ -58,4 +58,4 @@ output "skill_version" {
 - `directory` (String) Top-level directory name extracted from the uploaded files.
 - `id` (String) Unique skill version identifier assigned by the API.
 - `name` (String) Human-readable name of the skill version, extracted from the `SKILL.md` file.
-- `type` (String) Type of the skill version.
+- `type` (String) Object type. For Skill Versions, this is always `"skill_version"`.

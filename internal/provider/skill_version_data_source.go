@@ -75,7 +75,7 @@ func (d *SkillVersionDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			},
 			"type": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Type of the skill version.",
+				MarkdownDescription: "Object type. For Skill Versions, this is always `\"skill_version\"`.",
 			},
 		},
 	}
@@ -120,6 +120,8 @@ func (d *SkillVersionDataSource) Read(ctx context.Context, req datasource.ReadRe
 	data.Directory = types.StringValue(skillVersion.Directory)
 	data.CreatedAt = types.StringValue(skillVersion.CreatedAt)
 	data.Type = types.StringValue(skillVersion.Type)
+	data.SkillID = types.StringValue(skillVersion.SkillID)
+	data.Version = types.StringValue(skillVersion.Version)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
