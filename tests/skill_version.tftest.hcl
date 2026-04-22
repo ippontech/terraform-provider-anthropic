@@ -17,4 +17,14 @@ run "skill_version_resource_creates_version" {
     condition     = output.version != ""
     error_message = "Expected version to be non-empty."
   }
+
+  assert {
+    condition     = output.name != ""
+    error_message = "Expected name to be non-empty."
+  }
+
+  assert {
+    condition     = output.created_at != ""
+    error_message = "Expected created_at to be non-empty."
+  }
 }

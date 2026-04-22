@@ -25,3 +25,11 @@ output "skill_version_id" {
 output "version" {
   value = anthropic_skill_version.example.version
 }
+
+output "name" {
+  value = anthropic_skill_version.example.name
+}
+
+output "created_at" {
+  value = anthropic_skill_version.example.created_at
+}

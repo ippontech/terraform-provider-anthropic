@@ -169,6 +169,7 @@ func (r *SkillVersionResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
+	// Version (not ID) is the SDK lookup key; this is what ImportState populates.
 	skillVersion, err := r.client.Beta.Skills.Versions.Get(ctx, data.Version.ValueString(), anthropic.BetaSkillVersionGetParams{
 		SkillID: data.SkillID.ValueString(),
 	})
