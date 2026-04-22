@@ -13,7 +13,7 @@ Retrieves a specific Skill Version by skill ID and version.
 
 ```hcl
 terraform {
-  required_version = ">= 1.0"
+  required_version = "~> 1.0"
 
   required_providers {
     anthropic = {
