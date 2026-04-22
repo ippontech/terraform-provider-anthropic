@@ -13,7 +13,7 @@ Creates and manages a custom Skill on the Anthropic platform (beta). Skills are 
 
 ```hcl
 terraform {
-  required_version = ">= 1.0"
+  required_version = "~> 1.0"
 
   required_providers {
     anthropic = {
