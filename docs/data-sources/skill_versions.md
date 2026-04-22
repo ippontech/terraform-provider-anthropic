@@ -13,7 +13,7 @@ Lists all Skill Versions for a given Skill on the Anthropic platform (beta). All
 
 ```hcl
 terraform {
-  required_version = ">= 1.0"
+  required_version = "~> 1.0"
 
   required_providers {
     anthropic = {
