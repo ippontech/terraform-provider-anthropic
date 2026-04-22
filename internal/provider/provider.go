@@ -80,6 +80,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 	return []func() resource.Resource{
 		NewAgentResource,
 		NewMessageResource,
+		NewSkillResource,
 	}
 }
 
