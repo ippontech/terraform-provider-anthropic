@@ -30,3 +30,23 @@ run "skills_data_source_returns_list" {
     error_message = "Expected the first skill's created_at to be non-empty."
   }
 }
+
+run "skills_data_source_source_filter" {
+  module {
+    source = "./examples/data-sources/skills"
+  }
+
+  variables {
+    source_filter = "custom"
+  }
+
+  assert {
+    condition     = length(output.skills) > 0
+    error_message = "Expected at least one skill with source_filter='custom'."
+  }
+
+  assert {
+    condition     = alltrue([for s in output.skills : s.source == "custom"])
+    error_message = "Expected all returned skills to have source == 'custom'."
+  }
+}

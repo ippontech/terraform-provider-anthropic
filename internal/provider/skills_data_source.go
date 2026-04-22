@@ -8,9 +8,11 @@ import (
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -54,8 +56,11 @@ func (d *SkillsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 		Attributes: map[string]schema.Attribute{
 			// --- Optional inputs ---
 			"source_filter": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "Filter skills by source. Accepted values: `\"custom\"` (user-created) or `\"anthropic\"` (built-in).",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("custom", "anthropic"),
+				},
+				MarkdownDescription: "Filter skills by source. Accepted values: `\"custom\"` (user-created) or `\"anthropic\"` (built-in). Values are case-sensitive.",
 			},
 
 			// --- Computed output ---

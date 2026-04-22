@@ -9,13 +9,20 @@ terraform {
   }
 }
 
+variable "source_filter" {
+  description = "Optional filter by skill source. Accepted values: \"custom\" or \"anthropic\"."
+  type        = string
+  default     = null
+}
+
 resource "anthropic_skill" "example" {
   display_title = "Example Skill (list)"
   files         = ["${path.module}/SKILL.md"]
 }
 
 data "anthropic_skills" "all" {
-  depends_on = [anthropic_skill.example]
+  source_filter = var.source_filter
+  depends_on    = [anthropic_skill.example]
 }
 
 output "skills" {

@@ -38,6 +38,7 @@ func TestAccSkillsDataSource_sourceFilter(t *testing.T) {
 				Config: fmt.Sprintf(testAccSkillsDataSourceWithFilterConfig, skillFilePath),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.anthropic_skills.filtered", "skills.#"),
+					resource.TestCheckResourceAttr("data.anthropic_skills.filtered", "skills.0.source", "custom"),
 				),
 			},
 		},
