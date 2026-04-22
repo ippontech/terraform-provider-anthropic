@@ -120,6 +120,35 @@ GitHub requires at least one commit before a PR can be opened. Always inform the
 
 > "Branches are created and ready. Open a draft PR on each branch once the first commit is pushed."
 
+## Invariants (never violate)
+
+### One GitHub issue per Vibe Kanban ticket
+Every Vibe Kanban issue **must** have exactly one corresponding GitHub issue. The
+GitHub issue URL must be written back into the Vibe Kanban issue description (Step 6).
+The two systems are mirrors: Vibe Kanban is local/private, GitHub is shared.
+
+### One PR per ticket — no bundled PRs
+Each Vibe Kanban ticket must result in **exactly one dedicated PR**. Never batch
+multiple tickets into one PR, even if the changes seem small or related. Reviewers
+need one PR per logical unit.
+
+### Vibe Kanban ticket numbers must not appear outside Vibe Kanban
+`TAU-N` identifiers are local to Vibe Kanban and meaningless on GitHub.
+**Never** include them in:
+- Commit messages
+- PR titles
+- PR descriptions
+
+Use the GitHub issue number (`#N`) or a plain description instead.
+
+### Branch isolation during parallel implementation
+When implementing tickets in parallel via agents, each agent must only commit
+changes that belong to its own ticket onto its own branch. An agent must never:
+- Check out or modify files on a sibling branch
+- Leave untracked files in the main worktree that belong to a different ticket
+
+Use `EnterWorktree` / isolated worktrees to enforce this boundary.
+
 ## Implementation guidance
 
 Each subtask description should reference:
