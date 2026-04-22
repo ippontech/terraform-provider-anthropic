@@ -61,12 +61,13 @@ func TestAccSkillResource_basic(t *testing.T) {
 					resource.TestCheckResourceAttrSet("anthropic_skill.test", "latest_version"),
 				),
 			},
-			// ImportState
+			// ImportState — display_title is not set in config, so the API may return a
+			// server-derived value that won't match after import.
 			{
 				ResourceName:            "anthropic_skill.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"files"},
+				ImportStateVerifyIgnore: []string{"files", "display_title"},
 			},
 		},
 	})

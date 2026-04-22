@@ -11,12 +11,14 @@ import (
 	"os"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -68,6 +70,7 @@ func (r *SkillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				ElementType:         types.StringType,
 				MarkdownDescription: "Local file paths to upload for the skill. Must include a `SKILL.md` file at the root of the directory.",
 				PlanModifiers:       []planmodifier.List{listplanmodifier.RequiresReplace()},
+				Validators:          []validator.List{listvalidator.SizeAtLeast(1)},
 			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
@@ -220,11 +223,16 @@ func mapSkillNewResponseToState(skill *anthropic.BetaSkillNewResponse, data *Ski
 	data.LatestVersion = types.StringValue(skill.LatestVersion)
 	data.Source = types.StringValue(skill.Source)
 
-	if skill.DisplayTitle != "" {
-		data.DisplayTitle = types.StringValue(skill.DisplayTitle)
-	} else {
-		data.DisplayTitle = types.StringNull()
+	// Only adopt display_title from the API if the user explicitly set it in config;
+	// otherwise leave the plan/state value (null) to avoid drift on subsequent plans.
+	if !data.DisplayTitle.IsNull() {
+		if skill.DisplayTitle != "" {
+			data.DisplayTitle = types.StringValue(skill.DisplayTitle)
+		} else {
+			data.DisplayTitle = types.StringNull()
+		}
 	}
+	// Do NOT update Files — the API does not return file paths (they are ForceNew).
 }
 
 func mapSkillGetResponseToState(skill *anthropic.BetaSkillGetResponse, data *SkillResourceModel) {
@@ -234,10 +242,14 @@ func mapSkillGetResponseToState(skill *anthropic.BetaSkillGetResponse, data *Ski
 	data.LatestVersion = types.StringValue(skill.LatestVersion)
 	data.Source = types.StringValue(skill.Source)
 
-	if skill.DisplayTitle != "" {
-		data.DisplayTitle = types.StringValue(skill.DisplayTitle)
-	} else {
-		data.DisplayTitle = types.StringNull()
+	// Only adopt display_title from the API if the user explicitly set it in config;
+	// otherwise leave the plan/state value (null) to avoid drift on subsequent plans.
+	if !data.DisplayTitle.IsNull() {
+		if skill.DisplayTitle != "" {
+			data.DisplayTitle = types.StringValue(skill.DisplayTitle)
+		} else {
+			data.DisplayTitle = types.StringNull()
+		}
 	}
 	// Do NOT update Files — the API does not return file paths (they are ForceNew).
 }

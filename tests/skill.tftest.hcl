@@ -12,4 +12,9 @@ run "skill_resource_creates_skill" {
     condition     = output.skill_id != ""
     error_message = "Expected skill_id to be non-empty."
   }
+
+  assert {
+    condition     = output.skill_source == "custom"
+    error_message = "Expected skill source to be 'custom' for user-created skills."
+  }
 }
