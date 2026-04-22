@@ -5,25 +5,13 @@ package provider
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
-func testAccSkillDataSourceFilePath(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	p := filepath.Join(dir, "SKILL.md")
-	if err := os.WriteFile(p, []byte("# Test Skill\n\nFor testing.\n"), 0644); err != nil {
-		t.Fatalf("failed to write test skill file: %s", err)
-	}
-	return p
-}
-
 func TestAccSkillDataSource_basic(t *testing.T) {
-	skillFilePath := testAccSkillDataSourceFilePath(t)
+	skillFilePath := testAccSkillFilePath(t)
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
