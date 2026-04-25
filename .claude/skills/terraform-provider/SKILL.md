@@ -1,6 +1,6 @@
 ---
 name: terraform-provider
-description: Develops Terraform providers in Go. Use when creating a new Terraform provider or updating an existing one.
+description: Develops Terraform providers in Go. Use when creating a new Terraform provider or updating an existing one, use when creating, updating, deleting resources or data sources.
 model: sonnet
 ---
 
