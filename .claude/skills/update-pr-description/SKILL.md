@@ -71,7 +71,7 @@ Guidelines:
 Call `mcp__github__update_pull_request` with the new `body` and report the PR
 URL back to the user.
 
-Then write the sentinel file to suppress the Stop hook for 60 seconds:
+Then write the sentinel file to suppress the Stop hook for 5 minutes:
 
 ```bash
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
