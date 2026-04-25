@@ -11,21 +11,49 @@ It allows you to manage and query Anthropic resources such as models.
 
 ## Authentication
 
-The provider requires an Anthropic API key. It can be configured in two ways:
+The provider uses two distinct API keys depending on which resources you manage.
+
+### API Key (`api_key` / `ANTHROPIC_API_KEY`)
+
+Required for all inference resources: `anthropic_message`, `anthropic_agent`, `anthropic_skill`, models, token counting, etc.
+
+Generate one in the [Anthropic Console → API Keys](https://console.anthropic.com/settings/keys).
 
 **Environment variable** (recommended):
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+export ANTHROPIC_API_KEY="sk-ant-api03-..."
 ```
 
 **Provider argument**:
 
 ```hcl
 provider "anthropic" {
-  api_key = "sk-ant-..."
+  api_key = "sk-ant-api03-..."
 }
 ```
+
+### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
+
+Required for organization-management resources: `anthropic_workspace`, workspace members, and workspace rate limits. This is a separate credential scoped to your whole organization rather than a single workspace.
+
+Generate one in the [Anthropic Console → Admin API Keys](https://console.anthropic.com/settings/admin-keys).
+
+**Environment variable** (recommended):
+
+```bash
+export ANTHROPIC_ADMIN_API_KEY="sk-ant-admin03-..."
+```
+
+**Provider argument**:
+
+```hcl
+provider "anthropic" {
+  admin_api_key = "sk-ant-admin03-..."
+}
+```
+
+The `admin_api_key` is optional — you only need it when using workspace-related resources.
 
 ~> **Warning**: Never hardcode API keys in your Terraform configuration files.
 Use environment variables or a secrets manager instead.
