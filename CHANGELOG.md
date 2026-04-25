@@ -1,3 +1,9 @@
+## [1.13.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.1...v1.13.2) (2026-04-25)
+
+### 🐛 Bug Fixes
+
+* prefix skill file uploads with parent directory name ([#60](https://github.com/ippontech/terraform-provider-anthropic/issues/60)) ([0405f4c](https://github.com/ippontech/terraform-provider-anthropic/commit/0405f4c2f294fbb2999bea59875b6df6a47a75ec))
+
 ## [1.13.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.0...v1.13.1) (2026-04-25)
 
 ### 🐛 Bug Fixes
