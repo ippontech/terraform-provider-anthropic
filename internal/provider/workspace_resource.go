@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/provider/admin"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -30,7 +31,7 @@ func NewWorkspaceResource() resource.Resource {
 
 // WorkspaceResource defines the resource implementation.
 type WorkspaceResource struct {
-	adminClient *AdminClient
+	adminClient *admin.Client
 }
 
 // --- Terraform data models ---
@@ -222,7 +223,7 @@ func (r *WorkspaceResource) Create(ctx context.Context, req resource.CreateReque
 		body.DataResidency = dr
 	}
 
-	respBytes, err := r.adminClient.doRequest(ctx, "POST", "/v1/organizations/workspaces", body)
+	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/workspaces", body)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create workspace: %s", err))
 		return
@@ -251,9 +252,9 @@ func (r *WorkspaceResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	respBytes, err := r.adminClient.doRequest(ctx, "GET", "/v1/organizations/workspaces/"+data.ID.ValueString(), nil)
+	respBytes, err := r.adminClient.DoRequest(ctx, "GET", "/v1/organizations/workspaces/"+data.ID.ValueString(), nil)
 	if err != nil {
-		if IsNotFound(err) {
+		if admin.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -307,7 +308,7 @@ func (r *WorkspaceResource) Update(ctx context.Context, req resource.UpdateReque
 		body.DataResidency = dr
 	}
 
-	respBytes, err := r.adminClient.doRequest(ctx, "POST", "/v1/organizations/workspaces/"+state.ID.ValueString(), body)
+	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/workspaces/"+state.ID.ValueString(), body)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update workspace: %s", err))
 		return
@@ -336,7 +337,7 @@ func (r *WorkspaceResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	_, err := r.adminClient.doRequest(ctx, "POST", "/v1/organizations/workspaces/"+data.ID.ValueString()+"/archive", nil)
+	_, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/workspaces/"+data.ID.ValueString()+"/archive", nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive workspace: %s", err))
 		return

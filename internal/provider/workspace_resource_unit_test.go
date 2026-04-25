@@ -12,15 +12,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ippontech/terraform-provider-anthropic/internal/provider/admin"
 )
 
-// newTestAdminClient returns an AdminClient pointed at srv instead of the real API.
-func newTestAdminClient(t *testing.T, srv *httptest.Server) *AdminClient {
+// newTestAdminClient returns an admin.Client pointed at srv instead of the real API.
+func newTestAdminClient(t *testing.T, srv *httptest.Server) *admin.Client {
 	t.Helper()
-	return &AdminClient{
-		apiKey:     "test-key",
-		baseURL:    srv.URL,
-		httpClient: srv.Client(),
+	return &admin.Client{
+		ApiKey:     "test-key",
+		BaseURL:    srv.URL,
+		HTTPClient: srv.Client(),
 	}
 }
 
@@ -92,12 +94,12 @@ func TestBuildAllowedInferenceGeos(t *testing.T) {
 // --- AdminAPIError ---
 
 func TestAdminAPIError_Error(t *testing.T) {
-	withType := &AdminAPIError{StatusCode: 404, ErrType: "not_found", Message: "workspace not found"}
+	withType := &admin.APIError{StatusCode: 404, ErrType: "not_found", Message: "workspace not found"}
 	if got := withType.Error(); got != "API error (404 not_found): workspace not found" {
 		t.Fatalf("unexpected: %q", got)
 	}
 
-	noType := &AdminAPIError{StatusCode: 500, Message: "internal server error"}
+	noType := &admin.APIError{StatusCode: 500, Message: "internal server error"}
 	if got := noType.Error(); got != "API error (500): internal server error" {
 		t.Fatalf("unexpected: %q", got)
 	}
@@ -106,13 +108,13 @@ func TestAdminAPIError_Error(t *testing.T) {
 // --- IsNotFound ---
 
 func TestIsNotFound(t *testing.T) {
-	if !IsNotFound(&AdminAPIError{StatusCode: 404, Message: "not found"}) {
+	if !admin.IsNotFound(&admin.APIError{StatusCode: 404, Message: "not found"}) {
 		t.Fatal("expected true for 404 AdminAPIError")
 	}
-	if IsNotFound(&AdminAPIError{StatusCode: 500, Message: "error"}) {
+	if admin.IsNotFound(&admin.APIError{StatusCode: 500, Message: "error"}) {
 		t.Fatal("expected false for 500 AdminAPIError")
 	}
-	if IsNotFound(errors.New("random error")) {
+	if admin.IsNotFound(errors.New("random error")) {
 		t.Fatal("expected false for non-AdminAPIError")
 	}
 }
@@ -131,15 +133,15 @@ func TestAdminClient_doRequest_sendsCorrectHeaders(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	_, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+	_, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotAPIKey != "test-key" {
 		t.Errorf("x-api-key = %q, want %q", gotAPIKey, "test-key")
 	}
-	if gotVersion != anthropicVersion {
-		t.Errorf("anthropic-version = %q, want %q", gotVersion, anthropicVersion)
+	if gotVersion != admin.AnthropicVersion {
+		t.Errorf("anthropic-version = %q, want %q", gotVersion, admin.AnthropicVersion)
 	}
 	if gotContentType != "application/json" {
 		t.Errorf("content-type = %q, want %q", gotContentType, "application/json")
@@ -156,7 +158,7 @@ func TestAdminClient_doRequest_noContentTypeWithoutBody(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_1", nil)
+	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,16 +176,16 @@ func TestAdminClient_doRequest_jsonErrorBody(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/missing", nil)
+	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/missing", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !IsNotFound(err) {
+	if !admin.IsNotFound(err) {
 		t.Errorf("expected IsNotFound true, got false; err = %v", err)
 	}
-	var apiErr *AdminAPIError
+	var apiErr *admin.APIError
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected *AdminAPIError, got %T", err)
+		t.Fatalf("expected *admin.APIError, got %T", err)
 	}
 	if apiErr.ErrType != "not_found_error" {
 		t.Errorf("ErrType = %q, want %q", apiErr.ErrType, "not_found_error")
@@ -201,13 +203,13 @@ func TestAdminClient_doRequest_nonJsonErrorBody(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_1", nil)
+	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_1", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	var apiErr *AdminAPIError
+	var apiErr *admin.APIError
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected *AdminAPIError, got %T", err)
+		t.Fatalf("expected *admin.APIError, got %T", err)
 	}
 	if apiErr.StatusCode != 500 {
 		t.Errorf("StatusCode = %d, want 500", apiErr.StatusCode)
@@ -225,7 +227,7 @@ func TestAdminClient_doRequest_successReturnsBody(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	body, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_abc123", nil)
+	body, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_abc123", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -268,7 +270,7 @@ func TestWorkspaceCreate_parsesResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	body, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces",
+	body, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/workspaces",
 		workspaceCreateRequest{Name: "test-workspace"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -303,8 +305,8 @@ func TestWorkspaceRead_notFound(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_missing", nil)
-	if !IsNotFound(err) {
+	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_missing", nil)
+	if !admin.IsNotFound(err) {
 		t.Fatalf("expected IsNotFound, got: %v", err)
 	}
 }
@@ -330,7 +332,7 @@ func TestWorkspaceRead_archivedDetection(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	body, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_01ABC", nil)
+	body, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_01ABC", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -359,7 +361,7 @@ func TestWorkspaceArchive_sendsCorrectPath(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestAdminClient(t, srv)
-	_, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces/wrkspc_01ABC/archive", nil)
+	_, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/workspaces/wrkspc_01ABC/archive", nil)
 	if err != nil {
 		t.Fatalf("archive: %v", err)
 	}
@@ -385,7 +387,7 @@ func TestWorkspaceUpdate_excludesWorkspaceGeo(t *testing.T) {
 			AllowedInferenceGeos: json.RawMessage(`"unrestricted"`),
 		},
 	}
-	_, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces/wrkspc_01ABC", updateReq)
+	_, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/workspaces/wrkspc_01ABC", updateReq)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}

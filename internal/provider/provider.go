@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/provider/admin"
 )
 
 // Ensure AnthropicProvider satisfies various provider interfaces.
@@ -39,7 +40,7 @@ type ProviderData struct {
 	Client *anthropic.Client
 	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
 	// Nil when admin_api_key is not configured.
-	AdminClient *AdminClient
+	AdminClient *admin.Client
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -97,7 +98,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		Client: &client,
 	}
 	if adminApiKey != "" {
-		pd.AdminClient = newAdminClient(adminApiKey)
+		pd.AdminClient = admin.NewClient(adminApiKey)
 	}
 
 	resp.DataSourceData = pd
