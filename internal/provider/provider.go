@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/provider/admin"
 )
 
 // Ensure AnthropicProvider satisfies various provider interfaces.
@@ -29,7 +30,17 @@ type AnthropicProvider struct {
 
 // AnthropicProviderModel describes the provider data model.
 type AnthropicProviderModel struct {
-	ApiKey types.String `tfsdk:"api_key"`
+	ApiKey      types.String `tfsdk:"api_key"`
+	AdminApiKey types.String `tfsdk:"admin_api_key"`
+}
+
+// ProviderData is passed to every resource and data source Configure call.
+type ProviderData struct {
+	// Client is the Anthropic SDK client for standard API endpoints.
+	Client *anthropic.Client
+	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
+	// Nil when admin_api_key is not configured.
+	AdminClient *admin.Client
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -44,6 +55,11 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Optional:    true,
 				Sensitive:   true,
 				Description: "The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.",
+			},
+			"admin_api_key": schema.StringAttribute{
+				Optional:    true,
+				Sensitive:   true,
+				Description: "The Anthropic Admin API key for organization management endpoints (workspaces, members). Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
 			},
 		},
 	}
@@ -71,9 +87,22 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
+	adminApiKey := os.Getenv("ANTHROPIC_ADMIN_API_KEY")
+	if !data.AdminApiKey.IsNull() && !data.AdminApiKey.IsUnknown() {
+		adminApiKey = data.AdminApiKey.ValueString()
+	}
+
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))
-	resp.DataSourceData = &client
-	resp.ResourceData = &client
+
+	pd := &ProviderData{
+		Client: &client,
+	}
+	if adminApiKey != "" {
+		pd.AdminClient = admin.NewClient(adminApiKey)
+	}
+
+	resp.DataSourceData = pd
+	resp.ResourceData = pd
 }
 
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {
@@ -82,6 +111,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		NewMessageResource,
 		NewSkillResource,
 		NewSkillVersionResource,
+		NewWorkspaceResource,
 	}
 }
 

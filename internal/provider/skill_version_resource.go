@@ -105,16 +105,16 @@ func (r *SkillVersionResource) Configure(_ context.Context, req resource.Configu
 		return
 	}
 
-	client, ok := req.ProviderData.(*anthropic.Client)
+	pd, ok := req.ProviderData.(*ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *anthropic.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	r.client = client
+	r.client = pd.Client
 }
 
 func (r *SkillVersionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
