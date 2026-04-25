@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -21,6 +22,17 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// namedReader wraps an io.Reader with an explicit multipart filename.
+// The Anthropic SDK encoder checks for Filename() before falling back to
+// path.Base(Name()), so this lets us send "dirname/file.md" instead of just "file.md".
+// The API requires every file to be inside a named top-level folder.
+type namedReader struct {
+	io.Reader
+	filename string
+}
+
+func (r namedReader) Filename() string { return r.filename }
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &SkillResource{}
@@ -133,6 +145,11 @@ func (r *SkillResource) Create(ctx context.Context, req resource.CreateRequest, 
 		}
 	}()
 
+	// The API requires every file to live inside a named top-level directory
+	// (e.g. "myskill/SKILL.md"). We derive that directory name from the common
+	// parent of the provided paths.
+	dirName := filepath.Base(filepath.Dir(filePaths[0]))
+
 	for _, p := range filePaths {
 		f, err := os.Open(p)
 		if err != nil {
@@ -140,7 +157,7 @@ func (r *SkillResource) Create(ctx context.Context, req resource.CreateRequest, 
 			return
 		}
 		openedFiles = append(openedFiles, f)
-		files = append(files, f)
+		files = append(files, namedReader{Reader: f, filename: dirName + "/" + filepath.Base(p)})
 	}
 
 	params := anthropic.BetaSkillNewParams{

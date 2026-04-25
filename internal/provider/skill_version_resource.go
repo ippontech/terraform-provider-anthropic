@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -139,6 +140,8 @@ func (r *SkillVersionResource) Create(ctx context.Context, req resource.CreateRe
 		}
 	}()
 
+	dirName := filepath.Base(filepath.Dir(filePaths[0]))
+
 	for _, p := range filePaths {
 		f, err := os.Open(p)
 		if err != nil {
@@ -146,7 +149,7 @@ func (r *SkillVersionResource) Create(ctx context.Context, req resource.CreateRe
 			return
 		}
 		openedFiles = append(openedFiles, f)
-		files = append(files, f)
+		files = append(files, namedReader{Reader: f, filename: dirName + "/" + filepath.Base(p)})
 	}
 
 	skillVersion, err := r.client.Beta.Skills.Versions.New(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionNewParams{
