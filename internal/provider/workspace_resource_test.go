@@ -88,10 +88,17 @@ func TestAccWorkspaceResource_basic(t *testing.T) {
 
 func TestAccWorkspaceResource_withDataResidency(t *testing.T) {
 	adminKey := testAccAdminAPIKey(t)
+	var workspaceID string
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: func(s *terraform.State) error {
+			if workspaceID == "" {
+				return nil
+			}
+			return testAccCheckWorkspaceArchived(adminKey, workspaceID)(s)
+		},
 		Steps: []resource.TestStep{
 			// Create with explicit data_residency
 			{
@@ -100,9 +107,18 @@ func TestAccWorkspaceResource_withDataResidency(t *testing.T) {
 					resource.TestCheckResourceAttrSet("anthropic_workspace.test", "id"),
 					resource.TestCheckResourceAttr("anthropic_workspace.test", "data_residency.workspace_geo", "us"),
 					resource.TestCheckResourceAttr("anthropic_workspace.test", "data_residency.default_inference_geo", "global"),
+					resource.TestCheckResourceAttr("anthropic_workspace.test", "data_residency.allowed_inference_geos.0", "unrestricted"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["anthropic_workspace.test"]
+						if !ok {
+							return fmt.Errorf("anthropic_workspace.test not found in state")
+						}
+						workspaceID = rs.Primary.ID
+						return nil
+					},
 				),
 			},
-			// In-place update: rename the workspace
+			// In-place update: rename the workspace; workspace_geo must stay the same (no replacement).
 			{
 				Config: testAccWorkspaceResourceWithDataResidencyConfig(adminKey, "tf-acc-test-ws-dr-updated"),
 				Check: resource.ComposeAggregateTestCheckFunc(

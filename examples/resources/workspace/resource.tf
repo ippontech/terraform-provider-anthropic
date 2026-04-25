@@ -9,14 +9,8 @@ terraform {
   }
 }
 
-# Minimal workspace — data_residency defaults applied by the API.
 resource "anthropic_workspace" "example" {
   name = "Example Workspace"
-}
-
-# Workspace with explicit data residency.
-resource "anthropic_workspace" "example_with_residency" {
-  name = "Example Workspace with Residency"
 
   data_residency = {
     workspace_geo          = "us"

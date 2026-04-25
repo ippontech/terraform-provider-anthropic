@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 const (
@@ -48,7 +49,7 @@ func IsNotFound(err error) bool {
 func newAdminClient(apiKey string) *AdminClient {
 	return &AdminClient{
 		apiKey:     apiKey,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 

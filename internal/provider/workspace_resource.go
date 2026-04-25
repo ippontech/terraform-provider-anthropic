@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -119,7 +120,7 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Data-residency configuration. Defaults applied by the API when omitted.",
-				PlanModifiers:       []planmodifier.Object{},
+				PlanModifiers:       []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
 				Attributes: map[string]schema.Attribute{
 					"allowed_inference_geos": schema.ListAttribute{
 						Optional:            true,
@@ -355,13 +356,15 @@ func (r *WorkspaceResource) ImportState(ctx context.Context, req resource.Import
 // parseAllowedInferenceGeos converts the API union type (string or []string) to a []string.
 // The API string "unrestricted" becomes ["unrestricted"] in the Terraform list.
 func parseAllowedInferenceGeos(raw json.RawMessage) ([]string, error) {
-	if len(raw) == 0 {
+	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
+	// Try string first ("unrestricted" scalar variant).
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return []string{s}, nil
 	}
+	// Fall back to array variant.
 	var arr []string
 	if err := json.Unmarshal(raw, &arr); err != nil {
 		return nil, fmt.Errorf("parse allowed_inference_geos: %w", err)
@@ -407,7 +410,8 @@ func buildCreateDataResidency(ctx context.Context, obj types.Object) (*workspace
 }
 
 // buildUpdateDataResidency converts the Terraform data_residency object to an API update request struct.
-// workspace_geo is excluded because it is immutable.
+// workspace_geo is intentionally excluded: it is immutable after creation, and RequiresReplace ensures
+// that Update is never called when workspace_geo changes (replacement happens instead).
 func buildUpdateDataResidency(ctx context.Context, obj types.Object) (*workspaceUpdateDataResidency, diag.Diagnostics) {
 	var m workspaceDataResidencyModel
 	diags := obj.As(ctx, &m, basetypes.ObjectAsOptions{})
@@ -454,14 +458,20 @@ func mapWorkspaceToState(ctx context.Context, ws *workspaceAPIResponse, data *Wo
 		return diags
 	}
 
-	var geoElems []attr.Value
-	for _, g := range geos {
-		geoElems = append(geoElems, types.StringValue(g))
-	}
-	allowedGeosList, d := types.ListValue(types.StringType, geoElems)
-	diags.Append(d...)
-	if diags.HasError() {
-		return diags
+	var allowedGeosList types.List
+	if len(geos) == 0 {
+		allowedGeosList = types.ListNull(types.StringType)
+	} else {
+		geoElems := make([]attr.Value, len(geos))
+		for i, g := range geos {
+			geoElems[i] = types.StringValue(g)
+		}
+		var d diag.Diagnostics
+		allowedGeosList, d = types.ListValue(types.StringType, geoElems)
+		diags.Append(d...)
+		if diags.HasError() {
+			return diags
+		}
 	}
 
 	drObj, d := types.ObjectValue(workspaceDataResidencyAttrTypes, map[string]attr.Value{
