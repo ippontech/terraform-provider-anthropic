@@ -17,7 +17,7 @@ The provider uses two distinct API keys depending on which resources you manage.
 
 Required for all inference resources: `anthropic_message`, `anthropic_agent`, `anthropic_skill`, models, token counting, etc.
 
-Generate one in the [Anthropic Console → API Keys](https://console.anthropic.com/settings/keys).
+Generate one in the [Anthropic Console → API Keys](https://platform.claude.com/settings/keys).
 
 **Environment variable** (recommended):
 
@@ -37,7 +37,7 @@ provider "anthropic" {
 
 Required for organization-management resources: `anthropic_workspace`, workspace members, and workspace rate limits. This is a separate credential scoped to your whole organization rather than a single workspace.
 
-Generate one in the [Anthropic Console → Admin API Keys](https://console.anthropic.com/settings/admin-keys).
+Generate one in the [Anthropic Console → Admin API Keys](https://platform.claude.com/settings/admin-keys).
 
 **Environment variable** (recommended):
 

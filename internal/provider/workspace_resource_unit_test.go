@@ -4,13 +4,25 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+// newTestAdminClient returns an AdminClient pointed at srv instead of the real API.
+func newTestAdminClient(t *testing.T, srv *httptest.Server) *AdminClient {
+	t.Helper()
+	return &AdminClient{
+		apiKey:     "test-key",
+		baseURL:    srv.URL,
+		httpClient: srv.Client(),
+	}
+}
 
 // --- parseAllowedInferenceGeos ---
 
@@ -107,38 +119,53 @@ func TestIsNotFound(t *testing.T) {
 
 // --- AdminClient.doRequest ---
 
-func TestAdminClient_doRequest_success(t *testing.T) {
+func TestAdminClient_doRequest_sendsCorrectHeaders(t *testing.T) {
+	var gotAPIKey, gotVersion, gotContentType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-api-key") != "test-key" {
-			http.Error(w, "bad key", http.StatusUnauthorized)
-			return
-		}
-		if r.Header.Get("anthropic-version") != anthropicVersion {
-			http.Error(w, "bad version", http.StatusBadRequest)
-			return
-		}
+		gotAPIKey = r.Header.Get("x-api-key")
+		gotVersion = r.Header.Get("anthropic-version")
+		gotContentType = r.Header.Get("content-type")
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"id":"ws_123"}`)
+		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
 
-	// adminAPIBaseURL is a package-level const, so we can't redirect doRequest to the
-	// test server. Instead, build the request manually to verify the client's header
-	// requirements via the server-side check above.
-	req, _ := http.NewRequest("GET", srv.URL+"/v1/organizations/workspaces/ws_123", nil)
-	req.Header.Set("x-api-key", "test-key")
-	req.Header.Set("anthropic-version", anthropicVersion)
-	resp, err := srv.Client().Do(req)
+	client := newTestAdminClient(t, srv)
+	_, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
 	if err != nil {
-		t.Fatalf("request failed: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	if gotAPIKey != "test-key" {
+		t.Errorf("x-api-key = %q, want %q", gotAPIKey, "test-key")
+	}
+	if gotVersion != anthropicVersion {
+		t.Errorf("anthropic-version = %q, want %q", gotVersion, anthropicVersion)
+	}
+	if gotContentType != "application/json" {
+		t.Errorf("content-type = %q, want %q", gotContentType, "application/json")
 	}
 }
 
-func TestAdminClient_doRequest_errorBody(t *testing.T) {
+func TestAdminClient_doRequest_noContentTypeWithoutBody(t *testing.T) {
+	var gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("content-type")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotContentType != "" {
+		t.Errorf("expected no content-type for GET, got %q", gotContentType)
+	}
+}
+
+func TestAdminClient_doRequest_jsonErrorBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -146,36 +173,231 @@ func TestAdminClient_doRequest_errorBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newAdminClient("key")
-	// Swap httpClient to use the test server's transport and rewrite the URL.
-	client.httpClient = srv.Client()
+	client := newTestAdminClient(t, srv)
+	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/missing", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !IsNotFound(err) {
+		t.Errorf("expected IsNotFound true, got false; err = %v", err)
+	}
+	var apiErr *AdminAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *AdminAPIError, got %T", err)
+	}
+	if apiErr.ErrType != "not_found_error" {
+		t.Errorf("ErrType = %q, want %q", apiErr.ErrType, "not_found_error")
+	}
+	if apiErr.Message != "workspace not found" {
+		t.Errorf("Message = %q, want %q", apiErr.Message, "workspace not found")
+	}
+}
 
-	// Build request pointing to test server.
-	req, _ := http.NewRequest("GET", srv.URL+"/v1/organizations/workspaces/missing", nil)
-	req.Header.Set("x-api-key", "key")
-	req.Header.Set("anthropic-version", anthropicVersion)
-	rawResp, err := client.httpClient.Do(req)
+func TestAdminClient_doRequest_nonJsonErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `Internal Server Error`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_1", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var apiErr *AdminAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *AdminAPIError, got %T", err)
+	}
+	if apiErr.StatusCode != 500 {
+		t.Errorf("StatusCode = %d, want 500", apiErr.StatusCode)
+	}
+	if !strings.Contains(apiErr.Message, "Internal Server Error") {
+		t.Errorf("Message = %q, want to contain 'Internal Server Error'", apiErr.Message)
+	}
+}
+
+func TestAdminClient_doRequest_successReturnsBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"ws_abc123","name":"test"}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	body, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/ws_abc123", nil)
 	if err != nil {
-		t.Fatalf("unexpected transport error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	defer func() { _ = rawResp.Body.Close() }()
+	var result map[string]string
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if result["id"] != "ws_abc123" {
+		t.Errorf("id = %q, want %q", result["id"], "ws_abc123")
+	}
+}
 
-	body, _ := io.ReadAll(rawResp.Body)
-	var envelope struct {
-		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
+// --- Workspace API round-trip via mock server ---
+
+func workspaceFixture() string {
+	return `{
+		"id": "wrkspc_01ABC",
+		"name": "test-workspace",
+		"archived_at": null,
+		"created_at": "2026-01-01T00:00:00Z",
+		"display_color": "#FF5733",
+		"type": "workspace",
+		"data_residency": {
+			"allowed_inference_geos": "unrestricted",
+			"default_inference_geo": "global",
+			"workspace_geo": "us"
+		}
+	}`
+}
+
+func TestWorkspaceCreate_parsesResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/organizations/workspaces" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, workspaceFixture())
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	body, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces",
+		workspaceCreateRequest{Name: "test-workspace"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
 	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		t.Fatalf("parse error body: %v", err)
+
+	var ws workspaceAPIResponse
+	if err := json.Unmarshal(body, &ws); err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	apiErr := &AdminAPIError{
-		StatusCode: rawResp.StatusCode,
-		ErrType:    envelope.Error.Type,
-		Message:    envelope.Error.Message,
+	if ws.ID != "wrkspc_01ABC" {
+		t.Errorf("ID = %q, want %q", ws.ID, "wrkspc_01ABC")
 	}
-	if !IsNotFound(apiErr) {
-		t.Fatalf("expected IsNotFound true for 404 response")
+	if ws.ArchivedAt != nil {
+		t.Errorf("ArchivedAt = %v, want nil", ws.ArchivedAt)
+	}
+
+	geos, err := parseAllowedInferenceGeos(ws.DataResidency.AllowedInferenceGeos)
+	if err != nil {
+		t.Fatalf("parseAllowedInferenceGeos: %v", err)
+	}
+	if len(geos) != 1 || geos[0] != "unrestricted" {
+		t.Errorf("geos = %v, want [unrestricted]", geos)
+	}
+}
+
+func TestWorkspaceRead_notFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"type":"not_found_error","message":"workspace not found"}}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_missing", nil)
+	if !IsNotFound(err) {
+		t.Fatalf("expected IsNotFound, got: %v", err)
+	}
+}
+
+func TestWorkspaceRead_archivedDetection(t *testing.T) {
+	archivedAt := "2026-04-25T10:00:00Z"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{
+			"id": "wrkspc_01ABC",
+			"name": "archived-workspace",
+			"archived_at": "`+archivedAt+`",
+			"created_at": "2026-01-01T00:00:00Z",
+			"display_color": "#FF5733",
+			"type": "workspace",
+			"data_residency": {
+				"allowed_inference_geos": "unrestricted",
+				"default_inference_geo": "global",
+				"workspace_geo": "us"
+			}
+		}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	body, err := client.doRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_01ABC", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var ws workspaceAPIResponse
+	if err := json.Unmarshal(body, &ws); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// The resource's Read method removes archived workspaces from state.
+	// Verify the detection condition matches what the code checks.
+	if ws.ArchivedAt == nil || *ws.ArchivedAt == "" {
+		t.Errorf("expected ArchivedAt to be set, got nil/empty")
+	}
+	if *ws.ArchivedAt != archivedAt {
+		t.Errorf("ArchivedAt = %q, want %q", *ws.ArchivedAt, archivedAt)
+	}
+}
+
+func TestWorkspaceArchive_sendsCorrectPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, workspaceFixture())
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces/wrkspc_01ABC/archive", nil)
+	if err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if gotPath != "/v1/organizations/workspaces/wrkspc_01ABC/archive" {
+		t.Errorf("path = %q, want archive path", gotPath)
+	}
+}
+
+func TestWorkspaceUpdate_excludesWorkspaceGeo(t *testing.T) {
+	var reqBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, workspaceFixture())
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	updateReq := workspaceUpdateRequest{
+		Name: "updated-name",
+		DataResidency: &workspaceUpdateDataResidency{
+			DefaultInferenceGeo:  "global",
+			AllowedInferenceGeos: json.RawMessage(`"unrestricted"`),
+		},
+	}
+	_, err := client.doRequest(context.Background(), "POST", "/v1/organizations/workspaces/wrkspc_01ABC", updateReq)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(reqBody, &parsed); err != nil {
+		t.Fatalf("parse request body: %v", err)
+	}
+	if _, ok := parsed["workspace_geo"]; ok {
+		t.Error("update request must not include workspace_geo (immutable field)")
+	}
+	if parsed["name"] != "updated-name" {
+		t.Errorf("name = %v, want updated-name", parsed["name"])
 	}
 }

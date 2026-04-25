@@ -23,6 +23,7 @@ const (
 // The Anthropic Go SDK does not expose admin endpoints, so this client handles them directly.
 type AdminClient struct {
 	apiKey     string
+	baseURL    string
 	httpClient *http.Client
 }
 
@@ -49,6 +50,7 @@ func IsNotFound(err error) bool {
 func newAdminClient(apiKey string) *AdminClient {
 	return &AdminClient{
 		apiKey:     apiKey,
+		baseURL:    adminAPIBaseURL,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
@@ -64,7 +66,7 @@ func (c *AdminClient) doRequest(ctx context.Context, method, path string, body a
 		reqBody = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, adminAPIBaseURL+path, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP request: %w", err)
 	}
