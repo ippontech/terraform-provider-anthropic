@@ -1,18 +1,44 @@
 ---
 name: vibe-kanban-brainstorming
 description: >
-  Automates planning and scaffolding for implementing Anthropic API endpoints
-  as Terraform resources and data sources. Use when starting work on a new API
-  (e.g. /v1/skills, /v1/environments) to generate fully cross-linked Vibe Kanban
-  issues, GitHub issues, and branches — one per resource/data source — ready
-  for parallel implementation.
-model: sonnet
+  Plans and scaffolds Anthropic API endpoints as Terraform resources/data sources
+  for Vibe Kanban — a multi-agent CLI tool that spawns one Claude Code agent per
+  issue, each isolated in its own git worktree, all running in parallel. Use when
+  starting work on a new API (e.g. /v1/skills, /v1/environments) to generate
+  cross-linked Vibe Kanban issues, GitHub issues, and branches — one per
+  resource/data source — ready for agents to implement in parallel.
+model: opus
 ---
 
 # vibe-kanban-brainstorming
 
 Use this skill when you need to plan and scaffold the implementation of a new
 Anthropic API as Terraform resources and data sources in this provider.
+
+## How Vibe Kanban works
+
+Vibe Kanban is a CLI tool (`npx vibe-kanban`) that orchestrates parallel coding
+agents through a kanban board. Its two core concepts:
+
+- **Issues** — tasks on the kanban board. This skill creates them.
+- **Workspaces** — isolated execution environments. A human operator creates one
+  workspace per issue after this skill runs. Each workspace automatically gets
+  its own git worktree (stored in `.vibe-kanban-workspaces/`), its own working
+  branch, and its own agent session.
+
+Workspace lifecycle (triggered by the operator in the Vibe Kanban UI):
+1. Operator creates a workspace linked to an issue → Vibe Kanban creates a git
+   worktree on the issue's branch.
+2. An agent (e.g. Claude Code) starts inside that worktree via a **Session**.
+3. The agent works, commits, and pushes on the branch.
+4. Operator reviews changes in the Vibe Kanban Changes panel, creates a PR.
+5. After merge, the worktree is torn down.
+
+All workspaces run simultaneously — agents work in parallel, one per issue. A
+workspace can also run multiple Sessions (independent conversation threads
+sharing the same files) to handle context-window limits or parallel sub-tasks.
+This is why branch isolation is a hard invariant: cross-worktree contamination
+corrupts a sibling agent's working state.
 
 ## Trigger
 
@@ -147,7 +173,9 @@ changes that belong to its own ticket onto its own branch. An agent must never:
 - Check out or modify files on a sibling branch
 - Leave untracked files in the main worktree that belong to a different ticket
 
-Use `EnterWorktree` / isolated worktrees to enforce this boundary.
+Vibe Kanban creates the worktree when the operator opens a workspace; the
+implementing agent enters it with `EnterWorktree`. Never operate outside
+the assigned worktree — sibling agents are running live in parallel.
 
 ## Implementation guidance
 
@@ -156,7 +184,7 @@ Each subtask description should reference:
   for schema definition, CRUD methods, ForceNew attributes, nested objects, examples,
   templates (with non-empty `subcategory`), and Terraform native tests.
 - **Subagent for review**: after implementation is complete on a branch, launch the
-  `terraform-provider-code-reviewer` subagent pointing at the changed files.
+  `terraform-provider-review` subagent pointing at the changed files.
 
 ## Parallelization rules
 
@@ -167,7 +195,7 @@ Each subtask description should reference:
 | Create issue relationships | One `create_issue_relationship` per pair in a single message |
 | Create GitHub issues + branches | All `issue_write` + `create_branch` calls in a single message |
 | Update Kanban issues with links | One `update_issue` per issue in a single message |
-| Implementation | All issues are independent — can be parallelized across agents |
+| Implementation | Vibe Kanban launches one agent per workspace in parallel — each in its own worktree |
 
 ## Subtask description template
 
