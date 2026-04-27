@@ -18,7 +18,13 @@ import (
 
 func testAccSkillFilePath(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	// The API requires the multipart folder name to match the `name` field in
+	// the SKILL.md frontmatter. Create an explicit subdirectory so dirName is
+	// predictable rather than relying on t.TempDir()'s random suffix.
+	dir := filepath.Join(t.TempDir(), "test-skill")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create test skill directory: %s", err)
+	}
 	p := filepath.Join(dir, "SKILL.md")
 	if err := os.WriteFile(p, []byte("---\nname: test-skill\ndescription: For testing.\n---\n\n# Test Skill\n\nFor testing.\n"), 0644); err != nil {
 		t.Fatalf("failed to write test skill file: %s", err)
