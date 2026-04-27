@@ -20,7 +20,7 @@ func testAccSkillFilePath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "SKILL.md")
-	if err := os.WriteFile(p, []byte("# Test Skill\n\nFor testing.\n"), 0644); err != nil {
+	if err := os.WriteFile(p, []byte("---\nname: test-skill\ndescription: For testing.\n---\n\n# Test Skill\n\nFor testing.\n"), 0644); err != nil {
 		t.Fatalf("failed to write test skill file: %s", err)
 	}
 	return p
