@@ -1,3 +1,9 @@
+## [1.13.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.2...v1.13.3) (2026-04-27)
+
+### 🐛 Bug Fixes
+
+* add YAML frontmatter to SKILL.md example and test files ([#63](https://github.com/ippontech/terraform-provider-anthropic/issues/63)) ([f1fdce0](https://github.com/ippontech/terraform-provider-anthropic/commit/f1fdce0456a99a8bb058bc09c4f1ce671c90e1bf))
+
 ## [1.13.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.1...v1.13.2) (2026-04-25)
 
 ### 🐛 Bug Fixes
