@@ -1,3 +1,9 @@
+## [1.13.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.3...v1.13.4) (2026-04-27)
+
+### 🐛 Bug Fixes
+
+* align SKILL.md name field with parent directory name ([#64](https://github.com/ippontech/terraform-provider-anthropic/issues/64)) ([a9f28a8](https://github.com/ippontech/terraform-provider-anthropic/commit/a9f28a8b07529c5d7668e0a6a3f9ae1696f50b75))
+
 ## [1.13.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.2...v1.13.3) (2026-04-27)
 
 ### 🐛 Bug Fixes
