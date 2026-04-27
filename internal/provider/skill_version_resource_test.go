@@ -18,9 +18,15 @@ import (
 
 func testAccSkillVersionFilePath(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	// The API requires the multipart folder name to match the `name` field in
+	// the SKILL.md frontmatter. Create an explicit subdirectory so dirName is
+	// predictable rather than relying on t.TempDir()'s random suffix.
+	dir := filepath.Join(t.TempDir(), "test-skill-version")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create test skill version directory: %s", err)
+	}
 	p := filepath.Join(dir, "SKILL.md")
-	if err := os.WriteFile(p, []byte("# Test Skill Version\n\nFor testing.\n"), 0644); err != nil {
+	if err := os.WriteFile(p, []byte("---\nname: test-skill-version\ndescription: For testing.\n---\n\n# Test Skill Version\n\nFor testing.\n"), 0644); err != nil {
 		t.Fatalf("failed to write test skill version file: %s", err)
 	}
 	return p

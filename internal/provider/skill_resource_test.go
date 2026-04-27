@@ -69,11 +69,12 @@ func TestAccSkillResource_basic(t *testing.T) {
 			},
 			// ImportState — display_title is not set in config, so the API may return a
 			// server-derived value that won't match after import.
+			// updated_at may differ between the create response and a subsequent GET.
 			{
 				ResourceName:            "anthropic_skill.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"files", "display_title"},
+				ImportStateVerifyIgnore: []string{"files", "display_title", "updated_at"},
 			},
 		},
 	})
@@ -96,12 +97,12 @@ func TestAccSkillResource_withDisplayTitle(t *testing.T) {
 					resource.TestCheckResourceAttr("anthropic_skill.test", "source", "custom"),
 				),
 			},
-			// ImportState
+			// ImportState — updated_at may differ between create response and a subsequent GET.
 			{
 				ResourceName:            "anthropic_skill.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"files"},
+				ImportStateVerifyIgnore: []string{"files", "updated_at"},
 			},
 		},
 	})

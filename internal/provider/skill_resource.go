@@ -213,7 +213,28 @@ func (r *SkillResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	_, err := r.client.Beta.Skills.Delete(ctx, data.ID.ValueString(), anthropic.BetaSkillDeleteParams{})
+	skillID := data.ID.ValueString()
+
+	// The API requires all versions to be deleted before the skill itself can be deleted.
+	iter := r.client.Beta.Skills.Versions.ListAutoPaging(ctx, skillID, anthropic.BetaSkillVersionListParams{})
+	for iter.Next() {
+		v := iter.Current()
+		_, err := r.client.Beta.Skills.Versions.Delete(ctx, v.Version, anthropic.BetaSkillVersionDeleteParams{SkillID: skillID})
+		if err != nil {
+			var apierr *anthropic.Error
+			if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+				continue
+			}
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete skill version %s: %s", v.Version, err))
+			return
+		}
+	}
+	if err := iter.Err(); err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list skill versions for deletion: %s", err))
+		return
+	}
+
+	_, err := r.client.Beta.Skills.Delete(ctx, skillID, anthropic.BetaSkillDeleteParams{})
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
@@ -253,15 +274,19 @@ func mapSkillNewResponseToState(skill *anthropic.BetaSkillNewResponse, data *Ski
 }
 
 func mapSkillGetResponseToState(skill *anthropic.BetaSkillGetResponse, data *SkillResourceModel) {
+	// Detect import context: during a fresh import the state has only the ID,
+	// so created_at is null. We use this to decide whether to always populate
+	// display_title from the API (import) or only when the user has it configured
+	// (normal read — to avoid unintended plan drift).
+	isImport := data.CreatedAt.IsNull()
+
 	data.ID = types.StringValue(skill.ID)
 	data.CreatedAt = types.StringValue(skill.CreatedAt)
 	data.UpdatedAt = types.StringValue(skill.UpdatedAt)
 	data.LatestVersion = types.StringValue(skill.LatestVersion)
 	data.Source = types.StringValue(skill.Source)
 
-	// Only adopt display_title from the API if the user explicitly set it in config;
-	// otherwise leave the plan/state value (null) to avoid drift on subsequent plans.
-	if !data.DisplayTitle.IsNull() {
+	if !data.DisplayTitle.IsNull() || isImport {
 		if skill.DisplayTitle != "" {
 			data.DisplayTitle = types.StringValue(skill.DisplayTitle)
 		} else {
