@@ -1,5 +1,5 @@
 ---
-name: example-skill-version
+name: skill_versions
 description: An example custom skill version for demonstration.
 ---
 
