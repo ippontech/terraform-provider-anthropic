@@ -92,7 +92,13 @@ func (r *SkillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Default:  booldefault.StaticBool(false),
 				MarkdownDescription: "When `true`, all skill versions are deleted before the skill is destroyed, " +
 					"allowing Terraform to remove a skill that still has versions. " +
-					"Defaults to `false`. Set to `true` only if you intend for all versions to be permanently deleted.",
+					"Defaults to `false`. Set to `true` only if you intend for all versions to be permanently deleted.\n\n" +
+					"~> **Note:** This only deletes versions when the skill is destroyed, not when setting this parameter to `true`. " +
+					"Once this parameter is set to `true`, there must be a successful `terraform apply` run before a destroy is required " +
+					"to update this value in the resource state. Without a successful `terraform apply` after this parameter is set, " +
+					"this flag will have no effect. If setting this field in the same operation that would require replacing the skill " +
+					"or destroying the skill, this flag will not work. Additionally, when importing a skill, a successful `terraform apply` " +
+					"is required to set this value in state before it will take effect on a destroy operation.",
 			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
