@@ -1,3 +1,9 @@
+## [1.13.5](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.4...v1.13.5) (2026-04-28)
+
+### 🐛 Bug Fixes
+
+* delete skill versions before deleting skill, fix import state ([#65](https://github.com/ippontech/terraform-provider-anthropic/issues/65)) ([bf8992d](https://github.com/ippontech/terraform-provider-anthropic/commit/bf8992dbfd4ba52fa63ada183c6b6593cb52bb97))
+
 ## [1.13.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.3...v1.13.4) (2026-04-27)
 
 ### 🐛 Bug Fixes
