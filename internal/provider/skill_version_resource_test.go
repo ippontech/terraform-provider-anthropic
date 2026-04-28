@@ -90,7 +90,8 @@ func TestAccSkillVersionResource_basic(t *testing.T) {
 
 const testAccSkillVersionResourceBasicConfig = `
 resource "anthropic_skill" "test" {
-  files = [%q]
+  files         = [%q]
+  force_destroy = true
 }
 
 resource "anthropic_skill_version" "test" {

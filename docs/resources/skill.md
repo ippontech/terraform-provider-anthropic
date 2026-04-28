@@ -26,6 +26,7 @@ terraform {
 resource "anthropic_skill" "example" {
   display_title = "Example Skill"
   files         = ["${path.module}/SKILL.md"]
+  force_destroy = true
 }
 
 output "skill_id" {
@@ -47,6 +48,7 @@ output "skill_source" {
 ### Optional
 
 - `display_title` (String) Human-readable display title for the skill. Not included in the prompt sent to the model.
+- `force_destroy` (Boolean) When `true`, all skill versions are deleted before the skill is destroyed, allowing Terraform to remove a skill that still has versions. Defaults to `false`. Set to `true` only if you intend for all versions to be permanently deleted.
 
 ### Read-Only
 

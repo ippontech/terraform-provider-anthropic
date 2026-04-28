@@ -67,14 +67,14 @@ func TestAccSkillResource_basic(t *testing.T) {
 					resource.TestCheckResourceAttrSet("anthropic_skill.test", "latest_version"),
 				),
 			},
-			// ImportState — display_title is not set in config, so the API may return a
-			// server-derived value that won't match after import.
+			// ImportState — display_title is not set in config so the API may return a
+			// server-derived value; force_destroy is not tracked server-side;
 			// updated_at may differ between the create response and a subsequent GET.
 			{
 				ResourceName:            "anthropic_skill.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"files", "display_title", "updated_at"},
+				ImportStateVerifyIgnore: []string{"files", "display_title", "force_destroy", "updated_at"},
 			},
 		},
 	})
@@ -97,12 +97,13 @@ func TestAccSkillResource_withDisplayTitle(t *testing.T) {
 					resource.TestCheckResourceAttr("anthropic_skill.test", "source", "custom"),
 				),
 			},
-			// ImportState — updated_at may differ between create response and a subsequent GET.
+			// ImportState — force_destroy is not tracked server-side;
+			// updated_at may differ between create response and a subsequent GET.
 			{
 				ResourceName:            "anthropic_skill.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"files", "updated_at"},
+				ImportStateVerifyIgnore: []string{"files", "force_destroy", "updated_at"},
 			},
 		},
 	})
@@ -110,7 +111,8 @@ func TestAccSkillResource_withDisplayTitle(t *testing.T) {
 
 const testAccSkillResourceBasicConfig = `
 resource "anthropic_skill" "test" {
-  files = [%q]
+  files         = [%q]
+  force_destroy = true
 }
 `
 
@@ -118,5 +120,6 @@ const testAccSkillResourceWithDisplayTitleConfig = `
 resource "anthropic_skill" "test" {
   display_title = "tf-acc-test-skill"
   files         = [%q]
+  force_destroy = true
 }
 `

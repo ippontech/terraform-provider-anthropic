@@ -47,7 +47,8 @@ func TestAccSkillsDataSource_sourceFilter(t *testing.T) {
 
 const testAccSkillsDataSourceBasicConfig = `
 resource "anthropic_skill" "test" {
-  files = [%q]
+  files         = [%q]
+  force_destroy = true
 }
 data "anthropic_skills" "test" {
   depends_on = [anthropic_skill.test]
@@ -56,7 +57,8 @@ data "anthropic_skills" "test" {
 
 const testAccSkillsDataSourceWithFilterConfig = `
 resource "anthropic_skill" "test" {
-  files = [%q]
+  files         = [%q]
+  force_destroy = true
 }
 data "anthropic_skills" "filtered" {
   source_filter = "custom"

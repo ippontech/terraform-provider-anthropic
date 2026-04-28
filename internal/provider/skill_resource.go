@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -52,6 +53,7 @@ type SkillResourceModel struct {
 	ID            types.String `tfsdk:"id"`
 	DisplayTitle  types.String `tfsdk:"display_title"`
 	Files         types.List   `tfsdk:"files"`
+	ForceDestroy  types.Bool   `tfsdk:"force_destroy"`
 	CreatedAt     types.String `tfsdk:"created_at"`
 	UpdatedAt     types.String `tfsdk:"updated_at"`
 	LatestVersion types.String `tfsdk:"latest_version"`
@@ -83,6 +85,14 @@ func (r *SkillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "Local file paths to upload for the skill. Must include a `SKILL.md` file at the root of the directory.",
 				PlanModifiers:       []planmodifier.List{listplanmodifier.RequiresReplace()},
 				Validators:          []validator.List{listvalidator.SizeAtLeast(1)},
+			},
+			"force_destroy": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
+				MarkdownDescription: "When `true`, all skill versions are deleted before the skill is destroyed, " +
+					"allowing Terraform to remove a skill that still has versions. " +
+					"Defaults to `false`. Set to `true` only if you intend for all versions to be permanently deleted.",
 			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
@@ -216,22 +226,26 @@ func (r *SkillResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	skillID := data.ID.ValueString()
 
 	// The API requires all versions to be deleted before the skill itself can be deleted.
-	iter := r.client.Beta.Skills.Versions.ListAutoPaging(ctx, skillID, anthropic.BetaSkillVersionListParams{})
-	for iter.Next() {
-		v := iter.Current()
-		_, err := r.client.Beta.Skills.Versions.Delete(ctx, v.Version, anthropic.BetaSkillVersionDeleteParams{SkillID: skillID})
-		if err != nil {
-			var apierr *anthropic.Error
-			if errors.As(err, &apierr) && apierr.StatusCode == 404 {
-				continue
+	// Only do this when force_destroy = true; otherwise surface the API error so the
+	// user is aware that versions exist and must be removed explicitly.
+	if data.ForceDestroy.ValueBool() {
+		iter := r.client.Beta.Skills.Versions.ListAutoPaging(ctx, skillID, anthropic.BetaSkillVersionListParams{})
+		for iter.Next() {
+			v := iter.Current()
+			_, err := r.client.Beta.Skills.Versions.Delete(ctx, v.Version, anthropic.BetaSkillVersionDeleteParams{SkillID: skillID})
+			if err != nil {
+				var apierr *anthropic.Error
+				if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+					continue
+				}
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete skill version %s: %s", v.Version, err))
+				return
 			}
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete skill version %s: %s", v.Version, err))
+		}
+		if err := iter.Err(); err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list skill versions for deletion: %s", err))
 			return
 		}
-	}
-	if err := iter.Err(); err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list skill versions for deletion: %s", err))
-		return
 	}
 
 	_, err := r.client.Beta.Skills.Delete(ctx, skillID, anthropic.BetaSkillDeleteParams{})
