@@ -12,6 +12,7 @@ terraform {
 resource "anthropic_skill" "example" {
   display_title = "Example Skill"
   files         = ["${path.module}/SKILL.md"]
+  force_destroy = true
 }
 
 output "skill_id" {

@@ -33,7 +33,8 @@ func TestAccSkillDataSource_basic(t *testing.T) {
 
 const testAccSkillDataSourceBasicConfig = `
 resource "anthropic_skill" "test" {
-  files = [%q]
+  files         = [%q]
+  force_destroy = true
 }
 data "anthropic_skill" "test" {
   skill_id = anthropic_skill.test.id
