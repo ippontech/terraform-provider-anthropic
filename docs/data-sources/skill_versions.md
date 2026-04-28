@@ -25,7 +25,8 @@ terraform {
 
 # Create a skill and a version so the list is guaranteed non-empty for tests.
 resource "anthropic_skill" "example" {
-  files = ["${path.module}/SKILL.md"]
+  files         = ["${path.module}/SKILL.md"]
+  force_destroy = true
 }
 
 resource "anthropic_skill_version" "example" {

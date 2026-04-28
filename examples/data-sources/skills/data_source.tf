@@ -18,6 +18,7 @@ variable "source_filter" {
 resource "anthropic_skill" "example" {
   display_title = "Example Skill (list)"
   files         = ["${path.module}/SKILL.md"]
+  force_destroy = true
 }
 
 data "anthropic_skills" "all" {
