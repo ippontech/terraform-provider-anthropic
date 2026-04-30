@@ -122,6 +122,7 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		NewAgentDataSource,
 		NewAgentsDataSource,
 		NewCountTokensDataSource,
+		NewEnvironmentDataSource,
 		NewModelDataSource,
 		NewModelsDataSource,
 		NewSkillDataSource,
