@@ -19,7 +19,7 @@ terraform {
   required_providers {
     anthropic = {
       source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 0.1.0"
+      version = "~> 1.0"
     }
   }
 }
