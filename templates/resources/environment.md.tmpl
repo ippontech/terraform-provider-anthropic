@@ -1,0 +1,24 @@
+---
+page_title: "anthropic_environment Resource - anthropic"
+subcategory: "Environments"
+description: |-
+  Creates and manages a cloud environment (container template) for Anthropic Managed Agent sessions (beta).
+---
+
+# anthropic_environment (Resource)
+
+Creates and manages a cloud environment (container template) for Anthropic Managed Agent sessions (beta). Environments define the networking policy and pre-installed packages available to agent sessions.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/environment/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing environment using its ID:
+
+```shell
+terraform import anthropic_environment.example <environment_id>
+```
