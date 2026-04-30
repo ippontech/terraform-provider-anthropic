@@ -2,14 +2,9 @@ test {
   parallel = true
 }
 
-variables {
-  environment_id = ""
-}
-
 run "environment_data_source_reads_environment" {
   parallel = true
   module { source = "./examples/data-sources/environment" }
-  variables { environment_id = var.environment_id }
 
   assert {
     condition     = output.environment_id != ""

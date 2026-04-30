@@ -8,13 +8,14 @@ terraform {
   }
 }
 
-variable "environment_id" {
-  type        = string
-  description = "The ID of the environment to look up."
+# Create an environment to read with the data source
+resource "anthropic_environment" "created" {
+  name = "environment-data-source-example"
 }
 
+# Look up the created environment by ID
 data "anthropic_environment" "example" {
-  environment_id = var.environment_id
+  environment_id = anthropic_environment.created.id
 }
 
 output "environment_id" {
