@@ -4,7 +4,8 @@ description: >
   Updates the GitHub PR description for the current branch based on the work
   done in the current Claude session. Use after any meaningful change to a PR
   (feature, fix, refactor, docs). Invoked automatically when Claude stops if
-  an open PR exists for the current branch.
+  an open PR exists for the current branch. Also works inside Vibe Kanban
+  worktrees (vk/* branches) by resolving the PR via the VK issue context.
 model: sonnet
 ---
 
@@ -33,12 +34,33 @@ git diff main...HEAD --stat          # files changed vs main
 
 ### Step 2 — Find the open PR
 
+#### Normal branch
+
 ```bash
 gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number,url \
   --jq 'if length > 0 then "number=\(.[0].number) url=\(.[0].url)" else "" end'
 ```
 
-If no open PR exists for this branch, stop silently.
+If an open PR exists, proceed to Step 3.
+
+#### Vibe Kanban worktree (branch starts with `vk/`)
+
+Vibe Kanban sessions run in worktrees on `vk/<id>-<name>` branches that have
+no direct PR. In this case:
+
+1. Call `mcp__vibe_kanban__get_context` to get the current workspace/issue.
+2. From the returned issue body, extract all branch names referenced (look for
+   lines matching `feat/...`, `fix/...`, `chore/...`, or a `## Branch` section).
+3. For each extracted branch, call `mcp__github__pull_request_read` (method:
+   `get`) to check for an open PR.
+4. Collect all open PRs found and run Steps 3–4 for **each one** — write a
+   separate description per PR reflecting what changed in that PR specifically.
+
+If `get_context` is unavailable or returns no useful issue, stop silently.
+
+#### Fallback
+
+If no open PR is found by any method above, stop silently.
 
 ### Step 3 — Write the updated description
 
