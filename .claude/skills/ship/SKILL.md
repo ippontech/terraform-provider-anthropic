@@ -3,7 +3,8 @@ name: ship
 description: >
   Creates a branch named from the work done, commits all changes with a
   detailed conventional-commit message, pushes to GitHub, and opens a PR
-  whose title and body come directly from the commit message.
+  (or updates the existing PR description if one already exists) whose
+  title and body come directly from the commit message.
 model: sonnet
 ---
 
@@ -63,17 +64,42 @@ EOF
 )"
 ```
 
-### Step 4 — Push and open a PR
+### Step 4 — Push and open or update the PR
 
-Push the branch, then create the PR. The PR title must be the commit title (first line, without the `Co-Authored-By` trailer). The PR body must be the commit body.
+Push the branch:
 
 ```bash
 git push -u origin <branch-name>
+```
 
+Then check whether an open PR already exists for this branch:
+
+```bash
+gh pr view --json number,url --jq '"\(.number) \(.url)"' 2>/dev/null
+```
+
+**If no open PR exists** — create one. The title must be the commit title (first line, without the `Co-Authored-By` trailer). The body must be the commit body:
+
+```bash
 gh pr create \
   --title "<commit title>" \
   --body "$(cat <<'EOF'
 <commit body>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+**If an open PR already exists** — synthesise an updated description from all commits on this branch since main, then update the PR:
+
+```bash
+git log main..HEAD --format="%s%n%n%b"   # all commit titles + bodies
+
+gh pr edit <number> \
+  --title "<title reflecting all commits>" \
+  --body "$(cat <<'EOF'
+<consolidated summary of all changes>
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
