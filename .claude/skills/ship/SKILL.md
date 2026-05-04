@@ -78,17 +78,17 @@ Then check whether an open PR already exists for this branch:
 gh pr view --json number,url --jq '"\(.number) \(.url)"' 2>/dev/null
 ```
 
-**If no open PR exists** — create one. The title must be the commit title (first line, without the `Co-Authored-By` trailer). The body must be the commit body:
+**If no open PR exists** — write the body to a temp file, then create the PR. The title must be the commit title (first line, without the `Co-Authored-By` trailer). The body must be the commit body:
 
 ```bash
-gh pr create \
-  --title "<commit title>" \
-  --body "$(cat <<'EOF'
+cat > /tmp/pr_body.txt << 'ENDBODY'
 <commit body>
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
+ENDBODY
+gh pr create \
+  --title "<commit title>" \
+  --body-file /tmp/pr_body.txt
 ```
 
 **If an open PR already exists** — synthesise an updated description from all commits on this branch since main, then update the PR via the GitHub API (`gh pr edit` can fail with a Projects classic deprecation error):
