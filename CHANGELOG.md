@@ -1,3 +1,9 @@
+## [1.14.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.14.2...v1.14.3) (2026-05-04)
+
+### ♻️ Refactoring
+
+* **retry:** extract multipart upload retry into internal/retry ([#99](https://github.com/ippontech/terraform-provider-anthropic/issues/99)) ([324a3f2](https://github.com/ippontech/terraform-provider-anthropic/commit/324a3f27cf7ca94b8da5a86dcd4a466b5e56d41e))
+
 ## [1.14.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.14.1...v1.14.2) (2026-05-04)
 
 ### 🐛 Bug Fixes
