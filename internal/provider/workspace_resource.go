@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	"github.com/ippontech/terraform-provider-anthropic/internal/provider/admin"
 )
 
@@ -191,12 +192,7 @@ func (r *WorkspaceResource) Configure(_ context.Context, req resource.ConfigureR
 		return
 	}
 
-	if pd.AdminClient == nil {
-		resp.Diagnostics.AddError(
-			"Missing Admin API Key",
-			"The anthropic_workspace resource requires an Admin API key. "+
-				"Configure it via the admin_api_key provider argument or the ANTHROPIC_ADMIN_API_KEY environment variable.",
-		)
+	if !providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics) {
 		return
 	}
 
@@ -374,7 +370,7 @@ func parseAllowedInferenceGeos(raw json.RawMessage) ([]string, error) {
 }
 
 // buildAllowedInferenceGeos converts a Terraform list back to the API union type.
-// ["unrestricted"] is serialised as the JSON string "unrestricted"; anything else is an array.
+// ["unrestricted"] is serialized as the JSON string "unrestricted"; anything else is an array.
 func buildAllowedInferenceGeos(geos []string) json.RawMessage {
 	if len(geos) == 1 && geos[0] == "unrestricted" {
 		return json.RawMessage(`"unrestricted"`)

@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -112,6 +113,10 @@ func (r *SkillVersionResource) Configure(_ context.Context, req resource.Configu
 			"Unexpected Resource Configure Type",
 			fmt.Sprintf("Expected *ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
+		return
+	}
+
+	if !providerrors.RequireResourceAPIClient(pd.Client, &resp.Diagnostics) {
 		return
 	}
 

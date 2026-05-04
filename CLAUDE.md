@@ -84,6 +84,43 @@ Before committing, run pre-commit hooks:
 pre-commit run -a
 ```
 
+## Provider coding conventions
+
+### API key model
+
+The provider has two optional API keys — at least one must be configured:
+
+| Key | Provider arg | Env var | Client field | Used by |
+|---|---|---|---|---|
+| Standard | `api_key` | `ANTHROPIC_API_KEY` | `pd.Client` | All standard resources and data sources |
+| Admin | `admin_api_key` | `ANTHROPIC_ADMIN_API_KEY` | `pd.AdminClient` | Organization endpoints (`/v1/organizations/*`, e.g. workspaces) |
+
+### Configure method pattern
+
+Every resource and data source `Configure` method must guard against a nil client using helpers from `internal/errors/` (import alias `providerrors`). Never use an inline `if pd.Client == nil` check.
+
+```go
+import providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+
+// Standard resource
+if !providerrors.RequireResourceAPIClient(pd.Client, &resp.Diagnostics) {
+    return
+}
+r.client = pd.Client
+
+// Standard data source  →  providerrors.RequireDataSourceAPIClient
+// Admin resource        →  providerrors.RequireAdminResourceClient(pd.AdminClient, ...)
+// Admin data source     →  providerrors.RequireAdminDataSourceClient(pd.AdminClient, ...)
+```
+
+### Shared helpers
+
+Helpers shared across resources/data sources go in `internal/errors/`, not `internal/provider/`.
+
+### Version constraints
+
+Provider is on major version 1.x. Always use `~> 1.0` in example configs — never `~> 0.1.0`.
+
 ## Conventions
 
 Commits and MR titles must follow [conventional commits](https://www.conventionalcommits.org/):

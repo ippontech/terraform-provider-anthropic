@@ -139,18 +139,6 @@ description: |-
 
 **Technical/maintainer documentation** (release process, GPG setup, CI secrets) must NOT go in `docs/` — it would be published to the registry. Place it at the repo root (e.g., `RELEASE.md`, `CONTRIBUTING.md`) instead.
 
-## Version constraints
-
-The provider is on major version 1.x. Use `~> 1.0` as the version constraint:
-
-```hcl
-# Correct
-version = "~> 1.0"
-
-# Wrong — old 0.x constraint, do not use
-version = "~> 0.1.0"
-```
-
 ## Native Terraform tests
 
 Use [native Terraform tests](https://developer.hashicorp.com/terraform/language/tests) (`terraform test`, requires Terraform >= 1.6) to test example modules end-to-end. Place test files in `tests/` at the project root, one file per example root module.
@@ -213,22 +201,23 @@ Use `command = plan` when you only need to validate logic without creating real 
 
 ### Running tests locally
 
-Tests use a locally-built provider via Terraform dev overrides. `terraform init` is required before `terraform test` to install local module references. With `dev_overrides` correctly configured (pointing to the actual binary path), `terraform init` skips the registry entirely for the dev-overridden provider and only installs the local modules. Add these targets to the `GNUmakefile`:
+Tests use a locally-built provider via Terraform dev overrides (`make terraform-test` handles this automatically). The provider requires at least one API key — set those needed by the resources under test:
 
-```makefile
-.dev.tfrc:
-    @printf 'provider_installation {\n  dev_overrides {\n    "registry.terraform.io/ippontech/anthropic" = "%s/bin"\n  }\n  direct {}\n}\n' "$$(go env GOPATH)" > $@
+```shell
+# Standard resources (most resources and data sources)
+ANTHROPIC_API_KEY=<key> make terraform-test
 
-terraform-test: install .dev.tfrc
-    TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform init
-    TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform test
+# Admin resources (anthropic_workspace, etc.)
+ANTHROPIC_ADMIN_API_KEY=<admin-key> make terraform-test
+
+# Both (when testing a mix)
+ANTHROPIC_API_KEY=<key> ANTHROPIC_ADMIN_API_KEY=<admin-key> make terraform-test
 ```
 
-Add `.dev.tfrc` to `.gitignore` — it is generated locally and contains a machine-specific path.
+Alternatively, store keys in the `.env` file at the project root (gitignored) and source it before running:
 
-Run from the project root:
 ```shell
-ANTHROPIC_API_KEY=<key> make terraform-test
+set -a && source .env && set +a && make terraform-test
 ```
 
 `terraform test` automatically discovers `.tftest.hcl` files in the current directory and `tests/` subdirectory.

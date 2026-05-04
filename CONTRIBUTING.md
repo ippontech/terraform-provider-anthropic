@@ -5,6 +5,16 @@ email, or any other method with the owners of this repository before making a ch
 
 ## Local Development Setup
 
+### Prerequisites
+
+This project uses [mise](https://mise.jdx.dev/) to manage tool versions (Go, Terraform, golangci-lint, etc.). Install it and run:
+
+```bash
+mise install
+```
+
+This installs the exact versions declared in `mise.toml`.
+
 ### Build and install the provider
 
 ```bash
@@ -19,7 +29,7 @@ whereis terraform-provider-anthropic
 
 ### Configure Terraform to use the local binary
 
-Create or edit `~/.terraformrc` with the path found above:
+For ad-hoc local development, create or edit `~/.terraformrc` with the path found above:
 
 ```hcl
 provider_installation {
@@ -32,30 +42,68 @@ provider_installation {
 
 With `dev_overrides`, `terraform init` is not required — run `terraform plan` directly. Terraform will show a warning about development overrides being in effect; this is expected.
 
-### Set your API key
+Alternatively, `make terraform-test` auto-generates a project-local `.dev.tfrc` and uses it automatically (see [Run Terraform native tests](#run-terraform-native-tests) below).
+
+### Set your API keys
+
+The provider uses two API keys:
 
 ```bash
+# Required for all resources and data sources
 export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Required for organization management resources (workspaces, environments)
+export ANTHROPIC_ADMIN_API_KEY="sk-ant-admin-..."
+```
+
+At least one key must be set. `ANTHROPIC_API_KEY` is needed for most resources and data sources. `ANTHROPIC_ADMIN_API_KEY` is needed for organization management resources (`anthropic_workspace`). Both can be set at the same time.
+
+A `.env` file at the project root can hold machine-specific values. **Always source it before running any command:**
+
+```bash
+set -a && source .env && set +a
+```
+
+### Run unit tests
+
+```bash
+make test
 ```
 
 ### Run acceptance tests
-Also
+
+Go acceptance tests run against the live Anthropic API:
+
 ```bash
 TF_ACC=1 make testacc
 ```
 
+Requires `ANTHROPIC_API_KEY` to be set.
+
+### Run Terraform native tests
+
+Terraform native tests (`.tftest.hcl` files under `tests/`) build the provider, generate a project-local `.dev.tfrc`, and run `terraform test`:
+
+```bash
+make terraform-test
+```
+
+Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set (some tests exercise Admin API resources).
+
 ## Merge Request Process
 
 1. Create your MR and add reviewers. Owners or contributors of this repository must be added as reviewers.
-2. Run pre-commit hooks `pre-commit run -a`.
-3. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG).
+2. Run `make` (formats, lints, tests, installs, and regenerates docs in one step).
+3. Run pre-commit hooks `pre-commit run -a`.
+4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG).
 
 ## Checklists for contributions
 
-- [ ] Add [semantics prefix](#semantic-pull-requests) to your Commits
-- [ ] MR Title and description written in English
+- [ ] Add [semantics prefix](#semantic-pull-requests) to your commits
+- [ ] MR title and description written in English
+- [ ] Run `make` (fmt + lint + test + install + generate)
 - [ ] Run pre-commit hooks `pre-commit run -a`
-- [ ] CI is passing (if needed)
+- [ ] CI is passing
 
 ## Semantic Pull Requests
 
