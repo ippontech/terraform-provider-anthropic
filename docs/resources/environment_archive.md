@@ -15,7 +15,7 @@ Archives an Anthropic cloud environment (beta). Archived environments cannot be 
 
 ```hcl
 terraform {
-  required_version = ">= 1.0"
+  required_version = "~> 1.0"
   required_providers {
     anthropic = {
       source  = "registry.terraform.io/ippontech/anthropic"
