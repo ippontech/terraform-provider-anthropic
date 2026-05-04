@@ -33,8 +33,10 @@ git diff main...HEAD --stat          # files changed vs main
 
 ### Step 2 — Find the open PR
 
-Use `mcp__github__pull_request_read` (method: `get`) with the current branch
-name to retrieve the PR number and existing description.
+```bash
+gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number,url \
+  --jq 'if length > 0 then "number=\(.[0].number) url=\(.[0].url)" else "" end'
+```
 
 If no open PR exists for this branch, stop silently.
 
@@ -65,6 +67,7 @@ Guidelines:
 - One bullet per logical change — do not list individual files
 - Do not invent claims about behaviour you have not observed in this session
 - Keep it concise: a reviewer should understand the PR in under 30 seconds
+- **Write each bullet as a single unbroken line — do not hard-wrap at 80 chars**, as continuation lines render as visible line breaks on GitHub
 
 ### Step 4 — Update the PR
 
@@ -77,7 +80,7 @@ cat > /tmp/pr_body.txt << 'ENDBODY'
 ENDBODY
 gh api repos/{owner}/{repo}/pulls/<number> \
   --method PATCH \
-  --field body="$(cat /tmp/pr_body.txt)" \
+  --raw-field body="$(cat /tmp/pr_body.txt)" \
   --jq '.html_url'
 ```
 
