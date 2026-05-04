@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -130,35 +130,18 @@ func (r *SkillVersionResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	// Open each file.
 	var filePaths []string
 	resp.Diagnostics.Append(data.Files.ElementsAs(ctx, &filePaths, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	files := make([]io.Reader, 0, len(filePaths))
-	openedFiles := make([]*os.File, 0, len(filePaths))
-	defer func() {
-		for _, f := range openedFiles {
-			_ = f.Close()
-		}
-	}()
-
 	dirName := filepath.Base(filepath.Dir(filePaths[0]))
 
-	for _, p := range filePaths {
-		f, err := os.Open(p)
-		if err != nil {
-			resp.Diagnostics.AddError("File Open Error", fmt.Sprintf("Unable to open file %q: %s", p, err))
-			return
-		}
-		openedFiles = append(openedFiles, f)
-		files = append(files, namedReader{Reader: f, filename: dirName + "/" + filepath.Base(p)})
-	}
-
-	skillVersion, err := r.client.Beta.Skills.Versions.New(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionNewParams{
-		Files: files,
+	skillVersion, err := provretry.MultipartUpload(ctx, filePaths, dirName, func(files []io.Reader) (*anthropic.BetaSkillVersionNewResponse, error) {
+		return r.client.Beta.Skills.Versions.New(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionNewParams{
+			Files: files,
+		})
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create skill version: %s", err))
