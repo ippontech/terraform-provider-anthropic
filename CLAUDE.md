@@ -115,7 +115,10 @@ r.client = pd.Client
 
 ### Shared helpers
 
-Helpers shared across resources/data sources go in `internal/errors/`, not `internal/provider/`.
+Helpers shared across resources/data sources live in `internal/`, not `internal/provider/`:
+
+- `internal/errors/` (import alias `providerrors`) — nil-client guards for `Configure` methods
+- `internal/retry/` (import alias `provretry`) — multipart file upload with automatic 5xx retry; use `provretry.MultipartUpload` for any resource that uploads files to the API (the Anthropic SDK cannot retry streaming multipart bodies on its own)
 
 ### Version constraints
 
@@ -133,3 +136,7 @@ Commits and MR titles must follow [conventional commits](https://www.conventiona
 - `chore:` maintenance
 
 PRs are squash-merged; the MR title becomes the commit message.
+
+### Go unit tests
+
+After any bug fix, refactoring, or new helper added under `internal/`, write or update Go unit tests in the same package before considering the task done. Unit tests live next to the code they test (e.g. `internal/retry/multipart_test.go` for `internal/retry/multipart.go`). Run `make test` to verify they pass.

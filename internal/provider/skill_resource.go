@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -23,18 +22,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 )
-
-// namedReader wraps an io.Reader with an explicit multipart filename.
-// The Anthropic SDK encoder checks for Filename() before falling back to
-// path.Base(Name()), so this lets us send "dirname/file.md" instead of just "file.md".
-// The API requires every file to be inside a named top-level folder.
-type namedReader struct {
-	io.Reader
-	filename string
-}
-
-func (r namedReader) Filename() string { return r.filename }
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &SkillResource{}
@@ -151,45 +140,24 @@ func (r *SkillResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	// Open each file.
 	var filePaths []string
 	resp.Diagnostics.Append(data.Files.ElementsAs(ctx, &filePaths, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	files := make([]io.Reader, 0, len(filePaths))
-	openedFiles := make([]*os.File, 0, len(filePaths))
-	defer func() {
-		for _, f := range openedFiles {
-			_ = f.Close()
-		}
-	}()
-
 	// The API requires every file to live inside a named top-level directory
 	// (e.g. "myskill/SKILL.md"). We derive that directory name from the common
 	// parent of the provided paths.
 	dirName := filepath.Base(filepath.Dir(filePaths[0]))
 
-	for _, p := range filePaths {
-		f, err := os.Open(p)
-		if err != nil {
-			resp.Diagnostics.AddError("File Open Error", fmt.Sprintf("Unable to open file %q: %s", p, err))
-			return
+	skill, err := provretry.MultipartUpload(ctx, filePaths, dirName, func(files []io.Reader) (*anthropic.BetaSkillNewResponse, error) {
+		params := anthropic.BetaSkillNewParams{Files: files}
+		if !data.DisplayTitle.IsNull() && !data.DisplayTitle.IsUnknown() {
+			params.DisplayTitle = anthropic.String(data.DisplayTitle.ValueString())
 		}
-		openedFiles = append(openedFiles, f)
-		files = append(files, namedReader{Reader: f, filename: dirName + "/" + filepath.Base(p)})
-	}
-
-	params := anthropic.BetaSkillNewParams{
-		Files: files,
-	}
-
-	if !data.DisplayTitle.IsNull() && !data.DisplayTitle.IsUnknown() {
-		params.DisplayTitle = anthropic.String(data.DisplayTitle.ValueString())
-	}
-
-	skill, err := r.client.Beta.Skills.New(ctx, params)
+		return r.client.Beta.Skills.New(ctx, params)
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create skill: %s", err))
 		return

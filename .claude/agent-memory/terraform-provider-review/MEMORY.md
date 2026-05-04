@@ -5,3 +5,4 @@
 - [Environment resources architecture](project_environment_resources.md) — Four branches added environment CRUD + archive + data sources; tracks patterns and issues fixed
 - [Configure method providerrors pattern](project_configure_pattern.md) — Flag inline nil checks on pd.Client/pd.AdminClient; must use providerrors.Require* helpers from internal/errors/
 - [Test file placement](project_test_placement.md) — Tests must live next to the code they test; admin package tests belong in admin_client_test.go, not workspace files
+- [Plan modifier patterns](project_plan_modifier_patterns.md) — UseStateForUnknown for stable Computed attrs; ModifyPlan for timestamps that change on updates
