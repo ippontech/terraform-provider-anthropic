@@ -12,249 +12,119 @@ model: opus
 
 # vibe-kanban-brainstorming
 
-Use this skill when you need to plan and scaffold the implementation of a new
-Anthropic API as Terraform resources and data sources in this provider.
+## Concepts
 
-## How Vibe Kanban works
-
-Vibe Kanban is a CLI tool (`npx vibe-kanban`) that orchestrates parallel coding
-agents through a kanban board. Its two core concepts:
-
-- **Issues** — tasks on the kanban board. This skill creates them.
-- **Workspaces** — isolated execution environments. A human operator creates one
-  workspace per issue after this skill runs. Each workspace automatically gets
-  its own git worktree (stored in `.vibe-kanban-workspaces/`), its own working
-  branch, and its own agent session.
-
-Workspace lifecycle (triggered by the operator in the Vibe Kanban UI):
-1. Operator creates a workspace linked to an issue → Vibe Kanban creates a git
-   worktree on the issue's branch.
-2. An agent (e.g. Claude Code) starts inside that worktree via a **Session**.
-3. The agent works, commits, and pushes on the branch.
-4. Operator reviews changes in the Vibe Kanban Changes panel, creates a PR.
-5. After merge, the worktree is torn down.
-
-All workspaces run simultaneously — agents work in parallel, one per issue. A
-workspace can also run multiple Sessions (independent conversation threads
-sharing the same files) to handle context-window limits or parallel sub-tasks.
-This is why branch isolation is a hard invariant: cross-worktree contamination
-corrupts a sibling agent's working state.
-
-## Trigger
-
-The user says something like:
-- "I'd like to implement /v1/environments APIs"
-- "Plan the work for the Files API"
-- "Create issues for the Sessions endpoints"
+- **Issues** — kanban tasks; this skill creates them.
+- **Workspaces** — isolated git worktrees, one per issue. The human operator creates only the **orchestration workspace** manually; the orchestration agent creates all implementation workspaces automatically.
+- **Orchestration issue** — one required per batch; monitors parallel work on `main`, no code output. Implementation issues are `blocking` it so it stays open until all work is merged.
 
 ## Workflow
 
 ### Step 1 — Discover the API
 
-Fetch the API overview and all relevant endpoint pages:
+Fetch `https://platform.claude.com/docs/en/api/overview` and all relevant endpoint pages in parallel. Collect HTTP method, path, request/response fields.
 
+Endpoint → Terraform mapping:
+- `POST` + `GET /{id}` + `DELETE /{id}` → resource (ForceNew)
+- `POST` + `GET /{id}` + `PATCH /{id}` + `DELETE /{id}` → resource (with Update)
+- `GET /{id}` only → data source (single)
+- `GET /` → data source (list)
+
+### Step 2 — Create Vibe Kanban issues
+
+One `mcp__vibe_kanban__create_issue` per resource/data source **plus one orchestration issue**, all top-level (`no parent_issue_id`), in a **single parallel message**.
+
+Priorities: orchestration `high`, resources `high`, data sources `medium`.
+
+**Orchestration issue body:**
+```markdown
+Track parallel implementation of <API name> resources and data sources.
+
+## Workspaces to monitor
+- [ ] <Issue title A> — branch: feat/<name-a>
+- [ ] <Issue title B> — branch: feat/<name-b>
+
+## Agent instructions
+Do NOT write code. Your job:
+1. Create a workspace for each implementation issue above (the human has only created yours).
+2. Monitor sibling workspaces; report progress and flag inconsistencies.
+3. Close this issue once all sibling PRs are merged.
 ```
-WebFetch: https://platform.claude.com/docs/en/api/overview
-```
 
-Then fetch each individual endpoint page to collect the full schema (request
-body, path params, query params, response fields). Run all fetches in parallel.
+**Implementation issue body:** use the template at the bottom of this file.
 
-For each endpoint, identify:
-- HTTP method + path
-- Required and optional request fields with types
-- Response fields with types
-- Whether it maps to a **resource** (Create/Read/Delete or CRUD) or a
-  **data source** (Read-only lookup or list)
+### Step 3 — Create issue relationships
 
-Mapping heuristic:
-- `POST` + `GET /{id}` + `DELETE /{id}` → **resource** (ForceNew if no PATCH/PUT)
-- `POST` + `GET /{id}` + `PATCH /{id}` + `DELETE /{id}` → **resource** (with Update)
-- `GET /{id}` only → **data source** (single lookup)
-- `GET /` (list) → **data source** (list)
+Call `mcp__vibe_kanban__create_issue_relationship` for all pairs in a **single parallel message**:
+- Every implementation issue → orchestration issue: `blocking`
+- Resource ↔ its data source(s): `related`
+- Single data source ↔ list data source: `related`
 
-Also check the Go SDK for existing types:
+### Step 4 — Create GitHub issues and branches
+
+First check for existing issues to avoid duplicates:
 ```bash
-find $(go env GOPATH)/pkg/mod/github.com/anthropics/anthropic-sdk-go* -name "beta*.go" | xargs grep -l "<Resource>"
+gh issue list --search "<resource name>" --json number,title,url
 ```
 
-### Step 2 — Plan issues
-
-Create one issue per resource/data source. Each issue must include:
-
-1. **API spec** — endpoint, SDK method signatures, request/response fields
-2. **Terraform schema** — attribute table with types and R/W annotations
-3. **Files to create/modify** — Go source, test file, example, template, native test
-4. **Go acceptance tests** — list of `TestAcc*` function names with what they verify
-5. **Terraform native test** — `.tftest.hcl` snippet with `parallel = true` and assert blocks
-
-**Do NOT create a separate issue for tests.** Tests are part of every issue.
-
-### Step 3 — Create Vibe Kanban issues
-
-Use `mcp__vibe_kanban__create_issue` for each resource/data source as a
-top-level issue (no `parent_issue_id`). Top-level issues are visible on the
-kanban board; subtasks are not.
-
-Run all `create_issue` calls in a **single parallel message**.
-
-Priority guidelines:
-- Resources: `high`
-- Data sources: `medium`
-
-### Step 4 — Create issue relationships
-
-After all Vibe Kanban issues exist, analyze dependencies between them and call
-`mcp__vibe_kanban__create_issue_relationship` for each pair. Use these rules:
-
-| Situation | `relationship_type` |
-|---|---|
-| Issue A must be merged before work on B can start | `blocking` (A → B) |
-| Resource and its corresponding data source(s) | `related` |
-| Single-item data source and its list data source | `related` |
-
-Run all `create_issue_relationship` calls in a **single parallel message**.
-
-If no dependencies exist between the issues, skip this step.
-
-### Step 5 — Create GitHub issues and branches
-
-For each issue, in a **single parallel message**:
-- `mcp__github__issue_write` (method: `create`) — mirror the Kanban description as a GitHub issue
-- `mcp__github__create_branch` (from `main`) — one branch per issue
-
-Branch naming convention:
-- `anthropic_skill` resource → `feat/skill-resource`
-- `anthropic_skills` data source → `feat/skills-data-source`
-- `anthropic_skill_version` resource → `feat/skill-version-resource`
-- `anthropic_skill_versions` data source → `feat/skill-versions-data-source`
-
-### Step 6 — Cross-link everything
-
-Update each Vibe Kanban issue description to add at the top:
-
-```
-GitHub Issue: https://github.com/ippontech/terraform-provider-anthropic/issues/<N>
-Branch: feat/<name>
+For each **implementation issue only** (orchestration has no GitHub issue or branch), create via `gh` CLI:
+```bash
+gh issue create --title "<title>" --body "<body>"
+gh api repos/{owner}/{repo}/git/refs -f ref="refs/heads/feat/<name>" -f sha="$(gh api repos/{owner}/{repo}/git/ref/heads/main --jq .object.sha)"
 ```
 
-Run all `mcp__vibe_kanban__update_issue` calls in a **single parallel message**.
+Branch naming: `feat/<resource-name>-resource` or `feat/<name>-data-source`.
 
-### Step 7 — Note on PRs
+### Step 5 — Cross-link
 
-GitHub requires at least one commit before a PR can be opened. Always inform the user:
+Update all Vibe Kanban issues in a **single parallel message**:
+- Implementation issues: prepend `GitHub Issue: <url>\nBranch: feat/<name>`
+- Orchestration issue: prepend a list of all GitHub issue URLs it tracks.
 
-> "Branches are created and ready. Open a draft PR on each branch once the first commit is pushed."
+### Step 6 — Inform the user
 
-## Invariants (never violate)
+Report a summary table. Remind: "Open a draft PR on each branch once the first commit is pushed."
 
-### One GitHub issue per Vibe Kanban ticket
-Every Vibe Kanban issue **must** have exactly one corresponding GitHub issue. The
-GitHub issue URL must be written back into the Vibe Kanban issue description (Step 6).
-The two systems are mirrors: Vibe Kanban is local/private, GitHub is shared.
+## Invariants
 
-### One PR per ticket — no bundled PRs
-Each Vibe Kanban ticket must result in **exactly one dedicated PR**. Never batch
-multiple tickets into one PR, even if the changes seem small or related. Reviewers
-need one PR per logical unit.
+- **One orchestration issue per batch.** No branch, no PR, no commits. Never skip it.
+- **One GitHub issue per implementation ticket.** URL written back into the Vibe Kanban description.
+- **One PR per ticket.** Never bundle multiple tickets.
+- **No Vibe Kanban IDs outside Vibe Kanban** (not in commits, PR titles, or PR bodies — use `#N`).
+- **Branch isolation.** Each agent commits only to its own worktree branch.
 
-### Vibe Kanban ticket numbers must not appear outside Vibe Kanban
-Vibe Kanban ticket identifiers (e.g. `TAU-N`, `ABC-N` — the prefix varies per installation) are local to Vibe Kanban and meaningless on GitHub.
-**Never** include them in:
-- Commit messages
-- PR titles
-- PR descriptions
-
-Use the GitHub issue number (`#N`) or a plain description instead.
-
-### Branch isolation during parallel implementation
-When implementing tickets in parallel via agents, each agent must only commit
-changes that belong to its own ticket onto its own branch. An agent must never:
-- Check out or modify files on a sibling branch
-- Leave untracked files in the main worktree that belong to a different ticket
-
-Vibe Kanban creates the worktree when the operator opens a workspace; the
-implementing agent enters it with `EnterWorktree`. Never operate outside
-the assigned worktree — sibling agents are running live in parallel.
-
-## Implementation guidance
-
-Each subtask description should reference:
-- **Skill for implementation**: `terraform-provider` — follow its conventions
-  for schema definition, CRUD methods, ForceNew attributes, nested objects, examples,
-  templates (with non-empty `subcategory`), and Terraform native tests.
-- **Subagent for review**: after implementation is complete on a branch, launch the
-  `terraform-provider-review` subagent pointing at the changed files.
-
-## Parallelization rules
-
-| Step | Strategy |
-|---|---|
-| Fetch API docs pages | One `WebFetch` per page in a single message |
-| Create Vibe Kanban issues | One `create_issue` per issue in a single message |
-| Create issue relationships | One `create_issue_relationship` per pair in a single message |
-| Create GitHub issues + branches | All `issue_write` + `create_branch` calls in a single message |
-| Update Kanban issues with links | One `update_issue` per issue in a single message |
-| Implementation | Vibe Kanban launches one agent per workspace in parallel — each in its own worktree |
-
-## Subtask description template
+## Implementation issue template
 
 ```markdown
 GitHub Issue: <url>
 
-<One-line summary of what this implements.>
+<One-line summary.>
 
 ## Branch
-`<branch-name>` (open PR once first commit is pushed)
+`feat/<name>` (open draft PR after first commit)
 
 ## API
 - `METHOD /v1/<path>` — description
 
-## SDK methods (anthropic-sdk-go)
-- `client.Beta.<Service>.<Method>(ctx, params)` → `ResponseType`
+## SDK methods
+- `client.<Service>.<Method>(ctx, params)` → `ResponseType`
 
 ## Terraform schema
 | Attribute | Type | R/W |
 |---|---|---|
 | `id` | string | Computed |
-| `...` | ... | ... |
 
-## Files to create / modify
-- `internal/provider/<name>_resource.go`
-- `internal/provider/<name>_resource_test.go` — Go acceptance tests
-- `internal/provider/provider.go` — register factory function
-- `examples/resources/<name>/resource.tf` — expose relevant outputs
-- `templates/resources/<name>.md.tmpl` — subcategory: "<Category>"
-- `tests/<name>.tftest.hcl` — Terraform native test
-
-## Go acceptance tests
-- `TestAcc<Name>Resource_basic` — create with minimal config, check `id` is set
-- `testAccCheck<Name>Destroyed` — destroy checker
-- ImportState round-trip step
-
-## Terraform native test (`tests/<name>.tftest.hcl`)
-```hcl
-run "<name>_resource_creates_<name>" {
-  parallel = true
-  module { source = "./examples/resources/<name>" }
-  assert {
-    condition     = output.<name>_id != ""
-    error_message = "Expected <name>_id to be non-empty."
-  }
-}
+## Implementation
+Follow the `terraform-provider-implementer` agent conventions (files, tests, make, review).
 ```
 
-Run `make` after implementation, then `make terraform-test`.
-```
-
-## Example invocation
+## Example
 
 User: "I'd like to implement /v1/environments APIs"
 
-1. Fetch `https://platform.claude.com/docs/en/api/overview` + all Environments endpoint pages in parallel
-2. Identify: `anthropic_environment` resource + `anthropic_environment` data source + `anthropic_environments` data source
-3. Create 3 Kanban issues in parallel (all `create_issue` in one message, no `parent_issue_id`)
-4. Create relationships in parallel: resource `related` to single data source, single data source `related` to list data source
-5. Create 3 GitHub issues + 3 branches in parallel (all in one message)
-6. Update 3 Kanban issues with links in parallel (all `update_issue` in one message)
-7. Report summary table to the user and remind them to open draft PRs after first commits
+1. Fetch API docs in parallel → identify: `anthropic_environment` resource, `anthropic_environment` data source, `anthropic_environments` data source.
+2. Create **4** Kanban issues in parallel: 1 orchestration + 3 implementation.
+3. Create **5** relationships in parallel: 3× impl `blocking` orch, resource `related` single DS, single DS `related` list DS.
+4. Create **3** GitHub issues + **3** branches in parallel (implementation only).
+5. Update **4** Kanban issues with links in parallel.
+6. Report summary; remind user to open draft PRs.
