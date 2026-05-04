@@ -81,3 +81,10 @@ EOF
 ```
 
 Report the PR URL to the user.
+
+Then write the sentinel file to suppress the stop hook (which would otherwise ask you to run `/update-pr-description` on a PR whose description is already correct):
+
+```bash
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+touch "/tmp/claude-pr-desc-done-$(echo "$branch" | tr '/' '-')"
+```
