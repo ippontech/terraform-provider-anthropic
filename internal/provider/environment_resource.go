@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -27,6 +28,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &EnvironmentResource{}
 var _ resource.ResourceWithImportState = &EnvironmentResource{}
+var _ resource.ResourceWithModifyPlan = &EnvironmentResource{}
 
 func NewEnvironmentResource() resource.Resource {
 	return &EnvironmentResource{}
@@ -119,12 +121,14 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Optional description of the environment.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"metadata": schema.MapAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
 				MarkdownDescription: "User-provided metadata key-value pairs.",
+				PlanModifiers:       []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
 			},
 			"config": schema.SingleNestedAttribute{
 				Optional:            true,
@@ -262,6 +266,36 @@ func (r *EnvironmentResource) Configure(_ context.Context, req resource.Configur
 	}
 
 	r.client = pd.Client
+}
+
+// --- ModifyPlan ---
+
+// ModifyPlan keeps updated_at stable on no-op plans and marks it unknown when
+// mutable attributes are changing, to avoid inconsistent-result-after-apply errors.
+func (r *EnvironmentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Only relevant during updates (both state and plan are non-null).
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+
+	var state, plan EnvironmentResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !plan.Name.Equal(state.Name) ||
+		!plan.Description.Equal(state.Description) ||
+		!plan.Metadata.Equal(state.Metadata) ||
+		!plan.Config.Equal(state.Config) {
+		// Resource is being updated; updated_at will change.
+		plan.UpdatedAt = types.StringUnknown()
+	} else {
+		// No-op plan; keep updated_at stable to avoid a spurious diff.
+		plan.UpdatedAt = state.UpdatedAt
+	}
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
 }
 
 // --- Create ---
