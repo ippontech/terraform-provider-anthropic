@@ -254,7 +254,7 @@ Return a concise summary:
 ## Conventions reference
 
 - File names: snake_case (`data_source.tf`, not `data-source.tf`)
-- Version constraints: `~> 0.1.0` (patch-only for 0.x providers)
+- Version constraints: `~> 1.0` (provider is on major version 1.x)
 - Never pin Go deps with `@latest` — use `go list -m -versions` first
 - Never edit `docs/` directly — always via `make generate`
 - Never commit `.env`, `.dev.tfrc`, or API keys
