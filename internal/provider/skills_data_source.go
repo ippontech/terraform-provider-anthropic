@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -115,6 +116,10 @@ func (d *SkillsDataSource) Configure(_ context.Context, req datasource.Configure
 			"Unexpected Data Source Configure Type",
 			fmt.Sprintf("Expected *ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
+		return
+	}
+
+	if !providerrors.RequireDataSourceAPIClient(pd.Client, &resp.Diagnostics) {
 		return
 	}
 

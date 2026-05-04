@@ -15,11 +15,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -128,6 +130,7 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Cloud environment configuration including networking and packages.",
+				PlanModifiers:       []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
 						Computed:            true,
@@ -137,6 +140,7 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 						Optional:            true,
 						Computed:            true,
 						MarkdownDescription: "Network configuration policy for the environment.",
+						PlanModifiers:       []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
 						Attributes: map[string]schema.Attribute{
 							"type": schema.StringAttribute{
 								Required:            true,
@@ -165,6 +169,7 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 						Optional:            true,
 						Computed:            true,
 						MarkdownDescription: "Package manager configuration for pre-installed packages.",
+						PlanModifiers:       []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
 						Attributes: map[string]schema.Attribute{
 							"apt": schema.ListAttribute{
 								Optional:            true,
@@ -249,6 +254,10 @@ func (r *EnvironmentResource) Configure(_ context.Context, req resource.Configur
 			"Unexpected Resource Configure Type",
 			fmt.Sprintf("Expected *ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
+		return
+	}
+
+	if !providerrors.RequireResourceAPIClient(pd.Client, &resp.Diagnostics) {
 		return
 	}
 

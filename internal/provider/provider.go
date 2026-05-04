@@ -79,23 +79,24 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		apiKey = data.ApiKey.ValueString()
 	}
 
-	if apiKey == "" {
-		resp.Diagnostics.AddError(
-			"Missing API Key",
-			"The Anthropic API key must be configured via the api_key provider argument or the ANTHROPIC_API_KEY environment variable.",
-		)
-		return
-	}
-
 	adminApiKey := os.Getenv("ANTHROPIC_ADMIN_API_KEY")
 	if !data.AdminApiKey.IsNull() && !data.AdminApiKey.IsUnknown() {
 		adminApiKey = data.AdminApiKey.ValueString()
 	}
 
-	client := anthropic.NewClient(option.WithAPIKey(apiKey))
+	if apiKey == "" && adminApiKey == "" {
+		resp.Diagnostics.AddError(
+			"Missing API Key",
+			"At least one API key must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
+				"or admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources.",
+		)
+		return
+	}
 
-	pd := &ProviderData{
-		Client: &client,
+	pd := &ProviderData{}
+	if apiKey != "" {
+		client := anthropic.NewClient(option.WithAPIKey(apiKey))
+		pd.Client = &client
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
