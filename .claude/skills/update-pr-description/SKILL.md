@@ -34,7 +34,8 @@ git diff main...HEAD --stat          # files changed vs main
 ### Step 2 — Find the open PR
 
 ```bash
-gh pr view --json number,body --jq '{number: .number, body: .body}' 2>/dev/null
+gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number,url \
+  --jq 'if length > 0 then "number=\(.[0].number) url=\(.[0].url)" else "" end'
 ```
 
 If no open PR exists for this branch, stop silently.

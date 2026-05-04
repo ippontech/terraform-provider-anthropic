@@ -75,7 +75,8 @@ git push -u origin <branch-name>
 Then check whether an open PR already exists for this branch:
 
 ```bash
-gh pr view --json number,url --jq '"\(.number) \(.url)"' 2>/dev/null
+gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number,url \
+  --jq 'if length > 0 then "\(.[0].number) \(.[0].url)" else "" end'
 ```
 
 **If no open PR exists** — write the body to a temp file, then create the PR. The title must be the commit title (first line, without the `Co-Authored-By` trailer). The body must be the commit body. **Write each bullet as a single unbroken line — do not hard-wrap at 80 chars, as continuation lines render as visible line breaks on GitHub.**
