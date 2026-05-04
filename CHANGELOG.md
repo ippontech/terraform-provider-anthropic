@@ -1,3 +1,9 @@
+## [1.15.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.14.3...v1.15.0) (2026-05-04)
+
+### ✨ Features
+
+* add anthropic_environment data source ([#71](https://github.com/ippontech/terraform-provider-anthropic/issues/71)) ([aad7b7e](https://github.com/ippontech/terraform-provider-anthropic/commit/aad7b7e3fbb0bfaf87067acb2331cc9d59a6f4c9)), closes [#67](https://github.com/ippontech/terraform-provider-anthropic/issues/67)
+
 ## [1.14.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.14.2...v1.14.3) (2026-05-04)
 
 ### ♻️ Refactoring
