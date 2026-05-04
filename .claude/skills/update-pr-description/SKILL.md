@@ -72,9 +72,12 @@ Use the GitHub API to update the PR (`gh pr edit` can fail with a Projects
 classic deprecation error):
 
 ```bash
+cat > /tmp/pr_body.txt << 'ENDBODY'
+<new body>
+ENDBODY
 gh api repos/{owner}/{repo}/pulls/<number> \
   --method PATCH \
-  --field body="<new body>" \
+  --field body="$(cat /tmp/pr_body.txt)" \
   --jq '.html_url'
 ```
 

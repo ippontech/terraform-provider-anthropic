@@ -96,12 +96,15 @@ EOF
 ```bash
 git log main..HEAD --format="%s%n%n%b"   # all commit titles + bodies
 
+cat > /tmp/pr_body.txt << 'ENDBODY'
+<consolidated summary of all changes>
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+ENDBODY
 gh api repos/{owner}/{repo}/pulls/<number> \
   --method PATCH \
   --field title="<title reflecting all commits>" \
-  --field body="<consolidated summary of all changes>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)" \
+  --field body="$(cat /tmp/pr_body.txt)" \
   --jq '.html_url'
 ```
 
