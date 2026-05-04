@@ -13,22 +13,23 @@ Fetches a single Anthropic cloud environment by ID (beta).
 
 ```hcl
 terraform {
-  required_version = ">= 1.0"
+  required_version = "~> 1.0"
   required_providers {
     anthropic = {
       source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 0.1.0"
+      version = "~> 1.0"
     }
   }
 }
 
-variable "environment_id" {
-  type        = string
-  description = "The ID of the environment to look up."
+# Create an environment to read with the data source
+resource "anthropic_environment" "created" {
+  name = "environment-data-source-example"
 }
 
+# Look up the created environment by ID
 data "anthropic_environment" "example" {
-  environment_id = var.environment_id
+  environment_id = anthropic_environment.created.id
 }
 
 output "environment_id" {

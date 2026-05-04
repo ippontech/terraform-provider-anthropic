@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 )
 
 var _ datasource.DataSource = &EnvironmentDataSource{}
@@ -188,6 +189,10 @@ func (d *EnvironmentDataSource) Configure(_ context.Context, req datasource.Conf
 			"Unexpected Data Source Configure Type",
 			fmt.Sprintf("Expected *ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
+		return
+	}
+
+	if !providerrors.RequireDataSourceAPIClient(pd.Client, &resp.Diagnostics) {
 		return
 	}
 
