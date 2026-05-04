@@ -1,3 +1,9 @@
+## [1.14.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.14.0...v1.14.1) (2026-05-04)
+
+### ♻️ Refactoring
+
+* make API keys optional, extract providerErrors helpers, and improve Claude config ([#96](https://github.com/ippontech/terraform-provider-anthropic/issues/96)) ([54332be](https://github.com/ippontech/terraform-provider-anthropic/commit/54332be90daa06fed69faf0ee674a73025bdac1b))
+
 ## [1.14.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.13.5...v1.14.0) (2026-05-04)
 
 ### ✨ Features
