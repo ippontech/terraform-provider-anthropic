@@ -91,19 +91,18 @@ EOF
 )"
 ```
 
-**If an open PR already exists** — synthesise an updated description from all commits on this branch since main, then update the PR:
+**If an open PR already exists** — synthesise an updated description from all commits on this branch since main, then update the PR via the GitHub API (`gh pr edit` can fail with a Projects classic deprecation error):
 
 ```bash
 git log main..HEAD --format="%s%n%n%b"   # all commit titles + bodies
 
-gh pr edit <number> \
-  --title "<title reflecting all commits>" \
-  --body "$(cat <<'EOF'
-<consolidated summary of all changes>
+gh api repos/{owner}/{repo}/pulls/<number> \
+  --method PATCH \
+  --field title="<title reflecting all commits>" \
+  --field body="<consolidated summary of all changes>
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
+🤖 Generated with [Claude Code](https://claude.com/claude-code)" \
+  --jq '.html_url'
 ```
 
 Report the PR URL to the user.

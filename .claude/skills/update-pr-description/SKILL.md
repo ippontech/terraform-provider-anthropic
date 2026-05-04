@@ -68,8 +68,17 @@ Guidelines:
 
 ### Step 4 — Update the PR
 
-Call `mcp__github__update_pull_request` with the new `body` and report the PR
-URL back to the user.
+Use the GitHub API to update the PR (`gh pr edit` can fail with a Projects
+classic deprecation error):
+
+```bash
+gh api repos/{owner}/{repo}/pulls/<number> \
+  --method PATCH \
+  --field body="<new body>" \
+  --jq '.html_url'
+```
+
+Report the PR URL back to the user.
 
 Then write the sentinel file to suppress the Stop hook for 5 minutes:
 
