@@ -78,7 +78,7 @@ Then check whether an open PR already exists for this branch:
 gh pr view --json number,url --jq '"\(.number) \(.url)"' 2>/dev/null
 ```
 
-**If no open PR exists** — write the body to a temp file, then create the PR. The title must be the commit title (first line, without the `Co-Authored-By` trailer). The body must be the commit body:
+**If no open PR exists** — write the body to a temp file, then create the PR. The title must be the commit title (first line, without the `Co-Authored-By` trailer). The body must be the commit body. **Write each bullet as a single unbroken line — do not hard-wrap at 80 chars, as continuation lines render as visible line breaks on GitHub.**
 
 ```bash
 cat > /tmp/pr_body.txt << 'ENDBODY'
@@ -91,7 +91,7 @@ gh pr create \
   --body-file /tmp/pr_body.txt
 ```
 
-**If an open PR already exists** — synthesise an updated description from all commits on this branch since main, then update the PR via the GitHub API (`gh pr edit` can fail with a Projects classic deprecation error):
+**If an open PR already exists** — synthesise an updated description from all commits on this branch since main, then update the PR via the GitHub API (`gh pr edit` can fail with a Projects classic deprecation error). **Write each bullet as a single unbroken line — do not hard-wrap at 80 chars.**
 
 ```bash
 git log main..HEAD --format="%s%n%n%b"   # all commit titles + bodies
@@ -103,8 +103,8 @@ cat > /tmp/pr_body.txt << 'ENDBODY'
 ENDBODY
 gh api repos/{owner}/{repo}/pulls/<number> \
   --method PATCH \
-  --field title="<title reflecting all commits>" \
-  --field body="$(cat /tmp/pr_body.txt)" \
+  --raw-field title="<title reflecting all commits>" \
+  --raw-field body="$(cat /tmp/pr_body.txt)" \
   --jq '.html_url'
 ```
 
