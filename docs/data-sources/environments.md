@@ -13,7 +13,7 @@ Lists all Anthropic cloud environments (beta). All pages are fetched automatical
 
 ```hcl
 terraform {
-  required_version = ">= 1.0"
+  required_version = "~> 1.0"
   required_providers {
     anthropic = {
       source  = "registry.terraform.io/ippontech/anthropic"
