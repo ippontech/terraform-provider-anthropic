@@ -141,17 +141,15 @@ description: |-
 
 ## Version constraints
 
-For providers on major version 0, always use patch-only version constraints to prevent breaking changes from minor upgrades:
+The provider is on major version 1.x. Use `~> 1.0` as the version constraint:
 
 ```hcl
-# Correct — patch only
+# Correct
+version = "~> 1.0"
+
+# Wrong — old 0.x constraint, do not use
 version = "~> 0.1.0"
-
-# Wrong — allows minor bumps (0.2, 0.3…) which may break
-version = "~> 0.1"
 ```
-
-For providers on major version 1+, `~> 1.0` is acceptable as semver guarantees backwards compatibility within a major version.
 
 ## Native Terraform tests
 

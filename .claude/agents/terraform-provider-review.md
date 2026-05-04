@@ -36,7 +36,7 @@ You review **recently changed or added files** unless explicitly asked to review
 
 ### Terraform Plugin Conventions (terraform-provider-anthropic)
 - Verify Terraform configs use the provider source `registry.terraform.io/ippontech/anthropic`.
-- Check version constraints follow the project convention: for 0.x providers, use patch-only constraints (`~> 0.1.0`, not `~> 0.1`) to prevent breaking minor upgrades.
+- Check version constraints follow the project convention: the provider is on major version 1.x, so use `~> 1.0` (not `~> 0.1.0` or `~> 0.1`).
 - File names must use snake_case (e.g., `data_source.tf`, not `data-source.tf`).
 - Use explicit, pinned versions for any external providers (never `@latest`; list available versions with `go list -m -versions` for Go deps or the Terraform registry for provider deps).
 
