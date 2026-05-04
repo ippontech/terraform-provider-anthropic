@@ -1,3 +1,9 @@
+## [1.14.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.14.1...v1.14.2) (2026-05-04)
+
+### 🐛 Bug Fixes
+
+* **environment:** add plan modifiers to resolve acc test failures ([#98](https://github.com/ippontech/terraform-provider-anthropic/issues/98)) ([24312d7](https://github.com/ippontech/terraform-provider-anthropic/commit/24312d7f3fda0792c29679b0e7a0821575fb1bc9))
+
 ## [1.14.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.14.0...v1.14.1) (2026-05-04)
 
 ### ♻️ Refactoring
