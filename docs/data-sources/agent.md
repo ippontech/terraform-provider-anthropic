@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_agent Data Source - anthropic"
-subcategory: "Agents"
+subcategory: "Managed Agents"
 description: |-
   Retrieves a Managed Agent by ID.
 ---
