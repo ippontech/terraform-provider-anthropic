@@ -71,6 +71,7 @@ internal/
 **Go acceptance tests** (`internal/services/<service>/`):
 - Test files use `package <service>_test` (external test package), except tests that access unexported symbols which use `package <service>`
 - `internal/acctest/acctest.go` exports `ProtoV6ProviderFactories` and `PreCheck` used by all acceptance tests
+- Admin API acceptance tests: only read-only data source tests are possible today; resource tests (create/update/delete) are blocked by [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58). Add a `PreCheckAdmin` helper when that is resolved.
 - Unit tests: no special env vars needed
 - Acceptance tests: use `resource.Test(t, resource.TestCase{...})` with `TF_ACC=1`
 
