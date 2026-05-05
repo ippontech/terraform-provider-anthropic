@@ -63,7 +63,7 @@ type workspaceMemberUpdateRequest struct {
 
 // --- Schema validator ---
 
-// noWorkspaceBillingValidator rejects the "workspace_billing" role on create.
+// noWorkspaceBillingValidator rejects the "workspace_billing" role.
 type noWorkspaceBillingValidator struct{}
 
 func (v noWorkspaceBillingValidator) Description(_ context.Context) string {
@@ -71,7 +71,7 @@ func (v noWorkspaceBillingValidator) Description(_ context.Context) string {
 }
 
 func (v noWorkspaceBillingValidator) MarkdownDescription(_ context.Context) string {
-	return "The `workspace_billing` role cannot be assigned via this resource on creation."
+	return "The `workspace_billing` role cannot be assigned via this resource."
 }
 
 func (v noWorkspaceBillingValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {

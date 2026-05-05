@@ -151,6 +151,22 @@ func TestAccWorkspaceMemberResource_rejectsBillingOnCreate(t *testing.T) {
 	})
 }
 
+func TestAccWorkspaceMemberResource_rejectsBillingOnUpdate(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccWorkspaceMemberConfig("workspace_user"),
+			},
+			{
+				Config:      testAccWorkspaceMemberConfig("workspace_billing"),
+				ExpectError: regexp.MustCompile(`workspace_billing`),
+			},
+		},
+	})
+}
+
 func testAccWorkspaceMemberConfig(role string) string {
 	return `
 resource "anthropic_workspace" "test" {
