@@ -23,8 +23,13 @@ terraform {
   }
 }
 
-variable "workspace_id" {}
-variable "user_id" {}
+variable "workspace_id" {
+  type = string
+}
+
+variable "user_id" {
+  type = string
+}
 
 data "anthropic_workspace_member" "example" {
   workspace_id = var.workspace_id
