@@ -129,6 +129,7 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		skills.NewSkillVersionsDataSource,
 		skills.NewSkillsDataSource,
 		workspaces.NewWorkspaceDataSource,
+		workspaces.NewWorkspaceMemberDataSource,
 		workspaces.NewWorkspacesDataSource,
 	}
 }
