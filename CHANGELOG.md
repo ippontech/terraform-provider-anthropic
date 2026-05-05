@@ -1,3 +1,9 @@
+## [1.18.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.18.0...v1.18.1) (2026-05-05)
+
+### 🐛 Bug Fixes
+
+* **tests:** remove unevaluable asserts from workspace data source plan test ([#112](https://github.com/ippontech/terraform-provider-anthropic/issues/112)) ([aa9e2b6](https://github.com/ippontech/terraform-provider-anthropic/commit/aa9e2b6504b261bc9787e0595db0d39a5d935b23))
+
 ## [1.18.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.17.0...v1.18.0) (2026-05-05)
 
 ### ✨ Features
