@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_agent Resource - anthropic"
-subcategory: "Agents"
+subcategory: "Managed Agents"
 description: |-
   Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are persistent configurations that can be used to run sessions with tools, MCP servers, and skills.
 ---

@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_agents Data Source - anthropic"
-subcategory: "Agents"
+subcategory: "Managed Agents"
 description: |-
   Lists Managed Agents on the Anthropic platform (beta). Supports filtering by creation time, archive status, and a per-page limit; all pages are fetched automatically.
 ---
