@@ -14,7 +14,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/ippontech/terraform-provider-anthropic/internal/provider/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/messages"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/workspaces"
 )
 
 // Ensure AnthropicProvider satisfies various provider interfaces.
@@ -32,15 +39,6 @@ type AnthropicProvider struct {
 type AnthropicProviderModel struct {
 	ApiKey      types.String `tfsdk:"api_key"`
 	AdminApiKey types.String `tfsdk:"admin_api_key"`
-}
-
-// ProviderData is passed to every resource and data source Configure call.
-type ProviderData struct {
-	// Client is the Anthropic SDK client for standard API endpoints.
-	Client *anthropic.Client
-	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
-	// Nil when admin_api_key is not configured.
-	AdminClient *admin.Client
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -93,7 +91,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	pd := &ProviderData{}
+	pd := &providerdata.ProviderData{}
 	if apiKey != "" {
 		client := anthropic.NewClient(option.WithAPIKey(apiKey))
 		pd.Client = &client
@@ -108,28 +106,28 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewAgentResource,
-		NewEnvironmentResource,
-		NewMessageResource,
-		NewSkillResource,
-		NewSkillVersionResource,
-		NewWorkspaceResource,
+		agents.NewAgentResource,
+		environments.NewEnvironmentResource,
+		messages.NewMessageResource,
+		skills.NewSkillResource,
+		skills.NewSkillVersionResource,
+		workspaces.NewWorkspaceResource,
 	}
 }
 
 func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewAgentDataSource,
-		NewAgentsDataSource,
-		NewCountTokensDataSource,
-		NewEnvironmentDataSource,
-		NewEnvironmentsDataSource,
-		NewModelDataSource,
-		NewModelsDataSource,
-		NewSkillDataSource,
-		NewSkillVersionDataSource,
-		NewSkillVersionsDataSource,
-		NewSkillsDataSource,
+		agents.NewAgentDataSource,
+		agents.NewAgentsDataSource,
+		messages.NewCountTokensDataSource,
+		environments.NewEnvironmentDataSource,
+		environments.NewEnvironmentsDataSource,
+		models.NewModelDataSource,
+		models.NewModelsDataSource,
+		skills.NewSkillDataSource,
+		skills.NewSkillVersionDataSource,
+		skills.NewSkillVersionsDataSource,
+		skills.NewSkillsDataSource,
 	}
 }
 
