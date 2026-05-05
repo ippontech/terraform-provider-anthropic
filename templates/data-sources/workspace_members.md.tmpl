@@ -1,0 +1,18 @@
+---
+page_title: "anthropic_workspace_members Data Source - anthropic"
+subcategory: "Workspaces"
+description: |-
+  Lists all members of an Anthropic Workspace via the Admin API. All pages are fetched automatically.
+---
+
+# anthropic_workspace_members (Data Source)
+
+Lists all members of an Anthropic Workspace via the Admin API. All pages are fetched automatically.
+
+Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/anthropic_workspace_members/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
