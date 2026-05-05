@@ -6,7 +6,7 @@ package errors
 import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/ippontech/terraform-provider-anthropic/internal/provider/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 )
 
 // RequireResourceAPIClient adds a missing-API-key error diagnostic and returns false when client is nil.

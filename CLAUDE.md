@@ -8,25 +8,56 @@ This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](h
 
 - `main.go` — entry point; serves the provider at `registry.terraform.io/ippontech/anthropic`
 - `internal/provider/provider.go` — provider registration; `Resources()` and `DataSources()` methods list all implemented resources and data sources
-- `internal/provider/` — all resources, data sources, and their tests live here
+- `internal/services/` — all resources and data sources, organized by Anthropic service (one subdirectory per service)
 - `examples/provider/` — example Terraform configs used by `terraform-plugin-docs` to generate `docs/`
 - `tests/` — Terraform native tests (`.tftest.hcl` files), one per resource/data source
 - `tools/tools.go` — build-time tool imports only (not runtime)
 
+### Internal package layout
+
+```
+internal/
+  admin/           — HTTP client for Admin API (/v1/organizations/*)
+  acctest/         — shared acceptance test helpers (ProtoV6ProviderFactories, PreCheck)
+  errors/          — nil-client guards for Configure methods (import alias: providerrors)
+  providerdata/    — ProviderData struct passed to every resource/data source Configure call
+  retry/           — multipart upload with 5xx retry (import alias: provretry)
+  provider/        — AnthropicProvider implementation only (provider.go)
+  services/
+    agents/        — anthropic_agent resource + agent/agents data sources
+    environments/  — anthropic_environment resource + environment/environments data sources
+    messages/      — anthropic_message resource + count_tokens data source
+    models/        — model/models data sources
+    skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
+    workspaces/    — anthropic_workspace resource
+```
+
 ### Implemented resources and data sources
 
 **Resources:**
-- `anthropic_message` (`internal/provider/message_resource.go`) — calls the Messages API; write-only, immutable (no read/update/delete)
-- `anthropic_agent` (`internal/provider/agent_resource.go`) — manages Managed Agents (create/read/update/delete)
+- `anthropic_message` (`internal/services/messages/message_resource.go`) — calls the Messages API; write-only, immutable (no read/update/delete)
+- `anthropic_agent` (`internal/services/agents/agent_resource.go`) — manages Managed Agents (create/read/update/delete)
+- `anthropic_environment` (`internal/services/environments/environment_resource.go`) — manages environments
+- `anthropic_skill` (`internal/services/skills/skill_resource.go`) — manages skills
+- `anthropic_skill_version` (`internal/services/skills/skill_version_resource.go`) — manages skill versions
+- `anthropic_workspace` (`internal/services/workspaces/workspace_resource.go`) — manages workspaces (admin API)
 
 **Data sources:**
-- `anthropic_model` (`internal/provider/model_data_source.go`) — fetches a single model by ID
-- `anthropic_models` (`internal/provider/models_data_source.go`) — lists all available models
-- `anthropic_count_tokens` (`internal/provider/count_tokens_data_source.go`) — counts tokens for a given prompt
+- `anthropic_model` (`internal/services/models/model_data_source.go`) — fetches a single model by ID
+- `anthropic_models` (`internal/services/models/models_data_source.go`) — lists all available models
+- `anthropic_count_tokens` (`internal/services/messages/count_tokens_data_source.go`) — counts tokens for a given prompt
+- `anthropic_agent` (`internal/services/agents/agent_data_source.go`) — fetches a single agent
+- `anthropic_agents` (`internal/services/agents/agents_data_source.go`) — lists all agents
+- `anthropic_environment` (`internal/services/environments/environment_data_source.go`) — fetches a single environment
+- `anthropic_environments` (`internal/services/environments/environments_data_source.go`) — lists all environments
+- `anthropic_skill` (`internal/services/skills/skill_data_source.go`) — fetches a single skill
+- `anthropic_skills` (`internal/services/skills/skills_data_source.go`) — lists all skills
+- `anthropic_skill_version` (`internal/services/skills/skill_version_data_source.go`) — fetches a single skill version
+- `anthropic_skill_versions` (`internal/services/skills/skill_versions_data_source.go`) — lists all skill versions
 
 ### Adding a resource or data source
 
-1. Create `internal/provider/<name>_resource.go` (or `_data_source.go`)
+1. Create the file under `internal/services/<service>/<name>_resource.go` (or `_data_source.go`), using `package <service>`
 2. Implement the `resource.Resource` (or `datasource.DataSource`) interface
 3. Register the factory function in `Resources()` (or `DataSources()`) in `internal/provider/provider.go`
 4. Add an example config under `examples/resources/<name>/` (or `examples/data-sources/<name>/`)
@@ -36,8 +67,9 @@ This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](h
 
 ### Testing pattern
 
-**Go acceptance tests** (`internal/provider/`):
-- `internal/provider/provider_test.go` defines `testAccProtoV6ProviderFactories` used by all acceptance tests
+**Go acceptance tests** (`internal/services/<service>/`):
+- Test files use `package <service>_test` (external test package), except tests that access unexported symbols which use `package <service>`
+- `internal/acctest/acctest.go` exports `ProtoV6ProviderFactories` and `PreCheck` used by all acceptance tests
 - Unit tests: no special env vars needed
 - Acceptance tests: use `resource.Test(t, resource.TestCase{...})` with `TF_ACC=1`
 
@@ -72,9 +104,9 @@ make                # Default: fmt lint test install generate
 
 **After implementing any feature or bug fix, always run `make` (alias for `make default`) before committing.** It formats code, runs the linter, reinstalls the provider, and regenerates docs in one step.
 
-Run a single Go test:
+Run tests for a single service:
 ```bash
-go test -run TestName -v ./internal/provider/
+go test -run TestName -v ./internal/services/agents/
 ```
 
 Go acceptance tests require `TF_ACC=1` and a real Anthropic API key. Terraform native tests also require a real API key and a locally installed provider.
@@ -97,12 +129,19 @@ The provider has two optional API keys — at least one must be configured:
 
 ### Configure method pattern
 
-Every resource and data source `Configure` method must guard against a nil client using helpers from `internal/errors/` (import alias `providerrors`). Never use an inline `if pd.Client == nil` check.
+Every resource and data source `Configure` method must:
+1. Import `providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"` and cast `req.ProviderData` to `*providerdata.ProviderData`
+2. Guard against a nil client using helpers from `internal/errors/` (import alias `providerrors`). Never use an inline `if pd.Client == nil` check.
 
 ```go
-import providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+import (
+    providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+    providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+)
 
 // Standard resource
+pd, ok := req.ProviderData.(*providerdata.ProviderData)
+// ... (ok check) ...
 if !providerrors.RequireResourceAPIClient(pd.Client, &resp.Diagnostics) {
     return
 }
@@ -115,9 +154,9 @@ r.client = pd.Client
 
 ### Shared helpers
 
-Helpers shared across resources/data sources live in `internal/`, not `internal/provider/`:
-
+- `internal/admin/` — HTTP client for Admin API; import as `"github.com/ippontech/terraform-provider-anthropic/internal/admin"`
 - `internal/errors/` (import alias `providerrors`) — nil-client guards for `Configure` methods
+- `internal/providerdata/` (import alias `providerdata`) — `ProviderData` struct
 - `internal/retry/` (import alias `provretry`) — multipart file upload with automatic 5xx retry; use `provretry.MultipartUpload` for any resource that uploads files to the API (the Anthropic SDK cannot retry streaming multipart bodies on its own)
 
 ### Version constraints
