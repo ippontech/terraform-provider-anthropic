@@ -3,8 +3,7 @@ test {
 }
 
 run "workspace_data_source_reads_workspace" {
-  command  = plan
-  parallel = true
+  command = plan
   module { source = "./examples/data-sources/workspace" }
 
   assert {
