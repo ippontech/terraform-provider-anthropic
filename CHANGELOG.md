@@ -1,3 +1,9 @@
+## [1.16.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.16.0...v1.16.1) (2026-05-05)
+
+### ♻️ Refactoring
+
+* **docs:** rename subcategory "Agents" to "Managed Agents" ([#103](https://github.com/ippontech/terraform-provider-anthropic/issues/103)) ([44dbe1e](https://github.com/ippontech/terraform-provider-anthropic/commit/44dbe1e8eb948ddc9c72444776367c8f24315819)), closes [#90](https://github.com/ippontech/terraform-provider-anthropic/issues/90)
+
 ## [1.16.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.15.0...v1.16.0) (2026-05-04)
 
 ### ✨ Features
