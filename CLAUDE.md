@@ -29,7 +29,7 @@ internal/
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
     skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
-    workspaces/    — anthropic_workspace resource + workspaces data source
+    workspaces/    — anthropic_workspace resource + workspace/workspaces data sources
 ```
 
 ### Implemented resources and data sources
@@ -54,6 +54,7 @@ internal/
 - `anthropic_skills` (`internal/services/skills/skills_data_source.go`) — lists all skills
 - `anthropic_skill_version` (`internal/services/skills/skill_version_data_source.go`) — fetches a single skill version
 - `anthropic_skill_versions` (`internal/services/skills/skill_versions_data_source.go`) — lists all skill versions
+- `anthropic_workspace` (`internal/services/workspaces/workspace_data_source.go`) — fetches a single workspace by ID (admin API)
 - `anthropic_workspaces` (`internal/services/workspaces/workspaces_data_source.go`) — lists all workspaces (admin API, transparent pagination)
 
 ### Adding a resource or data source
@@ -72,6 +73,7 @@ internal/
 - Test files use `package <service>_test` (external test package), except tests that access unexported symbols which use `package <service>`
 - `internal/acctest/acctest.go` exports `ProtoV6ProviderFactories` and `PreCheck` used by all acceptance tests
 - Admin API acceptance tests: only read-only data source tests are possible today; resource tests (create/update/delete) are blocked by [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58). Add a `PreCheckAdmin` helper when that is resolved.
+- Admin API **Terraform native tests**: use `command = plan` (not the default `apply`) until a test org is available; this validates schema without making live API calls.
 - Unit tests: no special env vars needed
 - Acceptance tests: use `resource.Test(t, resource.TestCase{...})` with `TF_ACC=1`
 
