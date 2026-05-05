@@ -2,9 +2,11 @@
 name: brainstorming
 description: >
   Plans and scaffolds Anthropic API endpoints as Terraform resources/data sources
-  without a task management tool. Use when starting work on a new API
-  (e.g. /v1/skills, /v1/environments) to discover endpoints, design the Terraform
-  schema, and generate GitHub issues and branches — one per resource/data source —
+  without a task management tool. TRIGGER when: user says "implement GitHub issues", references
+  a range of GitHub issues to implement (e.g. "issues 52 to 57"), asks to
+  parallelize implementation of multiple resources/data sources, or says
+  "implement all [API name] APIs" or "work on a new API" (e.g. /v1/skills, /v1/environments).
+  Generates GitHub issues and branches if they to not already exist — one per resource/data source —
   ready for sequential or parallel implementation.
 model: opus
 ---
