@@ -1,3 +1,9 @@
+## [1.16.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.16.1...v1.16.2) (2026-05-05)
+
+### ♻️ Refactoring
+
+* reorganize resources and data sources by service ([#104](https://github.com/ippontech/terraform-provider-anthropic/issues/104)) ([43f3da2](https://github.com/ippontech/terraform-provider-anthropic/commit/43f3da25d6bf7ce74389ac312f94a1cf6bd4167f))
+
 ## [1.16.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.16.0...v1.16.1) (2026-05-05)
 
 ### ♻️ Refactoring
