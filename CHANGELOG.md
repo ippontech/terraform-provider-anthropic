@@ -1,3 +1,9 @@
+## [1.20.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.19.0...v1.20.0) (2026-05-06)
+
+### ✨ Features
+
+* **workspaces:** add anthropic_workspace_members data source ([#108](https://github.com/ippontech/terraform-provider-anthropic/issues/108)) ([5d2312b](https://github.com/ippontech/terraform-provider-anthropic/commit/5d2312b12658ecf856da941f4d36761b9fb34f50)), closes [#56](https://github.com/ippontech/terraform-provider-anthropic/issues/56)
+
 ## [1.19.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.18.1...v1.19.0) (2026-05-06)
 
 ### ✨ Features
