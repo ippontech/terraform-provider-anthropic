@@ -59,6 +59,7 @@ internal/
 - `anthropic_workspaces` (`internal/services/workspaces/workspaces_data_source.go`) — lists all workspaces (admin API, transparent pagination)
 - `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_data_source.go`) — fetches a single workspace member by workspace ID and user ID (admin API)
 - `anthropic_workspace_members` (`internal/services/workspaces/workspace_members_data_source.go`) — lists all members of a workspace (admin API), with transparent pagination
+- `anthropic_workspace_rate_limits` (`internal/services/workspaces/workspace_rate_limits_data_source.go`) — lists workspace-level rate-limit overrides for a workspace (admin API), with transparent pagination and an optional `group_type` filter; only entries with at least one override are returned
 
 ### Adding a resource or data source
 
