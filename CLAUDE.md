@@ -29,7 +29,7 @@ internal/
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
     skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
-    workspaces/    — anthropic_workspace resource + workspace/workspaces/workspace_member data sources
+    workspaces/    — anthropic_workspace resource + workspace/workspaces/workspace_member/workspace_members data sources
 ```
 
 ### Implemented resources and data sources
@@ -57,6 +57,7 @@ internal/
 - `anthropic_workspace` (`internal/services/workspaces/workspace_data_source.go`) — fetches a single workspace by ID (admin API)
 - `anthropic_workspaces` (`internal/services/workspaces/workspaces_data_source.go`) — lists all workspaces (admin API, transparent pagination)
 - `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_data_source.go`) — fetches a single workspace member by workspace ID and user ID (admin API)
+- `anthropic_workspace_members` (`internal/services/workspaces/workspace_members_data_source.go`) — lists all members of a workspace (admin API), with transparent pagination
 
 ### Adding a resource or data source
 
