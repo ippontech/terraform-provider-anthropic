@@ -3,7 +3,7 @@ test {
 }
 
 variables {
-  workspace_id = ""
+  workspace_id = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
 }
 
 run "workspace_members_data_source_lists_members" {

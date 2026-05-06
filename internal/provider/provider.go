@@ -33,9 +33,6 @@ type AnthropicProvider struct {
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
 	version string
-	// testData, when non-nil, is injected directly as ProviderData in unit tests,
-	// bypassing the normal Configure flow (no real API keys needed).
-	testData *providerdata.ProviderData
 }
 
 // AnthropicProviderModel describes the provider data model.
@@ -67,12 +64,6 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 }
 
 func (p *AnthropicProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	if p.testData != nil {
-		resp.DataSourceData = p.testData
-		resp.ResourceData = p.testData
-		return
-	}
-
 	var data AnthropicProviderModel
 
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -146,14 +137,5 @@ func New(version string) func() provider.Provider {
 		return &AnthropicProvider{
 			version: version,
 		}
-	}
-}
-
-// NewWithProviderData returns a provider pre-loaded with pd for use in unit tests.
-// The Configure step is skipped; no real API keys are required.
-func NewWithProviderData(version string, pd *providerdata.ProviderData) provider.Provider {
-	return &AnthropicProvider{
-		version:  version,
-		testData: pd,
 	}
 }
