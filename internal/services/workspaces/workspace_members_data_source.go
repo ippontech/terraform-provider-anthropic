@@ -45,7 +45,7 @@ var workspaceMemberAttrTypes = map[string]attr.Type{
 
 // --- Admin API response types ---
 
-type workspaceMemberAPIResponse struct {
+type workspaceMembersListItem struct {
 	UserID        string `json:"user_id"`
 	WorkspaceID   string `json:"workspace_id"`
 	WorkspaceRole string `json:"workspace_role"`
@@ -53,7 +53,7 @@ type workspaceMemberAPIResponse struct {
 }
 
 type workspaceMembersListResponse struct {
-	Data    []workspaceMemberAPIResponse `json:"data"`
+	Data    []workspaceMembersListItem `json:"data"`
 	HasMore bool                         `json:"has_more"`
 	LastID  string                       `json:"last_id"`
 	FirstID string                       `json:"first_id"`
@@ -139,7 +139,7 @@ func (d *WorkspaceMembersDataSource) Read(ctx context.Context, req datasource.Re
 	workspaceID := data.WorkspaceID.ValueString()
 	basePath := "/v1/organizations/workspaces/" + workspaceID + "/members"
 
-	var allMembers []workspaceMemberAPIResponse
+	var allMembers []workspaceMembersListItem
 	afterID := ""
 
 	for {

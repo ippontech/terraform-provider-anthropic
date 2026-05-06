@@ -1,3 +1,27 @@
+## [1.19.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.18.1...v1.19.0) (2026-05-06)
+
+### ✨ Features
+
+* **workspaces:** add anthropic_workspace_member data source ([#107](https://github.com/ippontech/terraform-provider-anthropic/issues/107)) ([f07e5ac](https://github.com/ippontech/terraform-provider-anthropic/commit/f07e5ac3f367459d14bd70cfb9db453cdf26e09b)), closes [#113](https://github.com/ippontech/terraform-provider-anthropic/issues/113) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#55](https://github.com/ippontech/terraform-provider-anthropic/issues/55) [#113](https://github.com/ippontech/terraform-provider-anthropic/issues/113) [#113](https://github.com/ippontech/terraform-provider-anthropic/issues/113)
+
+## [1.18.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.18.0...v1.18.1) (2026-05-05)
+
+### 🐛 Bug Fixes
+
+* **tests:** remove unevaluable asserts from workspace data source plan test ([#112](https://github.com/ippontech/terraform-provider-anthropic/issues/112)) ([aa9e2b6](https://github.com/ippontech/terraform-provider-anthropic/commit/aa9e2b6504b261bc9787e0595db0d39a5d935b23))
+
+## [1.18.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.17.0...v1.18.0) (2026-05-05)
+
+### ✨ Features
+
+* **workspaces:** add anthropic_workspace data source ([#105](https://github.com/ippontech/terraform-provider-anthropic/issues/105)) ([ad1d584](https://github.com/ippontech/terraform-provider-anthropic/commit/ad1d584cdc13c7481c54bb11c0c55d479a937c89)), closes [#52](https://github.com/ippontech/terraform-provider-anthropic/issues/52)
+
+## [1.17.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.16.2...v1.17.0) (2026-05-05)
+
+### ✨ Features
+
+* **workspaces:** add anthropic_workspaces data source ([#106](https://github.com/ippontech/terraform-provider-anthropic/issues/106)) ([0256b08](https://github.com/ippontech/terraform-provider-anthropic/commit/0256b082fe58aaf69428b92ab438e150eb25592e))
+
 ## [1.16.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.16.1...v1.16.2) (2026-05-05)
 
 ### ♻️ Refactoring

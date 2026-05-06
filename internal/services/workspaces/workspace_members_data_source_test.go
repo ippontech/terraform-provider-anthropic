@@ -46,7 +46,7 @@ func TestWorkspaceMembersDataSource_paginatesTransparently(t *testing.T) {
 	client := newTestAdminClient(t, srv)
 
 	// Simulate what Read() does: page through all results.
-	var allMembers []workspaceMemberAPIResponse
+	var allMembers []workspaceMembersListItem
 	afterID := ""
 	for {
 		path := "/v1/organizations/workspaces/ws_01/members?limit=1000"
