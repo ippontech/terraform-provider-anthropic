@@ -33,12 +33,6 @@ type WorkspaceMemberDataSourceModel struct {
 	Type          types.String `tfsdk:"type"`
 }
 
-type workspaceMemberAPIResponse struct {
-	Type          string `json:"type"`
-	UserID        string `json:"user_id"`
-	WorkspaceRole string `json:"workspace_role"`
-}
-
 func (d *WorkspaceMemberDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_workspace_member"
 }

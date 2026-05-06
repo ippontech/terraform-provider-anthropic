@@ -45,7 +45,7 @@ type WorkspaceMemberResourceModel struct {
 }
 
 // --- Admin API request types ---
-// (workspaceMemberAPIResponse is declared in workspace_member_data_source.go)
+// (workspaceMemberAPIResponse is declared in workspace_member.go)
 
 type workspaceMemberCreateRequest struct {
 	UserID        string `json:"user_id"`
