@@ -54,9 +54,9 @@ type workspaceMembersListItem struct {
 
 type workspaceMembersListResponse struct {
 	Data    []workspaceMembersListItem `json:"data"`
-	HasMore bool                         `json:"has_more"`
-	LastID  string                       `json:"last_id"`
-	FirstID string                       `json:"first_id"`
+	HasMore bool                       `json:"has_more"`
+	LastID  string                     `json:"last_id"`
+	FirstID string                     `json:"first_id"`
 }
 
 // --- Schema ---

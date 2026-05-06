@@ -15,7 +15,7 @@ Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the 
 
 ```hcl
 terraform {
-  required_version = ">= 1.0"
+  required_version = "~> 1.0"
 
   required_providers {
     anthropic = {
