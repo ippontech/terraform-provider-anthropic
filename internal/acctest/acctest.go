@@ -23,3 +23,12 @@ func PreCheck(t *testing.T) {
 		t.Fatal("ANTHROPIC_API_KEY must be set for acceptance tests")
 	}
 }
+
+// PreCheckAdmin is used by acceptance tests that hit the Admin API
+// (organization endpoints under /v1/organizations/*).
+func PreCheckAdmin(t *testing.T) {
+	t.Helper()
+	if v := os.Getenv("ANTHROPIC_ADMIN_API_KEY"); v == "" {
+		t.Fatal("ANTHROPIC_ADMIN_API_KEY must be set for admin acceptance tests")
+	}
+}
