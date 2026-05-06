@@ -44,13 +44,8 @@ type WorkspaceMemberResourceModel struct {
 	Type          types.String `tfsdk:"type"`
 }
 
-// --- Admin API request/response types ---
-
-type workspaceMemberAPIResponse struct {
-	UserID        string `json:"user_id"`
-	WorkspaceRole string `json:"workspace_role"`
-	Type          string `json:"type"`
-}
+// --- Admin API request types ---
+// (workspaceMemberAPIResponse is declared in workspace_member_data_source.go)
 
 type workspaceMemberCreateRequest struct {
 	UserID        string `json:"user_id"`

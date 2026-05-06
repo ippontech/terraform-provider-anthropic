@@ -29,7 +29,7 @@ internal/
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
     skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
-    workspaces/    — anthropic_workspace resource + workspace/workspaces/workspace_member/workspace_members data sources
+    workspaces/    — anthropic_workspace + anthropic_workspace_member resources + workspace/workspaces/workspace_member/workspace_members data sources (shared test helpers in workspacetest.go)
 ```
 
 ### Implemented resources and data sources
@@ -41,6 +41,7 @@ internal/
 - `anthropic_skill` (`internal/services/skills/skill_resource.go`) — manages skills
 - `anthropic_skill_version` (`internal/services/skills/skill_version_resource.go`) — manages skill versions
 - `anthropic_workspace` (`internal/services/workspaces/workspace_resource.go`) — manages workspaces (admin API)
+- `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_resource.go`) — assigns a user to a workspace with a given role (admin API); composite ID `<workspace_id>:<user_id>`; `workspace_billing` role rejected at plan time
 
 **Data sources:**
 - `anthropic_model` (`internal/services/models/model_data_source.go`) — fetches a single model by ID
@@ -73,7 +74,9 @@ internal/
 
 **Go acceptance tests** (`internal/services/<service>/`):
 - Test files use `package <service>_test` (external test package), except tests that access unexported symbols which use `package <service>`
+- **Important:** acceptance tests (those importing `internal/acctest`) MUST live in `package <service>_test` (external) to avoid an import cycle (`acctest` → `provider` → `<service>`). When unit tests need internal types AND a service has acceptance tests, split them into two files: `*_test.go` (internal, unit) and `*_acc_test.go` (external, acceptance).
 - `internal/acctest/acctest.go` exports `ProtoV6ProviderFactories` and `PreCheck` used by all acceptance tests
+- `internal/services/workspaces/workspacetest.go` defines shared unit-test helpers (`newTestAdminClient`, `workspaceFixture`, `pageData`, `fetchAllPages`); reuse them in any new workspaces unit test instead of constructing `admin.Client` inline or duplicating pagination loops
 - Admin API acceptance tests: only read-only data source tests are possible today; resource tests (create/update/delete) are blocked by [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58). Add a `PreCheckAdmin` helper when that is resolved.
 - Admin API **Terraform native tests**: use `command = plan` (not the default `apply`) until a test org is available; this validates schema without making live API calls.
 - Unit tests: no special env vars needed
@@ -83,7 +86,7 @@ internal/
 - One `.tftest.hcl` file per resource/data source (e.g. `tests/message.tftest.hcl`)
 - Each test references the corresponding example config as its module source (e.g. `source = "./examples/resources/message"`)
 - Tests use `assert` blocks to verify computed attribute values
-- All test blocks set `parallel = true`
+- The top-level `test { parallel = true }` block opts every `run` block in the file into parallel execution; do not repeat `parallel = true` inside individual `run` blocks (it's redundant)
 - Run with `make terraform-test` (builds and installs the provider first via `.dev.tfrc`)
 
 ## Environment

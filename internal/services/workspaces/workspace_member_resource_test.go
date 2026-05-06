@@ -1,7 +1,7 @@
 // Copyright (c) Ippon
 // SPDX-License-Identifier: MPL-2.0
 
-package workspaces_test
+package workspaces
 
 import (
 	"context"
@@ -9,26 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 )
-
-// ============================================================================
-// Unit tests (no TF_ACC needed)
-// ============================================================================
-
-func newTestAdminClientForMember(t *testing.T, srv *httptest.Server) *admin.Client {
-	t.Helper()
-	return &admin.Client{
-		ApiKey:     "test-key",
-		BaseURL:    srv.URL,
-		HTTPClient: srv.Client(),
-	}
-}
 
 func workspaceMemberFixture() string {
 	return `{
@@ -49,29 +33,25 @@ func TestWorkspaceMemberCreate_parsesResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestAdminClientForMember(t, srv)
+	client := newTestAdminClient(t, srv)
 	body, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/workspaces/ws_01abc123/members",
-		map[string]string{"user_id": "user_01xyz789", "workspace_role": "workspace_user"})
+		workspaceMemberCreateRequest{UserID: "user_01xyz789", WorkspaceRole: "workspace_user"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	var resp struct {
-		UserID        string `json:"user_id"`
-		WorkspaceRole string `json:"workspace_role"`
-		Type          string `json:"type"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
+	var member workspaceMemberAPIResponse
+	if err := json.Unmarshal(body, &member); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if resp.UserID != "user_01xyz789" {
-		t.Errorf("UserID = %q, want %q", resp.UserID, "user_01xyz789")
+	if member.UserID != "user_01xyz789" {
+		t.Errorf("UserID = %q, want %q", member.UserID, "user_01xyz789")
 	}
-	if resp.WorkspaceRole != "workspace_user" {
-		t.Errorf("WorkspaceRole = %q, want %q", resp.WorkspaceRole, "workspace_user")
+	if member.WorkspaceRole != "workspace_user" {
+		t.Errorf("WorkspaceRole = %q, want %q", member.WorkspaceRole, "workspace_user")
 	}
-	if resp.Type != "workspace_member" {
-		t.Errorf("Type = %q, want %q", resp.Type, "workspace_member")
+	if member.Type != "workspace_member" {
+		t.Errorf("Type = %q, want %q", member.Type, "workspace_member")
 	}
 }
 
@@ -83,100 +63,10 @@ func TestWorkspaceMemberRead_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestAdminClientForMember(t, srv)
+	client := newTestAdminClient(t, srv)
 	_, err := client.DoRequest(context.Background(), "GET",
 		"/v1/organizations/workspaces/ws_01abc123/members/user_missing", nil)
 	if !admin.IsNotFound(err) {
 		t.Fatalf("expected IsNotFound, got: %v", err)
 	}
-}
-
-// ============================================================================
-// Acceptance tests (require TF_ACC=1 and real API credentials)
-// ============================================================================
-
-func TestAccWorkspaceMemberResource_basic(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(t) },
-		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccWorkspaceMemberConfig("workspace_user"),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("anthropic_workspace_member.test", "workspace_role", "workspace_user"),
-					resource.TestCheckResourceAttr("anthropic_workspace_member.test", "type", "workspace_member"),
-					resource.TestCheckResourceAttrSet("anthropic_workspace_member.test", "id"),
-				),
-			},
-			{
-				ResourceName:      "anthropic_workspace_member.test",
-				ImportState:       true,
-				ImportStateVerify: true,
-			},
-		},
-	})
-}
-
-func TestAccWorkspaceMemberResource_updateRole(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(t) },
-		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccWorkspaceMemberConfig("workspace_user"),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("anthropic_workspace_member.test", "workspace_role", "workspace_user"),
-				),
-			},
-			{
-				Config: testAccWorkspaceMemberConfig("workspace_admin"),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("anthropic_workspace_member.test", "workspace_role", "workspace_admin"),
-				),
-			},
-		},
-	})
-}
-
-func TestAccWorkspaceMemberResource_rejectsBillingOnCreate(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(t) },
-		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config:      testAccWorkspaceMemberConfig("workspace_billing"),
-				ExpectError: regexp.MustCompile(`workspace_billing`),
-			},
-		},
-	})
-}
-
-func TestAccWorkspaceMemberResource_rejectsBillingOnUpdate(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(t) },
-		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccWorkspaceMemberConfig("workspace_user"),
-			},
-			{
-				Config:      testAccWorkspaceMemberConfig("workspace_billing"),
-				ExpectError: regexp.MustCompile(`workspace_billing`),
-			},
-		},
-	})
-}
-
-func testAccWorkspaceMemberConfig(role string) string {
-	return `
-resource "anthropic_workspace" "test" {
-  name = "tf-acc-workspace-member-test"
-}
-
-resource "anthropic_workspace_member" "test" {
-  workspace_id   = anthropic_workspace.test.id
-  user_id        = "user_01test"
-  workspace_role = "` + role + `"
-}
-`
 }

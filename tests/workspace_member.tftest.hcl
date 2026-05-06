@@ -3,8 +3,7 @@ test {
 }
 
 run "workspace_member_plan_validates_schema" {
-  command  = plan
-  parallel = true
+  command = plan
 
   module {
     source = "./tests/fixtures/workspace_member_plan"

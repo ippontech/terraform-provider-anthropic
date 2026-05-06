@@ -35,6 +35,7 @@ type WorkspaceMemberDataSourceModel struct {
 
 type workspaceMemberAPIResponse struct {
 	Type          string `json:"type"`
+	UserID        string `json:"user_id"`
 	WorkspaceRole string `json:"workspace_role"`
 }
 

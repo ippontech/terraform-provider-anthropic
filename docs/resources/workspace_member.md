@@ -11,7 +11,7 @@ Assigns a user to an Anthropic Workspace with a given role via the Admin API.
 
 Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
 
-> **Note:** The `workspace_billing` role cannot be assigned via this resource on creation.
+> **Note:** The `workspace_billing` role cannot be assigned via this resource.
 
 ## Example Usage
 
