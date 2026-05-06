@@ -9,16 +9,19 @@ terraform {
   }
 }
 
-variable "workspace_id" {
-  type = string
+# Create a workspace to look up members from.
+resource "anthropic_workspace" "created" {
+  name = "workspace-member-data-source-example"
 }
 
 variable "user_id" {
-  type = string
+  description = "The technical user ID of the workspace member to look up."
+  type        = string
 }
 
+# Look up a member by workspace ID and user ID.
 data "anthropic_workspace_member" "example" {
-  workspace_id = var.workspace_id
+  workspace_id = anthropic_workspace.created.id
   user_id      = var.user_id
 }
 
