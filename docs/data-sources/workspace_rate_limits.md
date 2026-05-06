@@ -7,7 +7,7 @@ description: |-
 
 # anthropic_workspace_rate_limits (Data Source)
 
-Lists workspace-level rate-limit overrides for a given workspace. Only entries that have at least one override are returned; groups inheriting organisation-level limits are **not** listed.
+Lists workspace-level rate-limit overrides for a given workspace. Only entries that have at least one override are returned; groups inheriting organization-level limits are **not** listed.
 
 Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) on the provider.
 
@@ -68,6 +68,6 @@ Read-Only:
 
 Read-Only:
 
-- `org_limit` (Number) Organisation-level limit, or null if no org limit is configured.
+- `org_limit` (Number) Organization-level limit, or null if no org limit is configured.
 - `type` (String) Limit type (e.g. `requests_per_minute`).
 - `value` (Number) Override value applied to this workspace.

@@ -129,7 +129,7 @@ func (d *WorkspaceRateLimitsDataSource) Schema(_ context.Context, _ datasource.S
 									},
 									"org_limit": schema.Int64Attribute{
 										Computed:            true,
-										MarkdownDescription: "Organisation-level limit, or null if no org limit is configured.",
+										MarkdownDescription: "Organization-level limit, or null if no org limit is configured.",
 									},
 								},
 							},

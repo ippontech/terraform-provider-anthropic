@@ -12,7 +12,7 @@ import (
 
 // terraformTestsWorkspaceID is the ID of the "terraform-tests" workspace.
 // Read-only Admin API data source acceptance tests target it because we do
-// not yet have a dedicated test organisation for create/update/delete flows.
+// not yet have a dedicated test organization for create/update/delete flows.
 const terraformTestsWorkspaceID = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
 
 func TestAccWorkspaceRateLimitsDataSource(t *testing.T) {
