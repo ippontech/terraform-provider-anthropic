@@ -1,3 +1,9 @@
+## [1.20.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.20.0...v1.20.1) (2026-05-06)
+
+### ♻️ Refactoring
+
+* **workspaces:** clean up example folder names and deduplicate test helpers ([#114](https://github.com/ippontech/terraform-provider-anthropic/issues/114)) ([ccdd78c](https://github.com/ippontech/terraform-provider-anthropic/commit/ccdd78c75e15808cca2206c881c8991cec8ecb38))
+
 ## [1.20.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.19.0...v1.20.0) (2026-05-06)
 
 ### ✨ Features
