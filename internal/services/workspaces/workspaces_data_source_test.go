@@ -103,28 +103,18 @@ func TestWorkspacesDataSource_pagination(t *testing.T) {
 
 	client := newTestAdminClient(t, srv)
 
-	// Simulate the pagination loop
-	var all []workspaceAPIResponse
-	var afterID string
-	for {
-		path := "/v1/organizations/workspaces?limit=1000"
-		if afterID != "" {
-			path += "&after_id=" + afterID
-		}
-		respBytes, err := client.DoRequest(context.Background(), "GET", path, nil)
-		if err != nil {
-			t.Fatalf("DoRequest: %v", err)
-		}
-		var page workspaceListAPIResponse
-		if err := json.Unmarshal(respBytes, &page); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		all = append(all, page.Data...)
-		if !page.HasMore || page.LastID == nil {
-			break
-		}
-		afterID = *page.LastID
-	}
+	all := fetchAllPages(t, client, "/v1/organizations/workspaces?limit=1000",
+		func(b []byte) (pageData[workspaceAPIResponse], error) {
+			var p workspaceListAPIResponse
+			if err := json.Unmarshal(b, &p); err != nil {
+				return pageData[workspaceAPIResponse]{}, err
+			}
+			lastID := ""
+			if p.LastID != nil {
+				lastID = *p.LastID
+			}
+			return pageData[workspaceAPIResponse]{data: p.Data, hasMore: p.HasMore, lastID: lastID}, nil
+		})
 
 	if len(all) != 2 {
 		t.Fatalf("want 2 total workspaces, got %d", len(all))

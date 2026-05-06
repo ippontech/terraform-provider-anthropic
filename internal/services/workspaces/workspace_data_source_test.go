@@ -26,11 +26,7 @@ func TestWorkspaceDataSource_read(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := &admin.Client{
-		ApiKey:     "test-key",
-		BaseURL:    srv.URL,
-		HTTPClient: srv.Client(),
-	}
+	client := newTestAdminClient(t, srv)
 
 	body, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_01ABC", nil)
 	if err != nil {
@@ -79,11 +75,7 @@ func TestWorkspaceDataSource_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := &admin.Client{
-		ApiKey:     "test-key",
-		BaseURL:    srv.URL,
-		HTTPClient: srv.Client(),
-	}
+	client := newTestAdminClient(t, srv)
 
 	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces/wrkspc_missing", nil)
 	if !admin.IsNotFound(err) {

@@ -45,28 +45,14 @@ func TestWorkspaceMembersDataSource_paginatesTransparently(t *testing.T) {
 
 	client := newTestAdminClient(t, srv)
 
-	// Simulate what Read() does: page through all results.
-	var allMembers []workspaceMembersListItem
-	afterID := ""
-	for {
-		path := "/v1/organizations/workspaces/ws_01/members?limit=1000"
-		if afterID != "" {
-			path += "&after_id=" + afterID
-		}
-		respBytes, err := client.DoRequest(context.Background(), "GET", path, nil)
-		if err != nil {
-			t.Fatalf("DoRequest: %v", err)
-		}
-		var page workspaceMembersListResponse
-		if err := json.Unmarshal(respBytes, &page); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		allMembers = append(allMembers, page.Data...)
-		if !page.HasMore {
-			break
-		}
-		afterID = page.LastID
-	}
+	allMembers := fetchAllPages(t, client, "/v1/organizations/workspaces/ws_01/members?limit=1000",
+		func(b []byte) (pageData[workspaceMembersListItem], error) {
+			var p workspaceMembersListResponse
+			if err := json.Unmarshal(b, &p); err != nil {
+				return pageData[workspaceMembersListItem]{}, err
+			}
+			return pageData[workspaceMembersListItem]{data: p.Data, hasMore: p.HasMore, lastID: p.LastID}, nil
+		})
 
 	if callCount != 2 {
 		t.Errorf("expected 2 HTTP calls, got %d", callCount)
