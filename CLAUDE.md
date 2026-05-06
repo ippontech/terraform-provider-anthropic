@@ -75,11 +75,12 @@ internal/
 
 **Go acceptance tests** (`internal/services/<service>/`):
 - Test files use `package <service>_test` (external test package), except tests that access unexported symbols which use `package <service>`
-- **Important:** acceptance tests (those importing `internal/acctest`) MUST live in `package <service>_test` (external) to avoid an import cycle (`acctest` → `provider` → `<service>`). When unit tests need internal types AND a service has acceptance tests, split them into two files: `*_test.go` (internal, unit) and `*_acc_test.go` (external, acceptance).
-- `internal/acctest/acctest.go` exports `ProtoV6ProviderFactories` and `PreCheck` used by all acceptance tests
+- **File naming:** use `<name>_test.go` (e.g. `workspace_rate_limits_data_source_test.go`). Do **not** suffix unit-test files with `_unit_test.go` — acceptance test functions are already disambiguated by the `TestAccXxx` prefix, and unit tests use `TestXxx`.
+- **Important:** acceptance tests (those importing `internal/acctest`) MUST live in `package <service>_test` (external) to avoid an import cycle (`acctest` → `provider` → `<service>`). When unit tests need internal types AND a service has acceptance tests, split them into two files: one in `package <service>` (internal, unit) and one in `package <service>_test` (external, acceptance).
+- `internal/acctest/acctest.go` exports `ProtoV6ProviderFactories`, `PreCheck` (standard API key), and `PreCheckAdmin` (admin API key) used by all acceptance tests
 - `internal/services/workspaces/workspacetest.go` defines shared unit-test helpers (`newTestAdminClient`, `workspaceFixture`, `pageData`, `fetchAllPages`); reuse them in any new workspaces unit test instead of constructing `admin.Client` inline or duplicating pagination loops
-- Admin API acceptance tests: only read-only data source tests are possible today; resource tests (create/update/delete) are blocked by [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58). Add a `PreCheckAdmin` helper when that is resolved.
-- Admin API **Terraform native tests**: use `command = plan` (not the default `apply`) until a test org is available; this validates schema without making live API calls.
+- **Admin API acceptance tests for read-only data sources:** target the existing `terraform-tests` workspace (`wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm`) and gate on `acctest.PreCheckAdmin`. Resource tests (create/update/delete) on the Admin API remain blocked by [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) because we do not yet have a dedicated test organisation, so do not create new resources via Admin API in tests.
+- Admin API **Terraform native tests**: use `command = plan` (not the default `apply`) until a test org is available; this validates schema without making live API calls. Read-only data source native tests may run against the `terraform-tests` workspace ID above.
 - Unit tests: no special env vars needed
 - Acceptance tests: use `resource.Test(t, resource.TestCase{...})` with `TF_ACC=1`
 
