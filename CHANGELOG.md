@@ -1,3 +1,9 @@
+## [1.23.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.22.0...v1.23.0) (2026-05-13)
+
+### ✨ Features
+
+* **environments:** add archive_on_destroy to anthropic_environment resource ([#124](https://github.com/ippontech/terraform-provider-anthropic/issues/124)) ([10dfe43](https://github.com/ippontech/terraform-provider-anthropic/commit/10dfe439c3b54077b047285492c917158b2e221e)), closes [#73](https://github.com/ippontech/terraform-provider-anthropic/issues/73) [#123](https://github.com/ippontech/terraform-provider-anthropic/issues/123)
+
 ## [1.22.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.21.0...v1.22.0) (2026-05-06)
 
 ### ✨ Features
