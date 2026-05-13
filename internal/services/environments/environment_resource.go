@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -43,15 +45,16 @@ type EnvironmentResource struct {
 // --- Terraform data models ---
 
 type EnvironmentResourceModel struct {
-	ID          types.String `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	Metadata    types.Map    `tfsdk:"metadata"`
-	Config      types.Object `tfsdk:"config"`
-	ArchivedAt  types.String `tfsdk:"archived_at"`
-	CreatedAt   types.String `tfsdk:"created_at"`
-	UpdatedAt   types.String `tfsdk:"updated_at"`
-	Type        types.String `tfsdk:"type"`
+	ID               types.String `tfsdk:"id"`
+	Name             types.String `tfsdk:"name"`
+	Description      types.String `tfsdk:"description"`
+	Metadata         types.Map    `tfsdk:"metadata"`
+	Config           types.Object `tfsdk:"config"`
+	ArchivedAt       types.String `tfsdk:"archived_at"`
+	CreatedAt        types.String `tfsdk:"created_at"`
+	UpdatedAt        types.String `tfsdk:"updated_at"`
+	Type             types.String `tfsdk:"type"`
+	ArchiveOnDestroy types.Bool   `tfsdk:"archive_on_destroy"`
 }
 
 type environmentConfigModel struct {
@@ -242,6 +245,13 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				MarkdownDescription: "Archive timestamp (RFC 3339). Null if the environment has not been archived.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
+			"archive_on_destroy": schema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				MarkdownDescription: "If `true`, destroying this resource archives the environment instead of permanently deleting it. Default: `false`.",
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
 		},
 	}
 }
@@ -368,6 +378,11 @@ func (r *EnvironmentResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
+	// archive_on_destroy is local-only (not in the API); default to false when not already set (e.g. on import).
+	if data.ArchiveOnDestroy.IsNull() || data.ArchiveOnDestroy.IsUnknown() {
+		data.ArchiveOnDestroy = types.BoolValue(false)
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -435,10 +450,17 @@ func (r *EnvironmentResource) Delete(ctx context.Context, req resource.DeleteReq
 		return
 	}
 
+	if data.ArchiveOnDestroy.ValueBool() {
+		_, err := r.client.Beta.Environments.Archive(ctx, data.ID.ValueString(), anthropic.BetaEnvironmentArchiveParams{})
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive environment: %s", err))
+		}
+		return
+	}
+
 	_, err := r.client.Beta.Environments.Delete(ctx, data.ID.ValueString(), anthropic.BetaEnvironmentDeleteParams{})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete environment: %s", err))
-		return
 	}
 }
 

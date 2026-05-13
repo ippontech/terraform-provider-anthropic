@@ -37,7 +37,7 @@ internal/
 **Resources:**
 - `anthropic_message` (`internal/services/messages/message_resource.go`) — calls the Messages API; write-only, immutable (no read/update/delete)
 - `anthropic_agent` (`internal/services/agents/agent_resource.go`) — manages Managed Agents (create/read/update/delete)
-- `anthropic_environment` (`internal/services/environments/environment_resource.go`) — manages environments
+- `anthropic_environment` (`internal/services/environments/environment_resource.go`) — manages environments; supports `archive_on_destroy` (archives instead of deleting on destroy when true)
 - `anthropic_skill` (`internal/services/skills/skill_resource.go`) — manages skills
 - `anthropic_skill_version` (`internal/services/skills/skill_version_resource.go`) — manages skill versions
 - `anthropic_workspace` (`internal/services/workspaces/workspace_resource.go`) — manages workspaces (admin API)
@@ -98,6 +98,8 @@ A `.env` file at the project root sets machine-specific variables (e.g., `OTEL_T
 ```bash
 set -a && source .env && set +a
 ```
+
+After upgrading Go via mise, run `go clean -cache` before `make` to clear stale build artifacts. Without this, golangci-lint's typecheck step fails with a "version does not match go tool version" error because cached objects carry the old Go version tag.
 
 ## Commands
 
@@ -169,6 +171,43 @@ r.client = pd.Client
 - `internal/errors/` (import alias `providerrors`) — nil-client guards for `Configure` methods
 - `internal/providerdata/` (import alias `providerdata`) — `ProviderData` struct
 - `internal/retry/` (import alias `provretry`) — multipart file upload with automatic 5xx retry; use `provretry.MultipartUpload` for any resource that uploads files to the API (the Anthropic SDK cannot retry streaming multipart bodies on its own)
+
+### archive_on_destroy pattern
+
+Resources where the API supports archiving (non-destructive) as an alternative to hard-delete should expose an `archive_on_destroy` bool rather than a separate archive resource. Follow this shape exactly:
+
+```go
+// Schema attribute
+"archive_on_destroy": schema.BoolAttribute{
+    Optional:            true,
+    Computed:            true,
+    Default:             booldefault.StaticBool(false),
+    MarkdownDescription: "If `true`, destroying this resource archives it instead of permanently deleting it. Default: `false`.",
+    PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+},
+
+// Delete method
+if data.ArchiveOnDestroy.ValueBool() {
+    _, err := r.client.Beta.<Resource>.Archive(ctx, data.ID.ValueString(), ...)
+    // handle err
+    return
+}
+_, err := r.client.Beta.<Resource>.Delete(ctx, data.ID.ValueString(), ...)
+
+// Read method — default to false on import (field is not in API response)
+if data.ArchiveOnDestroy.IsNull() || data.ArchiveOnDestroy.IsUnknown() {
+    data.ArchiveOnDestroy = types.BoolValue(false)
+}
+```
+
+Acceptance tests whose `CheckDestroy` verifies archive behaviour must also hard-delete the environment afterwards to avoid dangling archived resources in the test org:
+
+```go
+func testAccCheck<Resource>ArchivedAndCleanup(s *terraform.State) error {
+    // 1. Get — assert ArchivedAt != ""
+    // 2. Delete — permanently remove to avoid accumulation
+}
+```
 
 ### Version constraints
 
