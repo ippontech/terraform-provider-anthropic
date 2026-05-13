@@ -33,6 +33,29 @@ func testAccCheckEnvironmentDestroyed(s *terraform.State) error {
 	return nil
 }
 
+// testAccCheckEnvironmentArchivedAndCleanup verifies the environment was archived
+// (not hard-deleted) and then permanently deletes it to avoid dangling resources.
+func testAccCheckEnvironmentArchivedAndCleanup(s *terraform.State) error {
+	client := anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "anthropic_environment" {
+			continue
+		}
+		env, err := client.Beta.Environments.Get(context.Background(), rs.Primary.ID, anthropic.BetaEnvironmentGetParams{})
+		if err != nil {
+			return fmt.Errorf("environment %s not found after archive destroy: %w", rs.Primary.ID, err)
+		}
+		if env.ArchivedAt == "" {
+			return fmt.Errorf("environment %s was not archived on destroy", rs.Primary.ID)
+		}
+		// Hard-delete the archived environment so it doesn't accumulate in the org.
+		if _, err := client.Beta.Environments.Delete(context.Background(), rs.Primary.ID, anthropic.BetaEnvironmentDeleteParams{}); err != nil {
+			return fmt.Errorf("cleanup: unable to delete archived environment %s: %w", rs.Primary.ID, err)
+		}
+	}
+	return nil
+}
+
 const testAccEnvironmentResourceBasicConfig = `
 resource "anthropic_environment" "test" {
   name = "tf-acc-test-env-basic"
@@ -182,6 +205,38 @@ func TestAccEnvironmentResource_update(t *testing.T) {
 					resource.TestCheckResourceAttr("anthropic_environment.test", "name", "tf-acc-test-env-update-v2"),
 					resource.TestCheckResourceAttr("anthropic_environment.test", "description", "Updated description"),
 				),
+			},
+		},
+	})
+}
+
+const testAccEnvironmentResourceArchiveOnDestroyConfig = `
+resource "anthropic_environment" "test" {
+  name               = "tf-acc-test-env-archive-on-destroy"
+  archive_on_destroy = true
+}
+`
+
+func TestAccEnvironmentResource_archiveOnDestroy(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckEnvironmentArchivedAndCleanup,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccEnvironmentResourceArchiveOnDestroyConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("anthropic_environment.test", "id"),
+					resource.TestCheckResourceAttr("anthropic_environment.test", "name", "tf-acc-test-env-archive-on-destroy"),
+					resource.TestCheckResourceAttr("anthropic_environment.test", "archive_on_destroy", "true"),
+				),
+			},
+			// ImportState — archive_on_destroy is local-only; provider defaults it to false on import.
+			{
+				ResourceName:            "anthropic_environment.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"archive_on_destroy"},
 			},
 		},
 	})
