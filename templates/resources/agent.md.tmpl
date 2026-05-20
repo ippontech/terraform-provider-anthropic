@@ -9,6 +9,11 @@ description: |-
 
 Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are persistent configurations that can be used to run sessions with tools, MCP servers, and skills.
 
+> **API**: `POST/GET/PATCH/POST /v1/agents[/{id}][/archive]` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free for management, billable at runtime.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/agent/resource.tf" }}

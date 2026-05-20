@@ -9,6 +9,11 @@ description: |-
 
 Lists available Skills on the Anthropic platform (beta). Supports optional filtering by source (`"custom"` or `"anthropic"`); all pages are fetched automatically.
 
+> **API**: `GET /v1/skills` (Skills API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: skills-2025-10-02`.
+> **Cost**: Free.
+
 ## Example Usage
 
 ```hcl

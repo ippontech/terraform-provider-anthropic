@@ -9,6 +9,11 @@ description: |-
 
 Lists all Anthropic Workspaces via the Admin API. All pages are fetched automatically.
 
+> **API**: `GET /v1/organizations/workspaces` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
 ## Example Usage
 
 ```hcl

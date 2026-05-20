@@ -9,6 +9,11 @@ description: |-
 
 Retrieves a specific Anthropic model by ID or alias.
 
+> **API**: `GET /v1/models/{id}` (Models API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
 ## Example Usage
 
 ```hcl

@@ -9,6 +9,11 @@ description: |-
 
 Retrieves a Skill by ID.
 
+> **API**: `GET /v1/skills/{id}` (Skills API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: skills-2025-10-02`.
+> **Cost**: Free.
+
 ## Example Usage
 
 ```hcl

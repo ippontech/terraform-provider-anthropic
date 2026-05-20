@@ -9,7 +9,10 @@ description: |-
 
 Lists workspace-level rate-limit overrides for a given workspace. Only entries that have at least one override are returned; groups inheriting organization-level limits are **not** listed.
 
-Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) on the provider.
+> **API**: `GET /v1/organizations/workspaces/{workspace_id}/rate_limits` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
 
 ## Example Usage
 

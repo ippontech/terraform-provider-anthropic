@@ -9,6 +9,11 @@ description: |-
 
 Fetches a single Anthropic cloud environment by ID (beta).
 
+> **API**: `GET /v1/environments/{id}` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free.
+
 ## Example Usage
 
 ```hcl

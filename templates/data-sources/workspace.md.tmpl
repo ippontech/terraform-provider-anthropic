@@ -9,6 +9,11 @@ description: |-
 
 Fetches a single Anthropic Workspace by ID via the Admin API.
 
+> **API**: `GET /v1/organizations/workspaces/{id}` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/data-sources/workspace/data_source.tf" }}

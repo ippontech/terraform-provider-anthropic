@@ -9,7 +9,10 @@ description: |-
 
 Creates and manages an Anthropic Workspace via the Admin API.
 
-Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
+> **API**: `POST/GET/POST/POST /v1/organizations/workspaces[/{id}][/archive]` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
 
 > **Note on deletion:** Deleting this resource **archives** the workspace rather than permanently deleting it, because the Anthropic API does not expose a delete operation for workspaces. An archived workspace is removed from state and Terraform will recreate it on the next apply.
 

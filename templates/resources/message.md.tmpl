@@ -9,6 +9,11 @@ description: |-
 
 Sends a message to an Anthropic model via the Messages API and stores the response. All input attributes trigger resource replacement on change.
 
+> **API**: `POST /v1/messages` (Messages API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Billable per apply (consumes tokens).
+
 ~> **Note:** This resource implements an immutable, write-only pattern. There is no persistent storage of messages beyond Terraform state; the resource calls the Anthropic Messages API during `terraform apply` and stores the response. Modifying any input attribute causes the resource to be replaced (a new API call is made). There is no `terraform refresh` from a remote API state.
 
 ## Example Usage

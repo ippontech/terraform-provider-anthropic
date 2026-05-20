@@ -9,6 +9,11 @@ description: |-
 
 Creates and manages a Skill Version on the Anthropic platform (beta). A Skill Version is created by uploading local files to an existing Skill.
 
+> **API**: `POST/GET/DELETE /v1/skills/{skill_id}/versions[/{version}]` (Skills API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: skills-2025-10-02`.
+> **Cost**: Free for management, billable when used.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/skill_version/resource.tf" }}

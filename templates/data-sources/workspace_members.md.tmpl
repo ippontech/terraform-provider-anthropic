@@ -9,7 +9,10 @@ description: |-
 
 Lists all members of an Anthropic Workspace via the Admin API. All pages are fetched automatically.
 
-Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.
+> **API**: `GET /v1/organizations/workspaces/{workspace_id}/members` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
 
 ## Example Usage
 

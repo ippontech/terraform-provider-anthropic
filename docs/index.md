@@ -58,6 +58,12 @@ The `admin_api_key` is optional — you only need it when using workspace-relate
 ~> **Warning**: Never hardcode API keys in your Terraform configuration files.
 Use environment variables or a secrets manager instead.
 
+## Cost considerations
+
+~> **Warning**: Some resources call billable Anthropic APIs at `terraform apply` time and can generate unbounded variable cost. `anthropic_message` consumes tokens on every apply, and Managed Agents / Skills (created via `anthropic_agent`, `anthropic_environment`, `anthropic_skill`, `anthropic_skill_version`) are free to manage but billable when invoked at runtime. Combining these with `count`/`for_each` over a large input set, or omitting `max_tokens`, can produce a single apply that costs significantly more than expected.
+
+Each per-resource doc page lists its cost profile in an **API / Auth / Beta header / Cost** header block. Review it before scaling apply-time inference across many instances, and prefer setting an explicit `max_tokens` on every `anthropic_message`.
+
 ## Example Usage
 
 ```hcl

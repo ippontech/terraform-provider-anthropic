@@ -9,6 +9,11 @@ description: |-
 
 Lists all Skill Versions for a given Skill on the Anthropic platform (beta). All pages are fetched automatically.
 
+> **API**: `GET /v1/skills/{skill_id}/versions` (Skills API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: skills-2025-10-02`.
+> **Cost**: Free.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/data-sources/skill_versions/data_source.tf" }}

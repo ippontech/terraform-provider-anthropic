@@ -9,6 +9,11 @@ description: |-
 
 Creates and manages a cloud environment (container template) for Anthropic Managed Agent sessions (beta). Environments define the networking policy and pre-installed packages available to agent sessions.
 
+> **API**: `POST/GET/PATCH/DELETE /v1/environments[/{id}]` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free for management, billable at runtime.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/environment/resource.tf" }}
