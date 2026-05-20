@@ -13,6 +13,12 @@ resource "anthropic_environment" "minimal" {
   name = "minimal-environment"
 }
 
+# Environment archived instead of deleted on terraform destroy
+resource "anthropic_environment" "preserved" {
+  name               = "preserved-environment"
+  archive_on_destroy = true
+}
+
 # Environment with limited network and pip packages
 resource "anthropic_environment" "python_data" {
   name        = "python-data-analysis"

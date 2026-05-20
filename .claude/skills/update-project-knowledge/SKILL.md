@@ -55,3 +55,10 @@ Do NOT:
 ### Step 4 — Report
 
 List each file updated and what was added (one line per change). If nothing needed updating, say so.
+
+Then suppress the Stop hook reminder for this branch:
+
+```bash
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+touch "/tmp/claude-knowledge-done-$(echo "$branch" | tr '/' '-')"
+```

@@ -32,6 +32,12 @@ resource "anthropic_environment" "minimal" {
   name = "minimal-environment"
 }
 
+# Environment archived instead of deleted on terraform destroy
+resource "anthropic_environment" "preserved" {
+  name               = "preserved-environment"
+  archive_on_destroy = true
+}
+
 # Environment with limited network and pip packages
 resource "anthropic_environment" "python_data" {
   name        = "python-data-analysis"
@@ -87,6 +93,7 @@ output "environment_networking_type" {
 
 ### Optional
 
+- `archive_on_destroy` (Boolean) If `true`, destroying this resource archives the environment instead of permanently deleting it. Default: `false`.
 - `config` (Attributes) Cloud environment configuration including networking and packages. (see [below for nested schema](#nestedatt--config))
 - `description` (String) Optional description of the environment.
 - `metadata` (Map of String) User-provided metadata key-value pairs.

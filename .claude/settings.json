@@ -20,6 +20,11 @@
             "type": "command",
             "command": "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"HEAD\" ]; then exit 0; fi; sentinel=\"/tmp/claude-pr-desc-done-$(echo \"$branch\" | tr '/' '-')\"; if [ -f \"$sentinel\" ] && [ $(( $(date +%s) - $(stat -c %Y \"$sentinel\") )) -lt 300 ]; then exit 0; fi; if gh pr view \"$branch\" --json state -q '.state' 2>/dev/null | grep -q \"OPEN\"; then jq -n --arg b \"$branch\" '{\"decision\":\"block\",\"reason\":(\"Open PR on branch \" + $b + \" — please invoke /update-pr-description to update the PR description.\")}'; fi",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"HEAD\" ]; then exit 0; fi; sentinel=\"/tmp/claude-knowledge-done-$(echo \"$branch\" | tr '/' '-')\"; if [ -f \"$sentinel\" ] && [ $(( $(date +%s) - $(stat -c %Y \"$sentinel\") )) -lt 300 ]; then exit 0; fi; if git diff --name-only origin/main..HEAD 2>/dev/null | grep -qE \"\\.(go|tf)$\"; then jq -n '{\"decision\":\"block\",\"reason\":\"Code changes on this branch — invoke /update-project-knowledge to sync CLAUDE.md and memories.\"}'; fi",
+            "timeout": 15
           }
         ]
       }
@@ -27,7 +32,8 @@
   },
   "permissions": {
     "allow": [
-      "Bash(touch /tmp/claude-pr-desc-done-*)"
+      "Bash(touch /tmp/claude-pr-desc-done-*)",
+      "Bash(touch /tmp/claude-knowledge-done-*)"
     ]
   },
   "enabledPlugins": {
