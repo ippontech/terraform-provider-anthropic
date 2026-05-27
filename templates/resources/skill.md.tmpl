@@ -9,6 +9,11 @@ description: |-
 
 Creates and manages a custom Skill on the Anthropic platform (beta). Skills are uploaded from local files and can be attached to Managed Agents.
 
+> **API**: `POST/GET/DELETE /v1/skills[/{id}]` (Skills API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: skills-2025-10-02`.
+> **Cost**: Free for management, billable when used.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/skill/resource.tf" }}

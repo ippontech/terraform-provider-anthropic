@@ -9,6 +9,11 @@ description: |-
 
 Lists all Anthropic cloud environments (beta). All pages are fetched automatically.
 
+> **API**: `GET /v1/environments` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/data-sources/environments/data_source.tf" }}

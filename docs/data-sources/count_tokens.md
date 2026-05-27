@@ -9,6 +9,11 @@ description: |-
 
 The `anthropic_count_tokens` data source counts the number of tokens that would be consumed by a message request without actually creating the message. This is useful for estimating API costs and validating that requests fit within model context windows before sending them.
 
+> **API**: `POST /v1/messages/count_tokens` (Messages API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free (rate-limited).
+
 ## Example Usage
 
 ```hcl

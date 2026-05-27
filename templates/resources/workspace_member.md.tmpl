@@ -9,7 +9,10 @@ description: |-
 
 Assigns a user to an Anthropic Workspace with a given role via the Admin API.
 
-Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
+> **API**: `POST/GET/POST/DELETE /v1/organizations/workspaces/{workspace_id}/members[/{user_id}]` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
 
 > **Note:** The `workspace_billing` role cannot be assigned via this resource.
 
