@@ -1,3 +1,9 @@
+## [1.23.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.23.0...v1.23.1) (2026-05-27)
+
+### 📚 Documentation
+
+* standardize API/Auth/Beta header/Cost block across all resource and data source docs ([#127](https://github.com/ippontech/terraform-provider-anthropic/issues/127)) ([b5c0571](https://github.com/ippontech/terraform-provider-anthropic/commit/b5c0571e2475d78699de26f858397dec5417ec1d)), closes [#78](https://github.com/ippontech/terraform-provider-anthropic/issues/78)
+
 ## [1.23.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.22.0...v1.23.0) (2026-05-13)
 
 ### ✨ Features
