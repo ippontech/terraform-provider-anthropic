@@ -17,6 +17,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/messages"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
@@ -107,6 +108,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		agents.NewAgentResource,
+		apikeys.NewAPIKeyResource,
 		environments.NewEnvironmentResource,
 		messages.NewMessageResource,
 		skills.NewSkillResource,
