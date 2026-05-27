@@ -1,3 +1,9 @@
+## [1.25.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.24.0...v1.25.0) (2026-05-27)
+
+### ✨ Features
+
+* **apikeys:** add anthropic_api_key and anthropic_api_keys data sources ([#131](https://github.com/ippontech/terraform-provider-anthropic/issues/131)) ([243feca](https://github.com/ippontech/terraform-provider-anthropic/commit/243fecafee7585d1aca08745559aa3a1461d9313))
+
 ## [1.24.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.23.1...v1.24.0) (2026-05-27)
 
 ### ✨ Features
