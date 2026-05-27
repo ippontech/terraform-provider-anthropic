@@ -1,0 +1,23 @@
+---
+page_title: "anthropic_api_keys Data Source - anthropic"
+subcategory: "Organization"
+description: |-
+  Lists Anthropic API keys via the Admin API, with optional filtering by status and workspace.
+---
+
+# anthropic_api_keys (Data Source)
+
+Lists Anthropic API keys via the Admin API. All pages are fetched automatically.
+
+Results can optionally be filtered by `status` (`active` or `inactive`) and by `workspace_id`.
+
+> **API**: `GET /v1/organizations/api_keys` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/api_keys/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
