@@ -25,6 +25,7 @@ internal/
   provider/        — AnthropicProvider implementation only (provider.go)
   services/
     agents/        — anthropic_agent resource + agent/agents data sources
+    apikeys/       — anthropic_api_key resource (import/update/delete only; no create)
     environments/  — anthropic_environment resource + environment/environments data sources
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
@@ -42,6 +43,7 @@ internal/
 - `anthropic_skill_version` (`internal/services/skills/skill_version_resource.go`) — manages skill versions
 - `anthropic_workspace` (`internal/services/workspaces/workspace_resource.go`) — manages workspaces (admin API)
 - `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_resource.go`) — assigns a user to a workspace with a given role (admin API); composite ID `<workspace_id>:<user_id>`; `workspace_billing` role rejected at plan time
+- `anthropic_api_key` (`internal/services/apikeys/api_key_resource.go`) — import-only resource; manages lifecycle of existing API keys (rename, deactivate) via Admin API; Create always errors with a message to use `terraform import`; Delete sets `status: inactive`
 
 **Data sources:**
 - `anthropic_model` (`internal/services/models/model_data_source.go`) — fetches a single model by ID
