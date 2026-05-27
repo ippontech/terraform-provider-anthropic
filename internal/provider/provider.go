@@ -121,6 +121,8 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		agents.NewAgentDataSource,
+		apikeys.NewAPIKeyDataSource,
+		apikeys.NewAPIKeysDataSource,
 		agents.NewAgentsDataSource,
 		messages.NewCountTokensDataSource,
 		environments.NewEnvironmentDataSource,

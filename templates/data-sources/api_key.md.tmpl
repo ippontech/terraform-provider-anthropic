@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_api_key Data Source - anthropic"
+subcategory: "Organization"
+description: |-
+  Fetches a single Anthropic API key by ID via the Admin API.
+---
+
+# anthropic_api_key (Data Source)
+
+Fetches a single Anthropic API key by ID via the Admin API.
+
+> **API**: `GET /v1/organizations/api_keys/{id}` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/api_key/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

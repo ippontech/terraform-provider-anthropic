@@ -25,7 +25,7 @@ internal/
   provider/        — AnthropicProvider implementation only (provider.go)
   services/
     agents/        — anthropic_agent resource + agent/agents data sources
-    apikeys/       — anthropic_api_key resource (import/update/delete only; no create)
+    apikeys/       — anthropic_api_key resource (import/update/delete only; no create) + api_key/api_keys data sources
     environments/  — anthropic_environment resource + environment/environments data sources
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
@@ -62,6 +62,8 @@ internal/
 - `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_data_source.go`) — fetches a single workspace member by workspace ID and user ID (admin API)
 - `anthropic_workspace_members` (`internal/services/workspaces/workspace_members_data_source.go`) — lists all members of a workspace (admin API), with transparent pagination
 - `anthropic_workspace_rate_limits` (`internal/services/workspaces/workspace_rate_limits_data_source.go`) — lists workspace-level rate-limit overrides for a workspace (admin API), with transparent pagination and an optional `group_type` filter; only entries with at least one override are returned
+- `anthropic_api_key` (`internal/services/apikeys/api_key_data_source.go`) — fetches a single API key by ID (admin API); reuses `APIKeyResourceModel` and `mapAPIKeyToState` from the resource file
+- `anthropic_api_keys` (`internal/services/apikeys/api_keys_data_source.go`) — lists API keys (admin API) with optional `status` and `workspace_id` filters; transparent pagination
 
 ### Adding a resource or data source
 
