@@ -23,8 +23,13 @@ import (
 )
 
 // NamedReader wraps an io.Reader with an explicit multipart filename.
-// The Anthropic SDK encoder checks for Filename() before falling back to
-// the struct field name, which is required for the API to accept the upload.
+//
+// The SDK encoder picks a multipart filename from `Filename() string`,
+// `Name() string` (path.Base'd), then the struct field name — in that
+// order. We embed io.Reader (not *os.File) so the concrete file's
+// Name() is not promoted; otherwise the SDK's path.Base fallback would
+// flatten the bundle layout. The compile-time assertion below locks
+// that contract.
 type NamedReader struct {
 	io.Reader
 	name string
@@ -35,8 +40,9 @@ func NewNamedReader(r io.Reader, filename string) NamedReader {
 	return NamedReader{Reader: r, name: filename}
 }
 
-// Filename satisfies the SDK's optional naming interface.
 func (r NamedReader) Filename() string { return r.name }
+
+var _ interface{ Filename() string } = NamedReader{}
 
 // backoff returns the delay before the given retry attempt.
 // Replaced by tests to avoid real sleeps.
@@ -47,13 +53,15 @@ var backoff = func(attempt int) time.Duration {
 // MultipartUpload opens filePaths fresh on each attempt and calls fn with the
 // resulting readers, retrying up to 3 times on 5xx API errors with backoff.
 //
-// dirName is prepended to each file's base name in the multipart body (the
-// Anthropic API requires all files to live inside a named top-level directory,
-// and that name must match the `name` field in SKILL.md).
+// Each file's multipart name is `dirName + "/" + <relPath>`, where relPath is
+// the file's path relative to bundleRoot in forward-slash form, preserving
+// nested subdirectories. dirName is the top-level directory name in the
+// upload body and must match the `name` field of the bundle's SKILL.md
+// frontmatter.
 //
 // File-open errors and non-5xx API errors are returned immediately without
 // retrying.
-func MultipartUpload[T any](ctx context.Context, filePaths []string, dirName string, fn func([]io.Reader) (T, error)) (T, error) {
+func MultipartUpload[T any](ctx context.Context, filePaths []string, bundleRoot, dirName string, fn func([]io.Reader) (T, error)) (T, error) {
 	const maxAttempts = 3
 	var zero T
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -65,7 +73,7 @@ func MultipartUpload[T any](ctx context.Context, filePaths []string, dirName str
 			}
 		}
 
-		files, openedFiles, err := openFiles(filePaths, dirName)
+		files, openedFiles, err := openFiles(filePaths, bundleRoot, dirName)
 		if err != nil {
 			return zero, err
 		}
@@ -84,17 +92,31 @@ func MultipartUpload[T any](ctx context.Context, filePaths []string, dirName str
 	return zero, nil // unreachable
 }
 
-func openFiles(filePaths []string, dirName string) ([]io.Reader, []*os.File, error) {
+func openFiles(filePaths []string, bundleRoot, dirName string) ([]io.Reader, []*os.File, error) {
 	files := make([]io.Reader, 0, len(filePaths))
 	opened := make([]*os.File, 0, len(filePaths))
 	for _, p := range filePaths {
+		rel, err := filepath.Rel(bundleRoot, p)
+		if err != nil {
+			closeAll(opened)
+			return nil, nil, fmt.Errorf("unable to compute path of %q relative to bundle root %q: %w", p, bundleRoot, err)
+		}
+		// IsLocal also returns true for ".", which means the file path equals
+		// bundleRoot and is nonsensical as an upload — reject it explicitly.
+		if rel == "." || !filepath.IsLocal(rel) {
+			closeAll(opened)
+			return nil, nil, fmt.Errorf("file %q is not inside bundle root %q (relative path: %q)", p, bundleRoot, rel)
+		}
 		f, err := os.Open(p)
 		if err != nil {
 			closeAll(opened)
 			return nil, nil, fmt.Errorf("unable to open file %q: %w", p, err)
 		}
 		opened = append(opened, f)
-		files = append(files, NewNamedReader(f, dirName+"/"+filepath.Base(p)))
+		// The API requires forward slashes; normalise so Windows-built
+		// binaries do not emit backslash names.
+		uploadName := dirName + "/" + filepath.ToSlash(rel)
+		files = append(files, NewNamedReader(f, uploadName))
 	}
 	return files, opened, nil
 }
