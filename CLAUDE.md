@@ -174,7 +174,7 @@ r.client = pd.Client
 - `internal/admin/` — HTTP client for Admin API; import as `"github.com/ippontech/terraform-provider-anthropic/internal/admin"`
 - `internal/errors/` (import alias `providerrors`) — nil-client guards for `Configure` methods
 - `internal/providerdata/` (import alias `providerdata`) — `ProviderData` struct
-- `internal/retry/` (import alias `provretry`) — multipart file upload with automatic 5xx retry; use `provretry.MultipartUpload` for any resource that uploads files to the API (the Anthropic SDK cannot retry streaming multipart bodies on its own)
+- `internal/retry/` (import alias `provretry`) — multipart file upload with automatic 5xx retry; use `provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, fn)` for any resource that uploads files to the API (the Anthropic SDK cannot retry streaming multipart bodies on its own). Each file's multipart name is `dirName + "/" + <path relative to bundleRoot>` (forward-slash normalised), so nested subdirectories inside a bundle are preserved on upload. Derive `bundleRoot` and `dirName` with `provretry.DeriveBundleRoot(filePaths)` — it returns the longest shared parent, which is order-independent (necessary because `fileset()` returns lexically sorted paths and a nested file like `Assets/icon.png` may sort before `SKILL.md`). Files outside `bundleRoot`, or a path equal to `bundleRoot`, are rejected explicitly
 
 ### archive_on_destroy pattern
 
