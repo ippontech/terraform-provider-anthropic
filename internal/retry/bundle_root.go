@@ -33,7 +33,11 @@ func DeriveBundleRoot(filePaths []string) (root, dirName string, err error) {
 
 // commonPathPrefix returns the longest shared parent of a and b, trimmed at
 // a path-segment boundary. Returns "" if they share no segments (e.g.
-// different Windows volumes, or one absolute and one relative).
+// different Windows volumes, or one absolute and one relative). Note: on
+// POSIX, `/foo` vs `/bar` also yields "" — the leading separator is not
+// treated as a shared segment. This is intentional: a skill bundle whose
+// files live in unrelated trees is not a well-formed bundle and is rejected
+// by DeriveBundleRoot rather than silently rooted at `/`.
 func commonPathPrefix(a, b string) string {
 	if a == b {
 		return a

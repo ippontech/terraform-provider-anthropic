@@ -30,7 +30,10 @@ terraform {
 
 resource "anthropic_skill" "example" {
   display_title = "Example Skill"
-  files         = ["${path.module}/SKILL.md"]
+  # fileset() picks up SKILL.md and any nested files (e.g. references/*.md).
+  # The provider preserves each file's path relative to the bundle root so
+  # SKILL.md can reference files in subdirectories at runtime.
+  files         = [for f in fileset(path.module, "**") : "${path.module}/${f}"]
   force_destroy = true
 }
 

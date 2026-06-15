@@ -107,6 +107,25 @@ func TestDeriveBundleRoot_NoCommonParent(t *testing.T) {
 	}
 }
 
+// TestDeriveBundleRoot_BareFilenameNoDirectory documents the behavior when
+// callers pass a file with no directory component (e.g. "SKILL.md" rather
+// than "bundle/SKILL.md"). filepath.Dir returns ".", which propagates to
+// both root and dirName. This matches the pre-strict-path behavior and is
+// kept visible here so any future change to the strict-path check has to
+// consider this case explicitly.
+func TestDeriveBundleRoot_BareFilenameNoDirectory(t *testing.T) {
+	root, dirName, err := DeriveBundleRoot([]string{"SKILL.md"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if root != "." {
+		t.Errorf("root = %q, want %q", root, ".")
+	}
+	if dirName != "." {
+		t.Errorf("dirName = %q, want %q", dirName, ".")
+	}
+}
+
 func TestDeriveBundleRoot_EmptyPaths(t *testing.T) {
 	_, _, err := DeriveBundleRoot(nil)
 	if err == nil {
