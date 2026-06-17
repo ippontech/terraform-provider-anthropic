@@ -28,17 +28,26 @@ terraform {
   }
 }
 
+locals {
+  # Explicit patterns avoid sweeping the Terraform config itself into the
+  # bundle. The provider preserves each file's path relative to the bundle
+  # root, so SKILL.md can reference files in subdirectories at runtime.
+  bundle_files = [
+    for f in setunion(
+      fileset(path.module, "SKILL.md"),
+      fileset(path.module, "references/**"),
+    ) : "${path.module}/${f}"
+  ]
+}
+
 resource "anthropic_skill" "example" {
-  files         = [for f in fileset(path.module, "**") : "${path.module}/${f}"]
+  files         = local.bundle_files
   force_destroy = true
 }
 
 resource "anthropic_skill_version" "example" {
   skill_id = anthropic_skill.example.id
-  # fileset() picks up SKILL.md and any nested files (e.g. references/*.md).
-  # The provider preserves each file's path relative to the bundle root so
-  # SKILL.md can reference files in subdirectories at runtime.
-  files = [for f in fileset(path.module, "**") : "${path.module}/${f}"]
+  files    = local.bundle_files
 }
 
 output "skill_version_id" {
