@@ -1,3 +1,9 @@
+## [1.25.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.0...v1.25.1) (2026-06-18)
+
+### 🐛 Bug Fixes
+
+* **skills:** preserve nested subdirectories in bundle uploads ([#136](https://github.com/ippontech/terraform-provider-anthropic/issues/136)) ([38b4a8f](https://github.com/ippontech/terraform-provider-anthropic/commit/38b4a8f2754d94b79d3b452a018cbfc2b0978c63))
+
 ## [1.25.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.24.0...v1.25.0) (2026-05-27)
 
 ### ✨ Features
