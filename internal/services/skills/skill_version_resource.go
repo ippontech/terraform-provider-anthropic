@@ -8,16 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -73,6 +74,7 @@ func (r *SkillVersionResource) Schema(_ context.Context, _ resource.SchemaReques
 				ElementType:         types.StringType,
 				MarkdownDescription: "Local file paths to upload for the skill version. Must include a `SKILL.md` file at the root of the directory.",
 				PlanModifiers:       []planmodifier.List{listplanmodifier.RequiresReplace()},
+				Validators:          []validator.List{listvalidator.SizeAtLeast(1)},
 			},
 			"version": schema.StringAttribute{
 				Computed:            true,
@@ -137,9 +139,13 @@ func (r *SkillVersionResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	dirName := filepath.Base(filepath.Dir(filePaths[0]))
+	bundleRoot, dirName, err := provretry.DeriveBundleRoot(filePaths)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid skill bundle", err.Error())
+		return
+	}
 
-	skillVersion, err := provretry.MultipartUpload(ctx, filePaths, dirName, func(files []io.Reader) (*anthropic.BetaSkillVersionNewResponse, error) {
+	skillVersion, err := provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, func(files []io.Reader) (*anthropic.BetaSkillVersionNewResponse, error) {
 		return r.client.Beta.Skills.Versions.New(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionNewParams{
 			Files: files,
 		})

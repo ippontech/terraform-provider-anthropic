@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -147,12 +146,13 @@ func (r *SkillResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	// The API requires every file to live inside a named top-level directory
-	// (e.g. "myskill/SKILL.md"). We derive that directory name from the common
-	// parent of the provided paths.
-	dirName := filepath.Base(filepath.Dir(filePaths[0]))
+	bundleRoot, dirName, err := provretry.DeriveBundleRoot(filePaths)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid skill bundle", err.Error())
+		return
+	}
 
-	skill, err := provretry.MultipartUpload(ctx, filePaths, dirName, func(files []io.Reader) (*anthropic.BetaSkillNewResponse, error) {
+	skill, err := provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, func(files []io.Reader) (*anthropic.BetaSkillNewResponse, error) {
 		params := anthropic.BetaSkillNewParams{Files: files}
 		if !data.DisplayTitle.IsNull() && !data.DisplayTitle.IsUnknown() {
 			params.DisplayTitle = anthropic.String(data.DisplayTitle.ValueString())

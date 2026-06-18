@@ -30,7 +30,15 @@ terraform {
 
 resource "anthropic_skill" "example" {
   display_title = "Example Skill"
-  files         = ["${path.module}/SKILL.md"]
+  # Explicit patterns avoid sweeping the Terraform config itself into the
+  # bundle. The provider preserves each file's path relative to the bundle
+  # root, so SKILL.md can reference files in subdirectories at runtime.
+  files = [
+    for f in setunion(
+      fileset(path.module, "SKILL.md"),
+      fileset(path.module, "references/**"),
+    ) : "${path.module}/${f}"
+  ]
   force_destroy = true
 }
 
