@@ -97,6 +97,27 @@ Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set (some 
 3. Run pre-commit hooks `pre-commit run -a`.
 4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG).
 
+## Commit Signing
+
+**Signed commits are not required to contribute.** You can open and get a Pull Request merged without configuring any GPG/SSH signing key. We deliberately keep the contribution bar low: trust in this project comes from code review and CI, not from commit-level signatures.
+
+What *is* signed is what ships:
+
+- **Release artifacts are GPG-signed.** Every release publishes a `*_SHA256SUMS` checksum file signed with the maintainers' GPG key (see `.goreleaser.yml` and `.github/workflows/goreleaser-release.yml`). This is the signature the Terraform Registry and `terraform init` verify when users install the provider — it is the signature that matters for supply-chain integrity.
+- **Merges land as GitHub-signed commits.** Because we squash-merge, the commit that lands on `main` is created and signed by GitHub's web-flow key.
+
+### Optional: sign your own commits
+
+Maintainers and contributors are welcome (but not obliged) to sign their commits. SSH signing is the simplest setup:
+
+```bash
+git config gpg.format ssh
+git config user.signingkey ~/.ssh/id_ed25519.pub
+git config commit.gpgsign true
+```
+
+For GitHub to show **Verified**, add the key's public half under your account *Settings → SSH and GPG keys* (key type **Signing Key**), and make sure your commit author email is a verified email on that account.
+
 ## Checklists for contributions
 
 - [ ] Add [semantics prefix](#semantic-pull-requests) to your commits
