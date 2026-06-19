@@ -1,3 +1,9 @@
+## [1.25.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.1...v1.25.2) (2026-06-19)
+
+### 📚 Documentation
+
+* clarify commit signing is optional for contributors ([#138](https://github.com/ippontech/terraform-provider-anthropic/issues/138)) ([28f82ca](https://github.com/ippontech/terraform-provider-anthropic/commit/28f82caeaafc6ac44aaeec1b7f7ed73d9a36f837))
+
 ## [1.25.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.0...v1.25.1) (2026-06-18)
 
 ### 🐛 Bug Fixes
