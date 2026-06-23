@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework) v1.13.0.
+This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework) v1.19.0.
 
 - `main.go` — entry point; serves the provider at `registry.terraform.io/ippontech/anthropic`
 - `internal/provider/provider.go` — provider registration; `Resources()` and `DataSources()` methods list all implemented resources and data sources
@@ -33,6 +33,7 @@ internal/
     organizations/ — organization data source (anthropic_organization; admin API GET /v1/organizations/me, no input)
     skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
     workspaces/    — anthropic_workspace + anthropic_workspace_member resources + workspace/workspaces/workspace_member/workspace_members data sources (shared test helpers in workspacetest.go)
+    vaults/        — anthropic_vault + anthropic_vault_credential resources (Beta managed-agents API; vault_credential uses write-only secret attributes)
 ```
 
 ### Implemented resources and data sources
@@ -46,6 +47,8 @@ internal/
 - `anthropic_workspace` (`internal/services/workspaces/workspace_resource.go`) — manages workspaces (admin API)
 - `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_resource.go`) — assigns a user to a workspace with a given role (admin API); composite ID `<workspace_id>:<user_id>`; `workspace_billing` role rejected at plan time
 - `anthropic_api_key` (`internal/services/apikeys/api_key_resource.go`) — import-only resource; manages lifecycle of existing API keys (rename, deactivate) via Admin API; Create always errors with a message to use `terraform import`; Delete sets `status: inactive`
+- `anthropic_vault` (`internal/services/vaults/vault_resource.go`) — manages vaults (Beta managed-agents API; `client.Beta.Vaults`); named container for MCP credentials; supports `archive_on_destroy`
+- `anthropic_vault_credential` (`internal/services/vaults/vault_credential_resource.go`) — manages a credential inside a vault (`client.Beta.Vaults.Credentials`); three auth `type`s (`static_bearer`, `mcp_oauth` with nested `refresh`/`token_endpoint_auth`, `environment_variable` with `networking`); secret material is **write-only** (see write-only convention below); structural fields (`vault_id`, `type`, `mcp_server_url`, `secret_name`) are RequiresReplace; supports `archive_on_destroy`
 
 **Data sources:**
 - `anthropic_model` (`internal/services/models/model_data_source.go`) — fetches a single model by ID
@@ -246,6 +249,20 @@ if raw := t.SomeField.RawJSON(); raw != "" && raw != "null" {
 Import: `"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"` (dependency: `terraform-plugin-framework-jsontypes v0.2.0`).
 
 Do **not** use `json.Marshal(sdkStruct)` to populate a string attribute in state — SDK upgrades can change struct field order or add new fields, silently breaking plan/apply consistency.
+
+### Write-only secret attributes
+
+For sensitive input that must never be persisted to state (tokens, secrets), use **write-only attributes** (plugin-framework v1.11+, requires Terraform ≥1.11). Reference implementation: `internal/services/vaults/vault_credential_resource.go`.
+
+```go
+// Schema: WriteOnly cannot be Computed; must be Optional (or Required).
+"token": schema.StringAttribute{Optional: true, WriteOnly: true, Sensitive: true, ...},
+```
+
+Rules:
+- Read write-only values from `req.Config` (NOT `req.Plan`/`req.State`) in Create/Update — e.g. `req.Config.GetAttribute(ctx, path.Root("token"), &v)`; nested via `path.Root("refresh").AtName("refresh_token")`.
+- Never write them into state and never populate them from API responses in the Read/map step.
+- Terraform can't diff a write-only value, so pair it with a normal `_wo_version` Int64 attribute (stored in state, e.g. `token_wo_version`). Bumping the version is what triggers an Update that re-reads and re-pushes the secret from config (rotation).
 
 ### Version constraints
 
