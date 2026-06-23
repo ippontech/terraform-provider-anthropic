@@ -1,3 +1,9 @@
+## [1.25.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.3...v1.25.4) (2026-06-23)
+
+### 🐛 Bug Fixes
+
+* **agents:** use jsontypes.Normalized for custom_tool input_schema ([#150](https://github.com/ippontech/terraform-provider-anthropic/issues/150)) ([9f7ef38](https://github.com/ippontech/terraform-provider-anthropic/commit/9f7ef384924b7cd339d26ecffd826c1fb62d3408)), closes [#133](https://github.com/ippontech/terraform-provider-anthropic/issues/133)
+
 ## [1.25.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.2...v1.25.3) (2026-06-23)
 
 ### 🐛 Bug Fixes
