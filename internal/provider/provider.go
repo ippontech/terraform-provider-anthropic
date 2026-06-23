@@ -116,6 +116,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		skills.NewSkillResource,
 		skills.NewSkillVersionResource,
 		vaults.NewVaultResource,
+		vaults.NewVaultCredentialResource,
 		workspaces.NewWorkspaceResource,
 		workspaces.NewWorkspaceMemberResource,
 	}
