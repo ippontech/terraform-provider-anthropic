@@ -1,3 +1,9 @@
+## [1.25.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.2...v1.25.3) (2026-06-23)
+
+### 🐛 Bug Fixes
+
+* **deps:** update go dependencies ([#133](https://github.com/ippontech/terraform-provider-anthropic/issues/133)) ([4fe8c7e](https://github.com/ippontech/terraform-provider-anthropic/commit/4fe8c7e2313c4c94a22e216292d7fbfe496f1c13))
+
 ## [1.25.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.1...v1.25.2) (2026-06-19)
 
 ### 📚 Documentation
