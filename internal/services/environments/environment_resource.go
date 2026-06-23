@@ -341,7 +341,7 @@ func (r *EnvironmentResource) Create(ctx context.Context, req resource.CreateReq
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		params.Config = configParams
+		params.Config = anthropic.BetaEnvironmentNewParamsConfigUnion{OfCloud: &configParams}
 	}
 
 	env, err := r.client.Beta.Environments.New(ctx, params)
@@ -424,7 +424,7 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		params.Config = configParams
+		params.Config = anthropic.BetaEnvironmentUpdateParamsConfigUnion{OfCloud: &configParams}
 	}
 
 	env, err := r.client.Beta.Environments.Update(ctx, state.ID.ValueString(), params)
