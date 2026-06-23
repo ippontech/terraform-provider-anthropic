@@ -1,0 +1,29 @@
+---
+page_title: "anthropic_vault Resource - anthropic"
+subcategory: "Vaults"
+description: |-
+  Creates and manages a vault that securely stores MCP credentials for use by Anthropic Managed Agent sessions (beta).
+---
+
+# anthropic_vault (Resource)
+
+Creates and manages a vault that securely stores MCP credentials for use by Anthropic Managed Agent sessions (beta). Vaults are billed only at runtime when credentials are accessed during an agent session.
+
+> **API**: `POST/GET/POST/DELETE /v1/vaults[/{id}]` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free for management, billable at runtime when credentials are used.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/vault/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing vault using its ID:
+
+```shell
+terraform import anthropic_vault.example <vault_id>
+```
