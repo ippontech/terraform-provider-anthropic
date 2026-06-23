@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_organization Data Source - anthropic"
+subcategory: "Organization"
+description: |-
+  Fetches the organization associated with the authenticated Admin API key via the Admin API.
+---
+
+# anthropic_organization (Data Source)
+
+Fetches the organization associated with the authenticated Admin API key. It takes no input and always returns the organization tied to the configured admin key. Useful for validating the admin key before an apply, exposing the organization ID to other modules, and audit trails.
+
+> **API**: `GET /v1/organizations/me` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/organization/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
