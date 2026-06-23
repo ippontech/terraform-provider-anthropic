@@ -5,11 +5,11 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -221,6 +221,7 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 						},
 						"input_schema": schema.StringAttribute{
 							Computed:            true,
+							CustomType:          jsontypes.NormalizedType{},
 							MarkdownDescription: "JSON Schema for the tool's input parameters.",
 						},
 					},
@@ -416,12 +417,9 @@ func mapAgentResponseToDataSource(agent *anthropic.BetaManagedAgentsAgent, data 
 	if len(apiCustomTools) > 0 {
 		toolObjs := make([]attr.Value, len(apiCustomTools))
 		for i, t := range apiCustomTools {
-			inputSchema := types.StringNull()
-			if t.InputSchema.Properties != nil || len(t.InputSchema.Required) > 0 || t.InputSchema.Type != "" {
-				schemaJSON, err := json.Marshal(t.InputSchema)
-				if err == nil {
-					inputSchema = types.StringValue(string(schemaJSON))
-				}
+			inputSchema := jsontypes.NewNormalizedNull()
+			if raw := t.InputSchema.RawJSON(); raw != "" && raw != "null" {
+				inputSchema = jsontypes.NewNormalizedValue(raw)
 			}
 			obj, d := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
 				"name":         types.StringValue(t.Name),

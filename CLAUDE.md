@@ -213,6 +213,35 @@ func testAccCheck<Resource>ArchivedAndCleanup(s *terraform.State) error {
 }
 ```
 
+### jsontypes.Normalized for JSON string attributes
+
+Any schema attribute that stores a JSON string and is `Optional` (not `Computed`) must use `jsontypes.NormalizedType{}` as its `CustomType` and `jsontypes.Normalized` as the Go model field type. Plain `types.String` causes "Provider produced inconsistent result after apply" whenever the API response JSON differs from the user's `jsonencode()` output in key order or whitespace.
+
+```go
+// Schema attribute
+"input_schema": schema.StringAttribute{
+    Optional:   true,
+    CustomType: jsontypes.NormalizedType{},
+    ...
+},
+
+// Model field
+InputSchema jsontypes.Normalized `tfsdk:"input_schema"`
+
+// Attr-type map
+"input_schema": jsontypes.NormalizedType{}
+
+// State mapping — use RawJSON() to avoid double-marshal artifacts
+inputSchema := jsontypes.NewNormalizedNull()
+if raw := t.SomeField.RawJSON(); raw != "" && raw != "null" {
+    inputSchema = jsontypes.NewNormalizedValue(raw)
+}
+```
+
+Import: `"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"` (dependency: `terraform-plugin-framework-jsontypes v0.2.0`).
+
+Do **not** use `json.Marshal(sdkStruct)` to populate a string attribute in state — SDK upgrades can change struct field order or add new fields, silently breaking plan/apply consistency.
+
 ### Version constraints
 
 Provider is on major version 1.x. Always use `~> 1.0` in example configs — never `~> 0.1.0`.

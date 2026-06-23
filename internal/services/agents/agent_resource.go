@@ -11,6 +11,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -92,9 +93,9 @@ type agentMCPToolsetModel struct {
 }
 
 type agentCustomToolModel struct {
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	InputSchema types.String `tfsdk:"input_schema"`
+	Name        types.String         `tfsdk:"name"`
+	Description types.String         `tfsdk:"description"`
+	InputSchema jsontypes.Normalized `tfsdk:"input_schema"`
 }
 
 // --- Attribute type maps for nested objects ---
@@ -138,7 +139,7 @@ var agentMCPToolsetAttrTypes = map[string]attr.Type{
 var agentCustomToolAttrTypes = map[string]attr.Type{
 	"name":         types.StringType,
 	"description":  types.StringType,
-	"input_schema": types.StringType,
+	"input_schema": jsontypes.NormalizedType{},
 }
 
 // --- Permission policy validators (reused across tool schemas) ---
@@ -326,6 +327,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						},
 						"input_schema": schema.StringAttribute{
 							Optional:            true,
+							CustomType:          jsontypes.NormalizedType{},
 							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.",
 						},
 					},
@@ -925,12 +927,9 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	if len(apiCustomTools) > 0 {
 		toolObjs := make([]attr.Value, len(apiCustomTools))
 		for i, t := range apiCustomTools {
-			inputSchema := types.StringNull()
-			if t.InputSchema.Properties != nil || len(t.InputSchema.Required) > 0 || t.InputSchema.Type != "" {
-				schemaJSON, err := json.Marshal(t.InputSchema)
-				if err == nil {
-					inputSchema = types.StringValue(string(schemaJSON))
-				}
+			inputSchema := jsontypes.NewNormalizedNull()
+			if raw := t.InputSchema.RawJSON(); raw != "" && raw != "null" {
+				inputSchema = jsontypes.NewNormalizedValue(raw)
 			}
 			obj, d := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
 				"name":         types.StringValue(t.Name),
