@@ -18,6 +18,7 @@ This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](h
 ```
 internal/
   admin/           — HTTP client for Admin API (/v1/organizations/*)
+  admintest/       — shared unit-test helper: admintest.NewClient(t, srv) builds an admin.Client pointed at an httptest server
   acctest/         — shared acceptance test helpers (ProtoV6ProviderFactories, PreCheck)
   errors/          — nil-client guards for Configure methods (import alias: providerrors)
   providerdata/    — ProviderData struct passed to every resource/data source Configure call
@@ -29,6 +30,7 @@ internal/
     environments/  — anthropic_environment resource + environment/environments data sources
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
+    organizations/ — organization data source (anthropic_organization; admin API GET /v1/organizations/me, no input)
     skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
     workspaces/    — anthropic_workspace + anthropic_workspace_member resources + workspace/workspaces/workspace_member/workspace_members data sources (shared test helpers in workspacetest.go)
 ```
@@ -48,6 +50,7 @@ internal/
 **Data sources:**
 - `anthropic_model` (`internal/services/models/model_data_source.go`) — fetches a single model by ID
 - `anthropic_models` (`internal/services/models/models_data_source.go`) — lists all available models
+- `anthropic_organization` (`internal/services/organizations/organization_data_source.go`) — fetches the organization tied to the admin key (admin API `GET /v1/organizations/me`); takes no input; exposes `id`, `name`, `type`
 - `anthropic_count_tokens` (`internal/services/messages/count_tokens_data_source.go`) — counts tokens for a given prompt
 - `anthropic_agent` (`internal/services/agents/agent_data_source.go`) — fetches a single agent
 - `anthropic_agents` (`internal/services/agents/agents_data_source.go`) — lists all agents
@@ -82,7 +85,8 @@ internal/
 - **File naming:** use `<name>_test.go` (e.g. `workspace_rate_limits_data_source_test.go`). Do **not** suffix unit-test files with `_unit_test.go` — acceptance test functions are already disambiguated by the `TestAccXxx` prefix, and unit tests use `TestXxx`.
 - **Important:** acceptance tests (those importing `internal/acctest`) MUST live in `package <service>_test` (external) to avoid an import cycle (`acctest` → `provider` → `<service>`). When unit tests need internal types AND a service has acceptance tests, split them into two files: one in `package <service>` (internal, unit) and one in `package <service>_test` (external, acceptance).
 - `internal/acctest/acctest.go` exports `ProtoV6ProviderFactories`, `PreCheck` (standard API key), and `PreCheckAdmin` (admin API key) used by all acceptance tests
-- `internal/services/workspaces/workspacetest.go` defines shared unit-test helpers (`newTestAdminClient`, `workspaceFixture`, `pageData`, `fetchAllPages`); reuse them in any new workspaces unit test instead of constructing `admin.Client` inline or duplicating pagination loops
+- For an admin `*admin.Client` pointed at an `httptest` server in any package's unit tests, use `admintest.NewClient(t, srv)` (`internal/admintest`) — do not construct `admin.Client` inline or duplicate the helper per package
+- `internal/services/workspaces/workspacetest.go` defines workspaces-specific shared helpers (`workspaceFixture`, `pageData`, `fetchAllPages`, plus a thin `newTestAdminClient` that delegates to `admintest.NewClient`); reuse them in any new workspaces unit test instead of duplicating pagination loops
 - **Admin API acceptance tests for read-only data sources:** target the existing `terraform-tests` workspace (`wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm`) and gate on `acctest.PreCheckAdmin`. Resource tests (create/update/delete) on the Admin API remain blocked by [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) because we do not yet have a dedicated test organization, so do not create new resources via Admin API in tests.
 - Admin API **Terraform native tests**: use `command = plan` (not the default `apply`) until a test org is available; this validates schema without making live API calls. Read-only data source native tests may run against the `terraform-tests` workspace ID above.
 - Unit tests: no special env vars needed
