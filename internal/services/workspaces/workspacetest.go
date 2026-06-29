@@ -9,16 +9,13 @@ import (
 	"testing"
 
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 )
 
 // newTestAdminClient returns an admin.Client pointed at srv instead of the real API.
 func newTestAdminClient(t *testing.T, srv *httptest.Server) *admin.Client {
 	t.Helper()
-	return &admin.Client{
-		ApiKey:     "test-key",
-		BaseURL:    srv.URL,
-		HTTPClient: srv.Client(),
-	}
+	return admintest.NewClient(t, srv)
 }
 
 // workspaceFixture returns a JSON workspace API response for use in tests.
