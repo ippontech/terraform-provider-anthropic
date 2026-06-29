@@ -8,8 +8,6 @@ variables {
 }
 
 run "workspace_rate_limits_data_source_lists_overrides" {
-  parallel = true
-
   module {
     source = "./examples/data-sources/workspace_rate_limits"
   }
