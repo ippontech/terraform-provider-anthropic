@@ -1,3 +1,9 @@
+## [1.26.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.4...v1.26.0) (2026-06-29)
+
+### ✨ Features
+
+* **organizations:** add anthropic_organization data source ([#152](https://github.com/ippontech/terraform-provider-anthropic/issues/152)) ([344b62e](https://github.com/ippontech/terraform-provider-anthropic/commit/344b62e104506bde0a5d5cddfb9866031f283933))
+
 ## [1.25.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.3...v1.25.4) (2026-06-23)
 
 ### 🐛 Bug Fixes
