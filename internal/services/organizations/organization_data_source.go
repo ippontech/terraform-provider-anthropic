@@ -101,11 +101,16 @@ func (d *OrganizationDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 		return
 	}
 
-	data := OrganizationDataSourceModel{
+	data := mapOrganizationToState(org)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// mapOrganizationToState copies the API response fields into the Terraform state model.
+func mapOrganizationToState(org organizationAPIResponse) OrganizationDataSourceModel {
+	return OrganizationDataSourceModel{
 		ID:   types.StringValue(org.ID),
 		Name: types.StringValue(org.Name),
 		Type: types.StringValue(org.Type),
 	}
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
