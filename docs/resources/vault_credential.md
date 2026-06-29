@@ -173,14 +173,14 @@ Optional:
 
 Required:
 
-- `client_id` (String) OAuth client ID.
+- `client_id` (String) OAuth client ID. Immutable: changing it forces replacement of the credential (the update API cannot modify it).
 - `refresh_token` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) OAuth refresh token. Write-only; never stored in state.
-- `token_endpoint` (String) Token endpoint URL used to refresh the access token.
+- `token_endpoint` (String) Token endpoint URL used to refresh the access token. Immutable: changing it forces replacement of the credential (the update API cannot modify it).
 - `token_endpoint_auth` (Attributes) Token endpoint authentication method. (see [below for nested schema](#nestedatt--refresh--token_endpoint_auth))
 
 Optional:
 
-- `resource` (String) OAuth resource indicator.
+- `resource` (String) OAuth resource indicator. Immutable: changing it forces replacement of the credential (the update API cannot modify it).
 - `scope` (String) OAuth scope for the refresh request.
 
 <a id="nestedatt--refresh--token_endpoint_auth"></a>

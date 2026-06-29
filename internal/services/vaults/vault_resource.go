@@ -5,6 +5,7 @@ package vaults
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -179,6 +180,13 @@ func (r *VaultResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	vault, err := r.client.Beta.Vaults.Get(ctx, data.ID.ValueString(), anthropic.BetaVaultGetParams{})
 	if err != nil {
+		// The vault was deleted out-of-band: drop it from state so the next plan
+		// recreates it instead of erroring forever.
+		var apierr *anthropic.Error
+		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read vault: %s", err))
 		return
 	}
@@ -215,13 +223,16 @@ func (r *VaultResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		DisplayName: param.NewOpt(data.DisplayName.ValueString()),
 	}
 
-	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
+	// metadata uses PATCH semantics (omitted keys preserved, null deletes a key).
+	// Build a patch that upserts planned keys and explicitly nulls keys removed
+	// since the prior state, so a cleared/removed key actually converges.
+	metaPatch, d := buildMetadataPatch(ctx, data.Metadata, state.Metadata)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(metaPatch) > 0 {
+		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
 	vault, err := r.client.Beta.Vaults.Update(ctx, state.ID.ValueString(), params)
@@ -301,4 +312,41 @@ func mapVaultResponseToState(vault *anthropic.BetaManagedAgentsVault, data *Vaul
 	}
 
 	return diags
+}
+
+// buildMetadataPatch computes a PATCH body for the metadata field shared by
+// vaults and vault credentials. The API preserves omitted keys and deletes keys
+// whose value is null, so to converge declarative config with server state the
+// patch upserts every planned key and explicitly sets keys removed since the
+// prior state to null. Returns a map[string]any (values are string for upserts,
+// nil for deletes) suitable for SetExtraFields; an empty map means "no change".
+func buildMetadataPatch(ctx context.Context, plan, state types.Map) (map[string]any, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	patch := map[string]any{}
+
+	if !plan.IsNull() && !plan.IsUnknown() {
+		var pm map[string]string
+		diags.Append(plan.ElementsAs(ctx, &pm, false)...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		for k, v := range pm {
+			patch[k] = v
+		}
+	}
+
+	if !state.IsNull() && !state.IsUnknown() {
+		var sm map[string]string
+		diags.Append(state.ElementsAs(ctx, &sm, false)...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		for k := range sm {
+			if _, ok := patch[k]; !ok {
+				patch[k] = nil
+			}
+		}
+	}
+
+	return patch, diags
 }

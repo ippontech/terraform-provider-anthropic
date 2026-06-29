@@ -418,6 +418,150 @@ func TestTokenWoVersion_IsDifferentTrigger(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ConfigValidator — token_wo_version requirement & Unknown handling
+// ---------------------------------------------------------------------------
+
+// hasErrorDetail reports whether any error diagnostic has the given detail.
+func hasErrorDetail(diags diag.Diagnostics, detail string) bool {
+	for _, d := range diags {
+		if d.Severity() == diag.SeverityError && d.Detail() == detail {
+			return true
+		}
+	}
+	return false
+}
+
+const tokenWoVersionRequiredDetail = "\"token_wo_version\" must be set when a write-only secret (token / access_token / secret_value) is configured. " +
+	"It is the rotation trigger: Terraform cannot diff write-only values, so increment it to re-push the secret. Set it to 1 on initial creation."
+
+func validateConfig(t *testing.T, vals map[string]tftypes.Value) resource.ValidateConfigResponse {
+	t.Helper()
+	schemaObjType := schemaType(t).(tftypes.Object)
+	rawVal := tftypes.NewValue(schemaObjType, vals)
+	cfg := makeTfsdkConfig(t, rawVal)
+	v := &vaultCredentialConfigValidator{}
+	var resp resource.ValidateConfigResponse
+	v.ValidateResource(context.Background(), resource.ValidateConfigRequest{Config: cfg}, &resp)
+	return resp
+}
+
+func TestVaultCredentialConfigValidator_RequiresTokenWoVersion(t *testing.T) {
+	vals := nullValuesForSchema(t)
+	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
+	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
+	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
+	// token_wo_version left null → must be flagged.
+
+	resp := validateConfig(t, vals)
+	if !hasErrorDetail(resp.Diagnostics, tokenWoVersionRequiredDetail) {
+		t.Errorf("expected token_wo_version required error; got: %v", resp.Diagnostics)
+	}
+}
+
+func TestVaultCredentialConfigValidator_TokenWoVersionSet(t *testing.T) {
+	vals := nullValuesForSchema(t)
+	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
+	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
+	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
+	vals["token_wo_version"] = tftypes.NewValue(tftypes.Number, 1)
+
+	resp := validateConfig(t, vals)
+	if hasErrorDetail(resp.Diagnostics, tokenWoVersionRequiredDetail) {
+		t.Errorf("did not expect token_wo_version error when set; got: %v", resp.Diagnostics)
+	}
+}
+
+// An unknown required attribute (e.g. var/output not yet resolved) must not be
+// reported as missing — it may resolve to a value at apply time.
+func TestVaultCredentialConfigValidator_UnknownRequiredNotMissing(t *testing.T) {
+	vals := nullValuesForSchema(t)
+	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
+	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
+	vals["token_wo_version"] = tftypes.NewValue(tftypes.Number, 1)
+
+	resp := validateConfig(t, vals)
+	if hasErrorDetail(resp.Diagnostics, "\"mcp_server_url\" is required when type is \"static_bearer\".") {
+		t.Errorf("unknown mcp_server_url must not be flagged as missing; got: %v", resp.Diagnostics)
+	}
+}
+
+// An unknown attribute that is forbidden for the type must not be reported as a
+// conflict — it was never definitively set.
+func TestVaultCredentialConfigValidator_UnknownConflictingNotFlagged(t *testing.T) {
+	vals := nullValuesForSchema(t)
+	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
+	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
+	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
+	vals["token_wo_version"] = tftypes.NewValue(tftypes.Number, 1)
+	vals["secret_name"] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+
+	resp := validateConfig(t, vals)
+	if hasErrorDetail(resp.Diagnostics, "\"secret_name\" must not be set when type is \"static_bearer\".") {
+		t.Errorf("unknown secret_name must not be flagged as conflicting; got: %v", resp.Diagnostics)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildMetadataPatch tests
+// ---------------------------------------------------------------------------
+
+func mapValue(t *testing.T, m map[string]string) types.Map {
+	t.Helper()
+	elems := make(map[string]attr.Value, len(m))
+	for k, v := range m {
+		elems[k] = types.StringValue(v)
+	}
+	mv, diags := types.MapValue(types.StringType, elems)
+	if diags.HasError() {
+		t.Fatalf("MapValue: %v", diags)
+	}
+	return mv
+}
+
+func TestBuildMetadataPatch(t *testing.T) {
+	ctx := context.Background()
+	nullMap := types.MapNull(types.StringType)
+
+	t.Run("upsert and delete removed key", func(t *testing.T) {
+		plan := mapValue(t, map[string]string{"a": "1", "c": "3"})
+		state := mapValue(t, map[string]string{"a": "1", "b": "2"})
+		patch, diags := buildMetadataPatch(ctx, plan, state)
+		if diags.HasError() {
+			t.Fatalf("buildMetadataPatch: %v", diags)
+		}
+		if patch["a"] != "1" || patch["c"] != "3" {
+			t.Errorf("expected upserts a=1,c=3; got %#v", patch)
+		}
+		v, ok := patch["b"]
+		if !ok || v != nil {
+			t.Errorf("expected removed key b to be nil; got %#v (present=%v)", v, ok)
+		}
+	})
+
+	t.Run("clear all when plan null", func(t *testing.T) {
+		state := mapValue(t, map[string]string{"a": "1", "b": "2"})
+		patch, diags := buildMetadataPatch(ctx, nullMap, state)
+		if diags.HasError() {
+			t.Fatalf("buildMetadataPatch: %v", diags)
+		}
+		if len(patch) != 2 || patch["a"] != nil || patch["b"] != nil {
+			t.Errorf("expected all keys nulled; got %#v", patch)
+		}
+	})
+
+	t.Run("no change when both null", func(t *testing.T) {
+		patch, diags := buildMetadataPatch(ctx, nullMap, nullMap)
+		if diags.HasError() {
+			t.Fatalf("buildMetadataPatch: %v", diags)
+		}
+		if len(patch) != 0 {
+			t.Errorf("expected empty patch; got %#v", patch)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // buildTokenEndpointAuthUnion tests (Create path)
 // ---------------------------------------------------------------------------
 

@@ -5,6 +5,7 @@ package vaults
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -215,7 +216,8 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 				Attributes: map[string]schema.Attribute{
 					"client_id": schema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "OAuth client ID.",
+						MarkdownDescription: "OAuth client ID. Immutable: changing it forces replacement of the credential (the update API cannot modify it).",
+						PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 					},
 					"refresh_token": schema.StringAttribute{
 						Required:            true,
@@ -225,11 +227,13 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 					},
 					"token_endpoint": schema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Token endpoint URL used to refresh the access token.",
+						MarkdownDescription: "Token endpoint URL used to refresh the access token. Immutable: changing it forces replacement of the credential (the update API cannot modify it).",
+						PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 					},
 					"resource": schema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "OAuth resource indicator.",
+						MarkdownDescription: "OAuth resource indicator. Immutable: changing it forces replacement of the credential (the update API cannot modify it).",
+						PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 					},
 					"scope": schema.StringAttribute{
 						Optional:            true,
@@ -358,107 +362,116 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 	}
 	authType := data.Type.ValueString()
 
+	// isSet reports whether a write-only/optional attribute is definitively
+	// provided in config. An Unknown value (e.g. an unresolved var/output ref)
+	// is treated as neither set nor missing, so it never trips a required- or
+	// conflicting-attribute check.
+	isSet := func(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
+	// isMissing reports whether a required attribute is definitively absent.
+	// Unknown is not missing — it may resolve to a value at apply time.
+	isMissing := func(v attr.Value) bool { return v.IsNull() && !v.IsUnknown() }
+
 	switch authType {
 	case "static_bearer":
 		// Require token + mcp_server_url; forbid oauth/env-var attrs
-		if data.Token.IsNull() || data.Token.IsUnknown() {
+		if isMissing(data.Token) {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("token"),
 				"Missing required attribute",
 				"\"token\" is required when type is \"static_bearer\".",
 			)
 		}
-		if data.MCPServerURL.IsNull() || data.MCPServerURL.IsUnknown() {
+		if isMissing(data.MCPServerURL) {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("mcp_server_url"),
 				"Missing required attribute",
 				"\"mcp_server_url\" is required when type is \"static_bearer\".",
 			)
 		}
-		if !data.AccessToken.IsNull() {
+		if isSet(data.AccessToken) {
 			resp.Diagnostics.AddAttributeError(path.Root("access_token"), "Conflicting attribute", "\"access_token\" must not be set when type is \"static_bearer\".")
 		}
-		if !data.ExpiresAt.IsNull() {
+		if isSet(data.ExpiresAt) {
 			resp.Diagnostics.AddAttributeError(path.Root("expires_at"), "Conflicting attribute", "\"expires_at\" must not be set when type is \"static_bearer\".")
 		}
-		if !data.Refresh.IsNull() {
+		if isSet(data.Refresh) {
 			resp.Diagnostics.AddAttributeError(path.Root("refresh"), "Conflicting attribute", "\"refresh\" must not be set when type is \"static_bearer\".")
 		}
-		if !data.SecretName.IsNull() {
+		if isSet(data.SecretName) {
 			resp.Diagnostics.AddAttributeError(path.Root("secret_name"), "Conflicting attribute", "\"secret_name\" must not be set when type is \"static_bearer\".")
 		}
-		if !data.SecretValue.IsNull() {
+		if isSet(data.SecretValue) {
 			resp.Diagnostics.AddAttributeError(path.Root("secret_value"), "Conflicting attribute", "\"secret_value\" must not be set when type is \"static_bearer\".")
 		}
-		if !data.Networking.IsNull() {
+		if isSet(data.Networking) {
 			resp.Diagnostics.AddAttributeError(path.Root("networking"), "Conflicting attribute", "\"networking\" must not be set when type is \"static_bearer\".")
 		}
 
 	case "mcp_oauth":
 		// Require access_token + mcp_server_url; forbid static_bearer/env-var attrs
-		if data.AccessToken.IsNull() || data.AccessToken.IsUnknown() {
+		if isMissing(data.AccessToken) {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("access_token"),
 				"Missing required attribute",
 				"\"access_token\" is required when type is \"mcp_oauth\".",
 			)
 		}
-		if data.MCPServerURL.IsNull() || data.MCPServerURL.IsUnknown() {
+		if isMissing(data.MCPServerURL) {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("mcp_server_url"),
 				"Missing required attribute",
 				"\"mcp_server_url\" is required when type is \"mcp_oauth\".",
 			)
 		}
-		if !data.Token.IsNull() {
+		if isSet(data.Token) {
 			resp.Diagnostics.AddAttributeError(path.Root("token"), "Conflicting attribute", "\"token\" must not be set when type is \"mcp_oauth\".")
 		}
-		if !data.SecretName.IsNull() {
+		if isSet(data.SecretName) {
 			resp.Diagnostics.AddAttributeError(path.Root("secret_name"), "Conflicting attribute", "\"secret_name\" must not be set when type is \"mcp_oauth\".")
 		}
-		if !data.SecretValue.IsNull() {
+		if isSet(data.SecretValue) {
 			resp.Diagnostics.AddAttributeError(path.Root("secret_value"), "Conflicting attribute", "\"secret_value\" must not be set when type is \"mcp_oauth\".")
 		}
-		if !data.Networking.IsNull() {
+		if isSet(data.Networking) {
 			resp.Diagnostics.AddAttributeError(path.Root("networking"), "Conflicting attribute", "\"networking\" must not be set when type is \"mcp_oauth\".")
 		}
 
 	case "environment_variable":
 		// Require secret_name + secret_value + networking; forbid mcp_server_url/oauth/bearer attrs
-		if data.SecretName.IsNull() || data.SecretName.IsUnknown() {
+		if isMissing(data.SecretName) {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("secret_name"),
 				"Missing required attribute",
 				"\"secret_name\" is required when type is \"environment_variable\".",
 			)
 		}
-		if data.SecretValue.IsNull() || data.SecretValue.IsUnknown() {
+		if isMissing(data.SecretValue) {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("secret_value"),
 				"Missing required attribute",
 				"\"secret_value\" is required when type is \"environment_variable\".",
 			)
 		}
-		if data.Networking.IsNull() || data.Networking.IsUnknown() {
+		if isMissing(data.Networking) {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("networking"),
 				"Missing required attribute",
 				"\"networking\" is required when type is \"environment_variable\".",
 			)
 		}
-		if !data.MCPServerURL.IsNull() {
+		if isSet(data.MCPServerURL) {
 			resp.Diagnostics.AddAttributeError(path.Root("mcp_server_url"), "Conflicting attribute", "\"mcp_server_url\" must not be set when type is \"environment_variable\".")
 		}
-		if !data.Token.IsNull() {
+		if isSet(data.Token) {
 			resp.Diagnostics.AddAttributeError(path.Root("token"), "Conflicting attribute", "\"token\" must not be set when type is \"environment_variable\".")
 		}
-		if !data.AccessToken.IsNull() {
+		if isSet(data.AccessToken) {
 			resp.Diagnostics.AddAttributeError(path.Root("access_token"), "Conflicting attribute", "\"access_token\" must not be set when type is \"environment_variable\".")
 		}
-		if !data.ExpiresAt.IsNull() {
+		if isSet(data.ExpiresAt) {
 			resp.Diagnostics.AddAttributeError(path.Root("expires_at"), "Conflicting attribute", "\"expires_at\" must not be set when type is \"environment_variable\".")
 		}
-		if !data.Refresh.IsNull() {
+		if isSet(data.Refresh) {
 			resp.Diagnostics.AddAttributeError(path.Root("refresh"), "Conflicting attribute", "\"refresh\" must not be set when type is \"environment_variable\".")
 		}
 
@@ -477,6 +490,20 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 				}
 			}
 		}
+	}
+
+	// A write-only secret cannot be diffed by Terraform, so rotation relies on
+	// token_wo_version: bumping it is what triggers the secret to be re-pushed
+	// on the next apply. Require it whenever a secret is configured, otherwise
+	// changing the secret in config would be a silent no-op.
+	secretConfigured := isSet(data.Token) || isSet(data.AccessToken) || isSet(data.SecretValue)
+	if secretConfigured && isMissing(data.TokenWoVersion) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("token_wo_version"),
+			"Missing required attribute",
+			"\"token_wo_version\" must be set when a write-only secret (token / access_token / secret_value) is configured. "+
+				"It is the rotation trigger: Terraform cannot diff write-only values, so increment it to re-push the secret. Set it to 1 on initial creation.",
+		)
 	}
 }
 
@@ -563,6 +590,13 @@ func (r *VaultCredentialResource) Read(ctx context.Context, req resource.ReadReq
 		VaultID: data.VaultID.ValueString(),
 	})
 	if err != nil {
+		// The credential (or its parent vault) was deleted out-of-band: drop it
+		// from state so the next plan recreates it instead of erroring forever.
+		var apierr *anthropic.Error
+		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read vault credential: %s", err))
 		return
 	}
@@ -599,23 +633,44 @@ func (r *VaultCredentialResource) Update(ctx context.Context, req resource.Updat
 		VaultID: plan.VaultID.ValueString(),
 	}
 
-	if !plan.DisplayName.IsNull() && !plan.DisplayName.IsUnknown() {
+	// display_name is mutable and nullable: send the desired value, or an
+	// explicit null to clear it (omitting it would leave the old value in place).
+	if plan.DisplayName.IsUnknown() {
+		// Unknown should not occur for a non-computed optional attribute; leave omitted.
+	} else if plan.DisplayName.IsNull() {
+		params.DisplayName = param.Null[string]()
+	} else {
 		params.DisplayName = param.NewOpt(plan.DisplayName.ValueString())
 	}
 
-	if !plan.Metadata.IsNull() && !plan.Metadata.IsUnknown() {
-		var meta map[string]string
-		resp.Diagnostics.Append(plan.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
+	// metadata uses PATCH semantics (omitted keys preserved, null deletes a key).
+	// Build a patch that upserts planned keys and explicitly nulls keys removed
+	// since the prior state, so a cleared/removed key actually converges.
+	metaPatch, d := buildMetadataPatch(ctx, plan.Metadata, state.Metadata)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(metaPatch) > 0 {
+		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
-	// Re-push auth when token_wo_version changed (secret rotation), or
-	// when networking changed for environment_variable (no replace since networking is mutable).
-	needsAuthUpdate := !plan.TokenWoVersion.Equal(state.TokenWoVersion) ||
-		(plan.Type.ValueString() == "environment_variable" && !plan.Networking.Equal(state.Networking))
+	// Re-push auth on any change to a mutable auth field. token_wo_version covers
+	// write-only secret rotation (token / access_token / refresh_token / client_secret /
+	// secret_value, which Terraform cannot diff). The remaining mutable, non-secret
+	// auth fields are networking (environment_variable) and expires_at / refresh
+	// (mcp_oauth); immutable auth fields are RequiresReplace and never reach Update.
+	needsAuthUpdate := !plan.TokenWoVersion.Equal(state.TokenWoVersion)
+	switch plan.Type.ValueString() {
+	case "environment_variable":
+		if !plan.Networking.Equal(state.Networking) {
+			needsAuthUpdate = true
+		}
+	case "mcp_oauth":
+		if !plan.ExpiresAt.Equal(state.ExpiresAt) || !plan.Refresh.Equal(state.Refresh) {
+			needsAuthUpdate = true
+		}
+	}
 
 	if needsAuthUpdate {
 		authUpdate, d := buildUpdateAuthUnion(ctx, req.Config, &plan)
