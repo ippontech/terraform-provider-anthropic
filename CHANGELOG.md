@@ -1,3 +1,9 @@
+## [1.27.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.26.0...v1.27.0) (2026-06-29)
+
+### ✨ Features
+
+* add anthropic_vault and anthropic_vault_credential resources ([#151](https://github.com/ippontech/terraform-provider-anthropic/issues/151)) ([2091374](https://github.com/ippontech/terraform-provider-anthropic/commit/209137405c7e598f49d72be704dc306d12ff5b3b)), closes [#88](https://github.com/ippontech/terraform-provider-anthropic/issues/88) [#89](https://github.com/ippontech/terraform-provider-anthropic/issues/89) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58)
+
 ## [1.26.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.25.4...v1.26.0) (2026-06-29)
 
 ### ✨ Features
