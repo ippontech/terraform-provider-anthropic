@@ -42,7 +42,9 @@ data "anthropic_organization_member" "example" {
 }
 
 output "member_email" {
-  value = data.anthropic_organization_member.example.email
+  # Marked sensitive so the address is redacted in plan/apply/test output (e.g. CI logs).
+  value     = data.anthropic_organization_member.example.email
+  sensitive = true
 }
 
 output "member_role" {

@@ -16,7 +16,9 @@ output "member_count" {
 }
 
 output "member_emails" {
-  value = [for m in data.anthropic_organization_members.all.members : m.email]
+  # Marked sensitive so addresses are redacted in plan/apply/test output (e.g. CI logs).
+  value     = [for m in data.anthropic_organization_members.all.members : m.email]
+  sensitive = true
 }
 
 # Filter by email to resolve a single user.
