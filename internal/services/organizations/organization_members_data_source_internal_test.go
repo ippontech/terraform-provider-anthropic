@@ -110,20 +110,30 @@ func TestOrganizationMembersDataSource_pagination(t *testing.T) {
 	}
 }
 
-func TestOrganizationMembersDataSource_emailFilterPassedAsQueryParam(t *testing.T) {
-	var capturedQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedQuery = r.URL.Query()
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, makeOrganizationMembersPage(nil, false, ""))
-	}))
-	defer srv.Close()
+func TestOrganizationMembersDataSource_buildQuery(t *testing.T) {
+	t.Run("email and cursor set", func(t *testing.T) {
+		q := buildOrganizationMembersQuery("user_01A", "jane@example.com")
+		if got := q.Get("limit"); got != "1000" {
+			t.Errorf("limit = %q, want 1000", got)
+		}
+		if got := q.Get("after_id"); got != "user_01A" {
+			t.Errorf("after_id = %q, want user_01A", got)
+		}
+		if got := q.Get("email"); got != "jane@example.com" {
+			t.Errorf("email = %q, want jane@example.com", got)
+		}
+	})
 
-	client := admintest.NewClient(t, srv)
-	_, _ = client.DoRequest(context.Background(), "GET",
-		"/v1/organizations/users?limit=1000&email=jane%40example.com", nil)
-
-	if capturedQuery.Get("email") != "jane@example.com" {
-		t.Errorf("email param = %q, want %q", capturedQuery.Get("email"), "jane@example.com")
-	}
+	t.Run("no email, no cursor", func(t *testing.T) {
+		q := buildOrganizationMembersQuery("", "")
+		if got := q.Get("limit"); got != "1000" {
+			t.Errorf("limit = %q, want 1000", got)
+		}
+		if _, ok := q["after_id"]; ok {
+			t.Errorf("after_id should be omitted when empty, got %q", q.Get("after_id"))
+		}
+		if _, ok := q["email"]; ok {
+			t.Errorf("email should be omitted when empty, got %q", q.Get("email"))
+		}
+	})
 }

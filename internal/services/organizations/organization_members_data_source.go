@@ -122,6 +122,21 @@ func (d *OrganizationMembersDataSource) Configure(_ context.Context, req datasou
 	d.client = pd.AdminClient
 }
 
+// buildOrganizationMembersQuery builds the query parameters for one page of the
+// list-users request: the fixed page limit, an optional pagination cursor, and
+// an optional email filter. afterID and email are omitted when empty.
+func buildOrganizationMembersQuery(afterID, email string) url.Values {
+	params := url.Values{}
+	params.Set("limit", "1000")
+	if afterID != "" {
+		params.Set("after_id", afterID)
+	}
+	if email != "" {
+		params.Set("email", email)
+	}
+	return params
+}
+
 func (d *OrganizationMembersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data OrganizationMembersDataSourceModel
 
@@ -130,20 +145,16 @@ func (d *OrganizationMembersDataSource) Read(ctx context.Context, req datasource
 		return
 	}
 
+	email := ""
+	if !data.Email.IsNull() && !data.Email.IsUnknown() {
+		email = data.Email.ValueString()
+	}
+
 	var allMembers []organizationMemberAPIResponse
 	afterID := ""
 
 	for {
-		params := url.Values{}
-		params.Set("limit", "1000")
-		if afterID != "" {
-			params.Set("after_id", afterID)
-		}
-		if !data.Email.IsNull() && !data.Email.IsUnknown() {
-			params.Set("email", data.Email.ValueString())
-		}
-
-		apiPath := "/v1/organizations/users?" + params.Encode()
+		apiPath := "/v1/organizations/users?" + buildOrganizationMembersQuery(afterID, email).Encode()
 
 		respBytes, err := d.client.DoRequest(ctx, "GET", apiPath, nil)
 		if err != nil {
