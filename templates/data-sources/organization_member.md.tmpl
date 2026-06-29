@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_organization_member Data Source - anthropic"
+subcategory: "Organization"
+description: |-
+  Fetches a single member (User) of the organization by user ID via the Admin API.
+---
+
+# anthropic_organization_member (Data Source)
+
+Fetches a single member (User) of the organization by user ID. Useful for resolving a user's email, name, or organization role from their ID.
+
+> **API**: `GET /v1/organizations/users/{user_id}` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/organization_member/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
