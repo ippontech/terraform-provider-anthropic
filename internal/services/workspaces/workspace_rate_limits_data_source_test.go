@@ -10,11 +10,6 @@ import (
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
-// terraformTestsWorkspaceID is the ID of the "terraform-tests" workspace.
-// Read-only Admin API data source acceptance tests target it because we do
-// not yet have a dedicated test organization for create/update/delete flows.
-const terraformTestsWorkspaceID = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
-
 func TestAccWorkspaceRateLimitsDataSource(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheckAdmin(t) },
@@ -24,7 +19,7 @@ func TestAccWorkspaceRateLimitsDataSource(t *testing.T) {
 				Config: testAccWorkspaceRateLimitsDataSourceConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.anthropic_workspace_rate_limits.test", "rate_limits.#"),
-					resource.TestCheckResourceAttr("data.anthropic_workspace_rate_limits.test", "workspace_id", terraformTestsWorkspaceID),
+					resource.TestCheckResourceAttr("data.anthropic_workspace_rate_limits.test", "workspace_id", acctest.TerraformTestsWorkspaceID),
 				),
 			},
 		},
@@ -49,13 +44,13 @@ func TestAccWorkspaceRateLimitsDataSource_groupTypeFilter(t *testing.T) {
 
 const testAccWorkspaceRateLimitsDataSourceConfig = `
 data "anthropic_workspace_rate_limits" "test" {
-  workspace_id = "` + terraformTestsWorkspaceID + `"
+  workspace_id = "` + acctest.TerraformTestsWorkspaceID + `"
 }
 `
 
 const testAccWorkspaceRateLimitsDataSourceConfigGroupType = `
 data "anthropic_workspace_rate_limits" "test" {
-  workspace_id = "` + terraformTestsWorkspaceID + `"
+  workspace_id = "` + acctest.TerraformTestsWorkspaceID + `"
   group_type   = "model_group"
 }
 `
