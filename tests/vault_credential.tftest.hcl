@@ -2,12 +2,12 @@ test {
   parallel = true
 }
 
-# command = apply: credentials are stored as provided and are not validated until
-# session runtime, so applying with placeholder secret material and unreachable
-# MCP server URLs creates the records without error and exercises the full
-# create/read path across all three auth types. The run is torn down afterwards.
+# Applies for real (apply is the default command): credentials are stored as
+# provided and are not validated until session runtime, so placeholder secret
+# material and unreachable MCP server URLs create the records without error and
+# exercise the full create/read path across all three auth types. Torn down
+# afterwards.
 run "vault_credential_apply" {
-  command = apply
   module { source = "./examples/resources/vault_credential" }
 
   assert {
