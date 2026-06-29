@@ -1080,7 +1080,30 @@ func buildNetworkingUnion(ctx context.Context, networkingObj types.Object) (anth
 			return anthropic.BetaManagedAgentsCredentialNetworkingParamsUnion{}, diags
 		}
 	}
-	return anthropic.BetaManagedAgentsCredentialNetworkingParamsOfLimited(hosts), diags
+	// NOTE: the SDK's BetaManagedAgentsCredentialNetworkingParamsOfLimited helper
+	// does not set the "type" discriminator, so the API rejects the request with
+	// "networking.type: Field required". Construct the variant explicitly instead.
+	return anthropic.BetaManagedAgentsCredentialNetworkingParamsUnion{
+		OfLimited: &anthropic.BetaManagedAgentsLimitedCredentialNetworkingParams{
+			Type:         "limited",
+			AllowedHosts: hosts,
+		},
+	}, diags
+}
+
+// mcpServerURLForState returns the user-provided URL when it is equivalent to
+// the API value modulo a trailing slash. The API normalizes a bare host by
+// appending "/" (e.g. "https://mcp.example.com" -> "https://mcp.example.com/").
+// Since mcp_server_url is RequiresReplace (not Computed), blindly storing the
+// API value would cause "Provider produced inconsistent result after apply" and
+// a perpetual replace diff. Preserving the equivalent user value avoids both; a
+// genuinely different URL still falls through to the API value.
+func mcpServerURLForState(planned types.String, apiVal string) types.String {
+	if !planned.IsNull() && !planned.IsUnknown() &&
+		strings.TrimRight(planned.ValueString(), "/") == strings.TrimRight(apiVal, "/") {
+		return planned
+	}
+	return types.StringValue(apiVal)
 }
 
 // mapCredentialResponseToState maps non-secret API response fields to Terraform state.
@@ -1133,7 +1156,7 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 	switch authType {
 	case "static_bearer":
 		// MCPServerURL is a flat field on the union struct.
-		data.MCPServerURL = types.StringValue(cred.Auth.MCPServerURL)
+		data.MCPServerURL = mcpServerURLForState(data.MCPServerURL, cred.Auth.MCPServerURL)
 		// Clear oauth/env-var fields
 		data.ExpiresAt = types.StringNull()
 		data.Refresh = types.ObjectNull(credentialRefreshAttrTypes)
@@ -1141,7 +1164,7 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 		data.Networking = types.ObjectNull(credentialNetworkingAttrTypes)
 
 	case "mcp_oauth":
-		data.MCPServerURL = types.StringValue(cred.Auth.MCPServerURL)
+		data.MCPServerURL = mcpServerURLForState(data.MCPServerURL, cred.Auth.MCPServerURL)
 		if cred.Auth.ExpiresAt.IsZero() {
 			data.ExpiresAt = types.StringNull()
 		} else {
