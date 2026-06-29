@@ -2,6 +2,7 @@ test {
   parallel = true
 }
 
+# The dedicated "terraform-tests" workspace (Go tests use acctest.TerraformTestsWorkspaceID).
 variables {
   workspace_id = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
 }

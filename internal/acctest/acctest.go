@@ -17,6 +17,14 @@ var ProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, erro
 	"anthropic": providerserver.NewProtocol6WithError(provider.New("test")()),
 }
 
+// TerraformTestsWorkspaceID is the ID of the dedicated "terraform-tests"
+// workspace used to isolate acceptance-test resources from production
+// workspaces. The standard ANTHROPIC_API_KEY used to run the tests is scoped to
+// this workspace, so standard-API resources created during tests (vaults,
+// agents, environments, skills, ...) land here automatically. Admin API data
+// source tests, which are organization-wide, target this workspace by ID.
+const TerraformTestsWorkspaceID = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
+
 func PreCheck(t *testing.T) {
 	t.Helper()
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v == "" {

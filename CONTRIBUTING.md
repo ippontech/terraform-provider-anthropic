@@ -58,6 +58,8 @@ export ANTHROPIC_ADMIN_API_KEY="sk-ant-admin-..."
 
 At least one key must be set. `ANTHROPIC_API_KEY` is needed for most resources and data sources. `ANTHROPIC_ADMIN_API_KEY` is needed for organization management resources (`anthropic_workspace`). Both can be set at the same time.
 
+> **Test isolation.** Acceptance and Terraform native tests create real resources. Use an `ANTHROPIC_API_KEY` scoped to a **dedicated, non-production workspace** so test resources never land in a production workspace. This project uses a workspace named `terraform-tests`: standard-API resources (vaults, agents, environments, skills, ...) are created there via the key's scope, and the Admin API read-only data source tests target the same workspace by its ID (exposed as `acctest.TerraformTestsWorkspaceID`).
+
 A `.env` file at the project root can hold machine-specific values. **Always source it before running any command:**
 
 ```bash
