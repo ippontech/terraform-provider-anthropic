@@ -263,6 +263,18 @@ Rules:
 - Read write-only values from `req.Config` (NOT `req.Plan`/`req.State`) in Create/Update — e.g. `req.Config.GetAttribute(ctx, path.Root("token"), &v)`; nested via `path.Root("refresh").AtName("refresh_token")`.
 - Never write them into state and never populate them from API responses in the Read/map step.
 - Terraform can't diff a write-only value, so pair it with a normal `_wo_version` Int64 attribute (stored in state, e.g. `token_wo_version`). Bumping the version is what triggers an Update that re-reads and re-pushes the secret from config (rotation).
+- Require the `_wo_version` attribute (via a `ConfigValidator`) whenever a write-only secret is configured. Otherwise, if it is left null, the Update never fires and changing the secret in config is a silent no-op. See `vaultCredentialConfigValidator`.
+- In Update, re-push the auth/secret payload on **any** mutable-field diff, not just a `_wo_version` bump — otherwise a change to a non-secret mutable field (e.g. `expires_at`) is dropped because the API response then overwrites the planned value, yielding "Provider produced inconsistent result after apply". Mark truly-immutable fields `RequiresReplace` so they never reach Update.
+
+### ConfigValidator Unknown handling
+
+In a `ConfigValidator`, treat Unknown values (unresolved `var`/output refs at plan time) as neither set nor missing, or otherwise-valid configs fail spuriously. Use helpers: `isMissing(v) = v.IsNull() && !v.IsUnknown()` for required checks, `isSet(v) = !v.IsNull() && !v.IsUnknown()` for conflicting-attribute checks. Reference: `vaultCredentialConfigValidator`.
+
+### Map attributes with PATCH semantics (metadata)
+
+The Anthropic API's `metadata` field uses PATCH semantics: omitted keys are preserved, a key set to `null` is deleted. A plain `if !plan.Metadata.IsNull() { params.Metadata = ... }` therefore **cannot clear** keys removed in config — the API keeps them and the response overwrites the planned value → "Provider produced inconsistent result after apply".
+
+Use `buildMetadataPatch(ctx, plan, state)` (in `internal/services/vaults/vault_resource.go`): it upserts planned keys and sets keys removed since prior state to `nil`, returning a `map[string]any` sent via `params.SetExtraFields(map[string]any{"metadata": patch})` (the typed `map[string]string` field can't carry per-key nulls). The same drift applies to nullable scalars like `display_name`: send `param.Null[string]()` to clear, not an omitted field.
 
 ### Version constraints
 
