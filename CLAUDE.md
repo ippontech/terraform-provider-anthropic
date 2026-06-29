@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework) v1.13.0.
+This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework) v1.19.0.
 
 - `main.go` — entry point; serves the provider at `registry.terraform.io/ippontech/anthropic`
 - `internal/provider/provider.go` — provider registration; `Resources()` and `DataSources()` methods list all implemented resources and data sources
@@ -33,6 +33,7 @@ internal/
     organizations/ — organization data source (anthropic_organization; admin API GET /v1/organizations/me, no input)
     skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
     workspaces/    — anthropic_workspace + anthropic_workspace_member resources + workspace/workspaces/workspace_member/workspace_members data sources (shared test helpers in workspacetest.go)
+    vaults/        — anthropic_vault + anthropic_vault_credential resources (Beta managed-agents API; vault_credential uses write-only secret attributes)
 ```
 
 ### Implemented resources and data sources
@@ -46,6 +47,8 @@ internal/
 - `anthropic_workspace` (`internal/services/workspaces/workspace_resource.go`) — manages workspaces (admin API)
 - `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_resource.go`) — assigns a user to a workspace with a given role (admin API); composite ID `<workspace_id>:<user_id>`; `workspace_billing` role rejected at plan time
 - `anthropic_api_key` (`internal/services/apikeys/api_key_resource.go`) — import-only resource; manages lifecycle of existing API keys (rename, deactivate) via Admin API; Create always errors with a message to use `terraform import`; Delete sets `status: inactive`
+- `anthropic_vault` (`internal/services/vaults/vault_resource.go`) — manages vaults (Beta managed-agents API; `client.Beta.Vaults`); named container for MCP credentials; supports `archive_on_destroy`
+- `anthropic_vault_credential` (`internal/services/vaults/vault_credential_resource.go`) — manages a credential inside a vault (`client.Beta.Vaults.Credentials`); three auth `type`s (`static_bearer`, `mcp_oauth` with nested `refresh`/`token_endpoint_auth`, `environment_variable` with `networking`); secret material is **write-only** (see write-only convention below); structural/immutable fields are RequiresReplace (`vault_id`, `type`, `mcp_server_url`, `secret_name`, and the `refresh` block's `client_id`/`token_endpoint`/`resource`/`token_endpoint_auth.type` — the update API cannot modify these, and its `token_endpoint_auth` union has no `none` variant); supports `archive_on_destroy`
 
 **Data sources:**
 - `anthropic_model` (`internal/services/models/model_data_source.go`) — fetches a single model by ID
@@ -90,6 +93,7 @@ internal/
 - `internal/services/workspaces/workspacetest.go` defines workspaces-specific shared helpers (`workspaceFixture`, `pageData`, `fetchAllPages`, plus a thin `newTestAdminClient` that delegates to `admintest.NewClient`); reuse them in any new workspaces unit test instead of duplicating pagination loops
 - **Admin API acceptance tests for read-only data sources:** target the `terraform-tests` workspace via `acctest.TerraformTestsWorkspaceID` and gate on `acctest.PreCheckAdmin`. These are **smoke** tests (the live workspace's data isn't deterministic, so assert attribute presence like `members.#`, not specific values); they **complement, not replace**, the httptest-based unit tests that deterministically cover pagination, query-param/filter construction, mapping edge cases, and 404 handling. Covered so far: `workspace`, `workspaces`, `workspace_members`, `workspace_rate_limits`, `organization`, `api_keys`. Resource tests (create/update/delete) on the Admin API remain blocked by [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) because we do not yet have a dedicated test organization, so do not create new resources via Admin API in tests.
 - Admin API **Terraform native tests**: use `command = plan` (not the default `apply`) until a test org is available; this validates schema without making live API calls. Read-only data source native tests may run against the `terraform-tests` workspace ID above.
+- **Standard-API resources support full CRUD acceptance tests.** The #58 blocker is Admin-API-only. Vaults and vault credentials use the standard `ANTHROPIC_API_KEY` (gate on `acctest.PreCheck`) and are workspace-scoped to that key's workspace — there is no `workspace_id` create param, so they land wherever the key is scoped (the test key is scoped to `terraform-tests`; see the test-workspace-isolation note above). Vaults are billed only at runtime, so create/destroy is free. **Vault credentials are not validated until session runtime**, so acceptance tests create them with placeholder secrets and unreachable `mcp_server_url`s; the full CRUD lifecycle runs without ever starting a session. Their native test (`tests/vault_credential.tftest.hcl`) therefore applies for real (the default command), unlike the Admin-API native tests that are pinned to `command = plan`. `archive_on_destroy` tests for a credential must set `archive_on_destroy = true` on the parent vault too (a hard-deleted vault cascade-deletes the credential, leaving nothing to assert on).
 - Unit tests: no special env vars needed
 - Acceptance tests: use `resource.Test(t, resource.TestCase{...})` with `TF_ACC=1`
 
@@ -246,6 +250,32 @@ if raw := t.SomeField.RawJSON(); raw != "" && raw != "null" {
 Import: `"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"` (dependency: `terraform-plugin-framework-jsontypes v0.2.0`).
 
 Do **not** use `json.Marshal(sdkStruct)` to populate a string attribute in state — SDK upgrades can change struct field order or add new fields, silently breaking plan/apply consistency.
+
+### Write-only secret attributes
+
+For sensitive input that must never be persisted to state (tokens, secrets), use **write-only attributes** (plugin-framework v1.11+, requires Terraform ≥1.11). Reference implementation: `internal/services/vaults/vault_credential_resource.go`.
+
+```go
+// Schema: WriteOnly cannot be Computed; must be Optional (or Required).
+"token": schema.StringAttribute{Optional: true, WriteOnly: true, Sensitive: true, ...},
+```
+
+Rules:
+- Read write-only values from `req.Config` (NOT `req.Plan`/`req.State`) in Create/Update — e.g. `req.Config.GetAttribute(ctx, path.Root("token"), &v)`; nested via `path.Root("refresh").AtName("refresh_token")`.
+- Never write them into state and never populate them from API responses in the Read/map step.
+- Terraform can't diff a write-only value, so pair it with a normal `_wo_version` Int64 attribute (stored in state, e.g. `token_wo_version`). Bumping the version is what triggers an Update that re-reads and re-pushes the secret from config (rotation).
+- Require the `_wo_version` attribute (via a `ConfigValidator`) whenever a write-only secret is configured. Otherwise, if it is left null, the Update never fires and changing the secret in config is a silent no-op. See `vaultCredentialConfigValidator`.
+- In Update, re-push the auth/secret payload on **any** mutable-field diff, not just a `_wo_version` bump — otherwise a change to a non-secret mutable field (e.g. `expires_at`) is dropped because the API response then overwrites the planned value, yielding "Provider produced inconsistent result after apply". Mark truly-immutable fields `RequiresReplace` so they never reach Update.
+
+### ConfigValidator Unknown handling
+
+In a `ConfigValidator`, treat Unknown values (unresolved `var`/output refs at plan time) as neither set nor missing, or otherwise-valid configs fail spuriously. Use helpers: `isMissing(v) = v.IsNull() && !v.IsUnknown()` for required checks, `isSet(v) = !v.IsNull() && !v.IsUnknown()` for conflicting-attribute checks. Reference: `vaultCredentialConfigValidator`.
+
+### Map attributes with PATCH semantics (metadata)
+
+The Anthropic API's `metadata` field uses PATCH semantics: omitted keys are preserved, a key set to `null` is deleted. A plain `if !plan.Metadata.IsNull() { params.Metadata = ... }` therefore **cannot clear** keys removed in config — the API keeps them and the response overwrites the planned value → "Provider produced inconsistent result after apply".
+
+Use `buildMetadataPatch(ctx, plan, state)` (in `internal/services/vaults/vault_resource.go`): it upserts planned keys and sets keys removed since prior state to `nil`, returning a `map[string]any` sent via `params.SetExtraFields(map[string]any{"metadata": patch})` (the typed `map[string]string` field can't carry per-key nulls). The same drift applies to nullable scalars like `display_name`: send `param.Null[string]()` to clear, not an omitted field.
 
 ### Version constraints
 

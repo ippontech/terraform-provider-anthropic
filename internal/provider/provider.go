@@ -23,6 +23,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/workspaces"
 )
 
@@ -114,6 +115,8 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		messages.NewMessageResource,
 		skills.NewSkillResource,
 		skills.NewSkillVersionResource,
+		vaults.NewVaultResource,
+		vaults.NewVaultCredentialResource,
 		workspaces.NewWorkspaceResource,
 		workspaces.NewWorkspaceMemberResource,
 	}
