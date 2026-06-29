@@ -2,5 +2,5 @@
 go = "1.26.4"
 golangci-lint = "2.12.2"
 goreleaser = "2.16.0"
-terraform = "1.15.5"
+terraform = "1.15.7"
 "github:boostsecurityio/poutine" = "1.1.6"
