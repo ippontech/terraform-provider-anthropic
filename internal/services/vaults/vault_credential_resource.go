@@ -245,8 +245,9 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 						Attributes: map[string]schema.Attribute{
 							"type": schema.StringAttribute{
 								Required:            true,
-								MarkdownDescription: "Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`.",
+								MarkdownDescription: "Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API cannot transition to or from `none`).",
 								Validators:          []validator.String{stringvalidator.OneOf("none", "client_secret_basic", "client_secret_post")},
+								PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 							},
 							"client_secret": schema.StringAttribute{
 								Optional:            true,
@@ -371,123 +372,78 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 	// Unknown is not missing — it may resolve to a value at apply time.
 	isMissing := func(v attr.Value) bool { return v.IsNull() && !v.IsUnknown() }
 
-	switch authType {
-	case "static_bearer":
-		// Require token + mcp_server_url; forbid oauth/env-var attrs
-		if isMissing(data.Token) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("token"),
-				"Missing required attribute",
-				"\"token\" is required when type is \"static_bearer\".",
-			)
-		}
-		if isMissing(data.MCPServerURL) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("mcp_server_url"),
-				"Missing required attribute",
-				"\"mcp_server_url\" is required when type is \"static_bearer\".",
-			)
-		}
-		if isSet(data.AccessToken) {
-			resp.Diagnostics.AddAttributeError(path.Root("access_token"), "Conflicting attribute", "\"access_token\" must not be set when type is \"static_bearer\".")
-		}
-		if isSet(data.ExpiresAt) {
-			resp.Diagnostics.AddAttributeError(path.Root("expires_at"), "Conflicting attribute", "\"expires_at\" must not be set when type is \"static_bearer\".")
-		}
-		if isSet(data.Refresh) {
-			resp.Diagnostics.AddAttributeError(path.Root("refresh"), "Conflicting attribute", "\"refresh\" must not be set when type is \"static_bearer\".")
-		}
-		if isSet(data.SecretName) {
-			resp.Diagnostics.AddAttributeError(path.Root("secret_name"), "Conflicting attribute", "\"secret_name\" must not be set when type is \"static_bearer\".")
-		}
-		if isSet(data.SecretValue) {
-			resp.Diagnostics.AddAttributeError(path.Root("secret_value"), "Conflicting attribute", "\"secret_value\" must not be set when type is \"static_bearer\".")
-		}
-		if isSet(data.Networking) {
-			resp.Diagnostics.AddAttributeError(path.Root("networking"), "Conflicting attribute", "\"networking\" must not be set when type is \"static_bearer\".")
-		}
+	// Per auth type: the attributes that are required, plus the additional ones
+	// that are merely allowed. Any type-specific attribute in neither set is
+	// forbidden for that type. Driving the checks from this table keeps the three
+	// cases in lockstep instead of ~20 hand-written conditionals.
+	type credentialFieldRules struct {
+		required []string
+		optional []string
+	}
+	rules := map[string]credentialFieldRules{
+		"static_bearer":        {required: []string{"token", "mcp_server_url"}},
+		"mcp_oauth":            {required: []string{"access_token", "mcp_server_url"}, optional: []string{"expires_at", "refresh"}},
+		"environment_variable": {required: []string{"secret_name", "secret_value", "networking"}},
+	}
+	// Stable order so emitted diagnostics are deterministic.
+	fieldOrder := []string{"token", "access_token", "expires_at", "refresh", "mcp_server_url", "secret_name", "secret_value", "networking"}
+	fieldValues := map[string]attr.Value{
+		"token":          data.Token,
+		"access_token":   data.AccessToken,
+		"expires_at":     data.ExpiresAt,
+		"refresh":        data.Refresh,
+		"mcp_server_url": data.MCPServerURL,
+		"secret_name":    data.SecretName,
+		"secret_value":   data.SecretValue,
+		"networking":     data.Networking,
+	}
 
-	case "mcp_oauth":
-		// Require access_token + mcp_server_url; forbid static_bearer/env-var attrs
-		if isMissing(data.AccessToken) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("access_token"),
-				"Missing required attribute",
-				"\"access_token\" is required when type is \"mcp_oauth\".",
-			)
-		}
-		if isMissing(data.MCPServerURL) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("mcp_server_url"),
-				"Missing required attribute",
-				"\"mcp_server_url\" is required when type is \"mcp_oauth\".",
-			)
-		}
-		if isSet(data.Token) {
-			resp.Diagnostics.AddAttributeError(path.Root("token"), "Conflicting attribute", "\"token\" must not be set when type is \"mcp_oauth\".")
-		}
-		if isSet(data.SecretName) {
-			resp.Diagnostics.AddAttributeError(path.Root("secret_name"), "Conflicting attribute", "\"secret_name\" must not be set when type is \"mcp_oauth\".")
-		}
-		if isSet(data.SecretValue) {
-			resp.Diagnostics.AddAttributeError(path.Root("secret_value"), "Conflicting attribute", "\"secret_value\" must not be set when type is \"mcp_oauth\".")
-		}
-		if isSet(data.Networking) {
-			resp.Diagnostics.AddAttributeError(path.Root("networking"), "Conflicting attribute", "\"networking\" must not be set when type is \"mcp_oauth\".")
-		}
+	rule, ok := rules[authType]
+	if !ok {
+		return // unknown type already rejected by the OneOf validator on `type`
+	}
+	required := make(map[string]bool, len(rule.required))
+	allowed := make(map[string]bool, len(rule.required)+len(rule.optional))
+	for _, n := range rule.required {
+		required[n] = true
+		allowed[n] = true
+	}
+	for _, n := range rule.optional {
+		allowed[n] = true
+	}
 
-	case "environment_variable":
-		// Require secret_name + secret_value + networking; forbid mcp_server_url/oauth/bearer attrs
-		if isMissing(data.SecretName) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("secret_name"),
-				"Missing required attribute",
-				"\"secret_name\" is required when type is \"environment_variable\".",
-			)
+	for _, name := range fieldOrder {
+		switch {
+		case required[name]:
+			if isMissing(fieldValues[name]) {
+				resp.Diagnostics.AddAttributeError(
+					path.Root(name),
+					"Missing required attribute",
+					fmt.Sprintf("%q is required when type is %q.", name, authType),
+				)
+			}
+		case !allowed[name]:
+			if isSet(fieldValues[name]) {
+				resp.Diagnostics.AddAttributeError(
+					path.Root(name),
+					"Conflicting attribute",
+					fmt.Sprintf("%q must not be set when type is %q.", name, authType),
+				)
+			}
 		}
-		if isMissing(data.SecretValue) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("secret_value"),
-				"Missing required attribute",
-				"\"secret_value\" is required when type is \"environment_variable\".",
-			)
-		}
-		if isMissing(data.Networking) {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("networking"),
-				"Missing required attribute",
-				"\"networking\" is required when type is \"environment_variable\".",
-			)
-		}
-		if isSet(data.MCPServerURL) {
-			resp.Diagnostics.AddAttributeError(path.Root("mcp_server_url"), "Conflicting attribute", "\"mcp_server_url\" must not be set when type is \"environment_variable\".")
-		}
-		if isSet(data.Token) {
-			resp.Diagnostics.AddAttributeError(path.Root("token"), "Conflicting attribute", "\"token\" must not be set when type is \"environment_variable\".")
-		}
-		if isSet(data.AccessToken) {
-			resp.Diagnostics.AddAttributeError(path.Root("access_token"), "Conflicting attribute", "\"access_token\" must not be set when type is \"environment_variable\".")
-		}
-		if isSet(data.ExpiresAt) {
-			resp.Diagnostics.AddAttributeError(path.Root("expires_at"), "Conflicting attribute", "\"expires_at\" must not be set when type is \"environment_variable\".")
-		}
-		if isSet(data.Refresh) {
-			resp.Diagnostics.AddAttributeError(path.Root("refresh"), "Conflicting attribute", "\"refresh\" must not be set when type is \"environment_variable\".")
-		}
+	}
 
-		// When networking.mode == "limited", require non-empty allowed_hosts
-		if !data.Networking.IsNull() && !data.Networking.IsUnknown() {
-			var net credentialNetworkingModel
-			diags := data.Networking.As(ctx, &net, basetypes.ObjectAsOptions{})
-			resp.Diagnostics.Append(diags...)
-			if !resp.Diagnostics.HasError() && net.Mode.ValueString() == "limited" {
-				if net.AllowedHosts.IsNull() || net.AllowedHosts.IsUnknown() || len(net.AllowedHosts.Elements()) == 0 {
-					resp.Diagnostics.AddAttributeError(
-						path.Root("networking").AtName("allowed_hosts"),
-						"Missing required attribute",
-						"\"networking.allowed_hosts\" must contain at least one entry when \"networking.mode\" is \"limited\".",
-					)
-				}
+	// environment_variable with networking.mode == "limited" requires non-empty allowed_hosts.
+	if authType == "environment_variable" && !data.Networking.IsNull() && !data.Networking.IsUnknown() {
+		var net credentialNetworkingModel
+		resp.Diagnostics.Append(data.Networking.As(ctx, &net, basetypes.ObjectAsOptions{})...)
+		if !resp.Diagnostics.HasError() && net.Mode.ValueString() == "limited" {
+			if net.AllowedHosts.IsNull() || net.AllowedHosts.IsUnknown() || len(net.AllowedHosts.Elements()) == 0 {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("networking").AtName("allowed_hosts"),
+					"Missing required attribute",
+					"\"networking.allowed_hosts\" must contain at least one entry when \"networking.mode\" is \"limited\".",
+				)
 			}
 		}
 	}
@@ -984,6 +940,11 @@ func buildRefreshUpdateParams(ctx context.Context, cfg tfsdk.Config, refreshObj 
 			return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParams{}, diags
 		}
 
+		// Only client_secret_basic/client_secret_post are re-sent on update (e.g. to
+		// rotate the client secret). "none" has no update-union variant in the SDK
+		// and is never transmitted here; a change of token_endpoint_auth.type is
+		// RequiresReplace, so a transition to/from "none" recreates the resource
+		// rather than reaching this update path.
 		teaType := teaModel.Type.ValueString()
 		if teaType == "client_secret_basic" || teaType == "client_secret_post" {
 			var cs types.String

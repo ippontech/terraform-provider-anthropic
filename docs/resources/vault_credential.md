@@ -189,7 +189,7 @@ Optional:
 
 Required:
 
-- `type` (String) Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`.
+- `type` (String) Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API cannot transition to or from `none`).
 
 Optional:
 
