@@ -12,6 +12,7 @@ Creates and manages a vault credential for Anthropic Managed Agents (beta). A cr
 > **API**: `POST/GET/PATCH/DELETE /v1/vaults/{vault_id}/credentials[/{id}]` (Managed Agents API).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
 > **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free for management, billable at runtime when the credential is used during an agent session.
 
 ## Security Note
 
