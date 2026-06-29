@@ -1,0 +1,23 @@
+---
+page_title: "anthropic_organization_members Data Source - anthropic"
+subcategory: "Organization"
+description: |-
+  Lists all members (Users) of the organization via the Admin API, with optional filtering by email.
+---
+
+# anthropic_organization_members (Data Source)
+
+Lists all members (Users) of the organization via the Admin API. All pages are fetched automatically.
+
+Results can optionally be filtered by `email`.
+
+> **API**: `GET /v1/organizations/users` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/organization_members/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
