@@ -1,3 +1,9 @@
+## [1.28.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.28.0...v1.28.1) (2026-07-20)
+
+### 🐛 Bug Fixes
+
+* **deps:** update module github.com/anthropics/anthropic-sdk-go to v1.58.0 ([#162](https://github.com/ippontech/terraform-provider-anthropic/issues/162)) ([79fe796](https://github.com/ippontech/terraform-provider-anthropic/commit/79fe7961759323125cabaa2cc0ec848f4084326e))
+
 ## [1.28.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.27.0...v1.28.0) (2026-06-29)
 
 ### ✨ Features
