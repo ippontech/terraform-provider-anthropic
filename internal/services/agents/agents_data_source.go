@@ -48,6 +48,7 @@ var agentListItemAttrTypes = map[string]attr.Type{
 	"id":            types.StringType,
 	"name":          types.StringType,
 	"model":         types.StringType,
+	"model_effort":  types.StringType,
 	"model_speed":   types.StringType,
 	"description":   types.StringType,
 	"system":        types.StringType,
@@ -57,6 +58,7 @@ var agentListItemAttrTypes = map[string]attr.Type{
 	"agent_toolset": types.ObjectType{AttrTypes: agentToolsetAttrTypes},
 	"mcp_toolsets":  types.ListType{ElemType: types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}},
 	"custom_tools":  types.ListType{ElemType: types.ObjectType{AttrTypes: agentCustomToolAttrTypes}},
+	"multiagent":    types.ObjectType{AttrTypes: agentMultiagentAttrTypes},
 	"version":       types.Int64Type,
 	"created_at":    types.StringType,
 	"updated_at":    types.StringType,
@@ -106,6 +108,10 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 						"model": schema.StringAttribute{
 							Computed:            true,
 							MarkdownDescription: "The model that powers the agent.",
+						},
+						"model_effort": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "How hard Claude works on each turn.",
 						},
 						"model_speed": schema.StringAttribute{
 							Computed:            true,
@@ -255,6 +261,36 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 								},
 							},
 						},
+						"multiagent": schema.SingleNestedAttribute{
+							Computed:            true,
+							MarkdownDescription: "Resolved coordinator configuration for multiagent delegation.",
+							Attributes: map[string]schema.Attribute{
+								"type": schema.StringAttribute{
+									Computed:            true,
+									MarkdownDescription: "Multiagent topology type.",
+								},
+								"agents": schema.ListNestedAttribute{
+									Computed:            true,
+									MarkdownDescription: "Resolved agents in the coordinator roster.",
+									NestedObject: schema.NestedAttributeObject{
+										Attributes: map[string]schema.Attribute{
+											"type": schema.StringAttribute{
+												Computed:            true,
+												MarkdownDescription: "Roster entry type.",
+											},
+											"id": schema.StringAttribute{
+												Computed:            true,
+												MarkdownDescription: "Resolved agent ID.",
+											},
+											"version": schema.Int64Attribute{
+												Computed:            true,
+												MarkdownDescription: "Resolved agent version.",
+											},
+										},
+									},
+								},
+							},
+						},
 						"version": schema.Int64Attribute{
 							Computed:            true,
 							MarkdownDescription: "The agent's current version.",
@@ -380,6 +416,11 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		modelSpeed = types.StringValue(string(agent.Model.Speed))
 	}
 
+	modelEffort := types.StringNull()
+	if agent.Model.Effort.Type != "" {
+		modelEffort = types.StringValue(agent.Model.Effort.Type)
+	}
+
 	description := types.StringNull()
 	if agent.Description != "" {
 		description = types.StringValue(agent.Description)
@@ -502,10 +543,18 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		archivedAt = types.StringValue(agent.ArchivedAt.Format(time.RFC3339))
 	}
 
+	multiagent := types.ObjectNull(agentMultiagentAttrTypes)
+	if agent.Multiagent.Type != "" {
+		var d diag.Diagnostics
+		multiagent, d = mapResolvedMultiagentToDataSource(&agent.Multiagent)
+		diags.Append(d...)
+	}
+
 	obj, d := types.ObjectValue(agentListItemAttrTypes, map[string]attr.Value{
 		"id":            types.StringValue(agent.ID),
 		"name":          types.StringValue(agent.Name),
 		"model":         types.StringValue(string(agent.Model.ID)),
+		"model_effort":  modelEffort,
 		"model_speed":   modelSpeed,
 		"description":   description,
 		"system":        system,
@@ -515,6 +564,7 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		"agent_toolset": agentToolsetObj,
 		"mcp_toolsets":  mcpToolsetsList,
 		"custom_tools":  customToolsList,
+		"multiagent":    multiagent,
 		"version":       types.Int64Value(agent.Version),
 		"created_at":    types.StringValue(agent.CreatedAt.Format(time.RFC3339)),
 		"updated_at":    types.StringValue(agent.UpdatedAt.Format(time.RFC3339)),

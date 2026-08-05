@@ -30,8 +30,30 @@ terraform {
 
 # Minimal agent
 resource "anthropic_agent" "simple" {
-  model = "claude-sonnet-4-6"
-  name  = "Simple Agent"
+  model        = "claude-sonnet-4-6"
+  model_effort = "high"
+  name         = "Simple Agent"
+}
+
+# Coordinator agent that can delegate to another managed agent
+resource "anthropic_agent" "coordinator" {
+  model        = "claude-sonnet-4-6"
+  model_effort = "high"
+  name         = "Support Coordinator"
+
+  multiagent = {
+    type = "coordinator"
+    agents = [
+      {
+        type = "self"
+      },
+      {
+        type    = "agent"
+        id      = anthropic_agent.assistant.id
+        version = anthropic_agent.assistant.version
+      }
+    ]
+  }
 }
 
 # Agent with system prompt and description
@@ -144,7 +166,9 @@ output "developer_agent_version" {
 - `mcp_servers` (Attributes List) MCP servers this agent connects to. Maximum 20. Names must be unique. (see [below for nested schema](#nestedatt--mcp_servers))
 - `mcp_toolsets` (Attributes List) Tool configurations for MCP servers. Each entry corresponds to a server defined in `mcp_servers`. (see [below for nested schema](#nestedatt--mcp_toolsets))
 - `metadata` (Map of String) Arbitrary key-value metadata. Maximum 16 pairs, keys up to 64 chars, values up to 512 chars.
+- `model_effort` (String) How hard Claude works on each turn. Supported levels are `low`, `medium`, `high`, `xhigh`, and `max`; model compatibility is validated by the API.
 - `model_speed` (String) Inference speed mode. `fast` provides faster output at premium pricing. Not all models support `fast`.
+- `multiagent` (Attributes) Coordinator configuration listing the agents this agent can delegate to. (see [below for nested schema](#nestedatt--multiagent))
 - `skills` (Attributes List) Skills available to the agent. Maximum 20. (see [below for nested schema](#nestedatt--skills))
 - `system` (String) System prompt for the agent. Up to 100,000 characters.
 
@@ -225,6 +249,28 @@ Optional:
 
 - `enabled` (Boolean) Whether this tool is enabled.
 - `permission_policy` (String) Permission policy override: `always_allow` or `always_ask`.
+
+
+
+<a id="nestedatt--multiagent"></a>
+### Nested Schema for `multiagent`
+
+Required:
+
+- `agents` (Attributes List) Agents the coordinator may delegate to. Use type `agent` with an `id`, or type `self` to allow copies of the coordinator. (see [below for nested schema](#nestedatt--multiagent--agents))
+- `type` (String) Multiagent topology type. Currently only `coordinator` is supported.
+
+<a id="nestedatt--multiagent--agents"></a>
+### Nested Schema for `multiagent.agents`
+
+Required:
+
+- `type` (String) Roster entry type: `agent` or `self`.
+
+Optional:
+
+- `id` (String) Agent ID. Required when `type` is `agent` and omitted when `type` is `self`.
+- `version` (Number) Specific agent version. When omitted, the API pins and returns the latest version.
 
 
 
