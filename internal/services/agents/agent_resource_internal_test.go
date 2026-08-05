@@ -11,6 +11,9 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
 
 // TestMapAgentResponseToState_customToolInputSchema is a regression test for the
@@ -86,5 +89,69 @@ func TestMapAgentResponseToState_customToolInputSchema(t *testing.T) {
 	}
 	if !equal {
 		t.Errorf("planned and applied input_schema should be semantically equal\nplanned: %s\napplied: %s", userInputSchema, got.ValueString())
+	}
+}
+
+func TestMapAgentResponseToState_effortAndMultiagentSelf(t *testing.T) {
+	t.Parallel()
+
+	agentJSON := `{
+		"id": "agent_coordinator",
+		"name": "coordinator",
+		"model": {"id": "claude-sonnet-4-6", "effort": {"type": "medium"}},
+		"multiagent": {
+			"type": "coordinator",
+			"agents": [{"type": "agent", "id": "agent_coordinator", "version": 3}]
+		},
+		"version": 3,
+		"created_at": "2026-01-01T00:00:00Z",
+		"updated_at": "2026-01-01T00:00:00Z",
+		"tools": []
+	}`
+
+	var agent anthropic.BetaManagedAgentsAgent
+	if err := json.Unmarshal([]byte(agentJSON), &agent); err != nil {
+		t.Fatalf("failed to unmarshal agent fixture: %s", err)
+	}
+
+	roster, diags := types.ListValue(
+		types.ObjectType{AttrTypes: agentMultiagentEntryAttrTypes},
+		[]attr.Value{types.ObjectValueMust(agentMultiagentEntryAttrTypes, map[string]attr.Value{
+			"type":    types.StringValue("self"),
+			"id":      types.StringNull(),
+			"version": types.Int64Null(),
+		})},
+	)
+	if diags.HasError() {
+		t.Fatalf("failed to build roster state: %+v", diags)
+	}
+
+	data := AgentResourceModel{
+		Multiagent: types.ObjectValueMust(agentMultiagentAttrTypes, map[string]attr.Value{
+			"type":   types.StringValue("coordinator"),
+			"agents": roster,
+		}),
+	}
+	if diags := mapAgentResponseToState(context.Background(), &agent, &data); diags.HasError() {
+		t.Fatalf("mapAgentResponseToState returned errors: %+v", diags)
+	}
+
+	if got := data.ModelEffort.ValueString(); got != "medium" {
+		t.Fatalf("expected model_effort medium, got %q", got)
+	}
+
+	var topology agentMultiagentModel
+	if diags := data.Multiagent.As(context.Background(), &topology, basetypes.ObjectAsOptions{}); diags.HasError() {
+		t.Fatalf("failed to read multiagent state: %+v", diags)
+	}
+	var entries []agentMultiagentEntryModel
+	if diags := topology.Agents.ElementsAs(context.Background(), &entries, false); diags.HasError() {
+		t.Fatalf("failed to read roster state: %+v", diags)
+	}
+	if len(entries) != 1 || entries[0].Type.ValueString() != "self" {
+		t.Fatalf("expected the configured self sentinel to be preserved, got %+v", entries)
+	}
+	if !entries[0].ID.IsNull() || !entries[0].Version.IsNull() {
+		t.Fatalf("self entry must not gain a resolved id or version: %+v", entries[0])
 	}
 }

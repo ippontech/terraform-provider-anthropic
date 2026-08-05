@@ -74,7 +74,9 @@ Read-Only:
 - `mcp_toolsets` (Attributes List) Tool configurations for MCP servers. (see [below for nested schema](#nestedatt--agents--mcp_toolsets))
 - `metadata` (Map of String) Arbitrary key-value metadata attached to the agent.
 - `model` (String) The model that powers the agent.
+- `model_effort` (String) How hard Claude works on each turn.
 - `model_speed` (String) Inference speed mode: `standard` or `fast`.
+- `multiagent` (Attributes) Resolved coordinator configuration for multiagent delegation. (see [below for nested schema](#nestedatt--agents--multiagent))
 - `name` (String) Human-readable name for the agent.
 - `skills` (Attributes List) Skills available to the agent. (see [below for nested schema](#nestedatt--agents--skills))
 - `system` (String) System prompt for the agent.
@@ -138,6 +140,25 @@ Read-Only:
 - `enabled` (Boolean) Whether this tool is enabled.
 - `name` (String) Name of the MCP tool.
 - `permission_policy` (String) Permission policy: `always_allow` or `always_ask`.
+
+
+
+<a id="nestedatt--agents--multiagent"></a>
+### Nested Schema for `agents.multiagent`
+
+Read-Only:
+
+- `agents` (Attributes List) Resolved agents in the coordinator roster. (see [below for nested schema](#nestedatt--agents--multiagent--agents))
+- `type` (String) Multiagent topology type.
+
+<a id="nestedatt--agents--multiagent--agents"></a>
+### Nested Schema for `agents.multiagent.agents`
+
+Read-Only:
+
+- `id` (String) Resolved agent ID.
+- `type` (String) Roster entry type.
+- `version` (Number) Resolved agent version.
 
 
 
