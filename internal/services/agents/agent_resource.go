@@ -7,11 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -169,6 +171,131 @@ var agentMultiagentAttrTypes = map[string]attr.Type{
 // --- Permission policy validators (reused across tool schemas) ---
 
 var permissionPolicyValidator = stringvalidator.OneOf("always_allow", "always_ask")
+
+// multiagentRosterEntryValidator enforces the discriminator contract for an
+// individual coordinator roster entry.
+type multiagentRosterEntryValidator struct{}
+
+func (multiagentRosterEntryValidator) Description(_ context.Context) string {
+	return "Validates fields for agent and self multiagent roster entries."
+}
+
+func (v multiagentRosterEntryValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (multiagentRosterEntryValidator) ValidateObject(
+	_ context.Context,
+	req validator.ObjectRequest,
+	resp *validator.ObjectResponse,
+) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+
+	attributes := req.ConfigValue.Attributes()
+	entryType := attributes["type"].(types.String)
+	id := attributes["id"].(types.String)
+	version := attributes["version"].(types.Int64)
+	if entryType.IsNull() || entryType.IsUnknown() {
+		return
+	}
+
+	switch entryType.ValueString() {
+	case "agent":
+		if id.IsNull() {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("id"),
+				"Missing agent ID",
+				`"id" is required when a multiagent roster entry has type "agent".`,
+			)
+		} else if !id.IsUnknown() && strings.TrimSpace(id.ValueString()) == "" {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("id"),
+				"Invalid agent ID",
+				`"id" must be non-empty when a multiagent roster entry has type "agent".`,
+			)
+		}
+	case "self":
+		if !id.IsNull() && !id.IsUnknown() {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("id"),
+				"Invalid self roster entry",
+				`"id" must not be set when a multiagent roster entry has type "self".`,
+			)
+		}
+		if !version.IsNull() && !version.IsUnknown() {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("version"),
+				"Invalid self roster entry",
+				`"version" must not be set when a multiagent roster entry has type "self".`,
+			)
+		}
+	}
+}
+
+// multiagentRosterValidator enforces constraints that span roster entries.
+type multiagentRosterValidator struct{}
+
+func (multiagentRosterValidator) Description(_ context.Context) string {
+	return "Validates uniqueness constraints across a multiagent roster."
+}
+
+func (v multiagentRosterValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (multiagentRosterValidator) ValidateList(
+	ctx context.Context,
+	req validator.ListRequest,
+	resp *validator.ListResponse,
+) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+
+	var entries []agentMultiagentEntryModel
+	resp.Diagnostics.Append(req.ConfigValue.ElementsAs(ctx, &entries, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	selfSeen := false
+	seenAgentIDs := make(map[string]struct{}, len(entries))
+	for i, entry := range entries {
+		if entry.Type.IsNull() || entry.Type.IsUnknown() {
+			continue
+		}
+
+		switch entry.Type.ValueString() {
+		case "self":
+			if selfSeen {
+				resp.Diagnostics.AddAttributeError(
+					req.Path.AtListIndex(i).AtName("type"),
+					"Duplicate self roster entry",
+					`A multiagent roster can contain at most one entry with type "self".`,
+				)
+			}
+			selfSeen = true
+		case "agent":
+			if entry.ID.IsNull() || entry.ID.IsUnknown() {
+				continue
+			}
+			id := strings.TrimSpace(entry.ID.ValueString())
+			if id == "" {
+				continue
+			}
+			if _, exists := seenAgentIDs[id]; exists {
+				resp.Diagnostics.AddAttributeError(
+					req.Path.AtListIndex(i).AtName("id"),
+					"Duplicate agent roster entry",
+					fmt.Sprintf("Agent %q appears more than once in the multiagent roster.", id),
+				)
+			}
+			seenAgentIDs[id] = struct{}{}
+		}
+	}
+}
 
 // --- Schema ---
 
@@ -375,8 +502,12 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					"agents": schema.ListNestedAttribute{
 						Required:            true,
 						MarkdownDescription: "Agents the coordinator may delegate to. Use type `agent` with an `id`, or type `self` to allow copies of the coordinator.",
-						Validators:          []validator.List{listvalidator.SizeBetween(1, 20)},
+						Validators: []validator.List{
+							listvalidator.SizeBetween(1, 20),
+							multiagentRosterValidator{},
+						},
 						NestedObject: schema.NestedAttributeObject{
+							Validators: []validator.Object{multiagentRosterEntryValidator{}},
 							Attributes: map[string]schema.Attribute{
 								"type": schema.StringAttribute{
 									Required:            true,
@@ -391,6 +522,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 									Optional:            true,
 									Computed:            true,
 									MarkdownDescription: "Specific agent version. When omitted, the API pins and returns the latest version.",
+									Validators:          []validator.Int64{int64validator.AtLeast(1)},
 								},
 							},
 						},
@@ -777,6 +909,10 @@ func buildMultiagentParams(ctx context.Context, multiagent types.Object, target 
 	if diags.HasError() {
 		return diags
 	}
+	diags.Append(validateResolvedMultiagentEntries(entries)...)
+	if diags.HasError() {
+		return diags
+	}
 
 	target.Type = anthropic.BetaManagedAgentsMultiagentParamsTypeCoordinator
 	target.Agents = make([]anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion, len(entries))
@@ -800,6 +936,87 @@ func buildMultiagentParams(ctx context.Context, multiagent types.Object, target 
 			target.Agents[i] = anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{
 				OfBetaManagedAgentsMultiagentSelfs: &self,
 			}
+		}
+	}
+
+	return diags
+}
+
+// validateResolvedMultiagentEntries repeats the schema invariants immediately
+// before the API request. Schema validation must defer unknown interpolations;
+// this catches invalid values after their dependencies resolve during apply.
+func validateResolvedMultiagentEntries(entries []agentMultiagentEntryModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	selfSeen := false
+	seenAgentIDs := make(map[string]struct{}, len(entries))
+
+	for i, entry := range entries {
+		entryPath := path.Root("multiagent").AtName("agents").AtListIndex(i)
+		if entry.Type.IsNull() || entry.Type.IsUnknown() {
+			diags.AddAttributeError(
+				entryPath.AtName("type"),
+				"Unknown multiagent roster entry type",
+				"The roster entry type must be known before the agent can be created or updated.",
+			)
+			continue
+		}
+
+		switch entry.Type.ValueString() {
+		case "agent":
+			if entry.ID.IsNull() || entry.ID.IsUnknown() || strings.TrimSpace(entry.ID.ValueString()) == "" {
+				diags.AddAttributeError(
+					entryPath.AtName("id"),
+					"Invalid agent ID",
+					`A non-empty "id" is required when a multiagent roster entry has type "agent".`,
+				)
+				continue
+			}
+
+			id := strings.TrimSpace(entry.ID.ValueString())
+			if _, exists := seenAgentIDs[id]; exists {
+				diags.AddAttributeError(
+					entryPath.AtName("id"),
+					"Duplicate agent roster entry",
+					fmt.Sprintf("Agent %q appears more than once in the multiagent roster.", id),
+				)
+			}
+			seenAgentIDs[id] = struct{}{}
+			if !entry.Version.IsNull() && !entry.Version.IsUnknown() && entry.Version.ValueInt64() < 1 {
+				diags.AddAttributeError(
+					entryPath.AtName("version"),
+					"Invalid agent version",
+					`"version" must be at least 1 when it is specified.`,
+				)
+			}
+		case "self":
+			if selfSeen {
+				diags.AddAttributeError(
+					entryPath.AtName("type"),
+					"Duplicate self roster entry",
+					`A multiagent roster can contain at most one entry with type "self".`,
+				)
+			}
+			selfSeen = true
+			if !entry.ID.IsNull() && !entry.ID.IsUnknown() {
+				diags.AddAttributeError(
+					entryPath.AtName("id"),
+					"Invalid self roster entry",
+					`"id" must not be set when a multiagent roster entry has type "self".`,
+				)
+			}
+			if !entry.Version.IsNull() && !entry.Version.IsUnknown() {
+				diags.AddAttributeError(
+					entryPath.AtName("version"),
+					"Invalid self roster entry",
+					`"version" must not be set when a multiagent roster entry has type "self".`,
+				)
+			}
+		default:
+			diags.AddAttributeError(
+				entryPath.AtName("type"),
+				"Invalid multiagent roster entry type",
+				fmt.Sprintf("Unsupported roster entry type %q.", entry.Type.ValueString()),
+			)
 		}
 	}
 
@@ -1085,7 +1302,7 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	}
 
 	if agent.Multiagent.Type != "" {
-		multiagent, d := mapMultiagentToState(ctx, &agent.Multiagent, data.Multiagent)
+		multiagent, d := mapMultiagentToState(&agent.Multiagent, agent.ID)
 		diags.Append(d...)
 		data.Multiagent = multiagent
 	} else if !data.Multiagent.IsNull() {
@@ -1095,30 +1312,18 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	return diags
 }
 
-// mapMultiagentToState maps the resolved API roster while preserving a configured
-// `self` entry. The API resolves `self` to the coordinator's concrete ID/version,
-// but keeping the declarative sentinel in state prevents a perpetual diff.
-func mapMultiagentToState(ctx context.Context, apiMultiagent *anthropic.BetaManagedAgentsMultiagent, currentState types.Object) (types.Object, diag.Diagnostics) {
+// mapMultiagentToState maps the resolved API roster while preserving `self`.
+// The API resolves `self` to the coordinator's concrete ID/version, so compare
+// each reference with the owning agent instead of relying on its prior index.
+func mapMultiagentToState(apiMultiagent *anthropic.BetaManagedAgentsMultiagent, ownerID string) (types.Object, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	var currentEntries []agentMultiagentEntryModel
-
-	if !currentState.IsNull() && !currentState.IsUnknown() {
-		var current agentMultiagentModel
-		diags.Append(currentState.As(ctx, &current, basetypes.ObjectAsOptions{})...)
-		if !diags.HasError() && !current.Agents.IsNull() && !current.Agents.IsUnknown() {
-			diags.Append(current.Agents.ElementsAs(ctx, &currentEntries, false)...)
-		}
-		if diags.HasError() {
-			return types.ObjectNull(agentMultiagentAttrTypes), diags
-		}
-	}
 
 	entries := make([]attr.Value, len(apiMultiagent.Agents))
 	for i, ref := range apiMultiagent.Agents {
 		entryType := types.StringValue("agent")
 		id := types.StringValue(ref.ID)
 		version := types.Int64Value(ref.Version)
-		if i < len(currentEntries) && currentEntries[i].Type.ValueString() == "self" {
+		if ref.ID == ownerID {
 			entryType = types.StringValue("self")
 			id = types.StringNull()
 			version = types.Int64Null()

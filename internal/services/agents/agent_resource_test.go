@@ -190,6 +190,11 @@ func TestAccAgentResource_withModelEffortAndMultiagent(t *testing.T) {
 				),
 			},
 			{
+				ResourceName:      "anthropic_agent.coordinator",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
 				Config: testAccAgentResourceWithModelEffortAndMultiagentConfig("high"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("anthropic_agent.coordinator", "model_effort", "high"),
