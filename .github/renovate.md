@@ -1,51 +1,59 @@
 # Renovate
 
-This project uses [Renovate](https://docs.renovatebot.com/) via the [`renovatebot/github-action`](https://github.com/renovatebot/github-action) to automate dependency updates.
+This project uses [Renovate](https://docs.renovatebot.com/) to automate dependency updates, via the
+**[Mend-hosted Renovate app](https://docs.renovatebot.com/mend-hosted/overview/)** installed at the
+`ippontech` GitHub organization level.
 
 ## How it works
 
-The workflow (`.github/workflows/renovate.yml`) runs every Monday at 4 AM UTC and can also be triggered manually via `workflow_dispatch`. It:
+Nothing runs in this repository's CI. Mend hosts the bot and drives it:
 
-1. Generates a short-lived token from the `tf-provider-anthropic-renovate` GitHub App.
-2. Passes that token to the Renovate runner, which opens pull requests for outdated dependencies.
+1. It scans the repo on a regular cadence (every 4 hours on the Community plan) and also reacts to
+   GitHub webhooks — a merged Renovate PR, for instance, triggers a re-scan of the remaining branches.
+2. It reads `renovate.json` from the repository root and opens pull requests for outdated dependencies.
+3. Runs can be triggered on demand from the [Mend Developer Portal](https://developer.mend.io/) or by
+   ticking a checkbox on the Dependency Dashboard issue.
 
-## GitHub App
+Commits are made through the GitHub API and therefore appear as **verified**, authored by `renovate[bot]`.
 
-Renovate authenticates as the **`tf-provider-anthropic-renovate`** GitHub App instead of a personal access token. This ensures that Renovate commits are **signed** (verified badge on GitHub) and attributed to the bot rather than a human account.
+## Configuration
 
-See the [Renovate GitHub App documentation](https://docs.renovatebot.com/modules/platform/github/#running-as-a-github-app) for the full setup guide.
+A single file drives the bot: `renovate.json` at the repository root. Org-wide defaults, plus enabling
+or disabling this repo, live in the Mend Developer Portal.
 
-Two repository secrets are required:
-
-| Secret | Description |
+| Setting | Value |
 |---|---|
-| `RENOVATE_APP_ID` | Numeric ID of the GitHub App |
-| `RENOVATE_APP_PRIVATE_KEY` | PEM private key generated for the GitHub App |
+| `extends` | `config:recommended`, `:semanticCommits`, `:dependencyDashboard` |
+| `labels` | `dependencies` |
+| `schedule` | `before 6am on Monday` — gates when branches are created, so PR noise stays weekly even though the bot scans several times a day |
+| `prConcurrentLimit` | 10 open Renovate PRs at a time |
+| `platformAutomerge` | Uses GitHub's own auto-merge, so branch protection and required checks are respected |
+| `enabledManagers` | `github-actions`, `gomod`, `mise`, `pre-commit`, `terraform` |
+| `packageRules` | One grouped PR per manager, and automerge for `minor` / `patch` / `pin` / `digest` updates |
 
-The workflow uses [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token) to exchange these credentials for a short-lived installation token at runtime. Setting `RENOVATE_PLATFORM_COMMIT: 'true'` tells Renovate to commit via the GitHub API (rather than git over SSH/HTTPS), which is what causes commits to appear as signed by the app.
+Every option above is repository-level config. Global options (`platform`, `repositories`, `onboarding`,
+credentials) belong to the bot host, so they must not be added here:
+[Renovate ignores them](https://docs.renovatebot.com/self-hosted-configuration/) and may open a config
+error issue on the repo.
 
-## Configuration files
+## Validating a config change
 
-| File | Purpose |
-|---|---|
-| `renovate.json` | Repository-level Renovate config (schedule, managers, grouping rules) |
-| `.github/renovate-config.json` | Runner-level config consumed by `renovatebot/github-action` |
-| `.github/workflows/renovate.yml` | GitHub Actions workflow that runs the Renovate job |
+Renovate ships a validator that catches unknown keys and malformed values:
 
-### `renovate.json`
+```bash
+npx --yes --package renovate -- renovate-config-validator renovate.json
+```
 
-- **Schedule**: before 6 AM on Monday (aligns with the workflow cron).
-- **Dependency dashboard**: enabled — Renovate opens a tracking issue listing pending updates.
-- **PR concurrent limit**: 10 open Renovate PRs at a time.
-- **Enabled managers**: `github-actions`, `gomod`, `mise`, `pre-commit`, `terraform`.
-- **Grouping rules**: related updates are batched into a single PR per manager to reduce noise.
+Note it validates the file as *global* config, so it will not flag a global-only option that has been
+misplaced into repository config — that only shows up as a config error issue on the next hosted run.
+The `$schema` key in `renovate.json` also gives editors inline completion and validation.
 
-### `.github/renovate-config.json`
+## History
 
-Runner-level options passed to the self-hosted Renovate process:
-
-- `branchPrefix: "renovate/"` — all update branches are prefixed with `renovate/`.
-- `gitAuthor` — the commit author displayed on Renovate PRs.
-- `onboarding: true` — Renovate will open an onboarding PR when added to a new repository.
-- `platform: "github"` — explicitly set to GitHub.
-- `repositories: []` — repositories to manage; populated at runtime by the workflow context.
+Until [#174](https://github.com/ippontech/terraform-provider-anthropic/issues/174), Renovate was
+self-hosted in this repo: a weekly cron workflow (`.github/workflows/renovate.yml`) ran
+[`renovatebot/github-action`](https://github.com/renovatebot/github-action), authenticating as a
+repo-dedicated GitHub App (`tf-provider-anthropic-renovate`) whose credentials lived in the
+`RENOVATE_APP_ID` / `RENOVATE_APP_PRIVATE_KEY` repository secrets. That setup existed to get signed
+commits; the hosted app provides them out of the box. The workflow and its runner-level
+`.github/renovate-config.json` are gone, and the App and its secrets have been decommissioned.
