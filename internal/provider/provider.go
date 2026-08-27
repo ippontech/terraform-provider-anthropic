@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
@@ -96,7 +97,10 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 
 	pd := &providerdata.ProviderData{}
 	if apiKey != "" {
-		client := anthropic.NewClient(option.WithAPIKey(apiKey))
+		client := anthropic.NewClient(
+			option.WithAPIKey(apiKey),
+			option.WithHTTPClient(provretry.NewHTTPClient()),
+		)
 		pd.Client = &client
 	}
 	if adminApiKey != "" {
