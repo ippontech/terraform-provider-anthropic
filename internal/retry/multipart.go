@@ -6,7 +6,7 @@
 //
 // Multipart file uploads set req.Body without req.GetBody, so the SDK's
 // built-in retry logic (which requires a replayable body) is bypassed for
-// all 5xx responses. MultipartUpload works around this by re-opening files
+// all retryable responses. MultipartUpload works around this by re-opening files
 // from disk on each attempt.
 package retry
 
@@ -51,7 +51,8 @@ var backoff = func(attempt int) time.Duration {
 }
 
 // MultipartUpload opens filePaths fresh on each attempt and calls fn with the
-// resulting readers, retrying up to 3 times on 5xx API errors with backoff.
+// resulting readers, retrying up to 3 times on 5xx API errors and retrying 429s
+// until the operation context expires. Ordinary 4xx responses are not retried.
 //
 // Each file's multipart name is `dirName + "/" + <relPath>`, where relPath is
 // the file's path relative to bundleRoot in forward-slash form, preserving
@@ -64,14 +65,21 @@ var backoff = func(attempt int) time.Duration {
 func MultipartUpload[T any](ctx context.Context, filePaths []string, bundleRoot, dirName string, fn func([]io.Reader) (T, error)) (T, error) {
 	const maxAttempts = 3
 	var zero T
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	var retryAfter time.Duration
+	fiveXXAttempts := 0
+	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
+			delay := backoff(min(attempt, 6))
+			if retryAfter > delay {
+				delay = retryAfter
+			}
 			select {
 			case <-ctx.Done():
 				return zero, ctx.Err()
-			case <-time.After(backoff(attempt)):
+			case <-time.After(delay):
 			}
 		}
+		retryAfter = 0
 
 		files, openedFiles, err := openFiles(filePaths, bundleRoot, dirName)
 		if err != nil {
@@ -85,11 +93,20 @@ func MultipartUpload[T any](ctx context.Context, filePaths []string, bundleRoot,
 		}
 
 		var apierr *anthropic.Error
-		if !errors.As(err, &apierr) || apierr.StatusCode < 500 || attempt == maxAttempts-1 {
+		if !errors.As(err, &apierr) || (apierr.StatusCode != 429 && apierr.StatusCode < 500) {
+			return zero, err
+		}
+		if apierr.StatusCode == 429 {
+			if apierr.Response != nil {
+				retryAfter = retryDelayFromHeaders(apierr.Response.Header, time.Now())
+			}
+			continue
+		}
+		fiveXXAttempts++
+		if fiveXXAttempts == maxAttempts {
 			return zero, err
 		}
 	}
-	return zero, nil // unreachable
 }
 
 func openFiles(filePaths []string, bundleRoot, dirName string) ([]io.Reader, []*os.File, error) {
