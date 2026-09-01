@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -206,6 +207,58 @@ func (r *VaultResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 // --- Update ---
 
+// The vaults API is read-after-write inconsistent on update: a Get issued right
+// after a successful write can still return the pre-write object. Measured
+// against the live API on 2026-09-01, convergence took 520ms to 1.04s across
+// three trials, with the stale read returning every field at its prior value
+// (display_name included, so this is not a metadata-patch artefact). Creation is
+// not affected — a Get immediately after a create returns the new vault — so only
+// the update path waits.
+//
+// Without the wait, Terraform's post-apply refresh reads the stale object and the
+// next plan shows a phantom diff. That is what made TestAccVaultResource_update
+// flaky, and it is equally visible to anyone running `terraform apply` followed
+// straight away by `terraform plan`.
+//
+// Both knobs are vars rather than consts so tests can shrink them.
+var (
+	vaultConsistencyTimeout  = 5 * time.Second
+	vaultConsistencyInterval = 200 * time.Millisecond
+)
+
+// awaitVaultUpdateVisible polls Get until the stored vault is at least as new as
+// writtenAt, the updated_at returned by the write itself.
+//
+// It is deliberately best-effort: on a read error, a timeout, or a cancelled
+// context it returns without reporting a diagnostic. The write has already
+// succeeded, so failing the apply here would turn a cosmetic staleness window
+// into a hard error; the worst case of giving up is the phantom diff we were
+// trying to avoid.
+func awaitVaultUpdateVisible(ctx context.Context, client *anthropic.Client, vaultID string, writtenAt time.Time) {
+	deadline := time.Now().Add(vaultConsistencyTimeout)
+
+	for {
+		vault, err := client.Beta.Vaults.Get(ctx, vaultID, anthropic.BetaVaultGetParams{})
+		if err == nil && !vault.UpdatedAt.Before(writtenAt) {
+			return
+		}
+
+		if time.Now().After(deadline) {
+			tflog.Warn(ctx, "vault update not visible before the consistency timeout; the next plan may show a transient diff", map[string]any{
+				"vault_id": vaultID,
+				"timeout":  vaultConsistencyTimeout.String(),
+			})
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(vaultConsistencyInterval):
+		}
+	}
+}
+
 func (r *VaultResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data VaultResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -240,6 +293,10 @@ func (r *VaultResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update vault: %s", err))
 		return
 	}
+
+	// Wait for the write to become visible to reads before returning, so the
+	// post-apply refresh does not observe the pre-update object.
+	awaitVaultUpdateVisible(ctx, r.client, state.ID.ValueString(), vault.UpdatedAt)
 
 	resp.Diagnostics.Append(mapVaultResponseToState(vault, &data)...)
 	if resp.Diagnostics.HasError() {

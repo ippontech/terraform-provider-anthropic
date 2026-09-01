@@ -4,10 +4,15 @@
 package vaults
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -148,5 +153,159 @@ func TestMapVaultResponseToState_MetadataEmpty(t *testing.T) {
 
 	if !data.Metadata.IsNull() {
 		t.Errorf("expected Metadata to be null when API returns nil, got %v", data.Metadata)
+	}
+}
+
+// newStaleThenFreshVaultServer serves the vault as it was before the write for
+// the first staleReads Get calls, then as it is after. It reproduces the
+// read-after-write window measured against the live vaults API.
+func newStaleThenFreshVaultServer(t *testing.T, vaultID string, before, after time.Time, staleReads int) (*httptest.Server, *int) {
+	t.Helper()
+
+	gets := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		gets++
+		updated := after
+		if gets <= staleReads {
+			updated = before
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"id":           vaultID,
+			"type":         "vault",
+			"display_name": "probe",
+			"metadata":     map[string]string{},
+			"created_at":   before.Format(time.RFC3339Nano),
+			"updated_at":   updated.Format(time.RFC3339Nano),
+			"archived_at":  nil,
+		}); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv, &gets
+}
+
+func newTestVaultClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
+	t.Helper()
+
+	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAPIKey("test"))
+	return &c
+}
+
+// shrinkVaultConsistencyKnobs keeps the polling loop in the millisecond range so
+// the tests stay fast, restoring the production values afterwards.
+func shrinkVaultConsistencyKnobs(t *testing.T, timeout, interval time.Duration) {
+	t.Helper()
+
+	origTimeout, origInterval := vaultConsistencyTimeout, vaultConsistencyInterval
+	vaultConsistencyTimeout, vaultConsistencyInterval = timeout, interval
+	t.Cleanup(func() {
+		vaultConsistencyTimeout, vaultConsistencyInterval = origTimeout, origInterval
+	})
+}
+
+// TestAwaitVaultUpdateVisible_pollsUntilFresh is the regression test for the
+// flaky TestAccVaultResource_update: the vaults API can answer a Get with the
+// pre-update object for up to ~1s after a successful write, which made the
+// post-apply refresh read stale values and the next plan show a phantom diff.
+func TestAwaitVaultUpdateVisible_pollsUntilFresh(t *testing.T) {
+	shrinkVaultConsistencyKnobs(t, 2*time.Second, time.Millisecond)
+
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 3)
+	client := newTestVaultClient(t, srv)
+
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after)
+
+	if *gets != 4 {
+		t.Errorf("Get calls = %d, want 4 (three stale reads then the fresh one)", *gets)
+	}
+}
+
+// A Get that already reflects the write must not be polled a second time.
+func TestAwaitVaultUpdateVisible_returnsImmediatelyWhenFresh(t *testing.T) {
+	shrinkVaultConsistencyKnobs(t, 2*time.Second, time.Millisecond)
+
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 0)
+	client := newTestVaultClient(t, srv)
+
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after)
+
+	if *gets != 1 {
+		t.Errorf("Get calls = %d, want 1", *gets)
+	}
+}
+
+// An updated_at equal to the write timestamp counts as visible: the comparison
+// must not require a strictly newer value, or the loop would always time out.
+func TestAwaitVaultUpdateVisible_equalTimestampCountsAsVisible(t *testing.T) {
+	shrinkVaultConsistencyKnobs(t, 200*time.Millisecond, time.Millisecond)
+
+	writtenAt := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+
+	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", writtenAt, writtenAt, 0)
+	client := newTestVaultClient(t, srv)
+
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", writtenAt)
+
+	if *gets != 1 {
+		t.Errorf("Get calls = %d, want 1", *gets)
+	}
+}
+
+// The wait is best-effort: a vault that never converges must return at the
+// timeout rather than hang or surface an error, because the write itself already
+// succeeded.
+func TestAwaitVaultUpdateVisible_givesUpAtTimeout(t *testing.T) {
+	shrinkVaultConsistencyKnobs(t, 120*time.Millisecond, 10*time.Millisecond)
+
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	// staleReads far beyond what the timeout allows: it never becomes visible.
+	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 1_000_000)
+	client := newTestVaultClient(t, srv)
+
+	start := time.Now()
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after)
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Errorf("took %s, want it to give up near the 120ms timeout", elapsed)
+	}
+	if *gets < 2 {
+		t.Errorf("Get calls = %d, want it to have retried at least once", *gets)
+	}
+}
+
+// A cancelled context must abort the wait promptly.
+func TestAwaitVaultUpdateVisible_honoursContextCancellation(t *testing.T) {
+	shrinkVaultConsistencyKnobs(t, 10*time.Second, 50*time.Millisecond)
+
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	srv, _ := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 1_000_000)
+	client := newTestVaultClient(t, srv)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	awaitVaultUpdateVisible(ctx, client, "vlt_01ABC", after)
+
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %s, want an immediate return on a cancelled context", elapsed)
 	}
 }
