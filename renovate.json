@@ -55,6 +55,13 @@
       "groupSlug": "mise-tools"
     },
     {
+      "description": "checkov's git repo carries ~3900 tags, and Renovate's `github-tags` lookup on it fails with `no-result`. Its tags mirror the PyPI releases one-for-one, so resolve `rev` from PyPI instead.",
+      "matchManagers": ["pre-commit"],
+      "matchDepNames": ["bridgecrewio/checkov"],
+      "overrideDatasource": "pypi",
+      "overridePackageName": "checkov"
+    },
+    {
       "matchManagers": ["pre-commit"],
       "groupName": "pre-commit hooks",
       "groupSlug": "pre-commit"
