@@ -1,3 +1,9 @@
+## [1.29.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.28.2...v1.29.0) (2026-09-01)
+
+### ✨ Features
+
+* **admin:** add retry and backoff to the Admin API client ([#188](https://github.com/ippontech/terraform-provider-anthropic/issues/188)) ([c3261a8](https://github.com/ippontech/terraform-provider-anthropic/commit/c3261a8bd09712341669ef912d05b5c836bc78ea)), closes [#186](https://github.com/ippontech/terraform-provider-anthropic/issues/186) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137)
+
 ## [1.28.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.28.1...v1.28.2) (2026-09-01)
 
 ### 🐛 Bug Fixes
