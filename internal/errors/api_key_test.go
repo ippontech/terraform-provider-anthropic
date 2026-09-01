@@ -4,7 +4,6 @@
 package errors
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -50,24 +49,7 @@ func TestRequireResourceAPIClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var diags diag.Diagnostics
 			got := RequireResourceAPIClient(tc.client, &diags)
-			if got != tc.wantOk {
-				t.Fatalf("got %v, want %v", got, tc.wantOk)
-			}
-			if tc.wantOk {
-				if diags.HasError() {
-					t.Fatalf("expected no diagnostics, got: %v", diags)
-				}
-				return
-			}
-			if !diags.HasError() {
-				t.Fatal("expected error diagnostic, got none")
-			}
-			if diags[0].Summary() != tc.wantSummary {
-				t.Errorf("summary = %q, want %q", diags[0].Summary(), tc.wantSummary)
-			}
-			if !strings.Contains(diags[0].Detail(), tc.wantDetail) {
-				t.Errorf("detail %q does not contain %q", diags[0].Detail(), tc.wantDetail)
-			}
+			assertGuard(t, got, diags, tc.wantOk, tc.wantSummary, tc.wantDetail)
 		})
 	}
 }
@@ -100,24 +82,7 @@ func TestRequireDataSourceAPIClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var diags diag.Diagnostics
 			got := RequireDataSourceAPIClient(tc.client, &diags)
-			if got != tc.wantOk {
-				t.Fatalf("got %v, want %v", got, tc.wantOk)
-			}
-			if tc.wantOk {
-				if diags.HasError() {
-					t.Fatalf("expected no diagnostics, got: %v", diags)
-				}
-				return
-			}
-			if !diags.HasError() {
-				t.Fatal("expected error diagnostic, got none")
-			}
-			if diags[0].Summary() != tc.wantSummary {
-				t.Errorf("summary = %q, want %q", diags[0].Summary(), tc.wantSummary)
-			}
-			if !strings.Contains(diags[0].Detail(), tc.wantDetail) {
-				t.Errorf("detail %q does not contain %q", diags[0].Detail(), tc.wantDetail)
-			}
+			assertGuard(t, got, diags, tc.wantOk, tc.wantSummary, tc.wantDetail)
 		})
 	}
 }
@@ -150,24 +115,7 @@ func TestRequireAdminResourceClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var diags diag.Diagnostics
 			got := RequireAdminResourceClient(tc.client, &diags)
-			if got != tc.wantOk {
-				t.Fatalf("got %v, want %v", got, tc.wantOk)
-			}
-			if tc.wantOk {
-				if diags.HasError() {
-					t.Fatalf("expected no diagnostics, got: %v", diags)
-				}
-				return
-			}
-			if !diags.HasError() {
-				t.Fatal("expected error diagnostic, got none")
-			}
-			if diags[0].Summary() != tc.wantSummary {
-				t.Errorf("summary = %q, want %q", diags[0].Summary(), tc.wantSummary)
-			}
-			if !strings.Contains(diags[0].Detail(), tc.wantDetail) {
-				t.Errorf("detail %q does not contain %q", diags[0].Detail(), tc.wantDetail)
-			}
+			assertGuard(t, got, diags, tc.wantOk, tc.wantSummary, tc.wantDetail)
 		})
 	}
 }
@@ -200,24 +148,7 @@ func TestRequireAdminDataSourceClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var diags diag.Diagnostics
 			got := RequireAdminDataSourceClient(tc.client, &diags)
-			if got != tc.wantOk {
-				t.Fatalf("got %v, want %v", got, tc.wantOk)
-			}
-			if tc.wantOk {
-				if diags.HasError() {
-					t.Fatalf("expected no diagnostics, got: %v", diags)
-				}
-				return
-			}
-			if !diags.HasError() {
-				t.Fatal("expected error diagnostic, got none")
-			}
-			if diags[0].Summary() != tc.wantSummary {
-				t.Errorf("summary = %q, want %q", diags[0].Summary(), tc.wantSummary)
-			}
-			if !strings.Contains(diags[0].Detail(), tc.wantDetail) {
-				t.Errorf("detail %q does not contain %q", diags[0].Detail(), tc.wantDetail)
-			}
+			assertGuard(t, got, diags, tc.wantOk, tc.wantSummary, tc.wantDetail)
 		})
 	}
 }

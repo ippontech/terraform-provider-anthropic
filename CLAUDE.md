@@ -153,12 +153,22 @@ pre-commit run -a
 
 ### API key model
 
-The provider has two optional API keys — at least one must be configured:
+The provider has three optional credentials — at least one must be configured:
 
-| Key | Provider arg | Env var | Client field | Used by |
+| Credential | Provider arg | Env var | Client field | Used by |
 |---|---|---|---|---|
 | Standard | `api_key` | `ANTHROPIC_API_KEY` | `pd.Client` | All standard resources and data sources |
 | Admin | `admin_api_key` | `ANTHROPIC_ADMIN_API_KEY` | `pd.AdminClient` | Organization endpoints (`/v1/organizations/*`, e.g. workspaces) |
+| OAuth bearer (`org:admin`) | `auth_token` | `ANTHROPIC_AUTH_TOKEN` | `pd.OAuthClient` | Endpoints that reject API keys and require `Authorization: Bearer` (Workload Identity Federation, [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137)) |
+
+Each is resolved by `resolveCredential` (`internal/provider/provider.go`): the provider argument wins when set, the env var otherwise, and an Unknown value (an unresolved reference at plan time) counts as unset.
+
+Two details are load-bearing:
+
+- **`pd.OAuthClient` is a `*providerdata.OAuthClient` wrapper, not a bare `*anthropic.Client`.** The SDK carries no notion of which credential a client holds, so two bare clients are mutually assignable and mixing them up compiles silently, surfacing only as a 401 at apply time. The wrapper keeps the compiler in the loop; [#187](https://github.com/ippontech/terraform-provider-anthropic/issues/187) extends the same treatment to the other clients when `internal/admin` is retired. Because the wrapper adds a level of indirection the other guards do not have, `requireOAuthClient` checks `client.Client != nil` as well as `client != nil` — a non-nil wrapper around a nil SDK client would otherwise pass the guard and nil-deref on the first API call.
+- **Every SDK client is built through `newSDKClient`, which passes `option.WithoutEnvironmentDefaults()`.** `anthropic.NewClient` otherwise prepends `DefaultClientOptions()`, whose chain has five sources: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, the profile named by `ANTHROPIC_PROFILE`, env-var federation, and the fallback profile under the SDK config dir. The first two set a header *before* the explicit option is applied, so with both variables exported — the normal case — a client would present both credentials and the endpoints behind each reject the other. The last three are worse than a stray header: `option.WithConfig` applies a profile's non-credential settings **unconditionally**, so a profile left active by `ant auth login` (the command the provider docs tell operators to run) would override the base URL and stamp its `workspace_id` as an `anthropic-workspace-id` header on every request, none of it visible in the Terraform config. The marker option closes all five. Three tests cover it — `TestConfigureClientsCarryExactlyOneCredential`, `TestConfigureStandardClientDropsInheritedBearer`, `TestConfigureIgnoresTheAmbientProfile` (which plants a profile via `ANTHROPIC_CONFIG_DIR`) — and all fail if it is dropped.
+- **`ANTHROPIC_BASE_URL` is re-applied by hand**, because the marker option skips it too. It is read with an explicit `!= ""` check: an exported-but-empty value must not replace the SDK's production default with `""`. The same trap applies in tests, so `clearCredentialEnv` genuinely `os.Unsetenv`s each variable (after a `t.Setenv` whose only purpose is the restore-on-cleanup it registers) rather than setting it to `""`.
+- **The provider does not do the WIF token exchange**, so the SDK's federation variables alone cannot configure it — `Configure` fails with `Missing Credentials`. Documented as a caveat in `templates/index.md.tmpl`; revisit under [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) if native federation is wanted.
 
 ### Configure method pattern
 
@@ -183,12 +193,14 @@ r.client = pd.Client
 // Standard data source  →  providerrors.RequireDataSourceAPIClient
 // Admin resource        →  providerrors.RequireAdminResourceClient(pd.AdminClient, ...)
 // Admin data source     →  providerrors.RequireAdminDataSourceClient(pd.AdminClient, ...)
+// OAuth resource        →  providerrors.RequireOAuthResourceClient(pd.OAuthClient, ...)
+// OAuth data source     →  providerrors.RequireOAuthDataSourceClient(pd.OAuthClient, ...)
 ```
 
 ### Shared helpers
 
 - `internal/admin/` — HTTP client for Admin API; import as `"github.com/ippontech/terraform-provider-anthropic/internal/admin"`. `DoRequest` retries with exponential backoff plus jitter, honouring the `x-should-retry` override and the `retry-after-ms` / `retry-after` headers. **What gets retried depends on the method.** Idempotent requests (`GET`, `DELETE`, and the rest of the RFC 9110 set) replay on connection errors, on a response body that stops arriving mid-read, and on the transient statuses the Anthropic SDK retries (408, 409, 429, 5xx). A `POST` replays **only on 429** — the one answer that states the call was not processed; on a 5xx, a 409 or a dropped connection the write may already have landed, and a second `POST /v1/organizations/workspaces` would create a duplicate workspace (names are not unique) while a second member-add would burn the budget on a 409 and leave the membership untracked. An explicit `x-should-retry` header from the server still wins in both directions. Retries are **opt-in**: `admin.NewClient` sets `MaxRetries` to `DefaultMaxRetries` (2), while the zero-value `Client` built by `admintest.NewClient` performs a single attempt, so unit tests stay fast and deterministic. Tests that do exercise retrying should set `MaxRetries` along with `BaseRetryDelay`/`MaxRetryDelay` (both default when zero) to keep delays in the millisecond range, and their stub must **not** send `retry-after` / `retry-after-ms`: a server-supplied delay deliberately bypasses both knobs (shortening it would only earn another 429) and is bounded only by the 60s `maxRetryAfter` ceiling
-- `internal/errors/` (import alias `providerrors`) — nil-client guards for `Configure` methods
+- `internal/errors/` (import alias `providerrors`) — nil-client guards for `Configure` methods; `api_key.go` holds the standard and admin guards, `auth_token.go` the OAuth ones
 - `internal/providerdata/` (import alias `providerdata`) — `ProviderData` struct
 - `internal/retry/` (import alias `provretry`) — multipart file upload with automatic 5xx retry; use `provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, fn)` for any resource that uploads files to the API (the Anthropic SDK cannot retry streaming multipart bodies on its own). Each file's multipart name is `dirName + "/" + <path relative to bundleRoot>` (forward-slash normalised), so nested subdirectories inside a bundle are preserved on upload. Derive `bundleRoot` and `dirName` with `provretry.DeriveBundleRoot(filePaths)` — it returns the longest shared parent, which is order-independent (necessary because `fileset()` returns lexically sorted paths and a nested file like `Assets/icon.png` may sort before `SKILL.md`). Files outside `bundleRoot`, or a path equal to `bundleRoot`, are rejected explicitly
 
