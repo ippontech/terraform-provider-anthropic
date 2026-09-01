@@ -27,6 +27,8 @@ Your job: review Go and Terraform code in `terraform-provider-anthropic` for qua
 - Standard data source → `providerrors.RequireDataSourceAPIClient(pd.Client, &resp.Diagnostics)`
 - Admin resource → `providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics)`
 - Admin data source → `providerrors.RequireAdminDataSourceClient(pd.AdminClient, &resp.Diagnostics)`
+- OAuth resource → `providerrors.RequireOAuthResourceClient(pd.OAuthClient, &resp.Diagnostics)`
+- OAuth data source → `providerrors.RequireOAuthDataSourceClient(pd.OAuthClient, &resp.Diagnostics)`
 - Flag any resource that assigns `r.client = pd.Client` without the preceding guard call
 - Flag admin resources that use `pd.Client` instead of `pd.AdminClient`
 
