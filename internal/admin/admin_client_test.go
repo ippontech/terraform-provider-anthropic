@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // --- APIError ---
@@ -169,5 +171,612 @@ func TestAdminClient_doRequest_successReturnsBody(t *testing.T) {
 	}
 	if result["id"] != "ws_abc123" {
 		t.Errorf("id = %q, want %q", result["id"], "ws_abc123")
+	}
+}
+
+// --- retry ---
+
+// newRetryingTestClient returns a client with retries enabled and backoff
+// delays short enough to keep the suite fast.
+func newRetryingTestClient(t *testing.T, srv *httptest.Server, maxRetries int) *Client {
+	t.Helper()
+	c := newTestAdminClient(t, srv)
+	c.MaxRetries = maxRetries
+	c.BaseRetryDelay = time.Millisecond
+	c.MaxRetryDelay = 4 * time.Millisecond
+	return c
+}
+
+func TestAdminClient_doRequest_retriesTransientStatuses(t *testing.T) {
+	for _, status := range []int{
+		http.StatusRequestTimeout,
+		http.StatusConflict,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					w.WriteHeader(status)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{"id":"ws_ok"}`)
+			}))
+			defer srv.Close()
+
+			body, err := newRetryingTestClient(t, srv, 2).
+				DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if calls != 2 {
+				t.Errorf("calls = %d, want 2", calls)
+			}
+			if !strings.Contains(string(body), "ws_ok") {
+				t.Errorf("body = %q, want the second response", body)
+			}
+		})
+	}
+}
+
+func TestAdminClient_doRequest_doesNotRetryClientErrors(t *testing.T) {
+	for _, status := range []int{
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+
+			_, err := newRetryingTestClient(t, srv, 2).
+				DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if calls != 1 {
+				t.Errorf("calls = %d, want 1 (no retry)", calls)
+			}
+		})
+	}
+}
+
+func TestAdminClient_doRequest_zeroValueClientDoesNotRetry(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	// newTestAdminClient leaves MaxRetries at its zero value, as admintest.NewClient does.
+	_, err := newTestAdminClient(t, srv).
+		DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1 (retries disabled by default)", calls)
+	}
+}
+
+func TestAdminClient_doRequest_exhaustsRetriesAndReturnsLastError(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"type":"overloaded_error","message":"overloaded"}}`)
+	}))
+	defer srv.Close()
+
+	_, err := newRetryingTestClient(t, srv, 2).
+		DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3 (initial attempt + 2 retries)", calls)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.ErrType != "overloaded_error" {
+		t.Errorf("ErrType = %q, want %q", apiErr.ErrType, "overloaded_error")
+	}
+}
+
+func TestAdminClient_doRequest_honoursXShouldRetryHeader(t *testing.T) {
+	t.Run("true forces a retry on a non-retryable status", func(t *testing.T) {
+		var calls int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if calls == 1 {
+				w.Header().Set("x-should-retry", "true")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{}`)
+		}))
+		defer srv.Close()
+
+		if _, err := newRetryingTestClient(t, srv, 2).
+			DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if calls != 2 {
+			t.Errorf("calls = %d, want 2", calls)
+		}
+	})
+
+	t.Run("false suppresses a retry on a retryable status", func(t *testing.T) {
+		var calls int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.Header().Set("x-should-retry", "false")
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		if _, err := newRetryingTestClient(t, srv, 2).
+			DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil); err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if calls != 1 {
+			t.Errorf("calls = %d, want 1", calls)
+		}
+	})
+}
+
+func TestAdminClient_doRequest_replaysBodyOnRetry(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if len(bodies) == 1 {
+			// 429 is the only status that replays a POST; see shouldRetry.
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	_, err := newRetryingTestClient(t, srv, 2).
+		DoRequest(context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("got %d requests, want 2", len(bodies))
+	}
+	if bodies[0] != bodies[1] {
+		t.Errorf("retried body = %q, want the original %q", bodies[1], bodies[0])
+	}
+	if !strings.Contains(bodies[1], `"name":"x"`) {
+		t.Errorf("retried body = %q, want it to carry the payload", bodies[1])
+	}
+}
+
+func TestAdminClient_doRequest_retriesConnectionErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close() // nothing is listening, so every attempt is a transport error
+
+	client := &Client{
+		ApiKey:         "test-key",
+		BaseURL:        url,
+		HTTPClient:     &http.Client{Timeout: time.Second},
+		MaxRetries:     2,
+		BaseRetryDelay: time.Millisecond,
+		MaxRetryDelay:  4 * time.Millisecond,
+	}
+	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		t.Fatalf("expected a transport error, got *APIError: %v", err)
+	}
+}
+
+func TestAdminClient_doRequest_stopsWhenContextIsCancelled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	client.MaxRetries = 100
+	client.BaseRetryDelay = 50 * time.Millisecond
+	client.MaxRetryDelay = 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := client.DoRequest(ctx, "GET", "/v1/organizations/workspaces", nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestAdminClient_doRequest_doesNotReplayPostOnAmbiguousFailures(t *testing.T) {
+	// A create that may already have landed server-side must not be sent twice:
+	// a second POST /workspaces makes a second workspace (names are not unique),
+	// and a second member-add fails the apply over a membership that now exists.
+	for _, status := range []int{
+		http.StatusConflict,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+
+			_, err := newRetryingTestClient(t, srv, 2).DoRequest(
+				context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if calls != 1 {
+				t.Errorf("calls = %d, want 1 (a POST must not be replayed)", calls)
+			}
+		})
+	}
+}
+
+func TestAdminClient_doRequest_doesNotReplayPostOnADroppedConnection(t *testing.T) {
+	// The handler goroutine outlives the dropped connection, so the counter is
+	// atomic: DoRequest can return before the increment would otherwise be
+	// visible.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		hijackAndClose(t, w, "")
+	}))
+	defer srv.Close()
+
+	_, err := newRetryingTestClient(t, srv, 2).DoRequest(
+		context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("calls = %d, want 1 (a dropped connection leaves a POST ambiguous)", got)
+	}
+}
+
+func TestAdminClient_doRequest_retriesATruncatedResponseBody(t *testing.T) {
+	// Headers arrive, then the connection dies mid-payload. The status line says
+	// 200, but nothing usable came back: exactly the transient this loop exists
+	// for, so it must not be mistaken for a successful read.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			hijackAndClose(t, w, "HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{\"id\":\"ws_")
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"ws_ok"}`)
+	}))
+	defer srv.Close()
+
+	body, err := newRetryingTestClient(t, srv, 2).
+		DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("calls = %d, want 2 (the truncated read is retried)", got)
+	}
+	if !strings.Contains(string(body), "ws_ok") {
+		t.Errorf("body = %q, want the second response", body)
+	}
+}
+
+// hijackAndClose writes raw bytes (if any) and drops the connection without a
+// complete response, so the client sees a transport-level failure.
+func hijackAndClose(t *testing.T, w http.ResponseWriter, raw string) {
+	t.Helper()
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		t.Fatal("ResponseWriter is not a Hijacker")
+	}
+	conn, buf, err := hj.Hijack()
+	if err != nil {
+		t.Fatalf("hijack: %v", err)
+	}
+	if raw != "" {
+		_, _ = buf.WriteString(raw)
+		_ = buf.Flush()
+	}
+	_ = conn.Close()
+}
+
+// --- body rewind ---
+
+func TestAdminClient_doRequest_setsGetBodySoNetHTTPCanRewind(t *testing.T) {
+	var got func() (io.ReadCloser, error)
+	client := &Client{
+		ApiKey:  "test-key",
+		BaseURL: "https://example.invalid",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			got = r.GetBody
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+			}, nil
+		})},
+	}
+
+	if _, err := client.DoRequest(
+		context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetBody is nil: net/http cannot replay the body on a GOAWAY or a 307")
+	}
+	rewound, err := got()
+	if err != nil {
+		t.Fatalf("GetBody: %v", err)
+	}
+	b, _ := io.ReadAll(rewound)
+	if !strings.Contains(string(b), `"name":"x"`) {
+		t.Errorf("rewound body = %q, want the payload", b)
+	}
+}
+
+func TestAdminClient_doRequest_followsA307WithTheBodyIntact(t *testing.T) {
+	// net/http only follows a 307/308 when it can rewind the body; without
+	// GetBody the redirect surfaces as an APIError(307) instead.
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if r.URL.Path != "/moved" {
+			w.Header().Set("Location", "/moved")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"ws_ok"}`)
+	}))
+	defer srv.Close()
+
+	body, err := newTestAdminClient(t, srv).DoRequest(
+		context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(body), "ws_ok") {
+		t.Errorf("body = %q, want the redirected response", body)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("got %d requests, want 2 (the redirect was not followed)", len(bodies))
+	}
+	if !strings.Contains(bodies[1], `"name":"x"`) {
+		t.Errorf("redirected body = %q, want it to carry the payload", bodies[1])
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// --- retryDelay ---
+
+func TestClient_retryDelay_exponentialBackoffWithJitter(t *testing.T) {
+	c := &Client{BaseRetryDelay: time.Second, MaxRetryDelay: 8 * time.Second}
+
+	for attempt, want := range map[int]time.Duration{0: time.Second, 1: 2 * time.Second, 2: 4 * time.Second} {
+		got := c.retryDelay(nil, attempt)
+		// Jitter shaves off up to a quarter of the delay.
+		if got > want || got < want-want/4 {
+			t.Errorf("attempt %d: delay = %v, want between %v and %v", attempt, got, want-want/4, want)
+		}
+	}
+}
+
+func TestClient_retryDelay_capsAtMaxRetryDelay(t *testing.T) {
+	c := &Client{BaseRetryDelay: time.Second, MaxRetryDelay: 4 * time.Second}
+	for _, attempt := range []int{3, 10, 100} {
+		if got := c.retryDelay(nil, attempt); got > 4*time.Second {
+			t.Errorf("attempt %d: delay = %v, want at most 4s", attempt, got)
+		}
+	}
+}
+
+func TestClient_retryDelay_zeroValuesFallBackToDefaults(t *testing.T) {
+	c := &Client{}
+	got := c.retryDelay(nil, 0)
+	if got > DefaultBaseRetryDelay || got < DefaultBaseRetryDelay-DefaultBaseRetryDelay/4 {
+		t.Errorf("delay = %v, want close to %v", got, DefaultBaseRetryDelay)
+	}
+}
+
+func TestClient_retryDelay_honoursRetryAfterHeaders(t *testing.T) {
+	c := &Client{BaseRetryDelay: time.Hour, MaxRetryDelay: time.Hour}
+
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    time.Duration
+	}{
+		{"retry-after-ms", map[string]string{"retry-after-ms": "1500"}, 1500 * time.Millisecond},
+		{"retry-after seconds", map[string]string{"retry-after": "3"}, 3 * time.Second},
+		{"retry-after fractional seconds", map[string]string{"retry-after": "0.5"}, 500 * time.Millisecond},
+		{"retry-after-ms wins over retry-after", map[string]string{"retry-after-ms": "250", "retry-after": "30"}, 250 * time.Millisecond},
+		{"negative retry-after clamps to zero", map[string]string{"retry-after": "-5"}, 0},
+		{"oversized retry-after clamps to the ceiling", map[string]string{"retry-after": "86400"}, maxRetryAfter},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{Header: http.Header{}}
+			for k, v := range tc.headers {
+				resp.Header.Set(k, v)
+			}
+			if got := c.retryDelay(resp, 0); got != tc.want {
+				t.Errorf("delay = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClient_retryDelay_retryAfterIsNotBoundedByMaxRetryDelay(t *testing.T) {
+	// Deliberate: the server knows when the rate limit clears, so shortening its
+	// answer to MaxRetryDelay would only earn another 429. Only maxRetryAfter
+	// bounds it — which is why a test stub that wants millisecond delays must
+	// not send the header at all.
+	c := &Client{BaseRetryDelay: time.Millisecond, MaxRetryDelay: 4 * time.Millisecond}
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("retry-after", "30")
+
+	if got := c.retryDelay(resp, 0); got != 30*time.Second {
+		t.Errorf("delay = %v, want 30s (the server's value, not MaxRetryDelay)", got)
+	}
+}
+
+func TestClient_retryDelay_retryAfterHTTPDate(t *testing.T) {
+	c := &Client{BaseRetryDelay: time.Hour, MaxRetryDelay: time.Hour}
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("retry-after", time.Now().Add(5*time.Second).UTC().Format(http.TimeFormat))
+
+	got := c.retryDelay(resp, 0)
+	if got < 3*time.Second || got > 5*time.Second {
+		t.Errorf("delay = %v, want roughly 5s", got)
+	}
+}
+
+func TestClient_retryDelay_ignoresUnparseableRetryAfter(t *testing.T) {
+	c := &Client{BaseRetryDelay: time.Second, MaxRetryDelay: time.Second}
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("retry-after", "not-a-duration")
+
+	// Falls through to the exponential backoff rather than returning zero.
+	if got := c.retryDelay(resp, 0); got < 750*time.Millisecond || got > time.Second {
+		t.Errorf("delay = %v, want the backoff value", got)
+	}
+}
+
+// --- shouldRetry ---
+
+func TestShouldRetry_nilResponseIsAConnectionError(t *testing.T) {
+	if !shouldRetry(http.MethodGet, nil) {
+		t.Error("expected true for a nil response on an idempotent method")
+	}
+	if shouldRetry(http.MethodPost, nil) {
+		t.Error("expected false for a nil response on a POST: the write may have landed")
+	}
+}
+
+func TestShouldRetry_dependsOnIdempotency(t *testing.T) {
+	statuses := []int{
+		http.StatusRequestTimeout,
+		http.StatusConflict,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodDelete, "get"} {
+		for _, status := range statuses {
+			resp := &http.Response{StatusCode: status, Header: http.Header{}}
+			if !shouldRetry(method, resp) {
+				t.Errorf("%s %d: want retry", method, status)
+			}
+		}
+	}
+
+	for _, status := range statuses {
+		resp := &http.Response{StatusCode: status, Header: http.Header{}}
+		want := status == http.StatusTooManyRequests
+		if got := shouldRetry(http.MethodPost, resp); got != want {
+			t.Errorf("POST %d: retry = %v, want %v", status, got, want)
+		}
+	}
+}
+
+func TestShouldRetry_xShouldRetryOverridesIdempotency(t *testing.T) {
+	forced := &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{}}
+	forced.Header.Set("x-should-retry", "true")
+	if !shouldRetry(http.MethodPost, forced) {
+		t.Error("expected the server's explicit opt-in to replay a POST")
+	}
+
+	refused := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+	refused.Header.Set("x-should-retry", "false")
+	if shouldRetry(http.MethodPost, refused) {
+		t.Error("expected the server's explicit opt-out to win")
+	}
+}
+
+func TestIsIdempotent(t *testing.T) {
+	for _, method := range []string{
+		http.MethodGet, http.MethodHead, http.MethodPut,
+		http.MethodDelete, http.MethodOptions, http.MethodTrace, "delete",
+	} {
+		if !isIdempotent(method) {
+			t.Errorf("%s: want idempotent", method)
+		}
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPatch, http.MethodConnect} {
+		if isIdempotent(method) {
+			t.Errorf("%s: want non-idempotent", method)
+		}
+	}
+}
+
+// --- NewClient ---
+
+func TestNewClient_enablesRetriesByDefault(t *testing.T) {
+	c := NewClient("key")
+	if c.MaxRetries != DefaultMaxRetries {
+		t.Errorf("MaxRetries = %d, want %d", c.MaxRetries, DefaultMaxRetries)
+	}
+}
+
+func TestAdminClient_doRequest_doesNotRetryRequestConstructionErrors(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// A space is not a valid token in an HTTP method, so the request never leaves.
+	_, err := newRetryingTestClient(t, srv, 2).
+		DoRequest(context.Background(), "BAD METHOD", "/v1/organizations/workspaces", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "create HTTP request") {
+		t.Errorf("err = %v, want a request-construction error", err)
+	}
+	if calls != 0 {
+		t.Errorf("calls = %d, want 0", calls)
 	}
 }
