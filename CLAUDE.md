@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Terraform provider built with [HashiCorp Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework) v1.19.0.
 
+The Anthropic Go SDK is pinned to **v1.67.0** and must not be bumped past it in a plain `chore(deps)` change. v1.68.0 renames skill fields (`display_title` → `display_name`, `latest_version` → `latest_version_id`) and drops `directory` and `version` from the skill-version response — but **the deployed API still sends the v1.67.0 names**. Verified against the live API on 2026-09-01 under `anthropic-beta: skills-2025-10-02` (the only skills beta constant, unchanged in v1.68.0): `GET /v1/skills` returns `display_title` and `latest_version`, and `GET /v1/skills/{id}/versions` returns `directory` and `version`. v1.67.0's struct tags match that payload field for field.
+
+So v1.68.0 is **ahead of the API, not behind it**: bumping now would silently deserialise `""` into `display_name` and `latest_version_id` (the API sends the old keys, which v1.68.0 no longer maps) and would drop two attributes the API still returns. Going past v1.67.0 needs the API rename to ship first, then a documented migration — so close any Renovate PR that does it silently, and re-run the check above before revisiting.
+
 - `main.go` — entry point; serves the provider at `registry.terraform.io/ippontech/anthropic`
 - `internal/provider/provider.go` — provider registration; `Resources()` and `DataSources()` methods list all implemented resources and data sources
 - `internal/services/` — all resources and data sources, organized by Anthropic service (one subdirectory per service)
@@ -295,6 +299,12 @@ Compare the two timestamps with a **non-strict** comparison — `!vault.UpdatedA
 Do **not** mark user PII attributes (`email`, `name`, etc.) as `Sensitive: true` in a data source/resource schema. They are the legitimate product of a lookup, not credentials, and schema-level sensitivity forces every consumer into `sensitive = true` outputs or `nonsensitive()` wrappers. This matches the GitLab provider, whose `gitlab_user` resource and `gitlab_user`/`gitlab_users` data sources mark only `password` sensitive, never `email`/`name`. Reserve `Sensitive: true` for true secrets (see write-only attributes above).
 
 Instead, prevent PII from leaking into CI logs at the **example-output** layer: any example `output` that surfaces an email/name must set `sensitive = true` (e.g. `examples/data-sources/organization_member[s]/data_source.tf`). The native tests run those example modules via `terraform test`, and the live-API jobs (`testacc.yml`: `push` to `main` + `workflow_dispatch`, never `pull_request`) run under the public repo, so a non-sensitive output would print real addresses in world-readable Actions logs. Marking the output sensitive renders `(sensitive value)` instead. An output can always upgrade a non-sensitive source attribute to sensitive, so no schema change is needed.
+
+### Agent built-in tool configs are an SDK union
+
+Since SDK v1.66.0 `agent_toolset.configs` maps to `BetaManagedAgentsAgentToolConfigParamsUnion` — one struct per built-in tool, so the Terraform `name` attribute selects a union branch instead of filling an enum field. Two places must stay in sync when the API gains a built-in tool: the `stringvalidator.OneOf(...)` list on the `name` attribute and the `switch` in `buildAgentToolConfigParams` (`internal/services/agents/agent_resource.go`). The helper returns an error diagnostic on an unknown name rather than silently sending an empty config, so a missed branch surfaces as a plan-time error — cover it in `agent_resource_internal_test.go`. Permission policies are still just the two `alwaysAllowPolicyParam` / `alwaysAskPolicyParam` shapes, wrapped in each tool's own `PermissionPolicyUnion`.
+
+Response-side types stay flat (`...AgentToolConfigUnion`), so state mapping needs no per-tool switch.
 
 ### Version constraints
 
