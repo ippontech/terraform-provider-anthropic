@@ -512,11 +512,16 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	params := anthropic.BetaAgentUpdateParams{
-		Version: state.Version.ValueInt64(),
 		Model: anthropic.BetaManagedAgentsModelConfigParams{
 			ID: anthropic.BetaManagedAgentsModel(data.Model.ValueString()),
 		},
 		Name: param.NewOpt(data.Name.ValueString()),
+	}
+
+	// Optimistic locking: the API requires a version of at least 1 when supplied,
+	// and applies the update unconditionally when omitted.
+	if v := state.Version.ValueInt64(); v > 0 {
+		params.Version = param.NewOpt(v)
 	}
 
 	if !data.ModelSpeed.IsNull() && !data.ModelSpeed.IsUnknown() {
@@ -704,17 +709,23 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 			if diags.HasError() {
 				return nil, diags
 			}
-			sdkConfigs := make([]anthropic.BetaManagedAgentsAgentToolConfigParams, len(configs))
+			sdkConfigs := make([]anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, len(configs))
 			for i, c := range configs {
-				sdkConfigs[i] = anthropic.BetaManagedAgentsAgentToolConfigParams{
-					Name: anthropic.BetaManagedAgentsAgentToolConfigParamsName(c.Name.ValueString()),
-				}
+				var enabled param.Opt[bool]
 				if !c.Enabled.IsNull() && !c.Enabled.IsUnknown() {
-					sdkConfigs[i].Enabled = param.NewOpt(c.Enabled.ValueBool())
+					enabled = param.NewOpt(c.Enabled.ValueBool())
 				}
+				var policy string
 				if !c.PermissionPolicy.IsNull() && !c.PermissionPolicy.IsUnknown() {
-					sdkConfigs[i].PermissionPolicy = buildAgentToolConfigPermissionPolicy(c.PermissionPolicy.ValueString())
+					policy = c.PermissionPolicy.ValueString()
 				}
+
+				cfg, d := buildAgentToolConfigParams(c.Name.ValueString(), enabled, policy)
+				diags.Append(d...)
+				if diags.HasError() {
+					return nil, diags
+				}
+				sdkConfigs[i] = cfg
 			}
 			params.Configs = sdkConfigs
 		}
@@ -975,7 +986,7 @@ func mapAgentToolsetToState(ctx context.Context, apiToolset *anthropic.BetaManag
 			}
 
 			// Build lookup from API response.
-			apiByName := map[string]anthropic.BetaManagedAgentsAgentToolConfig{}
+			apiByName := map[string]anthropic.BetaManagedAgentsAgentToolConfigUnion{}
 			for _, c := range apiToolset.Configs {
 				apiByName[string(c.Name)] = c
 			}
@@ -1158,22 +1169,113 @@ func mapMCPToolsetsToState(ctx context.Context, apiToolsets []anthropic.BetaMana
 
 // --- Permission policy builder helpers ---
 
-func buildAgentToolConfigPermissionPolicy(policyType string) anthropic.BetaManagedAgentsAgentToolConfigParamsPermissionPolicyUnion {
-	switch policyType {
-	case "always_allow":
-		return anthropic.BetaManagedAgentsAgentToolConfigParamsPermissionPolicyUnion{
-			OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
-			},
-		}
-	case "always_ask":
-		return anthropic.BetaManagedAgentsAgentToolConfigParamsPermissionPolicyUnion{
-			OfAlwaysAsk: &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
-			},
-		}
+// alwaysAllowPolicyParam and alwaysAskPolicyParam build the two permission policy
+// variants. Since SDK v1.66.0 every built-in tool carries its own
+// `PermissionPolicyUnion` type, but all of them are unions over these same two
+// params, so the branches below only differ in which union struct they fill in.
+func alwaysAllowPolicyParam() *anthropic.BetaManagedAgentsAlwaysAllowPolicyParam {
+	return &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
+		Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
 	}
-	return anthropic.BetaManagedAgentsAgentToolConfigParamsPermissionPolicyUnion{}
+}
+
+func alwaysAskPolicyParam() *anthropic.BetaManagedAgentsAlwaysAskPolicyParam {
+	return &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
+		Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
+	}
+}
+
+// buildAgentToolConfigParams maps a `configs` entry to the SDK's discriminated
+// tool-config union. Since SDK v1.66.0 the flat
+// `BetaManagedAgentsAgentToolConfigParams` (a `name` enum plus shared fields) is
+// split into one struct per built-in tool, so the Terraform `name` attribute now
+// selects the union branch instead of populating a field. The accepted names are
+// the same eight the schema validator enforces.
+func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType string) (anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	var u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion
+
+	switch name {
+	case "bash":
+		cfg := &anthropic.BetaManagedAgentsBashToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfBash = cfg
+	case "edit":
+		cfg := &anthropic.BetaManagedAgentsEditToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfEdit = cfg
+	case "read":
+		cfg := &anthropic.BetaManagedAgentsReadToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfRead = cfg
+	case "write":
+		cfg := &anthropic.BetaManagedAgentsWriteToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfWrite = cfg
+	case "glob":
+		cfg := &anthropic.BetaManagedAgentsGlobToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfGlob = cfg
+	case "grep":
+		cfg := &anthropic.BetaManagedAgentsGrepToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfGrep = cfg
+	case "web_fetch":
+		cfg := &anthropic.BetaManagedAgentsWebFetchToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfWebFetch = cfg
+	case "web_search":
+		cfg := &anthropic.BetaManagedAgentsWebSearchToolConfigParams{Enabled: enabled}
+		switch policyType {
+		case "always_allow":
+			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
+		case "always_ask":
+			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
+		}
+		u.OfWebSearch = cfg
+	default:
+		diags.AddError(
+			"Unsupported built-in tool name",
+			fmt.Sprintf("%q is not a supported built-in tool name. Expected one of: bash, edit, read, write, glob, grep, web_fetch, web_search.", name),
+		)
+	}
+
+	return u, diags
 }
 
 func buildAgentToolsetDefaultPermissionPolicy(policyType string) anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion {
