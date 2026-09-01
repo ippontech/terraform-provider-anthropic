@@ -28,12 +28,10 @@ shows its recent runs and their logs.
 |---|---|
 | `extends` | `config:recommended`, `:semanticCommits`, `:dependencyDashboard`, `:enablePreCommit` |
 | `labels` | `dependencies` |
-| `timezone` | `Europe/Paris`, so the schedule below means what it says (Renovate defaults to UTC) |
-| `schedule` | `before 6am`, daily. Gates when branches are created, not when the bot runs (Mend scans on its own cadence regardless), so updates arrive in one overnight batch per day |
 | `platformAutomerge` | Uses GitHub's own auto-merge, so branch protection and required checks are respected. This is already the default; kept explicit because the whole automerge policy depends on it |
 | `enabledManagers` | `github-actions`, `gomod`, `mise`, `pre-commit`, `custom.regex` |
 | `customManagers` | Two regex managers, see [Custom managers](#custom-managers) below |
-| `packageRules` | One grouped PR per manager, plus automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown |
+| `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, plus a version hold on the Anthropic Go SDK (see [Version holds](#version-holds)) |
 
 Two of these entries are less obvious than they look:
 
@@ -53,13 +51,11 @@ published provider version.
 
 `prConcurrentLimit` is not set either: 10 is already the default.
 
-The schedule window is deliberately **wider than the scan interval**. Mend scans every 4 hours on the
-Community plan, so a 6-hour window guarantees at least one scan lands inside it every day. The
-`schedule:daily` preset (`* 0-3 * * *`) would be exactly 4 hours, leaving no margin: a scan cadence that
-happens to fall at 04:00 and 08:00 would skip the window entirely that day.
-
-Daily pairs well with the 3-day `minimumReleaseAge`: updates land roughly three days after release, in
-small daily batches rather than one weekly pile, which keeps a breaking bump easy to attribute.
+There is deliberately **no `schedule`** (nor the `timezone` that only existed to anchor it). Both were
+removed in [#182](https://github.com/ippontech/terraform-provider-anthropic/pull/182): a schedule gates
+when branches may be created, and combined with the hosted app's own 4-hour scan cadence it could skip
+the window entirely on a given day. Updates now arrive whenever Mend next scans, and the 3-day
+`minimumReleaseAge` remains the only deliberate delay — enough to keep a breaking bump easy to attribute.
 
 Every option above is repository-level config. Global options (`platform`, `repositories`, `onboarding`,
 credentials) belong to the bot host, so they must not be added here:
@@ -86,6 +82,31 @@ hence the annotation. To put another tool version under Renovate's control, add 
 ```
 
 Both managers are grouped into a single `CI tool versions` PR.
+
+## Version holds
+
+One dependency is deliberately capped rather than tracked to latest:
+
+| Dependency | Cap | Why |
+|---|---|---|
+| `github.com/anthropics/anthropic-sdk-go` | `<1.68.0` | v1.68.0 renames skill fields (`display_title` -> `display_name`, `latest_version` -> `latest_version_id`) and drops `directory` / `version` from the skill-version response, but the deployed API still returns the old names. Tracked in [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192) |
+
+The cap matters because of the automerge policy above: v1.67.0 -> v1.68.0 is a **minor** update, so it
+would be grouped into the `Go dependencies` PR and automerged after three days. Guidance to "close the
+Renovate PR" would never get a chance to apply. Today the only thing preventing that is accidental — the
+provider does not compile against v1.68.0 (11 errors in `internal/services/skills`), so CI goes red and
+GitHub's auto-merge is blocked. That is a lucky side effect, not a policy, and it would not hold for a
+release that changes behaviour without breaking the build.
+
+Two consequences worth knowing:
+
+- `allowedVersions` filters the version out entirely, so the SDK will keep appearing **up to date** on
+  the Dependency Dashboard. #192 is the reminder, not the dashboard.
+- Patch releases within `1.67.x` are still allowed and still automerge, matching the policy for every
+  other Go dependency.
+
+Remove the rule as part of #192, once the API rename has shipped and the migration is written — never on
+its own.
 
 ## Validating a config change
 

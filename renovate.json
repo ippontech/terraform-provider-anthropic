@@ -66,6 +66,12 @@
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true,
       "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Hold anthropic-sdk-go below v1.68.0 until #192 is done: v1.68.0 renames skill fields the deployed API still returns under their old names. Patch releases within 1.67.x stay allowed. Remove this rule as part of #192, not on its own.",
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
+      "allowedVersions": "<1.68.0"
     }
   ]
 }
