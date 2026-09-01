@@ -11,8 +11,30 @@ terraform {
 
 # Minimal agent
 resource "anthropic_agent" "simple" {
-  model = "claude-sonnet-4-6"
-  name  = "Simple Agent"
+  model        = "claude-sonnet-4-6"
+  model_effort = "high"
+  name         = "Simple Agent"
+}
+
+# Coordinator agent that can delegate to another managed agent
+resource "anthropic_agent" "coordinator" {
+  model        = "claude-sonnet-4-6"
+  model_effort = "high"
+  name         = "Support Coordinator"
+
+  multiagent = {
+    type = "coordinator"
+    agents = [
+      {
+        type = "self"
+      },
+      {
+        type    = "agent"
+        id      = anthropic_agent.assistant.id
+        version = anthropic_agent.assistant.version
+      }
+    ]
+  }
 }
 
 # Agent with system prompt and description
