@@ -42,6 +42,7 @@ type AnthropicProvider struct {
 type AnthropicProviderModel struct {
 	ApiKey      types.String `tfsdk:"api_key"`
 	AdminApiKey types.String `tfsdk:"admin_api_key"`
+	AuthToken   types.String `tfsdk:"auth_token"`
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -62,6 +63,13 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Sensitive:   true,
 				Description: "The Anthropic Admin API key for organization management endpoints (workspaces, members). Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
 			},
+			"auth_token": schema.StringAttribute{
+				Optional:  true,
+				Sensitive: true,
+				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
+					"such as the Workload Identity Federation admin endpoints. " +
+					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
+			},
 		},
 	}
 }
@@ -75,36 +83,53 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if !data.ApiKey.IsNull() && !data.ApiKey.IsUnknown() {
-		apiKey = data.ApiKey.ValueString()
-	}
+	apiKey := resolveCredential(data.ApiKey, "ANTHROPIC_API_KEY")
+	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
+	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
 
-	adminApiKey := os.Getenv("ANTHROPIC_ADMIN_API_KEY")
-	if !data.AdminApiKey.IsNull() && !data.AdminApiKey.IsUnknown() {
-		adminApiKey = data.AdminApiKey.ValueString()
-	}
-
-	if apiKey == "" && adminApiKey == "" {
+	if apiKey == "" && adminApiKey == "" && authToken == "" {
 		resp.Diagnostics.AddError(
-			"Missing API Key",
-			"At least one API key must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
-				"or admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources.",
+			"Missing Credentials",
+			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
+				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
+				"or auth_token (ANTHROPIC_AUTH_TOKEN) for endpoints that require an org:admin OAuth bearer token.",
 		)
 		return
 	}
 
+	// Each client must carry exactly one credential. anthropic.NewClient
+	// prepends DefaultClientOptions, which walks the env credential chain
+	// (ANTHROPIC_API_KEY, then ANTHROPIC_AUTH_TOKEN) and sets a header before
+	// our explicit option is applied. With both variables exported — the
+	// normal case here — a client would send x-api-key *and* Authorization,
+	// and the endpoints behind each credential reject the other one. The
+	// WithHeaderDel calls drop whatever the chain contributed.
 	pd := &providerdata.ProviderData{}
 	if apiKey != "" {
-		client := anthropic.NewClient(option.WithAPIKey(apiKey))
+		client := anthropic.NewClient(option.WithAPIKey(apiKey), option.WithHeaderDel("authorization"))
 		pd.Client = &client
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
 	}
+	if authToken != "" {
+		client := anthropic.NewClient(option.WithAuthToken(authToken), option.WithHeaderDel("x-api-key"))
+		pd.OAuthClient = &providerdata.OAuthClient{Client: &client}
+	}
 
 	resp.DataSourceData = pd
 	resp.ResourceData = pd
+}
+
+// resolveCredential returns the credential to use for one authentication
+// method: the provider argument when it is set, otherwise the environment
+// variable. An unknown value (an unresolved reference at plan time) is treated
+// as unset, so the environment still applies.
+func resolveCredential(configValue types.String, envVar string) string {
+	if !configValue.IsNull() && !configValue.IsUnknown() {
+		return configValue.ValueString()
+	}
+	return os.Getenv(envVar)
 }
 
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {

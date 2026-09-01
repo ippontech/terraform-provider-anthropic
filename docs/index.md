@@ -11,7 +11,7 @@ It allows you to manage and query Anthropic resources such as models.
 
 ## Authentication
 
-The provider uses two distinct API keys depending on which resources you manage.
+The provider accepts three distinct credentials, depending on which resources you manage. At least one must be configured; they are independent, and configuring one never substitutes for another.
 
 ### API Key (`api_key` / `ANTHROPIC_API_KEY`)
 
@@ -55,6 +55,29 @@ provider "anthropic" {
 
 The `admin_api_key` is optional — you only need it when using workspace-related resources.
 
+### OAuth Bearer Token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`)
+
+Required for the endpoints that reject API keys outright and expect an `Authorization: Bearer` header carrying the `org:admin` scope — currently the [Workload Identity Federation admin endpoints](https://platform.claude.com/docs/en/manage-claude/wif-admin-api). An Admin API key is **not** accepted there, for reads or for writes.
+
+Obtain a token with the `ant` CLI:
+
+```bash
+ant auth login --profile admin --scope "org:admin"
+export ANTHROPIC_AUTH_TOKEN="$(ant auth print-credentials --profile admin --access-token)"
+```
+
+**Provider argument**:
+
+```hcl
+provider "anthropic" {
+  auth_token = "sk-ant-oat01-..."
+}
+```
+
+~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider does not refresh it.
+
+The `auth_token` is optional — you only need it for federation resources.
+
 ~> **Warning**: Never hardcode API keys in your Terraform configuration files.
 Use environment variables or a secrets manager instead.
 
@@ -88,3 +111,4 @@ provider "anthropic" {}
 
 - `admin_api_key` (String, Sensitive) The Anthropic Admin API key for organization management endpoints (workspaces, members). Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.
 - `api_key` (String, Sensitive) The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.
+- `auth_token` (String, Sensitive) An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, such as the Workload Identity Federation admin endpoints. Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.
