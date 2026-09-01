@@ -3,18 +3,39 @@
   "extends": [
     "config:recommended",
     ":semanticCommits",
-    ":dependencyDashboard"
+    ":dependencyDashboard",
+    ":enablePreCommit"
   ],
   "labels": ["dependencies"],
-  "schedule": ["before 6am on Monday"],
-  "prConcurrentLimit": 10,
+  "timezone": "Europe/Paris",
+  "schedule": ["before 6am"],
   "platformAutomerge": true,
   "enabledManagers": [
     "github-actions",
     "gomod",
     "mise",
     "pre-commit",
-    "terraform"
+    "custom.regex"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Tool versions pinned in a workflow `with:` input, annotated with a `# renovate:` comment on the preceding line (no built-in manager reads action inputs)",
+      "managerFilePatterns": [".github/workflows/*.yml"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+\\S+: [\"']?(?<currentValue>[^\"'\\s]+)[\"']?"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "npm packages installed inline by the semantic-release workflow; there is no package.json for the npm manager to key off",
+      "managerFilePatterns": [".github/workflows/semantic-release.yml"],
+      "matchStrings": [
+        "(?<depName>(?:@[a-z0-9-]+/)?[a-z0-9][a-z0-9-._]*)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
   ],
   "packageRules": [
     {
@@ -39,8 +60,14 @@
       "groupSlug": "pre-commit"
     },
     {
+      "matchManagers": ["custom.regex"],
+      "groupName": "CI tool versions",
+      "groupSlug": "ci-tools"
+    },
+    {
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "automerge": true
+      "automerge": true,
+      "minimumReleaseAge": "3 days"
     }
   ]
 }
