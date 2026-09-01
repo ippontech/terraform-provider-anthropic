@@ -1,3 +1,9 @@
+## [1.28.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.28.1...v1.28.2) (2026-09-01)
+
+### 🐛 Bug Fixes
+
+* **renovate:** drop the schedule so the Mend app can act ([#182](https://github.com/ippontech/terraform-provider-anthropic/issues/182)) ([a63d122](https://github.com/ippontech/terraform-provider-anthropic/commit/a63d122424bad01b702442932733c488804a8ef8)), closes [175/#177](https://github.com/175/terraform-provider-anthropic/issues/177) [#176](https://github.com/ippontech/terraform-provider-anthropic/issues/176) [#177](https://github.com/ippontech/terraform-provider-anthropic/issues/177) [#166](https://github.com/ippontech/terraform-provider-anthropic/issues/166) [#169](https://github.com/ippontech/terraform-provider-anthropic/issues/169)
+
 ## [1.28.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.28.0...v1.28.1) (2026-07-20)
 
 ### 🐛 Bug Fixes
