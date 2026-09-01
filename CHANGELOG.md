@@ -1,3 +1,9 @@
+## [1.30.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.29.1...v1.30.0) (2026-09-01)
+
+### ✨ Features
+
+* **provider:** support org:admin OAuth bearer token auth ([#195](https://github.com/ippontech/terraform-provider-anthropic/issues/195)) ([fc05035](https://github.com/ippontech/terraform-provider-anthropic/commit/fc0503505ee95a6a2f3659a3043c93c50dc1cb2e)), closes [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#187](https://github.com/ippontech/terraform-provider-anthropic/issues/187) [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#186](https://github.com/ippontech/terraform-provider-anthropic/issues/186)
+
 ## [1.29.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.29.0...v1.29.1) (2026-09-01)
 
 ### 🐛 Bug Fixes
