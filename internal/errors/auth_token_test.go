@@ -34,6 +34,13 @@ func TestRequireOAuthResourceClient(t *testing.T) {
 			wantDetail:  "resource",
 		},
 		{
+			name:        "wrapper around a nil SDK client returns false and adds error",
+			client:      &providerdata.OAuthClient{},
+			wantOk:      false,
+			wantSummary: "Missing OAuth Token",
+			wantDetail:  "resource",
+		},
+		{
 			name:   "non-nil client returns true with no diagnostics",
 			client: newOAuthClient(),
 			wantOk: true,
@@ -65,6 +72,13 @@ func TestRequireOAuthDataSourceClient(t *testing.T) {
 			wantDetail:  "data source",
 		},
 		{
+			name:        "wrapper around a nil SDK client returns false and adds error",
+			client:      &providerdata.OAuthClient{},
+			wantOk:      false,
+			wantSummary: "Missing OAuth Token",
+			wantDetail:  "data source",
+		},
+		{
 			name:   "non-nil client returns true with no diagnostics",
 			client: newOAuthClient(),
 			wantOk: true,
@@ -91,28 +105,5 @@ func TestRequireOAuthClientNamesTheRightCredential(t *testing.T) {
 		if !strings.Contains(detail, want) {
 			t.Errorf("detail %q does not mention %q", detail, want)
 		}
-	}
-}
-
-func assertGuard(t *testing.T, got bool, diags diag.Diagnostics, wantOk bool, wantSummary, wantDetail string) {
-	t.Helper()
-
-	if got != wantOk {
-		t.Fatalf("got %v, want %v", got, wantOk)
-	}
-	if wantOk {
-		if diags.HasError() {
-			t.Fatalf("expected no diagnostics, got: %v", diags)
-		}
-		return
-	}
-	if !diags.HasError() {
-		t.Fatal("expected error diagnostic, got none")
-	}
-	if diags[0].Summary() != wantSummary {
-		t.Errorf("summary = %q, want %q", diags[0].Summary(), wantSummary)
-	}
-	if !strings.Contains(diags[0].Detail(), wantDetail) {
-		t.Errorf("detail %q does not contain %q", diags[0].Detail(), wantDetail)
 	}
 }

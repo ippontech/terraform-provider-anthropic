@@ -97,24 +97,17 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	// Each client must carry exactly one credential. anthropic.NewClient
-	// prepends DefaultClientOptions, which walks the env credential chain
-	// (ANTHROPIC_API_KEY, then ANTHROPIC_AUTH_TOKEN) and sets a header before
-	// our explicit option is applied. With both variables exported — the
-	// normal case here — a client would send x-api-key *and* Authorization,
-	// and the endpoints behind each credential reject the other one. The
-	// WithHeaderDel calls drop whatever the chain contributed.
+	// Each client carries exactly the credential resolved above and nothing
+	// the environment contributed on its own — see newSDKClient.
 	pd := &providerdata.ProviderData{}
 	if apiKey != "" {
-		client := anthropic.NewClient(option.WithAPIKey(apiKey), option.WithHeaderDel("authorization"))
-		pd.Client = &client
+		pd.Client = newSDKClient(option.WithAPIKey(apiKey))
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
 	}
 	if authToken != "" {
-		client := anthropic.NewClient(option.WithAuthToken(authToken), option.WithHeaderDel("x-api-key"))
-		pd.OAuthClient = &providerdata.OAuthClient{Client: &client}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken))}
 	}
 
 	resp.DataSourceData = pd
@@ -130,6 +123,38 @@ func resolveCredential(configValue types.String, envVar string) string {
 		return configValue.ValueString()
 	}
 	return os.Getenv(envVar)
+}
+
+// newSDKClient builds an SDK client that carries exactly the credential passed
+// in, and nothing the environment contributed on its own.
+//
+// option.WithoutEnvironmentDefaults suppresses anthropic.DefaultClientOptions
+// entirely, which matters for more than the credential headers. That chain has
+// five sources: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, the profile named by
+// ANTHROPIC_PROFILE, env-var federation, and the fallback profile under
+// ~/.anthropic. The first two set a header before our explicit option is
+// applied, so with both variables exported — the normal case here — a client
+// would send x-api-key *and* Authorization, and the endpoints behind each
+// credential reject the other one. The three profile/federation sources go
+// further: option.WithConfig applies the profile's non-credential settings
+// unconditionally, so a profile left behind by `ant auth login` (which also
+// makes itself the active profile) would silently override the base URL and
+// stamp its workspace_id on every request — neither of which appears anywhere
+// in the Terraform configuration.
+//
+// The provider resolves credentials itself, so the only environment variable
+// still worth honouring is ANTHROPIC_BASE_URL, which the marker option also
+// skips. It is read with an explicit emptiness check: an exported-but-empty
+// value must not replace the SDK's production default with "".
+func newSDKClient(credential option.RequestOption) *anthropic.Client {
+	opts := []option.RequestOption{option.WithoutEnvironmentDefaults(), credential}
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+
+	client := anthropic.NewClient(opts...)
+
+	return &client
 }
 
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {

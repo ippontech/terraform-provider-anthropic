@@ -78,6 +78,10 @@ provider "anthropic" {
 
 The `auth_token` is optional — you only need it for federation resources.
 
+~> **Note**: The provider needs a token it can read at plan time; it does not perform the Workload Identity Federation token exchange itself. The SDK's federation variables (`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`) are **not** a way to configure the provider: with no `auth_token` and no `ANTHROPIC_AUTH_TOKEN`, configuration fails with `Missing Credentials`. In CI, exchange the identity token in a preceding step — the [`ant` CLI with a federation profile, or the jwt-bearer grant directly](https://platform.claude.com/docs/en/manage-claude/wif-admin-api#bootstrap-a-workload-to-manage-wif) — and export the resulting bearer token.
+
+Profiles under `~/.config/anthropic` are ignored for the same reason: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
+
 ~> **Warning**: Never hardcode API keys in your Terraform configuration files.
 Use environment variables or a secrets manager instead.
 
