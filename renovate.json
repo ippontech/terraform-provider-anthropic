@@ -7,8 +7,6 @@
     ":enablePreCommit"
   ],
   "labels": ["dependencies"],
-  "timezone": "Europe/Paris",
-  "schedule": ["before 6am"],
   "platformAutomerge": true,
   "enabledManagers": [
     "github-actions",
