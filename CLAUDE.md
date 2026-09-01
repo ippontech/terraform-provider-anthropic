@@ -279,6 +279,14 @@ The Anthropic API's `metadata` field uses PATCH semantics: omitted keys are pres
 
 Use `buildMetadataPatch(ctx, plan, state)` (in `internal/services/vaults/vault_resource.go`): it upserts planned keys and sets keys removed since prior state to `nil`, returning a `map[string]any` sent via `params.SetExtraFields(map[string]any{"metadata": patch})` (the typed `map[string]string` field can't carry per-key nulls). The same drift applies to nullable scalars like `display_name`: send `param.Null[string]()` to clear, not an omitted field.
 
+### Read-after-write consistency on the vaults API
+
+`POST /v1/vaults/{id}` returns the updated object, but a `GET` issued immediately after can still return the **pre-update** object. Measured against the live API on 2026-09-01: stale at t+493ms, converged between 520ms and 1.04s across three trials, with every field back at its prior value (`display_name` included, so it is a stale read rather than a `buildMetadataPatch` artefact). A `GET` straight after a **create** is consistent, so only the update path is affected.
+
+Left alone, Terraform's post-apply refresh lands inside that window and the next plan shows a phantom in-place update — this is what made `TestAccVaultResource_update` flaky. `vault_resource.go` therefore calls `awaitVaultUpdateVisible` after a successful update: it polls `Get` until `updated_at` is no older than the timestamp the write returned (5s ceiling, 200ms interval, both `var`s so tests can shrink them). The wait is **best-effort** — a read error, a timeout or a cancelled context returns without a diagnostic, because the write already succeeded and failing the apply would turn a cosmetic staleness window into a hard error.
+
+Compare timestamps with `!After(...)` rather than `Before(...)`: an `updated_at` **equal** to the write timestamp must count as visible, or the loop always times out. `anthropic_vault_credential` has the same structural exposure but no observed flakiness, and its endpoint was not probed — check before assuming it needs the same wait.
+
 ### PII attributes and example outputs
 
 Do **not** mark user PII attributes (`email`, `name`, etc.) as `Sensitive: true` in a data source/resource schema. They are the legitimate product of a lookup, not credentials, and schema-level sensitivity forces every consumer into `sensitive = true` outputs or `nonsensitive()` wrappers. This matches the GitLab provider, whose `gitlab_user` resource and `gitlab_user`/`gitlab_users` data sources mark only `password` sensitive, never `email`/`name`. Reserve `Sensitive: true` for true secrets (see write-only attributes above).
