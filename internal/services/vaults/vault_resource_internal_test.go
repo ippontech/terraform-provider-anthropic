@@ -198,32 +198,18 @@ func newTestVaultClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
 	return &c
 }
 
-// shrinkVaultConsistencyKnobs keeps the polling loop in the millisecond range so
-// the tests stay fast, restoring the production values afterwards.
-func shrinkVaultConsistencyKnobs(t *testing.T, timeout, interval time.Duration) {
-	t.Helper()
-
-	origTimeout, origInterval := vaultConsistencyTimeout, vaultConsistencyInterval
-	vaultConsistencyTimeout, vaultConsistencyInterval = timeout, interval
-	t.Cleanup(func() {
-		vaultConsistencyTimeout, vaultConsistencyInterval = origTimeout, origInterval
-	})
-}
-
 // TestAwaitVaultUpdateVisible_pollsUntilFresh is the regression test for the
 // flaky TestAccVaultResource_update: the vaults API can answer a Get with the
 // pre-update object for up to ~1s after a successful write, which made the
 // post-apply refresh read stale values and the next plan show a phantom diff.
 func TestAwaitVaultUpdateVisible_pollsUntilFresh(t *testing.T) {
-	shrinkVaultConsistencyKnobs(t, 2*time.Second, time.Millisecond)
-
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
 	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 3)
 	client := newTestVaultClient(t, srv)
 
-	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after)
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after, 2*time.Second, time.Millisecond)
 
 	if *gets != 4 {
 		t.Errorf("Get calls = %d, want 4 (three stale reads then the fresh one)", *gets)
@@ -232,15 +218,13 @@ func TestAwaitVaultUpdateVisible_pollsUntilFresh(t *testing.T) {
 
 // A Get that already reflects the write must not be polled a second time.
 func TestAwaitVaultUpdateVisible_returnsImmediatelyWhenFresh(t *testing.T) {
-	shrinkVaultConsistencyKnobs(t, 2*time.Second, time.Millisecond)
-
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
 	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 0)
 	client := newTestVaultClient(t, srv)
 
-	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after)
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after, 2*time.Second, time.Millisecond)
 
 	if *gets != 1 {
 		t.Errorf("Get calls = %d, want 1", *gets)
@@ -250,14 +234,12 @@ func TestAwaitVaultUpdateVisible_returnsImmediatelyWhenFresh(t *testing.T) {
 // An updated_at equal to the write timestamp counts as visible: the comparison
 // must not require a strictly newer value, or the loop would always time out.
 func TestAwaitVaultUpdateVisible_equalTimestampCountsAsVisible(t *testing.T) {
-	shrinkVaultConsistencyKnobs(t, 200*time.Millisecond, time.Millisecond)
-
 	writtenAt := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 
 	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", writtenAt, writtenAt, 0)
 	client := newTestVaultClient(t, srv)
 
-	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", writtenAt)
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", writtenAt, 200*time.Millisecond, time.Millisecond)
 
 	if *gets != 1 {
 		t.Errorf("Get calls = %d, want 1", *gets)
@@ -268,8 +250,6 @@ func TestAwaitVaultUpdateVisible_equalTimestampCountsAsVisible(t *testing.T) {
 // timeout rather than hang or surface an error, because the write itself already
 // succeeded.
 func TestAwaitVaultUpdateVisible_givesUpAtTimeout(t *testing.T) {
-	shrinkVaultConsistencyKnobs(t, 120*time.Millisecond, 10*time.Millisecond)
-
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
@@ -278,7 +258,7 @@ func TestAwaitVaultUpdateVisible_givesUpAtTimeout(t *testing.T) {
 	client := newTestVaultClient(t, srv)
 
 	start := time.Now()
-	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after)
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after, 120*time.Millisecond, 10*time.Millisecond)
 	elapsed := time.Since(start)
 
 	if elapsed > time.Second {
@@ -291,8 +271,6 @@ func TestAwaitVaultUpdateVisible_givesUpAtTimeout(t *testing.T) {
 
 // A cancelled context must abort the wait promptly.
 func TestAwaitVaultUpdateVisible_honoursContextCancellation(t *testing.T) {
-	shrinkVaultConsistencyKnobs(t, 10*time.Second, 50*time.Millisecond)
-
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
@@ -303,9 +281,73 @@ func TestAwaitVaultUpdateVisible_honoursContextCancellation(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	awaitVaultUpdateVisible(ctx, client, "vlt_01ABC", after)
+	awaitVaultUpdateVisible(ctx, client, "vlt_01ABC", after, 10*time.Second, 50*time.Millisecond)
 
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("took %s, want an immediate return on a cancelled context", elapsed)
+	}
+}
+
+// newFailingVaultServer answers every Get with status, so the poll can never
+// converge.
+func newFailingVaultServer(t *testing.T, status int) (*httptest.Server, *int) {
+	t.Helper()
+
+	gets := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gets++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		if _, err := w.Write([]byte(`{"type":"error","error":{"type":"not_found_error","message":"not found"}}`)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv, &gets
+}
+
+// A vault deleted out-of-band (or a key that lost access to it) answers every
+// Get with a terminal status. Polling it to the deadline would stall the apply
+// for seconds on a read that can never converge, so the wait must bail out on
+// the first such answer.
+func TestAwaitVaultUpdateVisible_stopsOnTerminalReadError(t *testing.T) {
+	for _, status := range []int{401, 403, 404} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv, gets := newFailingVaultServer(t, status)
+			client := newTestVaultClient(t, srv)
+
+			writtenAt := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+
+			start := time.Now()
+			awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", writtenAt, 10*time.Second, 50*time.Millisecond)
+
+			if elapsed := time.Since(start); elapsed > time.Second {
+				t.Errorf("took %s, want an immediate return on a terminal read error", elapsed)
+			}
+			if *gets != 1 {
+				t.Errorf("Get calls = %d, want 1 (no retry on a terminal status)", *gets)
+			}
+		})
+	}
+}
+
+// A non-terminal failure says nothing about whether the vault will become
+// visible, so it must keep polling until the deadline like a stale read does.
+// 422 is used because the SDK client does not retry it internally.
+func TestAwaitVaultUpdateVisible_keepsPollingOnOtherReadErrors(t *testing.T) {
+	srv, gets := newFailingVaultServer(t, 422)
+	client := newTestVaultClient(t, srv)
+
+	writtenAt := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+
+	start := time.Now()
+	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", writtenAt, 120*time.Millisecond, 10*time.Millisecond)
+
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %s, want it to give up near the 120ms timeout", elapsed)
+	}
+	if *gets < 2 {
+		t.Errorf("Get calls = %d, want it to have retried at least once", *gets)
 	}
 }

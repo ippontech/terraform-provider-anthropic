@@ -220,11 +220,33 @@ func (r *VaultResource) Read(ctx context.Context, req resource.ReadRequest, resp
 // flaky, and it is equally visible to anyone running `terraform apply` followed
 // straight away by `terraform plan`.
 //
-// Both knobs are vars rather than consts so tests can shrink them.
-var (
+// The production bounds of that wait. They are consts, and awaitVaultUpdateVisible
+// takes them as arguments, so the unit tests can shrink the loop to milliseconds
+// without mutating shared state: the acceptance tests exercise the real Update in
+// the same test binary, and a package-level knob would race with them the day any
+// vault test opts into t.Parallel().
+const (
 	vaultConsistencyTimeout  = 5 * time.Second
 	vaultConsistencyInterval = 200 * time.Millisecond
 )
+
+// isTerminalVaultReadError reports whether a Get failure is one the poll can
+// never recover from: the vault is gone, or the key no longer has access to it.
+// Retrying those until the deadline would stall the apply for seconds on a read
+// that will never converge.
+func isTerminalVaultReadError(err error) bool {
+	var apierr *anthropic.Error
+	if !errors.As(err, &apierr) {
+		return false
+	}
+
+	switch apierr.StatusCode {
+	case 401, 403, 404:
+		return true
+	default:
+		return false
+	}
+}
 
 // awaitVaultUpdateVisible polls Get until the stored vault is at least as new as
 // writtenAt, the updated_at returned by the write itself.
@@ -234,19 +256,28 @@ var (
 // succeeded, so failing the apply here would turn a cosmetic staleness window
 // into a hard error; the worst case of giving up is the phantom diff we were
 // trying to avoid.
-func awaitVaultUpdateVisible(ctx context.Context, client *anthropic.Client, vaultID string, writtenAt time.Time) {
-	deadline := time.Now().Add(vaultConsistencyTimeout)
+func awaitVaultUpdateVisible(ctx context.Context, client *anthropic.Client, vaultID string, writtenAt time.Time, timeout, interval time.Duration) {
+	deadline := time.Now().Add(timeout)
 
 	for {
 		vault, err := client.Beta.Vaults.Get(ctx, vaultID, anthropic.BetaVaultGetParams{})
-		if err == nil && !vault.UpdatedAt.Before(writtenAt) {
+		switch {
+		case err == nil:
+			if !vault.UpdatedAt.Before(writtenAt) {
+				return
+			}
+		case isTerminalVaultReadError(err):
+			tflog.Warn(ctx, "vault became unreadable while waiting for the update to be visible; giving up on the consistency wait", map[string]any{
+				"vault_id": vaultID,
+				"error":    err.Error(),
+			})
 			return
 		}
 
 		if time.Now().After(deadline) {
 			tflog.Warn(ctx, "vault update not visible before the consistency timeout; the next plan may show a transient diff", map[string]any{
 				"vault_id": vaultID,
-				"timeout":  vaultConsistencyTimeout.String(),
+				"timeout":  timeout.String(),
 			})
 			return
 		}
@@ -254,7 +285,7 @@ func awaitVaultUpdateVisible(ctx context.Context, client *anthropic.Client, vaul
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(vaultConsistencyInterval):
+		case <-time.After(interval):
 		}
 	}
 }
@@ -296,7 +327,7 @@ func (r *VaultResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 	// Wait for the write to become visible to reads before returning, so the
 	// post-apply refresh does not observe the pre-update object.
-	awaitVaultUpdateVisible(ctx, r.client, state.ID.ValueString(), vault.UpdatedAt)
+	awaitVaultUpdateVisible(ctx, r.client, state.ID.ValueString(), vault.UpdatedAt, vaultConsistencyTimeout, vaultConsistencyInterval)
 
 	resp.Diagnostics.Append(mapVaultResponseToState(vault, &data)...)
 	if resp.Diagnostics.HasError() {
