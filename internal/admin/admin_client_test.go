@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -345,7 +346,8 @@ func TestAdminClient_doRequest_replaysBodyOnRetry(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		bodies = append(bodies, string(b))
 		if len(bodies) == 1 {
-			w.WriteHeader(http.StatusInternalServerError)
+			// 429 is the only status that replays a POST; see shouldRetry.
+			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -415,6 +417,175 @@ func TestAdminClient_doRequest_stopsWhenContextIsCancelled(t *testing.T) {
 	}
 }
 
+func TestAdminClient_doRequest_doesNotReplayPostOnAmbiguousFailures(t *testing.T) {
+	// A create that may already have landed server-side must not be sent twice:
+	// a second POST /workspaces makes a second workspace (names are not unique),
+	// and a second member-add fails the apply over a membership that now exists.
+	for _, status := range []int{
+		http.StatusConflict,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+
+			_, err := newRetryingTestClient(t, srv, 2).DoRequest(
+				context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if calls != 1 {
+				t.Errorf("calls = %d, want 1 (a POST must not be replayed)", calls)
+			}
+		})
+	}
+}
+
+func TestAdminClient_doRequest_doesNotReplayPostOnADroppedConnection(t *testing.T) {
+	// The handler goroutine outlives the dropped connection, so the counter is
+	// atomic: DoRequest can return before the increment would otherwise be
+	// visible.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		hijackAndClose(t, w, "")
+	}))
+	defer srv.Close()
+
+	_, err := newRetryingTestClient(t, srv, 2).DoRequest(
+		context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("calls = %d, want 1 (a dropped connection leaves a POST ambiguous)", got)
+	}
+}
+
+func TestAdminClient_doRequest_retriesATruncatedResponseBody(t *testing.T) {
+	// Headers arrive, then the connection dies mid-payload. The status line says
+	// 200, but nothing usable came back: exactly the transient this loop exists
+	// for, so it must not be mistaken for a successful read.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			hijackAndClose(t, w, "HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{\"id\":\"ws_")
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"ws_ok"}`)
+	}))
+	defer srv.Close()
+
+	body, err := newRetryingTestClient(t, srv, 2).
+		DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("calls = %d, want 2 (the truncated read is retried)", got)
+	}
+	if !strings.Contains(string(body), "ws_ok") {
+		t.Errorf("body = %q, want the second response", body)
+	}
+}
+
+// hijackAndClose writes raw bytes (if any) and drops the connection without a
+// complete response, so the client sees a transport-level failure.
+func hijackAndClose(t *testing.T, w http.ResponseWriter, raw string) {
+	t.Helper()
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		t.Fatal("ResponseWriter is not a Hijacker")
+	}
+	conn, buf, err := hj.Hijack()
+	if err != nil {
+		t.Fatalf("hijack: %v", err)
+	}
+	if raw != "" {
+		_, _ = buf.WriteString(raw)
+		_ = buf.Flush()
+	}
+	_ = conn.Close()
+}
+
+// --- body rewind ---
+
+func TestAdminClient_doRequest_setsGetBodySoNetHTTPCanRewind(t *testing.T) {
+	var got func() (io.ReadCloser, error)
+	client := &Client{
+		ApiKey:  "test-key",
+		BaseURL: "https://example.invalid",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			got = r.GetBody
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+			}, nil
+		})},
+	}
+
+	if _, err := client.DoRequest(
+		context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetBody is nil: net/http cannot replay the body on a GOAWAY or a 307")
+	}
+	rewound, err := got()
+	if err != nil {
+		t.Fatalf("GetBody: %v", err)
+	}
+	b, _ := io.ReadAll(rewound)
+	if !strings.Contains(string(b), `"name":"x"`) {
+		t.Errorf("rewound body = %q, want the payload", b)
+	}
+}
+
+func TestAdminClient_doRequest_followsA307WithTheBodyIntact(t *testing.T) {
+	// net/http only follows a 307/308 when it can rewind the body; without
+	// GetBody the redirect surfaces as an APIError(307) instead.
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if r.URL.Path != "/moved" {
+			w.Header().Set("Location", "/moved")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"ws_ok"}`)
+	}))
+	defer srv.Close()
+
+	body, err := newTestAdminClient(t, srv).DoRequest(
+		context.Background(), "POST", "/v1/organizations/workspaces", map[string]string{"name": "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(body), "ws_ok") {
+		t.Errorf("body = %q, want the redirected response", body)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("got %d requests, want 2 (the redirect was not followed)", len(bodies))
+	}
+	if !strings.Contains(bodies[1], `"name":"x"`) {
+		t.Errorf("redirected body = %q, want it to carry the payload", bodies[1])
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // --- retryDelay ---
 
 func TestClient_retryDelay_exponentialBackoffWithJitter(t *testing.T) {
@@ -475,6 +646,20 @@ func TestClient_retryDelay_honoursRetryAfterHeaders(t *testing.T) {
 	}
 }
 
+func TestClient_retryDelay_retryAfterIsNotBoundedByMaxRetryDelay(t *testing.T) {
+	// Deliberate: the server knows when the rate limit clears, so shortening its
+	// answer to MaxRetryDelay would only earn another 429. Only maxRetryAfter
+	// bounds it — which is why a test stub that wants millisecond delays must
+	// not send the header at all.
+	c := &Client{BaseRetryDelay: time.Millisecond, MaxRetryDelay: 4 * time.Millisecond}
+	resp := &http.Response{Header: http.Header{}}
+	resp.Header.Set("retry-after", "30")
+
+	if got := c.retryDelay(resp, 0); got != 30*time.Second {
+		t.Errorf("delay = %v, want 30s (the server's value, not MaxRetryDelay)", got)
+	}
+}
+
 func TestClient_retryDelay_retryAfterHTTPDate(t *testing.T) {
 	c := &Client{BaseRetryDelay: time.Hour, MaxRetryDelay: time.Hour}
 	resp := &http.Response{Header: http.Header{}}
@@ -500,8 +685,68 @@ func TestClient_retryDelay_ignoresUnparseableRetryAfter(t *testing.T) {
 // --- shouldRetry ---
 
 func TestShouldRetry_nilResponseIsAConnectionError(t *testing.T) {
-	if !shouldRetry(nil) {
-		t.Error("expected true for a nil response")
+	if !shouldRetry(http.MethodGet, nil) {
+		t.Error("expected true for a nil response on an idempotent method")
+	}
+	if shouldRetry(http.MethodPost, nil) {
+		t.Error("expected false for a nil response on a POST: the write may have landed")
+	}
+}
+
+func TestShouldRetry_dependsOnIdempotency(t *testing.T) {
+	statuses := []int{
+		http.StatusRequestTimeout,
+		http.StatusConflict,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodDelete, "get"} {
+		for _, status := range statuses {
+			resp := &http.Response{StatusCode: status, Header: http.Header{}}
+			if !shouldRetry(method, resp) {
+				t.Errorf("%s %d: want retry", method, status)
+			}
+		}
+	}
+
+	for _, status := range statuses {
+		resp := &http.Response{StatusCode: status, Header: http.Header{}}
+		want := status == http.StatusTooManyRequests
+		if got := shouldRetry(http.MethodPost, resp); got != want {
+			t.Errorf("POST %d: retry = %v, want %v", status, got, want)
+		}
+	}
+}
+
+func TestShouldRetry_xShouldRetryOverridesIdempotency(t *testing.T) {
+	forced := &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{}}
+	forced.Header.Set("x-should-retry", "true")
+	if !shouldRetry(http.MethodPost, forced) {
+		t.Error("expected the server's explicit opt-in to replay a POST")
+	}
+
+	refused := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+	refused.Header.Set("x-should-retry", "false")
+	if shouldRetry(http.MethodPost, refused) {
+		t.Error("expected the server's explicit opt-out to win")
+	}
+}
+
+func TestIsIdempotent(t *testing.T) {
+	for _, method := range []string{
+		http.MethodGet, http.MethodHead, http.MethodPut,
+		http.MethodDelete, http.MethodOptions, http.MethodTrace, "delete",
+	} {
+		if !isIdempotent(method) {
+			t.Errorf("%s: want idempotent", method)
+		}
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPatch, http.MethodConnect} {
+		if isIdempotent(method) {
+			t.Errorf("%s: want non-idempotent", method)
+		}
 	}
 }
 
