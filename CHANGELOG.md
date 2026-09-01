@@ -1,3 +1,9 @@
+## [1.29.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.29.0...v1.29.1) (2026-09-01)
+
+### 🐛 Bug Fixes
+
+* **vaults:** wait for an update to become visible before returning ([#193](https://github.com/ippontech/terraform-provider-anthropic/issues/193)) ([23fdbb0](https://github.com/ippontech/terraform-provider-anthropic/commit/23fdbb0409e60b9b0ef3c5e6837f3f45df55d2c4)), closes [#188](https://github.com/ippontech/terraform-provider-anthropic/issues/188)
+
 ## [1.29.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.28.2...v1.29.0) (2026-09-01)
 
 ### ✨ Features
