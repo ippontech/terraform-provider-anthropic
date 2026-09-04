@@ -23,10 +23,10 @@ import (
 )
 
 // newTestOAuthClient builds an OAuth-wrapped SDK client pointed at an
-// httptest server, matching the pattern the OAuth-gated resources in this
-// provider use for CI-deterministic unit tests (see
-// internal/services/vaults/vault_resource_internal_test.go and the sibling
-// federation_rule_resource_internal_test.go).
+// httptest server for CI-deterministic unit tests. The httptest pattern comes
+// from internal/services/vaults/vault_resource_internal_test.go (a standard
+// API-key resource); here option.WithAuthToken carries the OAuth bearer
+// credential instead.
 func newTestOAuthClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
 	t.Helper()
 	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
