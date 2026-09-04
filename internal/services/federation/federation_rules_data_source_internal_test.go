@@ -267,6 +267,69 @@ func TestFederationRulesList_paginatesAndForwardsQueryParams(t *testing.T) {
 	}
 }
 
+// TestFederationRulesList_issuerIDOnly asserts that when only the issuer_id
+// filter is set, include_archived is genuinely omitted from the query rather
+// than sent with a zero value.
+func TestFederationRulesList_issuerIDOnly(t *testing.T) {
+	var gotQuery url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[],"next_page":""}`)
+	}))
+	defer srv.Close()
+
+	client := newTestFederationClient(t, srv)
+
+	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
+		IssuerID: param.NewOpt("fdis_01ISSUER"),
+	})
+	for pager.Next() {
+	}
+	if err := pager.Err(); err != nil {
+		t.Fatalf("unexpected pagination error: %v", err)
+	}
+
+	if got := gotQuery.Get("issuer_id"); got != "fdis_01ISSUER" {
+		t.Errorf("issuer_id = %q, want fdis_01ISSUER", got)
+	}
+	if _, present := gotQuery["include_archived"]; present {
+		t.Errorf("include_archived sent as %q, want omitted", gotQuery.Get("include_archived"))
+	}
+}
+
+// TestFederationRulesList_includeArchivedOnly is the mirror case: only
+// include_archived set, issuer_id omitted.
+func TestFederationRulesList_includeArchivedOnly(t *testing.T) {
+	var gotQuery url.Values
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[],"next_page":""}`)
+	}))
+	defer srv.Close()
+
+	client := newTestFederationClient(t, srv)
+
+	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
+		IncludeArchived: param.NewOpt(true),
+	})
+	for pager.Next() {
+	}
+	if err := pager.Err(); err != nil {
+		t.Fatalf("unexpected pagination error: %v", err)
+	}
+
+	if got := gotQuery.Get("include_archived"); got != "true" {
+		t.Errorf("include_archived = %q, want true", got)
+	}
+	if _, present := gotQuery["issuer_id"]; present {
+		t.Errorf("issuer_id sent as %q, want omitted", gotQuery.Get("issuer_id"))
+	}
+}
+
 func TestFederationRulesList_emptyList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
