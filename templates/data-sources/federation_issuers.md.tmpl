@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_federation_issuers Data Source - anthropic"
+subcategory: "Workload Identity Federation"
+description: |-
+  Lists OIDC issuers registered for Workload Identity Federation in the organization (beta), with transparent pagination.
+---
+
+# anthropic_federation_issuers (Data Source)
+
+Lists OIDC issuers registered for Workload Identity Federation in the organization (beta). All pages are fetched automatically. Archived issuers are excluded unless `include_archived` is set to `true`.
+
+> **API**: `GET /v1/organizations/federation_issuers` (beta).
+> **Auth**: org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`). Admin API keys are not accepted.
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/federation_issuers/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
