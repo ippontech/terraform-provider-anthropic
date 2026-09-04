@@ -1,0 +1,37 @@
+---
+page_title: "anthropic_federation_issuer Resource - anthropic"
+subcategory: "Workload Identity Federation"
+description: |-
+  Registers an OIDC identity provider that Anthropic trusts for Workload Identity Federation (beta) in your organization.
+---
+
+# anthropic_federation_issuer (Resource)
+
+Registers an OIDC identity provider that Anthropic trusts for Workload Identity Federation (beta) in your organization. The `jwks` field controls how the issuer's signing keys are obtained: `discovery` (resolve keys through OIDC discovery), `explicit_url` (fetch keys from a fixed JWKS URL), or `inline` (a static key set).
+
+> **API**: `POST /v1/organizations/federation_issuers`, `GET/POST /v1/organizations/federation_issuers/{id}`, `POST /v1/organizations/federation_issuers/{id}/archive`.
+> **Auth**: requires an org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`), from `ant auth login --scope org:admin` or a workload identity federation rule. Admin API keys (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`) are **not** accepted on this endpoint.
+> **Beta header**: none required.
+> **No hard delete**: destroying this resource always archives the issuer. Archiving is rejected with a 400 while a live federation rule still references the issuer — archive or recreate those rules first. Archiving is idempotent.
+> **Console-only updates**: updating an issuer that backs a rule with a scope outside `workspace:developer` or `workspace:inference` requires a Console session; an OAuth caller gets an API error.
+
+## Deliberate omissions
+
+Two fields the API exposes on federation issuers are intentionally **not** in this resource's schema:
+
+- **`poll_status`** — a volatile summary of the background JWKS poller (consecutive failures, last/next fetch time) that changes on every poll cycle. Including it in this resource would churn the Terraform plan on every refresh; it belongs in a future `anthropic_federation_issuer` data source instead.
+- **`jwks_polling_disabled`** (the update-only toggle to re-enable polling after the system pauses it) — the create API has no equivalent field, so exposing it here would require a create-then-update dance on every apply. This resource only surfaces the resulting `jwks_polling_disabled_at` timestamp (computed); re-enabling polling requires calling the API directly for now.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/federation_issuer/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing federation issuer using its ID:
+
+```shell
+terraform import anthropic_federation_issuer.example <federation_issuer_id>
+```
