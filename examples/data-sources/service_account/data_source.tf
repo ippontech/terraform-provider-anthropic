@@ -27,7 +27,8 @@ output "service_account_id" {
 }
 
 output "service_account_name" {
-  value = data.anthropic_service_account.example.name
+  value     = data.anthropic_service_account.example.name
+  sensitive = true
 }
 
 output "service_account_organization_role" {
