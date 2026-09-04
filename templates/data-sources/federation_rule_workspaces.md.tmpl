@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_federation_rule_workspaces Data Source - anthropic"
+subcategory: "Workload Identity Federation"
+description: |-
+  Lists the workspaces where a Workload Identity Federation rule is enabled.
+---
+
+# anthropic_federation_rule_workspaces (Data Source)
+
+Lists the workspaces where a Workload Identity Federation rule (beta) is enabled. All results are returned in a single response by the API, so no pagination is required. Only explicit per-workspace enablements are returned; for rules with `applies_to_all_workspaces` or a legacy single `workspace_id`, check those fields on the `anthropic_federation_rule` data source instead.
+
+> **API**: `GET /v1/organizations/federation_rules/{federation_rule_id}/workspaces`.
+> **Auth**: org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`). Admin API keys are not accepted.
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/federation_rule_workspaces/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
