@@ -72,14 +72,15 @@ func findOtherWorkspaceID(t *testing.T, client anthropic.Client, exclude string)
 	pager := client.Beta.Organization.Workspaces.ListAutoPaging(ctx, anthropic.BetaOrganizationWorkspaceListParams{})
 	for pager.Next() {
 		ws := pager.Current()
-		if ws.ID != exclude {
+		// Skip archived workspaces; the federation rule creation will fail if bound to an archived workspace.
+		if ws.ID != exclude && (ws.ArchivedAt == nil || *ws.ArchivedAt == "") {
 			return ws.ID
 		}
 	}
 	if err := pager.Err(); err != nil {
 		t.Fatalf("failed to list workspaces: %s", err)
 	}
-	t.Fatal("no workspace other than acctest.TerraformTestsWorkspaceID found in the org; this test needs at least two workspaces")
+	t.Fatal("no active workspace other than acctest.TerraformTestsWorkspaceID found in the org; this test needs at least two non-archived workspaces")
 	return ""
 }
 
