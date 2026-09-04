@@ -1,0 +1,19 @@
+---
+page_title: "anthropic_federation_issuer Data Source - anthropic"
+subcategory: "Workload Identity Federation"
+description: |-
+  Fetches a Workload Identity Federation issuer by ID.
+---
+
+# anthropic_federation_issuer (Data Source)
+
+Fetches a Workload Identity Federation issuer by ID, including its JWKS configuration and JWKS polling status.
+
+> **API**: `GET /v1/organizations/federation_issuers/{id}`
+> **Auth**: org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`). Admin API keys are not accepted.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/federation_issuer/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
