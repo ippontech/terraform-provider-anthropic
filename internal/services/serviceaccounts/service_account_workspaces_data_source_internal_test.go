@@ -65,6 +65,26 @@ func TestMapServiceAccountWorkspacesListEntry_Explicit(t *testing.T) {
 	}
 }
 
+func TestMapServiceAccountWorkspacesListEntry_EmptyActorID(t *testing.T) {
+	member := &anthropic.BetaServiceAccountWorkspaceMember{
+		ServiceAccountID: "svac_01ABC",
+		WorkspaceID:      "wrkspc_01XYZ",
+		WorkspaceRole:    anthropic.BetaWorkspaceRoleWorkspaceUser,
+		Implicit:         true,
+		CreatedByActorID: "",
+	}
+
+	obj, diags := mapServiceAccountWorkspacesListEntry(member)
+	if diags.HasError() {
+		t.Fatalf("mapServiceAccountWorkspacesListEntry returned errors: %+v", diags)
+	}
+
+	attrs := obj.(types.Object).Attributes()
+	if !attrs["created_by_actor_id"].(types.String).IsNull() {
+		t.Errorf("created_by_actor_id = %v, want null for an empty actor ID", attrs["created_by_actor_id"])
+	}
+}
+
 func TestMapServiceAccountWorkspacesListEntry_Implicit(t *testing.T) {
 	member := &anthropic.BetaServiceAccountWorkspaceMember{
 		ServiceAccountID: "svac_01ABC",

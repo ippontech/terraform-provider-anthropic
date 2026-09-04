@@ -155,11 +155,17 @@ func (d *ServiceAccountWorkspacesDataSource) Read(ctx context.Context, req datas
 // workspace membership into a Terraform object value for inclusion in the
 // "workspaces" list.
 func mapServiceAccountWorkspacesListEntry(member *anthropic.BetaServiceAccountWorkspaceMember) (attr.Value, diag.Diagnostics) {
+	// The API omits the creating actor on implicit (default-workspace)
+	// memberships; an empty string must surface as null, not "".
+	createdByActorID := types.StringNull()
+	if member.CreatedByActorID != "" {
+		createdByActorID = types.StringValue(member.CreatedByActorID)
+	}
 	obj, diags := types.ObjectValue(serviceAccountWorkspacesListItemAttrTypes, map[string]attr.Value{
 		"workspace_id":        types.StringValue(member.WorkspaceID),
 		"workspace_role":      types.StringValue(string(member.WorkspaceRole)),
 		"implicit":            types.BoolValue(member.Implicit),
-		"created_by_actor_id": types.StringValue(member.CreatedByActorID),
+		"created_by_actor_id": createdByActorID,
 	})
 	return obj, diags
 }
