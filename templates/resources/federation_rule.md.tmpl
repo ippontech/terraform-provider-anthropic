@@ -1,0 +1,28 @@
+---
+page_title: "anthropic_federation_rule Resource - anthropic"
+subcategory: "Workload Identity Federation"
+description: |-
+  Manages a Workload Identity Federation rule, binding a federation issuer to a service account.
+---
+
+# anthropic_federation_rule (Resource)
+
+Manages a Workload Identity Federation rule. A rule binds a federation issuer to a service account: JWTs matching the rule's `match` conditions mint short-lived OAuth access tokens acting as the `target` service account, so CI/CD and other workloads can call the API without a long-lived API key.
+
+> **API**: `POST/GET/POST/POST /v1/organizations/federation_rules[/{id}][/archive]` (no hard-delete endpoint; destroying this resource always archives it).
+> **Auth**: org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`). Admin API keys are not accepted.
+> **Scope restriction**: OAuth callers (this provider) may only create or modify rules whose `oauth_scope` is `workspace:developer` or `workspace:inference`. The other two known scopes (`workspace:manage_tunnels`, `org:admin`) require a Console session to create, but a rule using one remains importable and readable through this resource.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/federation_rule/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing federation rule using its ID:
+
+```shell
+terraform import anthropic_federation_rule.example <federation_rule_id>
+```
