@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
@@ -28,14 +29,16 @@ func testAccCheckVaultCredentialDestroyed(s *terraform.State) error {
 		if rs.Type != "anthropic_vault_credential" {
 			continue
 		}
-		_, err := client.Beta.Vaults.Credentials.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultCredentialGetParams{
-			VaultID: rs.Primary.Attributes["vault_id"],
+		// 404 covers both the credential and its parent vault being deleted.
+		err := awaitGone("vault credential", rs.Primary.ID, func(ctx context.Context) error {
+			_, err := client.Beta.Vaults.Credentials.Get(ctx, rs.Primary.ID, anthropic.BetaVaultCredentialGetParams{
+				VaultID: rs.Primary.Attributes["vault_id"],
+			})
+			return err
 		})
 		if err != nil {
-			// Not found (credential or parent vault deleted) — destroyed successfully.
-			continue
+			return err
 		}
-		return fmt.Errorf("vault credential %s still exists", rs.Primary.ID)
 	}
 	return nil
 }
@@ -324,22 +327,29 @@ func testAccCheckVaultCredentialArchivedAndCleanup(s *terraform.State) error {
 	for _, rs := range s.RootModule().Resources {
 		switch rs.Type {
 		case "anthropic_vault_credential":
-			cred, err := client.Beta.Vaults.Credentials.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultCredentialGetParams{
-				VaultID: rs.Primary.Attributes["vault_id"],
+			vaultIDAttr := rs.Primary.Attributes["vault_id"]
+			err := awaitArchived("credential", rs.Primary.ID, func(ctx context.Context) (time.Time, error) {
+				cred, err := client.Beta.Vaults.Credentials.Get(ctx, rs.Primary.ID, anthropic.BetaVaultCredentialGetParams{
+					VaultID: vaultIDAttr,
+				})
+				if err != nil {
+					return time.Time{}, err
+				}
+				return cred.ArchivedAt, nil
 			})
 			if err != nil {
-				return fmt.Errorf("credential %s not found after archive destroy: %w", rs.Primary.ID, err)
-			}
-			if cred.ArchivedAt.IsZero() {
-				return fmt.Errorf("credential %s was not archived on destroy", rs.Primary.ID)
+				return err
 			}
 		case "anthropic_vault":
-			vault, err := client.Beta.Vaults.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultGetParams{})
+			err := awaitArchived("vault", rs.Primary.ID, func(ctx context.Context) (time.Time, error) {
+				vault, err := client.Beta.Vaults.Get(ctx, rs.Primary.ID, anthropic.BetaVaultGetParams{})
+				if err != nil {
+					return time.Time{}, err
+				}
+				return vault.ArchivedAt, nil
+			})
 			if err != nil {
-				return fmt.Errorf("vault %s not found after archive destroy: %w", rs.Primary.ID, err)
-			}
-			if vault.ArchivedAt.IsZero() {
-				return fmt.Errorf("vault %s was not archived on destroy", rs.Primary.ID)
+				return err
 			}
 			vaultID = rs.Primary.ID
 		}

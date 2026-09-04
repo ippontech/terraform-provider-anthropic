@@ -5,9 +5,12 @@ package vaults_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
@@ -23,18 +26,77 @@ import (
 // Vaults are billed only at runtime, so creating and destroying them in tests is
 // free; CheckDestroy guarantees no dangling resources remain.
 
+// The vaults API serves stale reads for up to ~1s after a write (see the
+// read-after-write note in CLAUDE.md and #193): a Get issued right after the
+// post-test destroy can still return the deleted — or not-yet-archived —
+// object, which made CheckDestroy flaky in CI. The destroy/archive checks
+// below therefore poll until the API converges, reusing the ceiling and
+// interval of awaitVaultUpdateVisible in the resource itself.
+const (
+	destroyCheckTimeout  = 5 * time.Second
+	destroyCheckInterval = 200 * time.Millisecond
+)
+
+// isNotFoundError reports whether err is an API 404.
+func isNotFoundError(err error) bool {
+	var apiErr *anthropic.Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+}
+
+// awaitGone polls get until it returns 404 (destroyed) or the deadline passes.
+// Any other error is returned as-is: it says nothing about visibility, and
+// treating it as "destroyed" would let an auth failure pass the check.
+func awaitGone(kind, id string, get func(ctx context.Context) error) error {
+	deadline := time.Now().Add(destroyCheckTimeout)
+	for {
+		err := get(context.Background())
+		if isNotFoundError(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("checking %s %s after destroy: %w", kind, id, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s %s still exists %v after destroy", kind, id, destroyCheckTimeout)
+		}
+		time.Sleep(destroyCheckInterval)
+	}
+}
+
+// awaitArchived polls get until it returns a non-zero archived_at, guarding
+// against the same staleness window on the archive write. A read error fails
+// immediately: the object existed before the archive, so a stale read shows
+// the unarchived object, never a 404.
+func awaitArchived(kind, id string, get func(ctx context.Context) (time.Time, error)) error {
+	deadline := time.Now().Add(destroyCheckTimeout)
+	for {
+		archivedAt, err := get(context.Background())
+		if err != nil {
+			return fmt.Errorf("%s %s not found after archive destroy: %w", kind, id, err)
+		}
+		if !archivedAt.IsZero() {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s %s was not archived on destroy", kind, id)
+		}
+		time.Sleep(destroyCheckInterval)
+	}
+}
+
 func testAccCheckVaultDestroyed(s *terraform.State) error {
 	client := anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "anthropic_vault" {
 			continue
 		}
-		_, err := client.Beta.Vaults.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultGetParams{})
+		err := awaitGone("vault", rs.Primary.ID, func(ctx context.Context) error {
+			_, err := client.Beta.Vaults.Get(ctx, rs.Primary.ID, anthropic.BetaVaultGetParams{})
+			return err
+		})
 		if err != nil {
-			// Resource not found — destroyed successfully.
-			return nil
+			return err
 		}
-		return fmt.Errorf("vault %s still exists", rs.Primary.ID)
 	}
 	return nil
 }
@@ -47,12 +109,15 @@ func testAccCheckVaultArchivedAndCleanup(s *terraform.State) error {
 		if rs.Type != "anthropic_vault" {
 			continue
 		}
-		vault, err := client.Beta.Vaults.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultGetParams{})
+		err := awaitArchived("vault", rs.Primary.ID, func(ctx context.Context) (time.Time, error) {
+			vault, err := client.Beta.Vaults.Get(ctx, rs.Primary.ID, anthropic.BetaVaultGetParams{})
+			if err != nil {
+				return time.Time{}, err
+			}
+			return vault.ArchivedAt, nil
+		})
 		if err != nil {
-			return fmt.Errorf("vault %s not found after archive destroy: %w", rs.Primary.ID, err)
-		}
-		if vault.ArchivedAt.IsZero() {
-			return fmt.Errorf("vault %s was not archived on destroy", rs.Primary.ID)
+			return err
 		}
 		// Hard-delete the archived vault so it doesn't accumulate in the workspace.
 		if _, err := client.Beta.Vaults.Delete(context.Background(), rs.Primary.ID, anthropic.BetaVaultDeleteParams{}); err != nil {
