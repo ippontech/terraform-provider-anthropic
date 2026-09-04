@@ -30,3 +30,11 @@ output "service_account_id" {
 output "service_account_organization_role" {
   value = anthropic_service_account.ci_runner.organization_role
 }
+
+output "service_account_name" {
+  value = anthropic_service_account.ci_runner.name
+}
+
+output "release_manager_role" {
+  value = anthropic_service_account.release_manager.organization_role
+}
