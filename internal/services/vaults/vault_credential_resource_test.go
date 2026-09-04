@@ -4,15 +4,11 @@
 package vaults_test
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
@@ -23,19 +19,14 @@ import (
 // update/delete lifecycle exercises fully without ever starting a session.
 
 func testAccCheckVaultCredentialDestroyed(s *terraform.State) error {
-	client := anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+	client := newAccTestClient()
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "anthropic_vault_credential" {
 			continue
 		}
-		_, err := client.Beta.Vaults.Credentials.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultCredentialGetParams{
-			VaultID: rs.Primary.Attributes["vault_id"],
-		})
-		if err != nil {
-			// Not found (credential or parent vault deleted) — destroyed successfully.
-			continue
+		if err := awaitCredentialGone(client, rs.Primary.Attributes["vault_id"], rs.Primary.ID); err != nil {
+			return err
 		}
-		return fmt.Errorf("vault credential %s still exists", rs.Primary.ID)
 	}
 	return nil
 }
@@ -318,37 +309,25 @@ resource "anthropic_vault_credential" "bearer" {
 // its vault were archived (not hard-deleted), then permanently deletes the vault
 // (which cascade-deletes the credential) to avoid dangling resources.
 func testAccCheckVaultCredentialArchivedAndCleanup(s *terraform.State) error {
-	client := anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+	client := newAccTestClient()
 	var vaultID string
 
 	for _, rs := range s.RootModule().Resources {
 		switch rs.Type {
 		case "anthropic_vault_credential":
-			cred, err := client.Beta.Vaults.Credentials.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultCredentialGetParams{
-				VaultID: rs.Primary.Attributes["vault_id"],
-			})
-			if err != nil {
-				return fmt.Errorf("credential %s not found after archive destroy: %w", rs.Primary.ID, err)
-			}
-			if cred.ArchivedAt.IsZero() {
-				return fmt.Errorf("credential %s was not archived on destroy", rs.Primary.ID)
+			if err := awaitCredentialArchived(client, rs.Primary.Attributes["vault_id"], rs.Primary.ID); err != nil {
+				return err
 			}
 		case "anthropic_vault":
-			vault, err := client.Beta.Vaults.Get(context.Background(), rs.Primary.ID, anthropic.BetaVaultGetParams{})
-			if err != nil {
-				return fmt.Errorf("vault %s not found after archive destroy: %w", rs.Primary.ID, err)
-			}
-			if vault.ArchivedAt.IsZero() {
-				return fmt.Errorf("vault %s was not archived on destroy", rs.Primary.ID)
+			if err := awaitVaultArchived(client, rs.Primary.ID); err != nil {
+				return err
 			}
 			vaultID = rs.Primary.ID
 		}
 	}
 
 	if vaultID != "" {
-		if _, err := client.Beta.Vaults.Delete(context.Background(), vaultID, anthropic.BetaVaultDeleteParams{}); err != nil {
-			return fmt.Errorf("cleanup: unable to delete archived vault %s: %w", vaultID, err)
-		}
+		return hardDeleteVault(client, vaultID)
 	}
 	return nil
 }
