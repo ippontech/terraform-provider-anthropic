@@ -1,3 +1,9 @@
+## [1.30.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.30.0...v1.30.1) (2026-09-04)
+
+### 🐛 Bug Fixes
+
+* **vaults:** poll destroy/archive checks past the API staleness window ([#199](https://github.com/ippontech/terraform-provider-anthropic/issues/199)) ([4c8b2a8](https://github.com/ippontech/terraform-provider-anthropic/commit/4c8b2a8ae88563f79fd8349783c86c6afc9cecda)), closes [#193](https://github.com/ippontech/terraform-provider-anthropic/issues/193)
+
 ## [1.30.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.29.1...v1.30.0) (2026-09-01)
 
 ### ✨ Features
