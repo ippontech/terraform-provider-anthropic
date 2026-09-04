@@ -42,12 +42,15 @@ func PreCheckAdmin(t *testing.T) {
 }
 
 // PreCheckOAuth is used by acceptance tests that hit endpoints requiring an
-// org:admin OAuth bearer token (e.g. Workload Identity Federation), which
-// reject API keys outright. No test organization or durable org:admin token
-// exists in CI, so tests gated on this run locally only.
+// org:admin OAuth bearer token (e.g. Workload Identity Federation endpoints),
+// which reject API keys outright. No test organization or durable org:admin
+// token exists in CI (see #137 — WIF token exchange not yet implemented), so
+// tests gated on this skip in CI: the testacc job has API keys but no bearer
+// token. Once CI can mint tokens (WIF bootstrap or durable org:admin token),
+// flip this back to Fatal.
 func PreCheckOAuth(t *testing.T) {
 	t.Helper()
 	if v := os.Getenv("ANTHROPIC_AUTH_TOKEN"); v == "" {
-		t.Fatal("ANTHROPIC_AUTH_TOKEN must be set for OAuth acceptance tests")
+		t.Skip("ANTHROPIC_AUTH_TOKEN must be set for OAuth acceptance tests; skipping")
 	}
 }
