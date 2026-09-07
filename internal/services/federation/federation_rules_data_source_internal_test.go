@@ -175,7 +175,7 @@ func TestMapFederationRulesListEntry_emptyOptionalFieldsMapToNull(t *testing.T) 
 	}
 }
 
-func newTestFederationClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
+func newTestFederationRulesClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
 	t.Helper()
 	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
 	return &c
@@ -234,7 +234,7 @@ func TestFederationRulesList_paginatesAndForwardsQueryParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(t, srv)
+	client := newTestFederationRulesClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
 		IssuerID:        param.NewOpt("fdis_01ISSUER"),
@@ -280,7 +280,7 @@ func TestFederationRulesList_issuerIDOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(t, srv)
+	client := newTestFederationRulesClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
 		IssuerID: param.NewOpt("fdis_01ISSUER"),
@@ -311,7 +311,7 @@ func TestFederationRulesList_includeArchivedOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(t, srv)
+	client := newTestFederationRulesClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
 		IncludeArchived: param.NewOpt(true),
@@ -337,7 +337,7 @@ func TestFederationRulesList_emptyList(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(t, srv)
+	client := newTestFederationRulesClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{})
 

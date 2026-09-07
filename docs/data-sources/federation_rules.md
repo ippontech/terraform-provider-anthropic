@@ -17,16 +17,6 @@ Optionally filter by issuer with `issuer_id`. Archived rules are excluded unless
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # List all federation rules in the organization.
 data "anthropic_federation_rules" "all" {}
 
