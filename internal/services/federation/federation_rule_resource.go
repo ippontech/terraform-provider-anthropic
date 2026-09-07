@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -29,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -756,36 +756,12 @@ func mapFederationRuleToState(ctx context.Context, rule *anthropic.BetaFederatio
 	}
 
 	// Timestamps + actor IDs: "" / zero-time -> null.
-	if rule.CreatedAt.IsZero() {
-		data.CreatedAt = types.StringNull()
-	} else {
-		data.CreatedAt = types.StringValue(rule.CreatedAt.Format(time.RFC3339))
-	}
-	if rule.UpdatedAt.IsZero() {
-		data.UpdatedAt = types.StringNull()
-	} else {
-		data.UpdatedAt = types.StringValue(rule.UpdatedAt.Format(time.RFC3339))
-	}
-	if rule.ArchivedAt.IsZero() {
-		data.ArchivedAt = types.StringNull()
-	} else {
-		data.ArchivedAt = types.StringValue(rule.ArchivedAt.Format(time.RFC3339))
-	}
-	if rule.CreatedByActorID != "" {
-		data.CreatedByActorID = types.StringValue(rule.CreatedByActorID)
-	} else {
-		data.CreatedByActorID = types.StringNull()
-	}
-	if rule.UpdatedByActorID != "" {
-		data.UpdatedByActorID = types.StringValue(rule.UpdatedByActorID)
-	} else {
-		data.UpdatedByActorID = types.StringNull()
-	}
-	if rule.ArchivedByActorID != "" {
-		data.ArchivedByActorID = types.StringValue(rule.ArchivedByActorID)
-	} else {
-		data.ArchivedByActorID = types.StringNull()
-	}
+	data.CreatedAt = tfvalue.TimeOrNull(rule.CreatedAt)
+	data.UpdatedAt = tfvalue.TimeOrNull(rule.UpdatedAt)
+	data.ArchivedAt = tfvalue.TimeOrNull(rule.ArchivedAt)
+	data.CreatedByActorID = tfvalue.StringOrNull(rule.CreatedByActorID)
+	data.UpdatedByActorID = tfvalue.StringOrNull(rule.UpdatedByActorID)
+	data.ArchivedByActorID = tfvalue.StringOrNull(rule.ArchivedByActorID)
 
 	matchObj, d := mapMatchResponseToObject(rule.Match)
 	diags.Append(d...)
