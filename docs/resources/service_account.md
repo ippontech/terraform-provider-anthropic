@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_service_account Resource - anthropic"
-subcategory: "Service Accounts"
+subcategory: "Workload Identity Federation"
 description: |-
   Manages a Workload Identity Federation (WIF) service account.
 ---
@@ -50,6 +50,14 @@ output "service_account_id" {
 
 output "service_account_organization_role" {
   value = anthropic_service_account.ci_runner.organization_role
+}
+
+output "service_account_name" {
+  value = anthropic_service_account.ci_runner.name
+}
+
+output "release_manager_role" {
+  value = anthropic_service_account.release_manager.organization_role
 }
 ```
 
