@@ -20,7 +20,7 @@ Read `agent_resource.go` (resource reference) or `model_data_source.go` (data so
 - `internal/provider/<name>_resource.go` (or `_data_source.go`) — implement the Resource/DataSource interface; for Configure use `providerrors.Require*` from `internal/errors/` — never an inline nil check; standard resources use `pd.Client`, admin resources use `pd.AdminClient`, and resources on endpoints that reject API keys (Workload Identity Federation) use `pd.OAuthClient` (see CLAUDE.md)
 - Register the factory in `internal/provider/provider.go`
 - `internal/provider/<name>_resource_test.go` — acceptance tests with `testAccProtoV6ProviderFactories`; include basic create, destroy verifier, and ImportState step
-- `examples/resources/<name>/resource.tf` — provider `registry.terraform.io/ippontech/anthropic`; at least one `output` block
+- `examples/resources/<name>/resource.tf` — provider `registry.terraform.io/MemoryStore/anthropic`; at least one `output` block
 - `templates/resources/<name>.md.tmpl` — **`subcategory` must never be empty** (e.g. `"Agents"`, `"Messages"`)
 - `tests/<name>.tftest.hcl` — `test { parallel = true }`; `source = "./examples/resources/<name>"`; assert `output.<name>_id != ""`
 

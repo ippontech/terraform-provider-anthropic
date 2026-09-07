@@ -30,7 +30,7 @@ testacc:
 
 .dev.tfrc:
 	@GOBIN=$$(go env GOBIN); \
-	printf 'provider_installation {\n  dev_overrides {\n    "registry.terraform.io/ippontech/anthropic" = "%s"\n  }\n  direct {}\n}\n' \
+	printf 'provider_installation {\n  dev_overrides {\n    "registry.terraform.io/MemoryStore/anthropic" = "%s"\n  }\n  direct {}\n}\n' \
 		"$${GOBIN:-$$(go env GOPATH)/bin}" > $@
 
 terraform-test: install .dev.tfrc

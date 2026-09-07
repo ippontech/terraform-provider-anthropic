@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
@@ -147,7 +148,11 @@ func resolveCredential(configValue types.String, envVar string) string {
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
 func newSDKClient(credential option.RequestOption) *anthropic.Client {
-	opts := []option.RequestOption{option.WithoutEnvironmentDefaults(), credential}
+	opts := []option.RequestOption{
+		option.WithoutEnvironmentDefaults(),
+		credential,
+		option.WithHTTPClient(provretry.NewHTTPClient()),
+	}
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}

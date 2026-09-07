@@ -99,7 +99,7 @@ terraform {
 
   required_providers {
     anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
+      source  = "registry.terraform.io/MemoryStore/anthropic"
       version = "~> 1.0"
     }
   }

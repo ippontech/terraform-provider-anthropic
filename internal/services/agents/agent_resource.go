@@ -7,11 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -46,6 +48,7 @@ type AgentResource struct {
 type AgentResourceModel struct {
 	Model        types.String `tfsdk:"model"`
 	Name         types.String `tfsdk:"name"`
+	ModelEffort  types.String `tfsdk:"model_effort"`
 	ModelSpeed   types.String `tfsdk:"model_speed"`
 	Description  types.String `tfsdk:"description"`
 	System       types.String `tfsdk:"system"`
@@ -55,6 +58,7 @@ type AgentResourceModel struct {
 	AgentToolset types.Object `tfsdk:"agent_toolset"`
 	MCPToolsets  types.List   `tfsdk:"mcp_toolsets"`
 	CustomTools  types.List   `tfsdk:"custom_tools"`
+	Multiagent   types.Object `tfsdk:"multiagent"`
 	ID           types.String `tfsdk:"id"`
 	Version      types.Int64  `tfsdk:"version"`
 	CreatedAt    types.String `tfsdk:"created_at"`
@@ -96,6 +100,17 @@ type agentCustomToolModel struct {
 	Name        types.String         `tfsdk:"name"`
 	Description types.String         `tfsdk:"description"`
 	InputSchema jsontypes.Normalized `tfsdk:"input_schema"`
+}
+
+type agentMultiagentModel struct {
+	Type   types.String `tfsdk:"type"`
+	Agents types.List   `tfsdk:"agents"`
+}
+
+type agentMultiagentEntryModel struct {
+	Type    types.String `tfsdk:"type"`
+	ID      types.String `tfsdk:"id"`
+	Version types.Int64  `tfsdk:"version"`
 }
 
 // --- Attribute type maps for nested objects ---
@@ -142,9 +157,145 @@ var agentCustomToolAttrTypes = map[string]attr.Type{
 	"input_schema": jsontypes.NormalizedType{},
 }
 
+var agentMultiagentEntryAttrTypes = map[string]attr.Type{
+	"type":    types.StringType,
+	"id":      types.StringType,
+	"version": types.Int64Type,
+}
+
+var agentMultiagentAttrTypes = map[string]attr.Type{
+	"type":   types.StringType,
+	"agents": types.ListType{ElemType: types.ObjectType{AttrTypes: agentMultiagentEntryAttrTypes}},
+}
+
 // --- Permission policy validators (reused across tool schemas) ---
 
 var permissionPolicyValidator = stringvalidator.OneOf("always_allow", "always_ask")
+
+// multiagentRosterEntryValidator enforces the discriminator contract for an
+// individual coordinator roster entry.
+type multiagentRosterEntryValidator struct{}
+
+func (multiagentRosterEntryValidator) Description(_ context.Context) string {
+	return "Validates fields for agent and self multiagent roster entries."
+}
+
+func (v multiagentRosterEntryValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (multiagentRosterEntryValidator) ValidateObject(
+	_ context.Context,
+	req validator.ObjectRequest,
+	resp *validator.ObjectResponse,
+) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+
+	attributes := req.ConfigValue.Attributes()
+	entryType := attributes["type"].(types.String)
+	id := attributes["id"].(types.String)
+	version := attributes["version"].(types.Int64)
+	if entryType.IsNull() || entryType.IsUnknown() {
+		return
+	}
+
+	switch entryType.ValueString() {
+	case "agent":
+		if id.IsNull() {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("id"),
+				"Missing agent ID",
+				`"id" is required when a multiagent roster entry has type "agent".`,
+			)
+		} else if !id.IsUnknown() && strings.TrimSpace(id.ValueString()) == "" {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("id"),
+				"Invalid agent ID",
+				`"id" must be non-empty when a multiagent roster entry has type "agent".`,
+			)
+		}
+	case "self":
+		if !id.IsNull() && !id.IsUnknown() {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("id"),
+				"Invalid self roster entry",
+				`"id" must not be set when a multiagent roster entry has type "self".`,
+			)
+		}
+		if !version.IsNull() && !version.IsUnknown() {
+			resp.Diagnostics.AddAttributeError(
+				req.Path.AtName("version"),
+				"Invalid self roster entry",
+				`"version" must not be set when a multiagent roster entry has type "self".`,
+			)
+		}
+	}
+}
+
+// multiagentRosterValidator enforces constraints that span roster entries.
+type multiagentRosterValidator struct{}
+
+func (multiagentRosterValidator) Description(_ context.Context) string {
+	return "Validates uniqueness constraints across a multiagent roster."
+}
+
+func (v multiagentRosterValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (multiagentRosterValidator) ValidateList(
+	ctx context.Context,
+	req validator.ListRequest,
+	resp *validator.ListResponse,
+) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+
+	var entries []agentMultiagentEntryModel
+	resp.Diagnostics.Append(req.ConfigValue.ElementsAs(ctx, &entries, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	selfSeen := false
+	seenAgentIDs := make(map[string]struct{}, len(entries))
+	for i, entry := range entries {
+		if entry.Type.IsNull() || entry.Type.IsUnknown() {
+			continue
+		}
+
+		switch entry.Type.ValueString() {
+		case "self":
+			if selfSeen {
+				resp.Diagnostics.AddAttributeError(
+					req.Path.AtListIndex(i).AtName("type"),
+					"Duplicate self roster entry",
+					`A multiagent roster can contain at most one entry with type "self".`,
+				)
+			}
+			selfSeen = true
+		case "agent":
+			if entry.ID.IsNull() || entry.ID.IsUnknown() {
+				continue
+			}
+			id := strings.TrimSpace(entry.ID.ValueString())
+			if id == "" {
+				continue
+			}
+			if _, exists := seenAgentIDs[id]; exists {
+				resp.Diagnostics.AddAttributeError(
+					req.Path.AtListIndex(i).AtName("id"),
+					"Duplicate agent roster entry",
+					fmt.Sprintf("Agent %q appears more than once in the multiagent roster.", id),
+				)
+			}
+			seenAgentIDs[id] = struct{}{}
+		}
+	}
+}
 
 // --- Schema ---
 
@@ -173,6 +324,12 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Computed:            true,
 				MarkdownDescription: "Inference speed mode. `fast` provides faster output at premium pricing. Not all models support `fast`.",
 				Validators:          []validator.String{stringvalidator.OneOf("standard", "fast")},
+			},
+			"model_effort": schema.StringAttribute{
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "How hard Claude works on each turn. Supported levels are `low`, `medium`, `high`, `xhigh`, and `max`; model compatibility is validated by the API.",
+				Validators:          []validator.String{stringvalidator.OneOf("low", "medium", "high", "xhigh", "max")},
 			},
 			"description": schema.StringAttribute{
 				Optional:            true,
@@ -326,9 +483,50 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							MarkdownDescription: "Description shown to the agent. 1-1024 characters.",
 						},
 						"input_schema": schema.StringAttribute{
-							Optional:            true,
-							CustomType:          jsontypes.NormalizedType{},
-							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.",
+							Optional:   true,
+							CustomType: jsontypes.NormalizedType{},
+							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
+								"Keywords beyond `type`/`properties`/`required` (for example `additionalProperties`) are forwarded as-is. " +
+								"If the API omits them on read, the provider keeps the configured JSON when the rest of the schema matches.",
+						},
+					},
+				},
+			},
+			"multiagent": schema.SingleNestedAttribute{
+				Optional:            true,
+				MarkdownDescription: "Coordinator configuration listing the agents this agent can delegate to.",
+				Attributes: map[string]schema.Attribute{
+					"type": schema.StringAttribute{
+						Required:            true,
+						MarkdownDescription: "Multiagent topology type. Currently only `coordinator` is supported.",
+						Validators:          []validator.String{stringvalidator.OneOf("coordinator")},
+					},
+					"agents": schema.ListNestedAttribute{
+						Required:            true,
+						MarkdownDescription: "Agents the coordinator may delegate to. Use type `agent` with an `id`, or type `self` to allow copies of the coordinator.",
+						Validators: []validator.List{
+							listvalidator.SizeBetween(1, 20),
+							multiagentRosterValidator{},
+						},
+						NestedObject: schema.NestedAttributeObject{
+							Validators: []validator.Object{multiagentRosterEntryValidator{}},
+							Attributes: map[string]schema.Attribute{
+								"type": schema.StringAttribute{
+									Required:            true,
+									MarkdownDescription: "Roster entry type: `agent` or `self`.",
+									Validators:          []validator.String{stringvalidator.OneOf("agent", "self")},
+								},
+								"id": schema.StringAttribute{
+									Optional:            true,
+									MarkdownDescription: "Agent ID. Required when `type` is `agent` and omitted when `type` is `self`.",
+								},
+								"version": schema.Int64Attribute{
+									Optional:            true,
+									Computed:            true,
+									MarkdownDescription: "Specific agent version. When omitted, the API pins and returns the latest version.",
+									Validators:          []validator.Int64{int64validator.AtLeast(1)},
+								},
+							},
 						},
 					},
 				},
@@ -404,6 +602,9 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if !data.ModelSpeed.IsNull() && !data.ModelSpeed.IsUnknown() {
 		params.Model.Speed = anthropic.BetaManagedAgentsModelConfigParamsSpeed(data.ModelSpeed.ValueString())
 	}
+	if !data.ModelEffort.IsNull() && !data.ModelEffort.IsUnknown() {
+		params.Model.Effort.OfBetaManagedAgentsModelConfigsEffortBetaManagedAgentsEffortLevel = param.NewOpt(data.ModelEffort.ValueString())
+	}
 	if !data.Description.IsNull() {
 		params.Description = param.NewOpt(data.Description.ValueString())
 	}
@@ -451,6 +652,11 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 	params.Tools = tools
+
+	resp.Diagnostics.Append(buildMultiagentParams(ctx, data.Multiagent, &params.Multiagent)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	agent, err := r.client.Beta.Agents.New(ctx, params)
 	if err != nil {
@@ -527,6 +733,9 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if !data.ModelSpeed.IsNull() && !data.ModelSpeed.IsUnknown() {
 		params.Model.Speed = anthropic.BetaManagedAgentsModelConfigParamsSpeed(data.ModelSpeed.ValueString())
 	}
+	if !data.ModelEffort.IsNull() && !data.ModelEffort.IsUnknown() {
+		params.Model.Effort.OfBetaManagedAgentsModelConfigsEffortBetaManagedAgentsEffortLevel = param.NewOpt(data.ModelEffort.ValueString())
+	}
 
 	if !data.Description.IsNull() {
 		params.Description = param.NewOpt(data.Description.ValueString())
@@ -596,6 +805,15 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		}
 	}
 	params.Tools = updateTools
+
+	if data.Multiagent.IsNull() {
+		params.Multiagent = param.NullStruct[anthropic.BetaManagedAgentsMultiagentParams]()
+	} else {
+		resp.Diagnostics.Append(buildMultiagentParams(ctx, data.Multiagent, &params.Multiagent)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 
 	agent, err := r.client.Beta.Agents.Update(ctx, state.ID.ValueString(), params)
 	if err != nil {
@@ -676,6 +894,139 @@ func buildSkillsParams(ctx context.Context, skillsList types.List, target *[]ant
 	}
 
 	*target = result
+	return diags
+}
+
+// buildMultiagentParams converts the Terraform coordinator roster to SDK params.
+func buildMultiagentParams(ctx context.Context, multiagent types.Object, target *anthropic.BetaManagedAgentsMultiagentParams) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	if multiagent.IsNull() || multiagent.IsUnknown() {
+		return diags
+	}
+
+	var topology agentMultiagentModel
+	diags.Append(multiagent.As(ctx, &topology, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return diags
+	}
+
+	var entries []agentMultiagentEntryModel
+	diags.Append(topology.Agents.ElementsAs(ctx, &entries, false)...)
+	if diags.HasError() {
+		return diags
+	}
+	diags.Append(validateResolvedMultiagentEntries(entries)...)
+	if diags.HasError() {
+		return diags
+	}
+
+	target.Type = anthropic.BetaManagedAgentsMultiagentParamsTypeCoordinator
+	target.Agents = make([]anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion, len(entries))
+	for i, entry := range entries {
+		switch entry.Type.ValueString() {
+		case "agent":
+			ref := anthropic.BetaManagedAgentsAgentParams{
+				ID:   entry.ID.ValueString(),
+				Type: anthropic.BetaManagedAgentsAgentParamsTypeAgent,
+			}
+			if !entry.Version.IsNull() && !entry.Version.IsUnknown() {
+				ref.Version = param.NewOpt(entry.Version.ValueInt64())
+			}
+			target.Agents[i] = anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{
+				OfBetaManagedAgentsAgents: &ref,
+			}
+		case "self":
+			self := anthropic.BetaManagedAgentsMultiagentSelfParams{
+				Type: anthropic.BetaManagedAgentsMultiagentSelfParamsTypeSelf,
+			}
+			target.Agents[i] = anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{
+				OfBetaManagedAgentsMultiagentSelfs: &self,
+			}
+		}
+	}
+
+	return diags
+}
+
+// validateResolvedMultiagentEntries repeats the schema invariants immediately
+// before the API request. Schema validation must defer unknown interpolations;
+// this catches invalid values after their dependencies resolve during apply.
+func validateResolvedMultiagentEntries(entries []agentMultiagentEntryModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	selfSeen := false
+	seenAgentIDs := make(map[string]struct{}, len(entries))
+
+	for i, entry := range entries {
+		entryPath := path.Root("multiagent").AtName("agents").AtListIndex(i)
+		if entry.Type.IsNull() || entry.Type.IsUnknown() {
+			diags.AddAttributeError(
+				entryPath.AtName("type"),
+				"Unknown multiagent roster entry type",
+				"The roster entry type must be known before the agent can be created or updated.",
+			)
+			continue
+		}
+
+		switch entry.Type.ValueString() {
+		case "agent":
+			if entry.ID.IsNull() || entry.ID.IsUnknown() || strings.TrimSpace(entry.ID.ValueString()) == "" {
+				diags.AddAttributeError(
+					entryPath.AtName("id"),
+					"Invalid agent ID",
+					`A non-empty "id" is required when a multiagent roster entry has type "agent".`,
+				)
+				continue
+			}
+
+			id := strings.TrimSpace(entry.ID.ValueString())
+			if _, exists := seenAgentIDs[id]; exists {
+				diags.AddAttributeError(
+					entryPath.AtName("id"),
+					"Duplicate agent roster entry",
+					fmt.Sprintf("Agent %q appears more than once in the multiagent roster.", id),
+				)
+			}
+			seenAgentIDs[id] = struct{}{}
+			if !entry.Version.IsNull() && !entry.Version.IsUnknown() && entry.Version.ValueInt64() < 1 {
+				diags.AddAttributeError(
+					entryPath.AtName("version"),
+					"Invalid agent version",
+					`"version" must be at least 1 when it is specified.`,
+				)
+			}
+		case "self":
+			if selfSeen {
+				diags.AddAttributeError(
+					entryPath.AtName("type"),
+					"Duplicate self roster entry",
+					`A multiagent roster can contain at most one entry with type "self".`,
+				)
+			}
+			selfSeen = true
+			if !entry.ID.IsNull() && !entry.ID.IsUnknown() {
+				diags.AddAttributeError(
+					entryPath.AtName("id"),
+					"Invalid self roster entry",
+					`"id" must not be set when a multiagent roster entry has type "self".`,
+				)
+			}
+			if !entry.Version.IsNull() && !entry.Version.IsUnknown() {
+				diags.AddAttributeError(
+					entryPath.AtName("version"),
+					"Invalid self roster entry",
+					`"version" must not be set when a multiagent roster entry has type "self".`,
+				)
+			}
+		default:
+			diags.AddAttributeError(
+				entryPath.AtName("type"),
+				"Invalid multiagent roster entry type",
+				fmt.Sprintf("Unsupported roster entry type %q.", entry.Type.ValueString()),
+			)
+		}
+	}
+
 	return diags
 }
 
@@ -794,8 +1145,8 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 				Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
 			}
 			if !t.InputSchema.IsNull() && !t.InputSchema.IsUnknown() {
-				var schema anthropic.BetaManagedAgentsCustomToolInputSchemaParam
-				if err := json.Unmarshal([]byte(t.InputSchema.ValueString()), &schema); err != nil {
+				schema, err := customToolInputSchemaParam(t.InputSchema.ValueString())
+				if err != nil {
 					diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
 					return nil, diags
 				}
@@ -806,6 +1157,102 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 	}
 
 	return tools, diags
+}
+
+// customToolInputSchemaParam keeps the user's JSON Schema bytes intact, including
+// keywords the SDK param struct does not declare (additionalProperties, $schema,
+// unevaluatedProperties, …). encoding/json into BetaManagedAgentsCustomToolInputSchemaParam
+// drops those keys because ExtraFields is tagged json:"-".
+func customToolInputSchemaParam(raw string) (anthropic.BetaManagedAgentsCustomToolInputSchemaParam, error) {
+	var compact json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &compact); err != nil {
+		return anthropic.BetaManagedAgentsCustomToolInputSchemaParam{}, err
+	}
+	var asObject map[string]any
+	if err := json.Unmarshal(compact, &asObject); err != nil {
+		return anthropic.BetaManagedAgentsCustomToolInputSchemaParam{}, fmt.Errorf("input_schema must be a JSON object")
+	}
+	return param.Override[anthropic.BetaManagedAgentsCustomToolInputSchemaParam](compact), nil
+}
+
+func configuredCustomToolInputSchemas(ctx context.Context, customTools types.List) (map[string]jsontypes.Normalized, diag.Diagnostics) {
+	out := make(map[string]jsontypes.Normalized)
+	if customTools.IsNull() || customTools.IsUnknown() {
+		return out, nil
+	}
+	var tools []agentCustomToolModel
+	diags := customTools.ElementsAs(ctx, &tools, false)
+	if diags.HasError() {
+		return out, diags
+	}
+	for _, tool := range tools {
+		if tool.Name.IsNull() || tool.Name.IsUnknown() || tool.InputSchema.IsNull() || tool.InputSchema.IsUnknown() {
+			continue
+		}
+		out[tool.Name.ValueString()] = tool.InputSchema
+	}
+	return out, diags
+}
+
+// preserveConfiguredInputSchema keeps the configured JSON Schema when the API
+// payload is a subset of it. The Managed Agents API (and the typed SDK param)
+// only persist type/properties/required, so extra keywords would otherwise
+// vanish after apply and fail with "Provider produced inconsistent result".
+func preserveConfiguredInputSchema(configured, api jsontypes.Normalized) jsontypes.Normalized {
+	if configured.IsNull() || configured.IsUnknown() {
+		return api
+	}
+	if api.IsNull() || api.IsUnknown() {
+		return api
+	}
+	if jsonObjectCovers(configured.ValueString(), api.ValueString()) {
+		return configured
+	}
+	return api
+}
+
+func jsonObjectCovers(configured, api string) bool {
+	var cfg, got any
+	if json.Unmarshal([]byte(configured), &cfg) != nil || json.Unmarshal([]byte(api), &got) != nil {
+		return false
+	}
+	gotMap, ok := got.(map[string]any)
+	if !ok || len(gotMap) == 0 {
+		return false
+	}
+	return jsonValueCovers(cfg, got)
+}
+
+func jsonValueCovers(configured, api any) bool {
+	switch apiVal := api.(type) {
+	case map[string]any:
+		cfgMap, ok := configured.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, value := range apiVal {
+			configuredValue, exists := cfgMap[key]
+			if !exists || !jsonValueCovers(configuredValue, value) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		cfgArr, ok := configured.([]any)
+		if !ok || len(cfgArr) != len(apiVal) {
+			return false
+		}
+		for i := range apiVal {
+			if !jsonValueCovers(cfgArr[i], apiVal[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		configuredJSON, errCfg := json.Marshal(configured)
+		apiJSON, errAPI := json.Marshal(api)
+		return errCfg == nil && errAPI == nil && string(configuredJSON) == string(apiJSON)
+	}
 }
 
 // mapAgentResponseToState maps the API response to the Terraform state model.
@@ -833,6 +1280,12 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		data.ModelSpeed = types.StringNull()
 	}
 	// else: keep existing data.ModelSpeed (e.g. "standard") to avoid drift
+
+	if agent.Model.Effort.Type != "" {
+		data.ModelEffort = types.StringValue(agent.Model.Effort.Type)
+	} else if data.ModelEffort.IsUnknown() || data.ModelEffort.IsNull() {
+		data.ModelEffort = types.StringNull()
+	}
 
 	// Description
 	if agent.Description != "" {
@@ -934,6 +1387,9 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		data.MCPToolsets = types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes})
 	}
 
+	configuredSchemas, d := configuredCustomToolInputSchemas(ctx, data.CustomTools)
+	diags.Append(d...)
+
 	// Custom tools
 	if len(apiCustomTools) > 0 {
 		toolObjs := make([]attr.Value, len(apiCustomTools))
@@ -941,6 +1397,9 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 			inputSchema := jsontypes.NewNormalizedNull()
 			if raw := t.InputSchema.RawJSON(); raw != "" && raw != "null" {
 				inputSchema = jsontypes.NewNormalizedValue(raw)
+			}
+			if configured, ok := configuredSchemas[t.Name]; ok {
+				inputSchema = preserveConfiguredInputSchema(configured, inputSchema)
 			}
 			obj, d := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
 				"name":         types.StringValue(t.Name),
@@ -957,7 +1416,51 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		data.CustomTools = types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes})
 	}
 
+	if agent.Multiagent.Type != "" {
+		multiagent, d := mapMultiagentToState(&agent.Multiagent, agent.ID)
+		diags.Append(d...)
+		data.Multiagent = multiagent
+	} else if !data.Multiagent.IsNull() {
+		data.Multiagent = types.ObjectNull(agentMultiagentAttrTypes)
+	}
+
 	return diags
+}
+
+// mapMultiagentToState maps the resolved API roster while preserving `self`.
+// The API resolves `self` to the coordinator's concrete ID/version, so compare
+// each reference with the owning agent instead of relying on its prior index.
+func mapMultiagentToState(apiMultiagent *anthropic.BetaManagedAgentsMultiagent, ownerID string) (types.Object, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	entries := make([]attr.Value, len(apiMultiagent.Agents))
+	for i, ref := range apiMultiagent.Agents {
+		entryType := types.StringValue("agent")
+		id := types.StringValue(ref.ID)
+		version := types.Int64Value(ref.Version)
+		if ref.ID == ownerID {
+			entryType = types.StringValue("self")
+			id = types.StringNull()
+			version = types.Int64Null()
+		}
+
+		entry, d := types.ObjectValue(agentMultiagentEntryAttrTypes, map[string]attr.Value{
+			"type":    entryType,
+			"id":      id,
+			"version": version,
+		})
+		diags.Append(d...)
+		entries[i] = entry
+	}
+
+	agents, d := types.ListValue(types.ObjectType{AttrTypes: agentMultiagentEntryAttrTypes}, entries)
+	diags.Append(d...)
+	topology, d := types.ObjectValue(agentMultiagentAttrTypes, map[string]attr.Value{
+		"type":   types.StringValue(string(apiMultiagent.Type)),
+		"agents": agents,
+	})
+	diags.Append(d...)
+	return topology, diags
 }
 
 // mapAgentToolsetToState maps the API agent toolset response to a Terraform object,

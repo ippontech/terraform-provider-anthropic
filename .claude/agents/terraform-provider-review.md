@@ -36,7 +36,7 @@ Your job: review Go and Terraform code in `terraform-provider-anthropic` for qua
 
 ## Terraform checklist
 
-- Provider source: `registry.terraform.io/ippontech/anthropic`, version `~> 1.0`
+- Provider source: `registry.terraform.io/MemoryStore/anthropic`, version `~> 1.0`
 - File names: snake_case (`data_source.tf`, not `data-source.tf`)
 - Every `examples/resources/` and `examples/data-sources/` module needs a `.tftest.hcl` with meaningful assertions
 - No hardcoded secrets; variables and outputs have descriptions and types

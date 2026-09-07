@@ -5,3 +5,5 @@
 - [Multipart upload retry](project_multipart_upload_retry.md) — File-uploading resources must use provretry.MultipartUpload; SDK cannot retry streaming multipart bodies
 - [Example resource directory naming](project_example_naming.md) — Use resource name WITHOUT anthropic_ prefix: examples/resources/workspace_member/ not anthropic_workspace_member/
 - [OTEL_TRACES_EXPORTER blocks make generate](project_otel_env.md) — Unset OTEL_TRACES_EXPORTER before running make; .env may set it to empty/invalid value
+- [Agent model_effort and multiagent roster](project_agent_multiagent.md) — Fork-only agent fields; roster discriminator needs object+list validators, mapped in resource and both data sources
+- [JSON Schema input_schema must use param.Override](project_json_schema_override.md) — Unmarshal into the typed SDK param drops additionalProperties; send raw JSON and keep configured schema when the API payload is a subset

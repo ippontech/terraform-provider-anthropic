@@ -37,6 +37,7 @@ type AgentDataSourceModel struct {
 	ID           types.String `tfsdk:"id"`
 	Name         types.String `tfsdk:"name"`
 	Model        types.String `tfsdk:"model"`
+	ModelEffort  types.String `tfsdk:"model_effort"`
 	ModelSpeed   types.String `tfsdk:"model_speed"`
 	Description  types.String `tfsdk:"description"`
 	System       types.String `tfsdk:"system"`
@@ -46,6 +47,7 @@ type AgentDataSourceModel struct {
 	AgentToolset types.Object `tfsdk:"agent_toolset"`
 	MCPToolsets  types.List   `tfsdk:"mcp_toolsets"`
 	CustomTools  types.List   `tfsdk:"custom_tools"`
+	Multiagent   types.Object `tfsdk:"multiagent"`
 	Version      types.Int64  `tfsdk:"version"`
 	CreatedAt    types.String `tfsdk:"created_at"`
 	UpdatedAt    types.String `tfsdk:"updated_at"`
@@ -78,6 +80,10 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 			"model": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "The model that powers the agent.",
+			},
+			"model_effort": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "How hard Claude works on each turn.",
 			},
 			"model_speed": schema.StringAttribute{
 				Computed:            true,
@@ -227,6 +233,36 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 					},
 				},
 			},
+			"multiagent": schema.SingleNestedAttribute{
+				Computed:            true,
+				MarkdownDescription: "Resolved coordinator configuration for multiagent delegation.",
+				Attributes: map[string]schema.Attribute{
+					"type": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "Multiagent topology type.",
+					},
+					"agents": schema.ListNestedAttribute{
+						Computed:            true,
+						MarkdownDescription: "Resolved agents in the coordinator roster.",
+						NestedObject: schema.NestedAttributeObject{
+							Attributes: map[string]schema.Attribute{
+								"type": schema.StringAttribute{
+									Computed:            true,
+									MarkdownDescription: "Roster entry type.",
+								},
+								"id": schema.StringAttribute{
+									Computed:            true,
+									MarkdownDescription: "Resolved agent ID.",
+								},
+								"version": schema.Int64Attribute{
+									Computed:            true,
+									MarkdownDescription: "Resolved agent version.",
+								},
+							},
+						},
+					},
+				},
+			},
 			"version": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "The agent's current version.",
@@ -298,6 +334,11 @@ func mapAgentResponseToDataSource(agent *anthropic.BetaManagedAgentsAgent, data 
 	data.ID = types.StringValue(agent.ID)
 	data.Name = types.StringValue(agent.Name)
 	data.Model = types.StringValue(string(agent.Model.ID))
+	if agent.Model.Effort.Type != "" {
+		data.ModelEffort = types.StringValue(agent.Model.Effort.Type)
+	} else {
+		data.ModelEffort = types.StringNull()
+	}
 	data.Version = types.Int64Value(agent.Version)
 	data.CreatedAt = types.StringValue(agent.CreatedAt.Format(time.RFC3339))
 	data.UpdatedAt = types.StringValue(agent.UpdatedAt.Format(time.RFC3339))
@@ -436,7 +477,41 @@ func mapAgentResponseToDataSource(agent *anthropic.BetaManagedAgentsAgent, data 
 		data.CustomTools = types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes})
 	}
 
+	if agent.Multiagent.Type != "" {
+		multiagent, d := mapResolvedMultiagentToDataSource(&agent.Multiagent)
+		diags.Append(d...)
+		data.Multiagent = multiagent
+	} else {
+		data.Multiagent = types.ObjectNull(agentMultiagentAttrTypes)
+	}
+
 	return diags
+}
+
+// mapResolvedMultiagentToDataSource maps the API's fully resolved coordinator
+// roster to a computed Terraform object.
+func mapResolvedMultiagentToDataSource(apiMultiagent *anthropic.BetaManagedAgentsMultiagent) (types.Object, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	entries := make([]attr.Value, len(apiMultiagent.Agents))
+	for i, ref := range apiMultiagent.Agents {
+		entry, d := types.ObjectValue(agentMultiagentEntryAttrTypes, map[string]attr.Value{
+			"type":    types.StringValue(string(ref.Type)),
+			"id":      types.StringValue(ref.ID),
+			"version": types.Int64Value(ref.Version),
+		})
+		diags.Append(d...)
+		entries[i] = entry
+	}
+
+	agents, d := types.ListValue(types.ObjectType{AttrTypes: agentMultiagentEntryAttrTypes}, entries)
+	diags.Append(d...)
+	topology, d := types.ObjectValue(agentMultiagentAttrTypes, map[string]attr.Value{
+		"type":   types.StringValue(string(apiMultiagent.Type)),
+		"agents": agents,
+	})
+	diags.Append(d...)
+	return topology, diags
 }
 
 // mapAgentToolsetToDataSource maps an API agent toolset to a Terraform object,

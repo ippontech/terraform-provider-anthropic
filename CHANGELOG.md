@@ -1,3 +1,17 @@
+## [1.31.1](https://github.com/MemoryStore/terraform-provider-anthropic/compare/v1.31.0...v1.31.1) (2026-09-07)
+
+### 🐛 Bug Fixes
+
+* **agents:** preserve extra JSON Schema keywords on `custom_tools.input_schema` (for example `additionalProperties`) so apply no longer fails with "Provider produced inconsistent result after apply" when the API omits them on read
+
+## [1.31.0](https://github.com/MemoryStore/terraform-provider-anthropic/compare/v1.29.1...v1.31.0) (2026-09-07)
+
+### ✨ Features
+
+* Sync ippontech/terraform-provider-anthropic v1.30.1 (org:admin OAuth `auth_token`, Admin API retry/backoff, vaults read-after-write and destroy polling, anthropic-sdk-go v1.67.0)
+* Serve and document the provider as `registry.terraform.io/MemoryStore/anthropic`
+* Keep fork-only `anthropic_agent` `model_effort` / `multiagent` support and Skills API 429 rate-limit handling on the shared SDK HTTP client
+
 ## [1.30.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.30.0...v1.30.1) (2026-09-04)
 
 ### 🐛 Bug Fixes

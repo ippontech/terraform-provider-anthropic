@@ -158,6 +158,28 @@ func TestMultipartUpload_NoRetryOn4xx(t *testing.T) {
 	}
 }
 
+func TestMultipartUpload_RetriesOn429(t *testing.T) {
+	noBackoff(t)
+	dir := t.TempDir()
+	p := writeFile(t, dir, "SKILL.md", "content")
+
+	calls := 0
+	result, err := MultipartUpload(context.Background(), []string{p}, dir, "mydir", func(_ []io.Reader) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", apiErr(http.StatusTooManyRequests)
+		}
+		return "ok", nil
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "ok" || calls != 2 {
+		t.Fatalf("result = %q, calls = %d; want ok after 2 calls", result, calls)
+	}
+}
+
 func TestMultipartUpload_NoRetryOnNonAPIError(t *testing.T) {
 	dir := t.TempDir()
 	p := writeFile(t, dir, "SKILL.md", "content")
