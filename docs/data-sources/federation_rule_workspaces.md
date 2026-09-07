@@ -17,17 +17,6 @@ Lists the workspaces where a Workload Identity Federation rule (beta) is enabled
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # When you already know the federation rule ID, look it up directly:
 #
 #   data "anthropic_federation_rule_workspaces" "example" {

@@ -16,12 +16,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// newTestFederationOAuthClient builds an SDK client pointed at an httptest
+// newTestFederationRuleWorkspacesClient builds an SDK client pointed at an httptest
 // server, authenticated with a bearer token the way pd.OAuthClient is in
 // production. WithoutEnvironmentDefaults keeps the test hermetic: it must not
 // pick up ambient ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the test
 // process environment.
-func newTestFederationOAuthClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
+func newTestFederationRuleWorkspacesClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
 	t.Helper()
 	c := anthropic.NewClient(
 		option.WithoutEnvironmentDefaults(),
@@ -119,7 +119,7 @@ func TestFederationRuleWorkspacesDataSource_singlePage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationOAuthClient(t, srv)
+	client := newTestFederationRuleWorkspacesClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},
@@ -175,7 +175,7 @@ func TestFederationRuleWorkspacesDataSource_pagination(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationOAuthClient(t, srv)
+	client := newTestFederationRuleWorkspacesClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},
@@ -216,7 +216,7 @@ func TestFederationRuleWorkspacesDataSource_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationOAuthClient(t, srv)
+	client := newTestFederationRuleWorkspacesClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_missing", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},
