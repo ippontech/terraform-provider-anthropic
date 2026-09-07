@@ -1,14 +1,3 @@
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # When you already know the service account ID, look it up directly:
 #
 #   data "anthropic_service_account_workspaces" "example" {

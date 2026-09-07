@@ -18,7 +18,7 @@ run "service_account_workspaces_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./tests/fixtures/service_account_workspaces_data_source_plan"
+    source = "./fixtures/service_account_workspaces_data_source_plan"
   }
 
   assert {
