@@ -1,3 +1,9 @@
+## [1.42.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.41.0...v1.42.0) (2026-09-07)
+
+### ✨ Features
+
+* **federation:** add anthropic_federation_rule data source ([#219](https://github.com/ippontech/terraform-provider-anthropic/issues/219)) ([aeb1fbf](https://github.com/ippontech/terraform-provider-anthropic/commit/aeb1fbf9800d713dc9e2de85152c8cc2cdda58d8)), closes [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137)
+
 ## [1.41.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.40.0...v1.41.0) (2026-09-07)
 
 ### ✨ Features
