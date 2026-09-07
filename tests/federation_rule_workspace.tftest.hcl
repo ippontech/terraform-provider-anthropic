@@ -2,25 +2,28 @@ test {
   parallel = true
 }
 
-# Federation endpoints require an org:admin OAuth bearer token and reject API
-# keys outright (see internal/errors/auth_token.go), and no test org exists
-# yet for org-level writes (the same blocker as #58). This runs against a
-# fixture with a dummy auth_token and asserts command = plan, so it validates
-# the schema without ever making a live API call or needing a real token.
+# WIF resource: the endpoint only accepts an org:admin OAuth bearer token and
+# CI has no durable one (#137), so this test plans the public example with a
+# dummy token. Configure only needs a non-empty credential and a create plan
+# never calls the API (#233).
+provider "anthropic" {
+  auth_token = "dummy-auth-token"
+}
+
 run "federation_rule_workspace_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./tests/fixtures/federation_rule_workspace_plan"
+    source = "./examples/resources/federation_rule_workspace"
   }
 
   assert {
-    condition     = output.federation_rule_workspace_federation_rule_id == "fdrl_01PLANTEST"
-    error_message = "Expected federation_rule_id to be 'fdrl_01PLANTEST'."
+    condition     = anthropic_federation_rule_workspace.gha_deploy_staging.workspace_id == var.staging_workspace_id
+    error_message = "Expected workspace_id to follow var.staging_workspace_id."
   }
 
   assert {
-    condition     = output.federation_rule_workspace_workspace_id == "wrkspc_01PLANTEST"
-    error_message = "Expected workspace_id to be 'wrkspc_01PLANTEST'."
+    condition     = anthropic_federation_rule.gha_deploy.workspace_id == "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
+    error_message = "Expected the rule's own binding to stay on wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm."
   }
 }

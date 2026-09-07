@@ -2,11 +2,19 @@ test {
   parallel = true
 }
 
+# WIF resource: the endpoint only accepts an org:admin OAuth bearer token and
+# CI has no durable one (#137), so this test plans the public example with a
+# dummy token. Configure only needs a non-empty credential and a create plan
+# never calls the API (#233).
+provider "anthropic" {
+  auth_token = "dummy-auth-token"
+}
+
 run "service_account_plan" {
   command = plan
 
   module {
-    source = "./tests/fixtures/service_account_resource_plan"
+    source = "./examples/resources/service_account"
   }
 
   assert {
