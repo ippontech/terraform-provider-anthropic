@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -191,8 +192,18 @@ func (r *FederationRuleResource) Schema(_ context.Context, _ resource.SchemaRequ
 				MarkdownDescription: "Tagged ID of the workspace to enable this rule for. Exactly one of `workspace_id` or `applies_to_all_workspaces = true` must be set.",
 			},
 			"applies_to_all_workspaces": schema.BoolAttribute{
-				Optional:            true,
-				MarkdownDescription: "When true, enable this rule for every workspace in the org (including workspaces created later). Exactly one of `workspace_id` or `applies_to_all_workspaces = true` must be set.",
+				Optional: true,
+				// Computed with a false default: the API always returns a
+				// concrete true/false, so a bare Optional would produce
+				// "Provider produced inconsistent result after apply" (null
+				// planned, false returned) on every workspace_id-only config.
+				// The static default (rather than prior-state carry-forward)
+				// also makes removing the attribute plan as false, so the
+				// Update below sends an explicit false when a rule switches
+				// back from all-workspaces to a single workspace binding.
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				MarkdownDescription: "When true, enable this rule for every workspace in the org (including workspaces created later). Exactly one of `workspace_id` or `applies_to_all_workspaces = true` must be set. Default: `false`.",
 			},
 			"token_lifetime_seconds": schema.Int64Attribute{
 				Optional:            true,
@@ -520,15 +531,14 @@ func (r *FederationRuleResource) Update(ctx context.Context, req resource.Update
 		params.WorkspaceID = param.NewOpt(plan.WorkspaceID.ValueString())
 	}
 
-	// applies_to_all_workspaces is always resolved explicitly to true or false
-	// when it changes. The ConfigValidator guarantees the config carries
-	// exactly one of workspace_id / applies_to_all_workspaces=true at any
-	// given time, so switching from applies_to_all_workspaces=true to a
-	// workspace_id binding removes this attribute from config (plan value
-	// null). Omitting the field in that case would leave the server's true
-	// value in place, and the rule would keep applying to every workspace
-	// instead of just the newly configured one — so an explicit `false` is
-	// sent whenever the prior state was true and the plan no longer sets it.
+	// applies_to_all_workspaces is always resolved explicitly to true or
+	// false. The schema's static false default means an attribute removed
+	// from config plans as false (not null, and not the carried-forward
+	// prior state), so the first case sends the explicit false the API needs
+	// when a rule switches back from all-workspaces to a single workspace
+	// binding — omitting the field would leave the server's true in place.
+	// The second case is a safety net for an Unknown plan value (unresolved
+	// reference) when the prior state was true.
 	switch {
 	case !plan.AppliesToAllWorkspaces.IsNull() && !plan.AppliesToAllWorkspaces.IsUnknown():
 		params.AppliesToAllWorkspaces = param.NewOpt(plan.AppliesToAllWorkspaces.ValueBool())

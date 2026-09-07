@@ -81,7 +81,7 @@ output "federation_rule_issuer_name" {
 
 ### Optional
 
-- `applies_to_all_workspaces` (Boolean) When true, enable this rule for every workspace in the org (including workspaces created later). Exactly one of `workspace_id` or `applies_to_all_workspaces = true` must be set.
+- `applies_to_all_workspaces` (Boolean) When true, enable this rule for every workspace in the org (including workspaces created later). Exactly one of `workspace_id` or `applies_to_all_workspaces = true` must be set. Default: `false`.
 - `attributes` (Map of String) CEL expressions `{name: expr}` extracting named values from claims. Not yet supported by the API; any non-empty value is rejected with 400.
 - `description` (String) Optional free-text description.
 - `token_lifetime_seconds` (Number) Lifetime in seconds for access tokens minted via this rule. Minted tokens are capped at `max(60, min(this value, 2 x remaining assertion validity))` seconds. Default: `3600` (1h).

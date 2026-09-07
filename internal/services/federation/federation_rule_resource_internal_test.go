@@ -18,6 +18,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
@@ -620,5 +622,33 @@ func TestFederationRuleImportState(t *testing.T) {
 	}
 	if id.ValueString() != "fdrl_01ABC" {
 		t.Errorf("id = %q, want fdrl_01ABC", id.ValueString())
+	}
+}
+
+// TestFederationRuleSchema_AppliesToAllWorkspacesDefaultsFalse locks in the
+// Computed+Default(false) shape of applies_to_all_workspaces. The API always
+// returns a concrete boolean, so a bare Optional attribute yields "Provider
+// produced inconsistent result after apply" on any workspace_id-only config,
+// and a Computed attribute without a static default would carry the prior
+// state forward on update, silently keeping a rule bound to all workspaces
+// after the attribute is removed from config.
+func TestFederationRuleSchema_AppliesToAllWorkspacesDefaultsFalse(t *testing.T) {
+	var schemaResp resource.SchemaResponse
+	(&FederationRuleResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["applies_to_all_workspaces"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatalf("applies_to_all_workspaces is not a BoolAttribute: %T", schemaResp.Schema.Attributes["applies_to_all_workspaces"])
+	}
+	if !attr.Computed {
+		t.Error("applies_to_all_workspaces must be Computed: the API always returns a concrete boolean")
+	}
+	if attr.Default == nil {
+		t.Fatal("applies_to_all_workspaces must carry a static false default")
+	}
+	resp := defaults.BoolResponse{}
+	attr.Default.DefaultBool(context.Background(), defaults.BoolRequest{}, &resp)
+	if resp.PlanValue.ValueBool() {
+		t.Error("applies_to_all_workspaces default must be false")
 	}
 }
