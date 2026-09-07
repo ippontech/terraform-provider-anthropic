@@ -1,3 +1,9 @@
+## [1.38.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.37.0...v1.38.0) (2026-09-07)
+
+### ✨ Features
+
+* **serviceaccounts:** add anthropic_service_account_workspaces data source ([#221](https://github.com/ippontech/terraform-provider-anthropic/issues/221)) ([8011de8](https://github.com/ippontech/terraform-provider-anthropic/commit/8011de8185eafef86addfe81686da37fc4f45ebe)), closes [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [213/#216](https://github.com/213/terraform-provider-anthropic/issues/216)
+
 ## [1.37.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.36.0...v1.37.0) (2026-09-07)
 
 ### ✨ Features
