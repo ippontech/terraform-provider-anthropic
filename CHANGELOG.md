@@ -1,3 +1,9 @@
+## [1.35.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.35.0...v1.35.1) (2026-09-07)
+
+### 📚 Documentation
+
+* strip terraform blocks from registry example snippets ([#232](https://github.com/ippontech/terraform-provider-anthropic/issues/232)) ([f68b043](https://github.com/ippontech/terraform-provider-anthropic/commit/f68b043bc031ea4a1e2adf49bc9e99e1a0548d89)), closes [#225](https://github.com/ippontech/terraform-provider-anthropic/issues/225)
+
 ## [1.35.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.34.0...v1.35.0) (2026-09-07)
 
 ### ✨ Features
