@@ -207,6 +207,7 @@ func (r *FederationIssuerResource) Schema(_ context.Context, _ resource.SchemaRe
 			"archived_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Archive timestamp (RFC 3339). Null if the issuer has not been archived.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"created_by_actor_id": schema.StringAttribute{
 				Computed:            true,
@@ -220,6 +221,7 @@ func (r *FederationIssuerResource) Schema(_ context.Context, _ resource.SchemaRe
 			"archived_by_actor_id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Tagged ID (`user_...`/`svac_...`) of the actor that archived this issuer. Null if not archived.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
