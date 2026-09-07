@@ -1,0 +1,29 @@
+---
+page_title: "anthropic_federation_rule_workspace Resource - anthropic"
+subcategory: "Workload Identity Federation"
+description: |-
+  Enables a Workload Identity Federation rule for an additional workspace.
+---
+
+# anthropic_federation_rule_workspace (Resource)
+
+Enables a Workload Identity Federation (WIF) rule for an additional workspace. A federation rule's create-time `workspace_id` already enables it for one workspace — this resource manages the extra workspaces a rule should also be usable from. Do not also manage that first workspace with this resource, or Terraform and the API will fight over the same enablement.
+
+> **API**: `POST/GET/DELETE /v1/organizations/federation_rules/{federation_rule_id}/workspaces[/{workspace_id}]`.
+> **Auth**: org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`). Admin API keys are not accepted.
+> **Scope restriction**: OAuth callers (this provider) may only manage this enablement for rules whose `oauth_scope` is `workspace:developer` or `workspace:inference`; other scopes require a Console session.
+> **Immutable**: every attribute forces replacement — there is no update endpoint.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/federation_rule_workspace/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing enablement using its composite ID, `<federation_rule_id>:<workspace_id>`:
+
+```shell
+terraform import anthropic_federation_rule_workspace.example fdrl_01ABC:wrkspc_01XYZ
+```
