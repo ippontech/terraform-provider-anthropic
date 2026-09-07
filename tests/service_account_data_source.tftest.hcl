@@ -10,7 +10,7 @@ run "service_account_data_source_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./tests/fixtures/service_account_plan"
+    source = "./fixtures/service_account_plan"
   }
 
   assert {
