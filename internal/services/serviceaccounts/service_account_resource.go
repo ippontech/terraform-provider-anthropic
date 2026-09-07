@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -413,27 +414,13 @@ func mapServiceAccountToState(sa *anthropic.BetaServiceAccount, data *ServiceAcc
 	data.UpdatedAt = types.StringValue(sa.UpdatedAt.Format(time.RFC3339))
 
 	data.Description = descriptionOrNull(sa.Description, data.Description)
-	data.CreatedByActorID = stringOrNull(sa.CreatedByActorID)
-	data.UpdatedByActorID = stringOrNull(sa.UpdatedByActorID)
-	data.ArchivedByActorID = stringOrNull(sa.ArchivedByActorID)
+	data.CreatedByActorID = tfvalue.StringOrNull(sa.CreatedByActorID)
+	data.UpdatedByActorID = tfvalue.StringOrNull(sa.UpdatedByActorID)
+	data.ArchivedByActorID = tfvalue.StringOrNull(sa.ArchivedByActorID)
 
-	if sa.ArchivedAt.IsZero() {
-		data.ArchivedAt = types.StringNull()
-	} else {
-		data.ArchivedAt = types.StringValue(sa.ArchivedAt.Format(time.RFC3339))
-	}
+	data.ArchivedAt = tfvalue.TimeOrNull(sa.ArchivedAt)
 
 	return diags
-}
-
-// stringOrNull maps an API "" (Go zero value for a required-but-optional
-// string field) to a null Terraform value, so an unset description or actor ID
-// is represented as null rather than an empty string.
-func stringOrNull(s string) types.String {
-	if s == "" {
-		return types.StringNull()
-	}
-	return types.StringValue(s)
 }
 
 // descriptionOrNull maps the API's description the same way stringOrNull
