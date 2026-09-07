@@ -6,14 +6,12 @@ package federation_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
@@ -31,13 +29,6 @@ import (
 // To keep this branch self-contained, the issuer and service account this
 // test's rule targets are created directly through the SDK in test setup, not
 // through those Terraform resources.
-
-// newTestOAuthClient builds an SDK client authenticated with the org:admin
-// OAuth bearer token, used for out-of-band fixture setup/teardown and for
-// CheckDestroy.
-func newTestOAuthClient() anthropic.Client {
-	return anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
-}
 
 // testFixtureRSAJWK is the well-known public RSA JWK from RFC 7517 Appendix
 // A.1. It only needs to be structurally valid: this test never performs a
