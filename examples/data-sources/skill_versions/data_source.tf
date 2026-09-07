@@ -1,14 +1,3 @@
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Create a skill and a version so the list is guaranteed non-empty for tests.
 resource "anthropic_skill" "example" {
   files         = ["${path.module}/SKILL.md"]

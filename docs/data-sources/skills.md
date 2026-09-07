@@ -17,17 +17,6 @@ Lists available Skills on the Anthropic platform (beta). Supports optional filte
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 variable "source_filter" {
   description = "Optional filter by skill source. Accepted values: \"custom\" or \"anthropic\"."
   type        = string

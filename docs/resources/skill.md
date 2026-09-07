@@ -17,17 +17,6 @@ Creates and manages a custom Skill on the Anthropic platform (beta). Skills are 
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 resource "anthropic_skill" "example" {
   display_title = "Example Skill"
   # Explicit patterns avoid sweeping the Terraform config itself into the

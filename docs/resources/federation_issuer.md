@@ -25,17 +25,6 @@ Two fields the API exposes on federation issuers are intentionally **not** in th
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Trust GitHub Actions' OIDC issuer for workload identity federation. The
 # issuer URL is publicly reachable over HTTPS, so the default "discovery"
 # jwks mode can fetch GitHub's signing keys automatically.

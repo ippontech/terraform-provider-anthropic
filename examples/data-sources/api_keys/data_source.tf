@@ -1,13 +1,3 @@
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # List all active API keys for a workspace.
 # The workspace_id references a resource (unknown during plan),
 # which defers the data source read until apply.

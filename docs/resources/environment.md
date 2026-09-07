@@ -17,16 +17,6 @@ Creates and manages a cloud environment (container template) for Anthropic Manag
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Minimal environment
 resource "anthropic_environment" "minimal" {
   name = "minimal-environment"

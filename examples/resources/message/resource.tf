@@ -1,14 +1,3 @@
-terraform {
-  required_version = ">= 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 resource "anthropic_message" "example" {
   model      = "claude-haiku-4-5-20251001"
   max_tokens = 1024

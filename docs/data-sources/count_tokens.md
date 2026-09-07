@@ -17,17 +17,6 @@ The `anthropic_count_tokens` data source counts the number of tokens that would 
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = ">= 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Minimal example: count tokens for a simple user message
 data "anthropic_count_tokens" "simple" {
   model = "claude-haiku-4-5-20251001"

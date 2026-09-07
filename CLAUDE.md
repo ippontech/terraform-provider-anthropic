@@ -85,7 +85,7 @@ internal/
 1. Create the file under `internal/services/<service>/<name>_resource.go` (or `_data_source.go`), using `package <service>`
 2. Implement the `resource.Resource` (or `datasource.DataSource`) interface
 3. Register the factory function in `Resources()` (or `DataSources()`) in `internal/provider/provider.go`
-4. Add an example config under `examples/resources/<name>/` (or `examples/data-sources/<name>/`)
+4. Add an example config under `examples/resources/<name>/` (or `examples/data-sources/<name>/`): the main file (`resource.tf` / `data_source.tf`) holds only the resource/data blocks and outputs — it is embedded verbatim in the Registry docs — while the `terraform {}` block (required_version + required_providers) lives in a sibling `versions.tf`, which Terraform still loads as part of the module (it maps `anthropic` to `ippontech/anthropic` for the native tests) but the docs never show. Never put a `terraform {}` block back in the main file ([#231](https://github.com/ippontech/terraform-provider-anthropic/issues/231))
 5. Add a template under `templates/resources/<name>.md.tmpl` (or `templates/data-sources/<name>.md.tmpl`) — **required** to set a non-empty `subcategory` (e.g. `"Agents"`, `"Messages"`, `"Models"`); without it `make generate` produces `subcategory: ""` and the resource appears ungrouped on the Terraform Registry
 6. Add a Terraform native test under `tests/<name>.tftest.hcl`
 7. Run `make generate` to regenerate docs

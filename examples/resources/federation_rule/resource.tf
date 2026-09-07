@@ -1,13 +1,3 @@
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Trust GitHub Actions' OIDC issuer so its workflow tokens can be exchanged for
 # short-lived Anthropic access tokens (no long-lived API key stored in CI).
 resource "anthropic_federation_issuer" "github_actions" {
