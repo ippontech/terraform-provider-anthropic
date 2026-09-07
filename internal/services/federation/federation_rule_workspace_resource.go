@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -20,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -267,21 +267,7 @@ func mapFederationRuleWorkspaceToState(w *anthropic.BetaFederationRuleWorkspace,
 	data.ID = types.StringValue(w.FederationRuleID + ":" + w.WorkspaceID)
 	data.FederationRuleID = types.StringValue(w.FederationRuleID)
 	data.WorkspaceID = types.StringValue(w.WorkspaceID)
-	data.WorkspaceName = stringOrNull(w.WorkspaceName)
-	data.CreatedByActorID = stringOrNull(w.CreatedByActorID)
-
-	if w.CreatedAt.IsZero() {
-		data.CreatedAt = types.StringNull()
-	} else {
-		data.CreatedAt = types.StringValue(w.CreatedAt.Format(time.RFC3339))
-	}
-}
-
-// stringOrNull maps an API "" (Go zero value for a required-but-optional
-// string field) to a null Terraform value.
-func stringOrNull(s string) types.String {
-	if s == "" {
-		return types.StringNull()
-	}
-	return types.StringValue(s)
+	data.WorkspaceName = tfvalue.StringOrNull(w.WorkspaceName)
+	data.CreatedByActorID = tfvalue.StringOrNull(w.CreatedByActorID)
+	data.CreatedAt = tfvalue.TimeOrNull(w.CreatedAt)
 }
