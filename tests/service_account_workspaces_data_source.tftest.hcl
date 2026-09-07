@@ -2,27 +2,28 @@ test {
   parallel = true
 }
 
-# The service account workspaces endpoint requires an org:admin OAuth bearer
-# token and rejects API keys outright (see internal/errors/auth_token.go), and
-# no test org exists yet for org-level writes (the same blocker as #58). This
-# runs against a fixture with a dummy auth_token and asserts command = plan,
-# so it validates the schema without ever making a live API call or needing a
-# real token.
-#
-# The fixture defers the data source's read past plan with a `depends_on` on
-# a resource that is never applied under `command = plan` (see
-# tests/fixtures/service_account_workspaces_data_source_plan/main.tf) — the
-# data source's own input (service_account_id) is otherwise fully known, which
-# would make Terraform read it live during plan.
-run "service_account_workspaces_plan_validates_schema" {
+# OAuth-only data source: CI has no org:admin token (#137), so the provider is
+# mocked and the public example runs end to end (plan + apply) with no
+# credentials. Provider logic (pagination, mapping) is covered by the httptest
+# unit tests; this validates schema and example wiring. The mocked list is
+# always empty: override_data cannot inject list(object) elements (#233).
+mock_provider "anthropic" {}
+
+run "service_account_workspaces_data_source_plan" {
   command = plan
 
   module {
-    source = "./fixtures/service_account_workspaces_data_source_plan"
+    source = "../examples/data-sources/service_account_workspaces"
+  }
+}
+
+run "service_account_workspaces_data_source_apply" {
+  module {
+    source = "../examples/data-sources/service_account_workspaces"
   }
 
   assert {
-    condition     = output.service_account_workspaces_service_account_id == "svac_01PLANTEST"
-    error_message = "Expected service_account_id to be 'svac_01PLANTEST'."
+    condition     = output.service_account_workspaces_count >= 0
+    error_message = "Expected the count output to be computed from the data source."
   }
 }

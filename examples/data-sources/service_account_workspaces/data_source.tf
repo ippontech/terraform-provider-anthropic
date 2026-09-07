@@ -1,16 +1,5 @@
-# When you already know the service account ID, look it up directly:
-#
-#   data "anthropic_service_account_workspaces" "example" {
-#     service_account_id = "svac_01WCz1FkmYMm4gnmykNKUu3Q"
-#   }
-#
-# This example instead resolves a real service account ID from the full list,
-# so it can run end-to-end, then lists that service account's workspace
-# memberships.
-data "anthropic_service_accounts" "all" {}
-
 data "anthropic_service_account_workspaces" "example" {
-  service_account_id = data.anthropic_service_accounts.all.service_accounts[0].id
+  service_account_id = "svac_01WCz1FkmYMm4gnmykNKUu3Q"
 }
 
 output "service_account_workspaces_count" {
