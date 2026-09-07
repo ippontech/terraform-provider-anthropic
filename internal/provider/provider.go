@@ -190,6 +190,7 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		environments.NewEnvironmentsDataSource,
 		federation.NewFederationIssuersDataSource,
 		federation.NewFederationRulesDataSource,
+		federation.NewFederationIssuerDataSource,
 		models.NewModelDataSource,
 		models.NewModelsDataSource,
 		organizations.NewOrganizationDataSource,
