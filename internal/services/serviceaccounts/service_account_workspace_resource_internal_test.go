@@ -13,25 +13,12 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
-	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
-
-// newTestOAuthClient builds an OAuth-wrapped SDK client pointed at an
-// httptest server for CI-deterministic unit tests. The httptest pattern comes
-// from internal/services/vaults/vault_resource_internal_test.go (a standard
-// API-key resource); here option.WithAuthToken carries the OAuth bearer
-// credential instead.
-func newTestOAuthClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &providerdata.OAuthClient{Client: &c}
-}
 
 // --- mapServiceAccountWorkspaceToState ---
 
@@ -202,7 +189,7 @@ func TestAddServiceAccountToWorkspace_SendsCorrectPathAndBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthClient(t, srv)
+	client := newTestServiceAccountOAuthClient(t, srv)
 	member, err := addServiceAccountToWorkspace(context.Background(), client, "svac_01ABC", "wrkspc_01XYZ", "workspace_developer")
 	if err != nil {
 		t.Fatalf("addServiceAccountToWorkspace: %v", err)
@@ -248,7 +235,7 @@ func TestRemoveServiceAccountFromWorkspace_RequestPathArgumentOrder(t *testing.T
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthClient(t, srv)
+	client := newTestServiceAccountOAuthClient(t, srv)
 	err := removeServiceAccountFromWorkspace(context.Background(), client, "svac_THESERVICEACCOUNT", "wrkspc_THEWORKSPACE")
 	if err != nil {
 		t.Fatalf("removeServiceAccountFromWorkspace: %v", err)
@@ -278,7 +265,7 @@ func TestFindServiceAccountWorkspaceMembership_FoundOnFirstPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthClient(t, srv)
+	client := newTestServiceAccountOAuthClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -315,7 +302,7 @@ func TestFindServiceAccountWorkspaceMembership_FoundOnSecondPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthClient(t, srv)
+	client := newTestServiceAccountOAuthClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -336,7 +323,7 @@ func TestFindServiceAccountWorkspaceMembership_GoneFromList(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthClient(t, srv)
+	client := newTestServiceAccountOAuthClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -362,7 +349,7 @@ func TestFindServiceAccountWorkspaceMembership_SkipsImplicitEntry(t *testing.T) 
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthClient(t, srv)
+	client := newTestServiceAccountOAuthClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -380,7 +367,7 @@ func TestFindServiceAccountWorkspaceMembership_NotFoundError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthClient(t, srv)
+	client := newTestServiceAccountOAuthClient(t, srv)
 	_, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_missing", "wrkspc_01TARGET")
 
 	var apierr *anthropic.Error

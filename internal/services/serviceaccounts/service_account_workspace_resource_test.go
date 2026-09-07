@@ -24,12 +24,10 @@ import (
 // gated on acctest.PreCheckOAuth, which skips rather than fails when the
 // token is absent.
 //
-// The public example this resource ships
-// (examples/resources/service_account_workspace) chains anthropic_service_account,
-// which is implemented on a sibling branch (see #137) and does not exist
-// here. To keep this branch self-contained, the service account this test's
-// membership targets is created directly through the SDK in test setup, not
-// through that Terraform resource.
+// The service account this test's membership targets is created directly
+// through the SDK in test setup rather than through the
+// anthropic_service_account resource (on main since #213), so the membership
+// under test does not depend on that resource's own CRUD lifecycle.
 
 // setupServiceAccountFixture creates the service account a test's
 // anthropic_service_account_workspace targets, and registers a t.Cleanup to
