@@ -31,11 +31,13 @@ resource "anthropic_service_account_workspace" "ci" {
 }
 
 output "service_account_workspace_id" {
-  value = anthropic_service_account_workspace.ci.id
+  description = "Composite ID of the membership (`<service_account_id>:<workspace_id>`)."
+  value       = anthropic_service_account_workspace.ci.id
 }
 
 output "service_account_workspace_implicit" {
-  value = anthropic_service_account_workspace.ci.implicit
+  description = "Whether the membership is implicit (org default workspace) rather than explicit."
+  value       = anthropic_service_account_workspace.ci.implicit
 }
 ```
 

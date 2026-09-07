@@ -64,11 +64,13 @@ resource "anthropic_federation_rule_workspace" "gha_deploy_staging" {
 }
 
 output "federation_rule_workspace_id" {
-  value = anthropic_federation_rule_workspace.gha_deploy_staging.id
+  description = "Composite ID of the enablement (`<federation_rule_id>:<workspace_id>`)."
+  value       = anthropic_federation_rule_workspace.gha_deploy_staging.id
 }
 
 output "federation_rule_workspace_name" {
-  value = anthropic_federation_rule_workspace.gha_deploy_staging.workspace_name
+  description = "Name of the workspace the rule was enabled in."
+  value       = anthropic_federation_rule_workspace.gha_deploy_staging.workspace_name
 }
 ```
 

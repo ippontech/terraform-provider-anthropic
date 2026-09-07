@@ -148,6 +148,8 @@ go test -run TestName -v ./internal/services/agents/
 
 Go acceptance tests require `TF_ACC=1` and a real Anthropic API key. Terraform native tests also require a real API key and a locally installed provider.
 
+`.tflint.hcl` enables the full `terraform` ruleset (`preset = "all"`, `terraform_standard_module_structure` off); the `tflint` CI job runs `tflint --recursive` on every push, so every example `output` needs a `description` and every `versions.tf` a `required_version` (#229).
+
 Before committing, run pre-commit hooks:
 ```bash
 pre-commit run -a

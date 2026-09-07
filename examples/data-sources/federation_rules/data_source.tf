@@ -2,11 +2,13 @@
 data "anthropic_federation_rules" "all" {}
 
 output "federation_rules_count" {
-  value = length(data.anthropic_federation_rules.all.rules)
+  description = "Number of live federation rules."
+  value       = length(data.anthropic_federation_rules.all.rules)
 }
 
 output "federation_rule_names" {
-  value = [for r in data.anthropic_federation_rules.all.rules : r.name]
+  description = "Names of the live federation rules."
+  value       = [for r in data.anthropic_federation_rules.all.rules : r.name]
 }
 
 # Filter to the rules referencing a specific issuer, and include archived ones.
@@ -16,5 +18,6 @@ data "anthropic_federation_rules" "by_issuer" {
 }
 
 output "rules_for_issuer" {
-  value = [for r in data.anthropic_federation_rules.by_issuer.rules : r.id]
+  description = "IDs of the rules bound to the given issuer."
+  value       = [for r in data.anthropic_federation_rules.by_issuer.rules : r.id]
 }

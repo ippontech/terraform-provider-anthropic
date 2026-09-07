@@ -13,11 +13,13 @@ data "anthropic_organization_member" "example" {
 }
 
 output "member_email" {
+  description = "Email address of the member."
   # Marked sensitive so the address is redacted in plan/apply/test output (e.g. CI logs).
   value     = data.anthropic_organization_member.example.email
   sensitive = true
 }
 
 output "member_role" {
-  value = data.anthropic_organization_member.example.role
+  description = "Organization role of the member."
+  value       = data.anthropic_organization_member.example.role
 }

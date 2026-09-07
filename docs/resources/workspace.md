@@ -30,11 +30,13 @@ resource "anthropic_workspace" "example" {
 }
 
 output "workspace_id" {
-  value = anthropic_workspace.example.id
+  description = "ID of the workspace."
+  value       = anthropic_workspace.example.id
 }
 
 output "workspace_display_color" {
-  value = anthropic_workspace.example.display_color
+  description = "Display color assigned to the workspace in the Console."
+  value       = anthropic_workspace.example.display_color
 }
 ```
 

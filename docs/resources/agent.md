@@ -109,11 +109,13 @@ resource "anthropic_agent" "custom_tools" {
 }
 
 output "simple_agent_id" {
-  value = anthropic_agent.simple.id
+  description = "ID of the minimal agent."
+  value       = anthropic_agent.simple.id
 }
 
 output "developer_agent_version" {
-  value = anthropic_agent.developer.version
+  description = "Version number of the developer agent."
+  value       = anthropic_agent.developer.version
 }
 ```
 

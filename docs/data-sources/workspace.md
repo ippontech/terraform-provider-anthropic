@@ -28,15 +28,18 @@ data "anthropic_workspace" "example" {
 }
 
 output "workspace_name" {
-  value = data.anthropic_workspace.example.name
+  description = "Name of the workspace."
+  value       = data.anthropic_workspace.example.name
 }
 
 output "created_at" {
-  value = data.anthropic_workspace.example.created_at
+  description = "Creation timestamp of the workspace (RFC 3339)."
+  value       = data.anthropic_workspace.example.created_at
 }
 
 output "display_color" {
-  value = data.anthropic_workspace.example.display_color
+  description = "Display color of the workspace in the Console."
+  value       = data.anthropic_workspace.example.display_color
 }
 ```
 

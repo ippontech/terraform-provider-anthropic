@@ -35,19 +35,23 @@ resource "anthropic_service_account" "release_manager" {
 }
 
 output "service_account_id" {
-  value = anthropic_service_account.ci_runner.id
+  description = "ID of the CI runner service account."
+  value       = anthropic_service_account.ci_runner.id
 }
 
 output "service_account_organization_role" {
-  value = anthropic_service_account.ci_runner.organization_role
+  description = "Organization role of the CI runner service account."
+  value       = anthropic_service_account.ci_runner.organization_role
 }
 
 output "service_account_name" {
-  value = anthropic_service_account.ci_runner.name
+  description = "Name of the CI runner service account."
+  value       = anthropic_service_account.ci_runner.name
 }
 
 output "release_manager_role" {
-  value = anthropic_service_account.release_manager.organization_role
+  description = "Organization role of the release manager service account."
+  value       = anthropic_service_account.release_manager.organization_role
 }
 ```
 

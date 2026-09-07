@@ -22,16 +22,19 @@ data "anthropic_service_account" "example" {
 }
 
 output "service_account_id" {
-  value = data.anthropic_service_account.example.id
+  description = "ID of the service account."
+  value       = data.anthropic_service_account.example.id
 }
 
 output "service_account_name" {
-  value     = data.anthropic_service_account.example.name
-  sensitive = true
+  description = "Name of the service account."
+  value       = data.anthropic_service_account.example.name
+  sensitive   = true
 }
 
 output "service_account_organization_role" {
-  value = data.anthropic_service_account.example.organization_role
+  description = "Organization role of the service account (`developer` or `admin`)."
+  value       = data.anthropic_service_account.example.organization_role
 }
 ```
 

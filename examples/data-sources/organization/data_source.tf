@@ -2,13 +2,16 @@
 data "anthropic_organization" "current" {}
 
 output "organization_id" {
-  value = data.anthropic_organization.current.id
+  description = "ID of the organization."
+  value       = data.anthropic_organization.current.id
 }
 
 output "organization_name" {
-  value = data.anthropic_organization.current.name
+  description = "Name of the organization."
+  value       = data.anthropic_organization.current.name
 }
 
 output "organization_type" {
-  value = data.anthropic_organization.current.type
+  description = "Object type returned by the API (`organization`)."
+  value       = data.anthropic_organization.current.type
 }

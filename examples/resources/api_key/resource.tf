@@ -6,9 +6,11 @@ resource "anthropic_api_key" "example" {
 }
 
 output "api_key_id" {
-  value = anthropic_api_key.example.id
+  description = "ID of the managed API key."
+  value       = anthropic_api_key.example.id
 }
 
 output "api_key_partial_hint" {
-  value = anthropic_api_key.example.partial_key_hint
+  description = "Last characters of the key, for identification without exposing the secret."
+  value       = anthropic_api_key.example.partial_key_hint
 }
