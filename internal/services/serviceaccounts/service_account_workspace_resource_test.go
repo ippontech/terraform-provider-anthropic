@@ -6,14 +6,12 @@ package serviceaccounts_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -32,13 +30,6 @@ import (
 // here. To keep this branch self-contained, the service account this test's
 // membership targets is created directly through the SDK in test setup, not
 // through that Terraform resource.
-
-// newTestOAuthClient builds an SDK client authenticated with the org:admin
-// OAuth bearer token, used for out-of-band fixture setup/teardown and for
-// CheckDestroy.
-func newTestOAuthClient() anthropic.Client {
-	return anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
-}
 
 // setupServiceAccountFixture creates the service account a test's
 // anthropic_service_account_workspace targets, and registers a t.Cleanup to
