@@ -90,7 +90,6 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             github.com:443
-            objects.githubusercontent.com:443
             release-assets.githubusercontent.com:443
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -100,15 +99,22 @@ jobs:
       # Installed from the GitHub release with checksum verification rather than
       # through a third-party action (poutine flags setup-tflint's unverified
       # creator, and a pinned binary is the smaller supply-chain surface).
+      #
+      # The expected hash is pinned here, not read from the release's own
+      # checksums.txt: both files come from the same source, so a compromised
+      # release would poison the checksum along with the binary. Bump
+      # TFLINT_VERSION and TFLINT_SHA256 together (value from the target
+      # release's checksums.txt, tflint_linux_amd64.zip line).
       - name: Install tflint
         env:
+          # renovate: datasource=github-releases depName=terraform-linters/tflint
           TFLINT_VERSION: v0.54.0
+          TFLINT_SHA256: 16d062ebb3d2d199463fb93e17644c27feb57cb6175babecbce3e8d34f4956c6
         run: |
           set -euo pipefail
           base="https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}"
           curl -fsSLO "${base}/tflint_linux_amd64.zip"
-          curl -fsSLO "${base}/checksums.txt"
-          grep ' tflint_linux_amd64.zip$' checksums.txt | sha256sum -c -
+          echo "${TFLINT_SHA256}  tflint_linux_amd64.zip" | sha256sum -c -
           install_dir="${RUNNER_TEMP}/tflint"
           mkdir -p "${install_dir}"
           unzip -o -q tflint_linux_amd64.zip -d "${install_dir}"
