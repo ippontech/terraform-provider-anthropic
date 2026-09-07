@@ -15,13 +15,8 @@ Fetches a Workload Identity Federation issuer by ID, including its JWKS configur
 ## Example Usage
 
 ```hcl
-# Resolve a real federation issuer ID from the list data source: a constant ID
-# would 404 against a live organization, and this also keeps the ID
-# unknown-at-plan so the read genuinely happens at apply time.
-data "anthropic_federation_issuers" "all" {}
-
 data "anthropic_federation_issuer" "example" {
-  id = data.anthropic_federation_issuers.all.issuers[0].id
+  id = "fdis_01ABCDEFabcdef0123456789XY"
 }
 
 output "federation_issuer_name" {
