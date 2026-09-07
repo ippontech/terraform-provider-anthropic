@@ -1,3 +1,9 @@
+## [1.31.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.31.0...v1.31.1) (2026-09-07)
+
+### 🐛 Bug Fixes
+
+* **serviceaccounts:** make the service_account native test offline ([#230](https://github.com/ippontech/terraform-provider-anthropic/issues/230)) ([d9cb34f](https://github.com/ippontech/terraform-provider-anthropic/commit/d9cb34f536cb2b2f7b05922121ea8b2412df3c36)), closes [#213](https://github.com/ippontech/terraform-provider-anthropic/issues/213) [#224](https://github.com/ippontech/terraform-provider-anthropic/issues/224) [#200](https://github.com/ippontech/terraform-provider-anthropic/issues/200)
+
 ## [1.31.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.30.1...v1.31.0) (2026-09-07)
 
 ### ✨ Features
