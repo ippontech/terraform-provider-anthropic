@@ -16,16 +16,6 @@ Assigns a Workload Identity Federation service account to a workspace with a giv
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Identity the explicit membership below is granted to. Federated tokens
 # minted for this service account can only act in a workspace once it is
 # an explicit member of that workspace (or the org default workspace, where

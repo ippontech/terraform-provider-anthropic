@@ -1,14 +1,3 @@
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 variable "staging_workspace_id" {
   description = "ID of the additional workspace to enable the rule for."
   type        = string

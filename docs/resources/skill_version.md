@@ -17,17 +17,6 @@ Creates and manages a Skill Version on the Anthropic platform (beta). A Skill Ve
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 locals {
   # Explicit patterns avoid sweeping the Terraform config itself into the
   # bundle. The provider preserves each file's path relative to the bundle

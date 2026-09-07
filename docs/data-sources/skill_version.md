@@ -17,17 +17,6 @@ Retrieves a specific Skill Version by skill ID and version.
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 resource "anthropic_skill" "example" {
   files         = ["${path.module}/SKILL.md"]
   force_destroy = true

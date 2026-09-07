@@ -17,17 +17,6 @@ Lists all members of an Anthropic Workspace via the Admin API. All pages are fet
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 variable "workspace_id" {
   description = "The ID of the workspace whose members to list."
   type        = string

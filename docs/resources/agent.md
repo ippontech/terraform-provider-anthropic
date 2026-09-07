@@ -17,17 +17,6 @@ Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = ">= 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 0.1.0"
-    }
-  }
-}
-
 # Minimal agent
 resource "anthropic_agent" "simple" {
   model = "claude-sonnet-4-6"

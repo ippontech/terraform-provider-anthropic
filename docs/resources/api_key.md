@@ -25,17 +25,6 @@ Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable)
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # API keys cannot be created via Terraform — import an existing key first:
 #   terraform import anthropic_api_key.example <api_key_id>
 resource "anthropic_api_key" "example" {

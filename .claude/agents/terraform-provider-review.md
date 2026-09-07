@@ -20,7 +20,7 @@ Your job: review Go and Terraform code in `terraform-provider-anthropic` for qua
 - No silent error swallows — always append to `resp.Diagnostics`
 - All new resources/data sources registered in `provider.go`
 - Full interface implemented (Create/Read/Update/Delete for resources; Read for data sources)
-- Example configs exist under `examples/resources/<name>/` or `examples/data-sources/<name>/`
+- Example configs exist under `examples/resources/<name>/` or `examples/data-sources/<name>/` — the main file must contain no `terraform {}` block (it is embedded in Registry docs); that block belongs in the sibling `versions.tf` (#231)
 
 **Configure method** — flag any inline nil check; must use helpers from `internal/errors/` (imported as `providerrors`):
 - Standard resource → `providerrors.RequireResourceAPIClient(pd.Client, &resp.Diagnostics)`

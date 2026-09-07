@@ -19,17 +19,6 @@ Assigns a user to an Anthropic Workspace with a given role via the Admin API.
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 resource "anthropic_workspace" "example" {
   name = "Example Workspace"
 }

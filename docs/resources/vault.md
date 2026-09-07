@@ -17,16 +17,6 @@ Creates and manages a vault that securely stores MCP credentials for use by Anth
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Minimal vault
 resource "anthropic_vault" "minimal" {
   display_name = "my-vault"

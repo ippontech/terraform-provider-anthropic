@@ -17,16 +17,6 @@ Lists workspace-level rate-limit overrides for a given workspace. Only entries t
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 data "anthropic_workspace_rate_limits" "example" {
   workspace_id = var.workspace_id
 }

@@ -1,13 +1,3 @@
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Import an existing API key first, then look it up with the data source.
 # The data source id references the resource id (unknown during plan),
 # which defers the read until apply.
