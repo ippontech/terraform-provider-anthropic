@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_federation_rule Data Source - anthropic"
+subcategory: "Workload Identity Federation"
+description: |-
+  Fetches a single Workload Identity Federation rule by ID.
+---
+
+# anthropic_federation_rule (Data Source)
+
+Fetches a single Workload Identity Federation rule by ID. A federation rule binds an external OIDC identity (from a federation issuer) to an Anthropic service account, optionally scoped to one or more workspaces, and governs the tokens minted via token exchange.
+
+> **API**: `GET /v1/organizations/federation_rules/{id}` (beta).
+> **Auth**: OAuth bearer token with the `org:admin` scope (`auth_token` / `ANTHROPIC_AUTH_TOKEN`). Admin API keys are not accepted.
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/federation_rule/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
