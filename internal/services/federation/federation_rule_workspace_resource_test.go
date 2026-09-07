@@ -6,14 +6,12 @@ package federation_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -33,24 +31,6 @@ import (
 // additionally enable it for acctest.TerraformTestsWorkspaceID — exercising
 // the resource against a workspace distinct from the rule's own binding.
 
-// newTestOAuthClient builds an SDK client authenticated with the org:admin
-// OAuth bearer token, used for out-of-band fixture setup/teardown and for
-// CheckDestroy.
-func newTestOAuthClient() anthropic.Client {
-	return anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
-}
-
-// testFixtureRSAJWK is the well-known public RSA JWK from RFC 7517 Appendix
-// A.1. It only needs to be structurally valid: this test never performs a
-// real token exchange, so the key never has to verify a real signature.
-var testFixtureRSAJWK = map[string]any{
-	"kty": "RSA",
-	"n":   "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
-	"e":   "AQAB",
-	"alg": "RS256",
-	"kid": "tf-acc-test-key",
-}
-
 // federationRuleWorkspaceTestFixtures holds the out-of-band issuer, service
 // account and federation rule a federation_rule_workspace acceptance test
 // exercises.
@@ -66,7 +46,7 @@ type federationRuleWorkspaceTestFixtures struct {
 // it at creation time, so the resource under test can enable a genuinely
 // *different* workspace (acctest.TerraformTestsWorkspaceID) without
 // duplicating the rule's own create-time binding.
-func findOtherWorkspaceID(t *testing.T, client anthropic.Client, exclude string) string {
+func findOtherWorkspaceID(t *testing.T, client *anthropic.Client, exclude string) string {
 	t.Helper()
 	ctx := context.Background()
 	pager := client.Beta.Organization.Workspaces.ListAutoPaging(ctx, anthropic.BetaOrganizationWorkspaceListParams{})

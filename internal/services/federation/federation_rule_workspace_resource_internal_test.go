@@ -27,9 +27,9 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// schemaType returns the tftypes.Type of the FederationRuleWorkspaceResource
+// ruleWorkspaceSchemaType returns the tftypes.Type of the FederationRuleWorkspaceResource
 // schema.
-func schemaType(t *testing.T) tftypes.Type {
+func ruleWorkspaceSchemaType(t *testing.T) tftypes.Type {
 	t.Helper()
 	var schemaResp resource.SchemaResponse
 	r := NewFederationRuleWorkspaceResource()
@@ -43,11 +43,11 @@ func schemaType(t *testing.T) tftypes.Type {
 	return tfType.TerraformType(context.Background())
 }
 
-// nullValuesForSchema returns a map of tftypes.Value with null values for
+// nullValuesForRuleWorkspaceSchema returns a map of tftypes.Value with null values for
 // every attribute in the schema — used as a base to build test states.
-func nullValuesForSchema(t *testing.T) map[string]tftypes.Value {
+func nullValuesForRuleWorkspaceSchema(t *testing.T) map[string]tftypes.Value {
 	t.Helper()
-	schemaObjType := schemaType(t).(tftypes.Object)
+	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
 	vals := make(map[string]tftypes.Value, len(schemaObjType.AttributeTypes))
 	for name, typ := range schemaObjType.AttributeTypes {
 		vals[name] = tftypes.NewValue(typ, nil)
@@ -90,8 +90,8 @@ func TestFederationRuleWorkspaceImportState_ValidID(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := schemaType(t).(tftypes.Object)
-	rawVal := tftypes.NewValue(schemaObjType, nullValuesForSchema(t))
+	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
+	rawVal := tftypes.NewValue(schemaObjType, nullValuesForRuleWorkspaceSchema(t))
 	state := tfsdk.State{Raw: rawVal, Schema: schemaResp.Schema}
 
 	req := resource.ImportStateRequest{ID: "fdrl_01ABC:wrkspc_01XYZ"}
@@ -129,8 +129,8 @@ func TestFederationRuleWorkspaceImportState_InvalidID(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := schemaType(t).(tftypes.Object)
-	rawVal := tftypes.NewValue(schemaObjType, nullValuesForSchema(t))
+	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
+	rawVal := tftypes.NewValue(schemaObjType, nullValuesForRuleWorkspaceSchema(t))
 	state := tfsdk.State{Raw: rawVal, Schema: schemaResp.Schema}
 
 	for _, id := range []string{"no-colon-here", "", ":missing-rule-id", "missing-workspace-id:"} {
@@ -315,8 +315,8 @@ func TestFederationRuleWorkspaceCreate_AddWiring(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := nullValuesForSchema(t)
+	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
+	vals := nullValuesForRuleWorkspaceSchema(t)
 	vals["federation_rule_id"] = tftypes.NewValue(tftypes.String, "fdrl_01ABC")
 	vals["workspace_id"] = tftypes.NewValue(tftypes.String, "wrkspc_01XYZ")
 	rawVal := tftypes.NewValue(schemaObjType, vals)
@@ -373,8 +373,8 @@ func TestFederationRuleWorkspaceDelete_RemoveURLPath(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := nullValuesForSchema(t)
+	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
+	vals := nullValuesForRuleWorkspaceSchema(t)
 	vals["federation_rule_id"] = tftypes.NewValue(tftypes.String, "fdrl_01ABC")
 	vals["workspace_id"] = tftypes.NewValue(tftypes.String, "wrkspc_01XYZ")
 	rawVal := tftypes.NewValue(schemaObjType, vals)
