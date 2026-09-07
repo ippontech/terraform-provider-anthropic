@@ -18,11 +18,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// newTestFederationClient builds an SDK client pointed at srv, wrapped as the
+// newTestFederationIssuersClient builds an SDK client pointed at srv, wrapped as the
 // OAuth client this data source requires. Unlike admin.Client (retried by
 // default), the SDK client's own MaxRetries default is small but nonzero;
 // these tests never return a transient status, so that default is harmless.
-func newTestFederationClient(srv *httptest.Server) *anthropic.Client {
+func newTestFederationIssuersClient(srv *httptest.Server) *anthropic.Client {
 	c := anthropic.NewClient(
 		option.WithBaseURL(srv.URL),
 		option.WithAuthToken("test"),
@@ -60,7 +60,7 @@ func TestFederationIssuersDataSource_ListAllSinglePage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(srv)
+	client := newTestFederationIssuersClient(srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 
 	var got []anthropic.BetaFederationIssuer
@@ -93,7 +93,7 @@ func TestFederationIssuersDataSource_ListAllMultiplePages(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(srv)
+	client := newTestFederationIssuersClient(srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 
 	var got []anthropic.BetaFederationIssuer
@@ -123,7 +123,7 @@ func TestFederationIssuersDataSource_EmptyList(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(srv)
+	client := newTestFederationIssuersClient(srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 
 	var got []anthropic.BetaFederationIssuer
@@ -148,7 +148,7 @@ func TestFederationIssuersDataSource_IncludeArchivedQueryParam(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(srv)
+	client := newTestFederationIssuersClient(srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{
 		IncludeArchived: param.NewOpt(true),
 	})
@@ -170,7 +170,7 @@ func Test404NotFoundSurfacesAsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(srv)
+	client := newTestFederationIssuersClient(srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 	for pager.Next() {
 	}

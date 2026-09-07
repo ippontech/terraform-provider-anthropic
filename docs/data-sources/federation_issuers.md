@@ -17,16 +17,6 @@ Lists OIDC issuers registered for Workload Identity Federation in the organizati
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = "~> 1.0"
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Requires an org:admin OAuth bearer token (auth_token / ANTHROPIC_AUTH_TOKEN);
 # Admin API keys are not accepted by this endpoint.
 data "anthropic_federation_issuers" "all" {}
