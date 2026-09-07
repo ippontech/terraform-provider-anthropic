@@ -16,7 +16,7 @@ import (
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
 
-func newTestFederationOAuthClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
+func newTestFederationRuleDataSourceClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
 	t.Helper()
 
 	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
@@ -191,7 +191,7 @@ func TestFederationRuleDataSource_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationOAuthClient(t, srv)
+	client := newTestFederationRuleDataSourceClient(t, srv)
 
 	_, err := client.Beta.Organization.Federation.Rules.Get(context.Background(), "fdrl_missing", anthropic.BetaOrganizationFederationRuleGetParams{})
 	if err == nil {
@@ -243,7 +243,7 @@ func TestFederationRuleDataSource_get(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationOAuthClient(t, srv)
+	client := newTestFederationRuleDataSourceClient(t, srv)
 
 	rule, err := client.Beta.Organization.Federation.Rules.Get(context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleGetParams{})
 	if err != nil {

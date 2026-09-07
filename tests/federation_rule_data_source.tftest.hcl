@@ -9,5 +9,5 @@ test {
 run "federation_rule_data_source_validates_schema" {
   command = plan
 
-  module { source = "./tests/fixtures/federation_rule_data_source_plan" }
+  module { source = "./fixtures/federation_rule_data_source_plan" }
 }
