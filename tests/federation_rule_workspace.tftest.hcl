@@ -14,7 +14,7 @@ run "federation_rule_workspace_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./examples/resources/federation_rule_workspace"
+    source = "../examples/resources/federation_rule_workspace"
   }
 
   assert {

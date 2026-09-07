@@ -9,7 +9,7 @@ variables {
 
 run "workspace_rate_limits_data_source_lists_overrides" {
   module {
-    source = "./examples/data-sources/workspace_rate_limits"
+    source = "../examples/data-sources/workspace_rate_limits"
   }
 
   variables {

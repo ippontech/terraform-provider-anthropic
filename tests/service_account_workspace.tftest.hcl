@@ -14,7 +14,7 @@ run "service_account_workspace_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./examples/resources/service_account_workspace"
+    source = "../examples/resources/service_account_workspace"
   }
 
   assert {

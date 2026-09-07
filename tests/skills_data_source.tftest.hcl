@@ -7,7 +7,7 @@ test {
 
 run "skills_data_source_returns_list" {
   module {
-    source = "./examples/data-sources/skills"
+    source = "../examples/data-sources/skills"
   }
 
   assert {
@@ -33,7 +33,7 @@ run "skills_data_source_returns_list" {
 
 run "skills_data_source_source_filter" {
   module {
-    source = "./examples/data-sources/skills"
+    source = "../examples/data-sources/skills"
   }
 
   variables {

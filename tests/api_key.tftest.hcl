@@ -13,7 +13,7 @@ run "api_key_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./examples/resources/api_key"
+    source = "../examples/resources/api_key"
   }
 
   assert {

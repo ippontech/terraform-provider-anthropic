@@ -4,7 +4,7 @@ test {
 
 run "environment_data_source_reads_environment" {
   parallel = true
-  module { source = "./examples/data-sources/environment" }
+  module { source = "../examples/data-sources/environment" }
 
   assert {
     condition     = output.environment_id != ""

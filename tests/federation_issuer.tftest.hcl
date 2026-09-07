@@ -14,7 +14,7 @@ run "federation_issuer_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./examples/resources/federation_issuer"
+    source = "../examples/resources/federation_issuer"
   }
 
   assert {

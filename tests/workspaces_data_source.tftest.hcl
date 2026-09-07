@@ -4,7 +4,7 @@ test {
 
 run "workspaces_data_source_lists_workspaces" {
   parallel = true
-  module { source = "./examples/data-sources/workspaces" }
+  module { source = "../examples/data-sources/workspaces" }
 
   assert {
     condition     = output.workspaces_count > 0

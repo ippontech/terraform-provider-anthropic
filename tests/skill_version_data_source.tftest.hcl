@@ -5,7 +5,7 @@ test {
 run "skill_version_data_source_returns_skill_version" {
   parallel = true
   module {
-    source = "./examples/data-sources/skill_version"
+    source = "../examples/data-sources/skill_version"
   }
 
   assert {

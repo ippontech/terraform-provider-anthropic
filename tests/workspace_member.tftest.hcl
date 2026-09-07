@@ -13,7 +13,7 @@ run "workspace_member_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./examples/resources/workspace_member"
+    source = "../examples/resources/workspace_member"
   }
 
   assert {
