@@ -17,18 +17,8 @@ Fetches a single Workload Identity Federation (WIF) service account by ID (beta)
 ## Example Usage
 
 ```hcl
-# When you already know the service account ID, look it up directly:
-#
-#   data "anthropic_service_account" "example" {
-#     id = "svac_01WCz1FkmYMm4gnmykNKUu3Q"
-#   }
-#
-# This example instead resolves a real ID from the list data source, so it can
-# run end-to-end, then fetches that service account's full details by ID.
-data "anthropic_service_accounts" "all" {}
-
 data "anthropic_service_account" "example" {
-  id = data.anthropic_service_accounts.all.service_accounts[0].id
+  id = "svac_01WCz1FkmYMm4gnmykNKUu3Q"
 }
 
 output "service_account_id" {
