@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -149,6 +150,12 @@ func (r *FederationRuleWorkspaceResource) Create(ctx context.Context, req resour
 	// failing the apply.
 	if found, lookupErr := findFederationRuleWorkspace(ctx, r.client.Client, federationRuleID, workspaceID); lookupErr == nil && found != nil {
 		added = found
+	} else if lookupErr != nil {
+		tflog.Warn(ctx, "best-effort workspace_name lookup after enable failed; state keeps the Add response", map[string]any{
+			"federation_rule_id": federationRuleID,
+			"workspace_id":       workspaceID,
+			"error":              lookupErr.Error(),
+		})
 	}
 
 	mapFederationRuleWorkspaceToState(added, &data)

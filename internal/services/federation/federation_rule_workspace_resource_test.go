@@ -202,6 +202,10 @@ func TestAccFederationRuleWorkspaceResource_basic(t *testing.T) {
 	fixtures := setupFederationRuleWorkspaceTestFixtures(t)
 
 	resource.Test(t, resource.TestCase{
+		// setupFederationRuleWorkspaceTestFixtures already gates on
+		// PreCheckOAuth (it must skip before creating live fixtures); this
+		// second gate is deliberate defence in case the fixture helper is
+		// ever reused without the framework's PreCheck contract.
 		PreCheck:                 func() { acctest.PreCheckOAuth(t) },
 		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
 		CheckDestroy:             testAccCheckFederationRuleWorkspaceRemoved,

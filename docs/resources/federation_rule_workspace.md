@@ -71,7 +71,7 @@ resource "anthropic_federation_rule" "gha_deploy" {
 # created with above.
 resource "anthropic_federation_rule_workspace" "gha_deploy_staging" {
   federation_rule_id = anthropic_federation_rule.gha_deploy.id
-  workspace_id        = var.staging_workspace_id
+  workspace_id       = var.staging_workspace_id
 }
 
 output "federation_rule_workspace_id" {
