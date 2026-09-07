@@ -37,7 +37,7 @@ testacc:
 # the test files' provider/mock_provider blocks resolve against) so the
 # repository root stays free of Terraform configuration.
 terraform-test: install .dev.tfrc
-	cd tests && TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform init
-	cd tests && TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform test
+	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests init
+	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests test
 
 .PHONY: fmt tidy-check lint test testacc terraform-test build install generate

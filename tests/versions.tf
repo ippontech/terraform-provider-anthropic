@@ -1,4 +1,5 @@
-# tests/ is the root module `terraform test` runs from (see `make terraform-test`),
+# tests/ is the root module `terraform test` runs in (`terraform -chdir=tests test`,
+# see `make terraform-test`),
 # so the provider repository root stays free of Terraform configuration.
 #
 # The provider and mock_provider blocks declared in the *.tftest.hcl files are
