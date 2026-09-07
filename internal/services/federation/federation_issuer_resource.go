@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -31,6 +30,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -630,37 +630,18 @@ func mapFederationIssuerToState(_ context.Context, issuer *anthropic.BetaFederat
 	data.CheckJTI = types.BoolValue(issuer.CheckJTI)
 	data.MaxJWTLifetimeSeconds = types.Int64Value(issuer.MaxJWTLifetimeSeconds)
 
-	data.CreatedAt = formatTimeOrNull(issuer.CreatedAt)
-	data.UpdatedAt = formatTimeOrNull(issuer.UpdatedAt)
-	data.ArchivedAt = formatTimeOrNull(issuer.ArchivedAt)
-	data.JWKSPollingDisabledAt = formatTimeOrNull(issuer.JWKSPollingDisabledAt)
+	data.CreatedAt = tfvalue.TimeOrNull(issuer.CreatedAt)
+	data.UpdatedAt = tfvalue.TimeOrNull(issuer.UpdatedAt)
+	data.ArchivedAt = tfvalue.TimeOrNull(issuer.ArchivedAt)
+	data.JWKSPollingDisabledAt = tfvalue.TimeOrNull(issuer.JWKSPollingDisabledAt)
 
-	data.CreatedByActorID = stringOrNull(issuer.CreatedByActorID)
-	data.UpdatedByActorID = stringOrNull(issuer.UpdatedByActorID)
-	data.ArchivedByActorID = stringOrNull(issuer.ArchivedByActorID)
+	data.CreatedByActorID = tfvalue.StringOrNull(issuer.CreatedByActorID)
+	data.UpdatedByActorID = tfvalue.StringOrNull(issuer.UpdatedByActorID)
+	data.ArchivedByActorID = tfvalue.StringOrNull(issuer.ArchivedByActorID)
 
 	jwksObj, d := mapJWKSResponseToObject(issuer.JWKS)
 	diags.Append(d...)
 	data.JWKS = jwksObj
 
 	return diags
-}
-
-// formatTimeOrNull formats a zero-valuable API timestamp as null, matching
-// the "" / zero-time -> null convention used for every optional timestamp in
-// this resource.
-func formatTimeOrNull(t time.Time) types.String {
-	if t.IsZero() {
-		return types.StringNull()
-	}
-	return types.StringValue(t.Format(time.RFC3339))
-}
-
-// stringOrNull maps an empty API string (e.g. an actor ID before an action
-// has happened, such as archived_by_actor_id on a live issuer) to null.
-func stringOrNull(s string) types.String {
-	if s == "" {
-		return types.StringNull()
-	}
-	return types.StringValue(s)
 }
