@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -32,6 +33,17 @@ var _ resource.ResourceWithImportState = &ServiceAccountResource{}
 // serviceAccountNameRegexp restricts names to the slug shape the API expects:
 // lowercase letters, digits and hyphens only.
 var serviceAccountNameRegexp = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// The production bounds of awaitServiceAccountUpdateVisible's wait. They are
+// consts, and the function takes them as arguments, so the unit tests can
+// shrink the loop to milliseconds without mutating shared state — see the
+// read-after-write note on the vaults API (vault_resource.go), which shares
+// the same underlying Beta managed-agents infrastructure and has not been
+// ruled out for this endpoint.
+const (
+	serviceAccountConsistencyTimeout  = 5 * time.Second
+	serviceAccountConsistencyInterval = 200 * time.Millisecond
+)
 
 func NewServiceAccountResource() resource.Resource {
 	return &ServiceAccountResource{}
@@ -121,6 +133,7 @@ func (r *ServiceAccountResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"archived_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "RFC 3339 timestamp of when the service account was archived, or null while it is live.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"created_by_actor_id": schema.StringAttribute{
 				Computed:            true,
@@ -134,6 +147,7 @@ func (r *ServiceAccountResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"archived_by_actor_id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Tagged ID (`user_...`/`svac_...`) of the actor that archived this service account, or null while it is live.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -219,6 +233,70 @@ func (r *ServiceAccountResource) Read(ctx context.Context, req resource.ReadRequ
 
 // --- Update ---
 
+// isTerminalServiceAccountReadError reports whether a Get failure is one the
+// poll can never recover from: the service account is gone, or the credential
+// no longer has access to it. Retrying those until the deadline would stall
+// the apply for seconds on a read that will never converge.
+func isTerminalServiceAccountReadError(err error) bool {
+	var apierr *anthropic.Error
+	if !errors.As(err, &apierr) {
+		return false
+	}
+
+	switch apierr.StatusCode {
+	case 401, 403, 404:
+		return true
+	default:
+		return false
+	}
+}
+
+// awaitServiceAccountUpdateVisible polls Get until the stored service account
+// is at least as new as writtenAt, the updated_at returned by the write
+// itself. Mirrors awaitVaultUpdateVisible (vault_resource.go): the vaults API
+// serves stale reads for up to ~1s after a write, and this endpoint shares the
+// same underlying Beta managed-agents infrastructure but has not itself been
+// probed for the same staleness.
+//
+// It is deliberately best-effort: on a read error, a timeout, or a cancelled
+// context it returns without reporting a diagnostic. The write has already
+// succeeded, so failing the apply here would turn a cosmetic staleness window
+// into a hard error; the worst case of giving up is the phantom diff we were
+// trying to avoid.
+func awaitServiceAccountUpdateVisible(ctx context.Context, client *providerdata.OAuthClient, id string, writtenAt time.Time, timeout, interval time.Duration) {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		sa, err := client.Beta.Organization.ServiceAccounts.Get(ctx, id, anthropic.BetaOrganizationServiceAccountGetParams{})
+		switch {
+		case err == nil:
+			if !sa.UpdatedAt.Before(writtenAt) {
+				return
+			}
+		case isTerminalServiceAccountReadError(err):
+			tflog.Warn(ctx, "service account became unreadable while waiting for the update to be visible; giving up on the consistency wait", map[string]any{
+				"service_account_id": id,
+				"error":              err.Error(),
+			})
+			return
+		}
+
+		if time.Now().After(deadline) {
+			tflog.Warn(ctx, "service account update not visible before the consistency timeout; the next plan may show a transient diff", map[string]any{
+				"service_account_id": id,
+				"timeout":            timeout.String(),
+			})
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+}
+
 func (r *ServiceAccountResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan ServiceAccountResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -232,7 +310,7 @@ func (r *ServiceAccountResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	params := buildServiceAccountUpdateParams(&plan)
+	params := buildServiceAccountUpdateParams(&plan, &state)
 
 	sa, err := r.client.Beta.Organization.ServiceAccounts.Update(ctx, state.ID.ValueString(), params)
 	if err != nil {
@@ -244,6 +322,8 @@ func (r *ServiceAccountResource) Update(ctx context.Context, req resource.Update
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	awaitServiceAccountUpdateVisible(ctx, r.client, state.ID.ValueString(), sa.UpdatedAt, serviceAccountConsistencyTimeout, serviceAccountConsistencyInterval)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -298,7 +378,14 @@ func buildServiceAccountCreateParams(data *ServiceAccountResourceModel) anthropi
 // explicit null via param.Null[string]() when cleared in config — because the
 // update API treats an omitted description as "leave unchanged", and would
 // otherwise never converge a removed description to the server's empty string.
-func buildServiceAccountUpdateParams(plan *ServiceAccountResourceModel) anthropic.BetaOrganizationServiceAccountUpdateParams {
+//
+// organization_role is only sent when it actually changes relative to prior
+// state. organization_role is Optional+Computed with UseStateForUnknown(), so
+// plan.OrganizationRole is always known once the service account exists —
+// sending it unconditionally would resend "admin" on every update to an
+// admin-role service account, which the API rejects from a non-interactive
+// (WIF/OAuth bearer) credential even when the value is unchanged.
+func buildServiceAccountUpdateParams(plan, state *ServiceAccountResourceModel) anthropic.BetaOrganizationServiceAccountUpdateParams {
 	params := anthropic.BetaOrganizationServiceAccountUpdateParams{}
 
 	if plan.Description.IsNull() {
@@ -307,7 +394,8 @@ func buildServiceAccountUpdateParams(plan *ServiceAccountResourceModel) anthropi
 		params.Description = param.NewOpt(plan.Description.ValueString())
 	}
 
-	if !plan.OrganizationRole.IsNull() && !plan.OrganizationRole.IsUnknown() {
+	if !plan.OrganizationRole.IsNull() && !plan.OrganizationRole.IsUnknown() &&
+		plan.OrganizationRole.ValueString() != state.OrganizationRole.ValueString() {
 		params.OrganizationRole = anthropic.BetaOrganizationServiceAccountUpdateParamsOrganizationRole(plan.OrganizationRole.ValueString())
 	}
 
@@ -324,7 +412,7 @@ func mapServiceAccountToState(sa *anthropic.BetaServiceAccount, data *ServiceAcc
 	data.CreatedAt = types.StringValue(sa.CreatedAt.Format(time.RFC3339))
 	data.UpdatedAt = types.StringValue(sa.UpdatedAt.Format(time.RFC3339))
 
-	data.Description = stringOrNull(sa.Description)
+	data.Description = descriptionOrNull(sa.Description, data.Description)
 	data.CreatedByActorID = stringOrNull(sa.CreatedByActorID)
 	data.UpdatedByActorID = stringOrNull(sa.UpdatedByActorID)
 	data.ArchivedByActorID = stringOrNull(sa.ArchivedByActorID)
@@ -346,4 +434,21 @@ func stringOrNull(s string) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(s)
+}
+
+// descriptionOrNull maps the API's description the same way stringOrNull
+// does, with one exception: description is Optional (not Computed), so
+// Terraform requires the final state to echo back a practitioner-configured
+// empty string rather than collapse it to null. planned is data.Description
+// as already populated from Plan (Create/Update) or State (Read) before this
+// call; a known non-null value there means the practitioner explicitly
+// configured `description = ""`, which must round-trip as "" instead of null.
+func descriptionOrNull(apiValue string, planned types.String) types.String {
+	if apiValue == "" {
+		if !planned.IsNull() && !planned.IsUnknown() {
+			return types.StringValue("")
+		}
+		return types.StringNull()
+	}
+	return types.StringValue(apiValue)
 }

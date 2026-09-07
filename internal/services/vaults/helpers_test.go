@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -41,21 +42,28 @@ func isNotFoundError(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
-// awaitGone polls get until it returns 404 (destroyed) or the deadline passes.
-// Any other error is returned as-is: it says nothing about visibility, and
-// treating it as "destroyed" would let an auth failure pass the check.
+// awaitGone polls get until it returns 404 (destroyed) or the deadline
+// passes. A transient non-404 error (a 5xx, a dropped connection) is retried
+// like a "still exists" read rather than failing the check immediately — it
+// says nothing about whether the object is gone, and the poll exists
+// specifically to ride out exactly this kind of flakiness. Only a non-404
+// error still standing at the deadline is surfaced, since by then it is the
+// most informative failure to report.
 func awaitGone(kind, id string, get func(ctx context.Context) error) error {
 	deadline := time.Now().Add(destroyCheckTimeout)
+	var lastErr error
 	for {
 		err := get(context.Background())
 		if isNotFoundError(err) {
 			return nil
 		}
-		if err != nil {
-			return fmt.Errorf("checking %s %s after destroy: %w", kind, id, err)
+		if err == nil {
+			lastErr = fmt.Errorf("%s %s still exists %v after destroy", kind, id, destroyCheckTimeout)
+		} else {
+			lastErr = fmt.Errorf("checking %s %s after destroy: %w", kind, id, err)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%s %s still exists %v after destroy", kind, id, destroyCheckTimeout)
+			return lastErr
 		}
 		time.Sleep(destroyCheckInterval)
 	}
@@ -129,4 +137,41 @@ func hardDeleteVault(client anthropic.Client, id string) error {
 		return fmt.Errorf("cleanup: unable to delete archived vault %s: %w", id, err)
 	}
 	return nil
+}
+
+func TestAwaitGone_notFoundReturnsNilImmediately(t *testing.T) {
+	calls := 0
+	err := awaitGone("thing", "id123", func(context.Context) error {
+		calls++
+		return &anthropic.Error{StatusCode: http.StatusNotFound}
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1", calls)
+	}
+}
+
+// TestAwaitGone_retriesTransientErrorThenSucceeds is the regression test for
+// a narrowing that made CheckDestroy fail on any transient hiccup: a
+// non-404 error (a 5xx, a dropped connection) on a single poll attempt must
+// be retried, not surfaced immediately — it says nothing about whether the
+// object is gone, and the poll exists specifically to ride out this kind of
+// flakiness.
+func TestAwaitGone_retriesTransientErrorThenSucceeds(t *testing.T) {
+	calls := 0
+	err := awaitGone("thing", "id123", func(context.Context) error {
+		calls++
+		if calls <= 2 {
+			return &anthropic.Error{StatusCode: http.StatusInternalServerError}
+		}
+		return &anthropic.Error{StatusCode: http.StatusNotFound}
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3 (two transient errors retried, then the 404)", calls)
+	}
 }

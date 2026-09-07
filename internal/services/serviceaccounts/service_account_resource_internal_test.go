@@ -5,6 +5,7 @@ package serviceaccounts
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
 
 func TestMapServiceAccountToState_basicFields(t *testing.T) {
@@ -87,6 +89,39 @@ func TestMapServiceAccountToState_emptyDescriptionMapsToNull(t *testing.T) {
 
 	if !data.Description.IsNull() {
 		t.Errorf("expected Description to be null for an empty API string, got %q", data.Description.ValueString())
+	}
+}
+
+// TestMapServiceAccountToState_explicitEmptyDescriptionRoundTrips is the
+// regression test for "Provider produced inconsistent result after apply":
+// description is Optional (not Computed), so a practitioner-configured
+// `description = ""` must come back as "" in state, not collapse to null the
+// way an omitted description does.
+func TestMapServiceAccountToState_explicitEmptyDescriptionRoundTrips(t *testing.T) {
+	sa := &anthropic.BetaServiceAccount{
+		ID:               "svac_04JKL",
+		Name:             "explicit-empty-description",
+		Description:      "",
+		OrganizationRole: anthropic.BetaServiceAccountOrganizationRoleDeveloper,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+
+	// Simulates data already populated from Plan/State with a practitioner-set
+	// empty string, as Create/Update/Read do before calling mapServiceAccountToState.
+	data := ServiceAccountResourceModel{
+		Description: types.StringValue(""),
+	}
+	diags := mapServiceAccountToState(sa, &data)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	if data.Description.IsNull() {
+		t.Error("expected an explicitly-configured empty Description to round-trip as \"\", got null")
+	}
+	if got := data.Description.ValueString(); got != "" {
+		t.Errorf("Description = %q, want empty string", got)
 	}
 }
 
@@ -168,8 +203,12 @@ func TestBuildServiceAccountUpdateParams(t *testing.T) {
 			Description:      types.StringNull(),
 			OrganizationRole: types.StringValue("developer"),
 		}
+		state := &ServiceAccountResourceModel{
+			Description:      types.StringValue("was set"),
+			OrganizationRole: types.StringValue("developer"),
+		}
 
-		params := buildServiceAccountUpdateParams(plan)
+		params := buildServiceAccountUpdateParams(plan, state)
 
 		if param.IsOmitted(params.Description) {
 			t.Fatal("Description should carry an explicit null, not be omitted")
@@ -182,19 +221,41 @@ func TestBuildServiceAccountUpdateParams(t *testing.T) {
 		}
 	})
 
-	t.Run("sends description and organization_role when set", func(t *testing.T) {
+	t.Run("sends description and organization_role when the role changed", func(t *testing.T) {
 		plan := &ServiceAccountResourceModel{
 			Description:      types.StringValue("updated description"),
 			OrganizationRole: types.StringValue("admin"),
 		}
+		state := &ServiceAccountResourceModel{
+			Description:      types.StringValue("initial description"),
+			OrganizationRole: types.StringValue("developer"),
+		}
 
-		params := buildServiceAccountUpdateParams(plan)
+		params := buildServiceAccountUpdateParams(plan, state)
 
 		if !params.Description.Valid() || params.Description.Value != "updated description" {
 			t.Errorf("Description = %+v, want set to %q", params.Description, "updated description")
 		}
 		if params.OrganizationRole != anthropic.BetaOrganizationServiceAccountUpdateParamsOrganizationRoleAdmin {
 			t.Errorf("OrganizationRole = %q, want admin", params.OrganizationRole)
+		}
+	})
+
+	t.Run("omits organization_role when unchanged from state", func(t *testing.T) {
+		plan := &ServiceAccountResourceModel{
+			Description:      types.StringValue("only description changed"),
+			OrganizationRole: types.StringValue("admin"),
+		}
+		state := &ServiceAccountResourceModel{
+			Description:      types.StringValue("initial description"),
+			OrganizationRole: types.StringValue("admin"),
+		}
+
+		params := buildServiceAccountUpdateParams(plan, state)
+
+		if params.OrganizationRole != "" {
+			t.Errorf("OrganizationRole = %q, want omitted (zero value) when unchanged from state — "+
+				"resending an unchanged \"admin\" role is rejected by the API for a non-interactive credential", params.OrganizationRole)
 		}
 	})
 }
@@ -269,5 +330,170 @@ func TestServiceAccountResource_archiveOnDelete(t *testing.T) {
 	}
 	if sa.ArchivedAt.IsZero() {
 		t.Error("expected the archived service account to carry a non-zero archived_at")
+	}
+}
+
+func newTestServiceAccountOAuthClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
+	t.Helper()
+	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
+	return &providerdata.OAuthClient{Client: &c}
+}
+
+// newStaleThenFreshServiceAccountServer serves the service account as it was
+// before the write for the first staleReads Get calls, then as it is after.
+// Mirrors newStaleThenFreshVaultServer (internal/services/vaults), reproducing
+// the read-after-write window measured against the live vaults API in case
+// this Beta endpoint shares it.
+func newStaleThenFreshServiceAccountServer(t *testing.T, id string, before, after time.Time, staleReads int) (*httptest.Server, *int) {
+	t.Helper()
+
+	gets := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		gets++
+		updated := after
+		if gets <= staleReads {
+			updated = before
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"id":                   id,
+			"type":                 "service_account",
+			"name":                 "probe",
+			"description":          "",
+			"organization_role":    "developer",
+			"created_at":           before.Format(time.RFC3339Nano),
+			"updated_at":           updated.Format(time.RFC3339Nano),
+			"archived_at":          nil,
+			"created_by_actor_id":  "user_01ABC",
+			"updated_by_actor_id":  "user_01ABC",
+			"archived_by_actor_id": "",
+		}); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv, &gets
+}
+
+// newFailingServiceAccountServer answers every Get with status, so the poll
+// can never converge.
+func newFailingServiceAccountServer(t *testing.T, status int) (*httptest.Server, *int) {
+	t.Helper()
+
+	gets := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gets++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		if _, err := w.Write([]byte(`{"type":"error","error":{"type":"not_found_error","message":"not found"}}`)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv, &gets
+}
+
+// TestAwaitServiceAccountUpdateVisible_pollsUntilFresh guards against the same
+// class of flakiness fixed for vaults (TestAwaitVaultUpdateVisible_pollsUntilFresh):
+// a Get answering with the pre-update object right after a successful write
+// would make the post-apply refresh show a phantom diff on the next plan.
+func TestAwaitServiceAccountUpdateVisible_pollsUntilFresh(t *testing.T) {
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 3)
+	client := newTestServiceAccountOAuthClient(t, srv)
+
+	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 2*time.Second, time.Millisecond)
+
+	if *gets != 4 {
+		t.Errorf("Get calls = %d, want 4 (three stale reads then the fresh one)", *gets)
+	}
+}
+
+// A Get that already reflects the write must not be polled a second time.
+func TestAwaitServiceAccountUpdateVisible_returnsImmediatelyWhenFresh(t *testing.T) {
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 0)
+	client := newTestServiceAccountOAuthClient(t, srv)
+
+	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 2*time.Second, time.Millisecond)
+
+	if *gets != 1 {
+		t.Errorf("Get calls = %d, want 1", *gets)
+	}
+}
+
+// The wait is best-effort: a service account that never converges must return
+// at the timeout rather than hang or surface an error, because the write
+// itself already succeeded.
+func TestAwaitServiceAccountUpdateVisible_givesUpAtTimeout(t *testing.T) {
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 1_000_000)
+	client := newTestServiceAccountOAuthClient(t, srv)
+
+	start := time.Now()
+	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 120*time.Millisecond, 10*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Errorf("took %s, want it to give up near the 120ms timeout", elapsed)
+	}
+	if *gets < 2 {
+		t.Errorf("Get calls = %d, want it to have retried at least once", *gets)
+	}
+}
+
+// A service account deleted out-of-band (or a token that lost access to it)
+// answers every Get with a terminal status. Polling it to the deadline would
+// stall the apply for seconds on a read that can never converge, so the wait
+// must bail out on the first such answer.
+func TestAwaitServiceAccountUpdateVisible_stopsOnTerminalReadError(t *testing.T) {
+	for _, status := range []int{401, 403, 404} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv, gets := newFailingServiceAccountServer(t, status)
+			client := newTestServiceAccountOAuthClient(t, srv)
+
+			writtenAt := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+
+			start := time.Now()
+			awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", writtenAt, 10*time.Second, 50*time.Millisecond)
+
+			if elapsed := time.Since(start); elapsed > time.Second {
+				t.Errorf("took %s, want an immediate return on a terminal read error", elapsed)
+			}
+			if *gets != 1 {
+				t.Errorf("Get calls = %d, want 1 (no retry on a terminal status)", *gets)
+			}
+		})
+	}
+}
+
+// A cancelled context must abort the wait promptly.
+func TestAwaitServiceAccountUpdateVisible_honoursContextCancellation(t *testing.T) {
+	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
+	after := before.Add(time.Second)
+
+	srv, _ := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 1_000_000)
+	client := newTestServiceAccountOAuthClient(t, srv)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	awaitServiceAccountUpdateVisible(ctx, client, "svac_01ABC", after, 10*time.Second, 50*time.Millisecond)
+
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %s, want an immediate return on a cancelled context", elapsed)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
@@ -15,6 +16,18 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+)
+
+// The service-accounts Beta endpoint has not been probed for the same
+// read-after-write staleness measured on the vaults API (see CLAUDE.md and
+// #193/#199), but it shares the underlying Beta managed-agents infrastructure.
+// CheckDestroy therefore polls rather than doing a single unpolled Get right
+// after destroy, mirroring internal/services/vaults/helpers_test.go's
+// awaitArchived so a stale read here doesn't fail the test the way it did for
+// vaults before that fix.
+const (
+	serviceAccountDestroyCheckTimeout  = 5 * time.Second
+	serviceAccountDestroyCheckInterval = 200 * time.Millisecond
 )
 
 // Service accounts require an org:admin OAuth bearer token (ANTHROPIC_AUTH_TOKEN),
@@ -37,15 +50,32 @@ func testAccCheckServiceAccountArchived(s *terraform.State) error {
 		if rs.Type != "anthropic_service_account" {
 			continue
 		}
-		sa, err := client.Beta.Organization.ServiceAccounts.Get(context.Background(), rs.Primary.ID, anthropic.BetaOrganizationServiceAccountGetParams{})
-		if err != nil {
-			return fmt.Errorf("service account %s not found after destroy: %w", rs.Primary.ID, err)
-		}
-		if sa.ArchivedAt.IsZero() {
-			return fmt.Errorf("service account %s was not archived on destroy", rs.Primary.ID)
+		if err := awaitServiceAccountArchived(client, rs.Primary.ID); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// awaitServiceAccountArchived polls Get until it returns a non-zero
+// archived_at or the deadline passes. A read error fails immediately: the
+// service account existed before the archive, so a stale read shows the
+// unarchived object, never an error.
+func awaitServiceAccountArchived(client *anthropic.Client, id string) error {
+	deadline := time.Now().Add(serviceAccountDestroyCheckTimeout)
+	for {
+		sa, err := client.Beta.Organization.ServiceAccounts.Get(context.Background(), id, anthropic.BetaOrganizationServiceAccountGetParams{})
+		if err != nil {
+			return fmt.Errorf("service account %s not found after destroy: %w", id, err)
+		}
+		if !sa.ArchivedAt.IsZero() {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("service account %s was not archived on destroy", id)
+		}
+		time.Sleep(serviceAccountDestroyCheckInterval)
+	}
 }
 
 const testAccServiceAccountResourceBasicConfig = `
