@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_service_account_workspace Resource - anthropic"
-subcategory: "Service Accounts"
+subcategory: "Workload Identity Federation"
 description: |-
   Assigns a Workload Identity Federation service account to a workspace with a given role.
 ---
