@@ -17,12 +17,8 @@ Fetches a single Workload Identity Federation rule by ID. A federation rule bind
 ## Example Usage
 
 ```hcl
-# Resolve a real federation rule ID from the list data source, then fetch its
-# full details by ID.
-data "anthropic_federation_rules" "all" {}
-
 data "anthropic_federation_rule" "example" {
-  id = data.anthropic_federation_rules.all.rules[0].id
+  id = "fdrl_01ABCDEFabcdef0123456789XY"
 }
 
 output "federation_rule_id" {
