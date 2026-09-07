@@ -1,3 +1,9 @@
+## [1.39.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.38.0...v1.39.0) (2026-09-07)
+
+### ✨ Features
+
+* **federation:** add anthropic_federation_issuers data source ([#220](https://github.com/ippontech/terraform-provider-anthropic/issues/220)) ([d9976ea](https://github.com/ippontech/terraform-provider-anthropic/commit/d9976eac379d4a7b117f43d75910daec0acc3c87)), closes [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#214](https://github.com/ippontech/terraform-provider-anthropic/issues/214)
+
 ## [1.38.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.37.0...v1.38.0) (2026-09-07)
 
 ### ✨ Features
