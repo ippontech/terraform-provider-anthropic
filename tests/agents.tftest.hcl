@@ -7,7 +7,7 @@ test {
 
 run "agents_data_source_returns_results" {
   module {
-    source = "./examples/data-sources/agents"
+    source = "../examples/data-sources/agents"
   }
 
   assert {

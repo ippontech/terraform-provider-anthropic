@@ -33,8 +33,11 @@ testacc:
 	printf 'provider_installation {\n  dev_overrides {\n    "registry.terraform.io/ippontech/anthropic" = "%s"\n  }\n  direct {}\n}\n' \
 		"$${GOBIN:-$$(go env GOPATH)/bin}" > $@
 
+# tests/ is the root module: it holds versions.tf (the provider source mapping
+# the test files' provider/mock_provider blocks resolve against) so the
+# repository root stays free of Terraform configuration.
 terraform-test: install .dev.tfrc
-	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform init
-	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform test
+	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests init
+	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests test
 
 .PHONY: fmt tidy-check lint test testacc terraform-test build install generate

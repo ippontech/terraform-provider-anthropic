@@ -22,7 +22,7 @@ Read `agent_resource.go` (resource reference) or `model_data_source.go` (data so
 - `internal/provider/<name>_resource_test.go` — acceptance tests with `testAccProtoV6ProviderFactories`; include basic create, destroy verifier, and ImportState step
 - `examples/resources/<name>/resource.tf` — only resource blocks and at least one `output` (this file is embedded verbatim in the Registry docs); put the `terraform {}` block (required_version `~> 1.6` for test fixtures / `~> 1.0` for examples, required_providers mapping to `registry.terraform.io/ippontech/anthropic`) in a sibling `versions.tf` (#231)
 - `templates/resources/<name>.md.tmpl` — **`subcategory` must never be empty** (e.g. `"Agents"`, `"Messages"`)
-- `tests/<name>.tftest.hcl` — `test { parallel = true }`; `source = "./examples/resources/<name>"`; assert `output.<name>_id != ""`
+- `tests/<name>.tftest.hcl` — `test { parallel = true }`; `source = "../examples/resources/<name>"` (relative to `tests/`, the root module) (the public example, never a fixture copy). Standard-API resources apply for real and assert `output.<name>_id != ""`. Admin/WIF resources: `command = plan` + a `provider "anthropic" { <dummy credential> }` block in the test file, asserting plan-known attributes on the module's resources. Self-contained list data sources: `mock_provider "anthropic" {}`. Only examples that chain `list[0].id` still get a `tests/fixtures/<name>_plan/` (#233)
 
 ## Validation
 

@@ -20,6 +20,7 @@ Your job: review Go and Terraform code in `terraform-provider-anthropic` for qua
 - No silent error swallows — always append to `resp.Diagnostics`
 - All new resources/data sources registered in `provider.go`
 - Full interface implemented (Create/Read/Update/Delete for resources; Read for data sources)
+- Native tests source the public example (`./examples/...`), not a `tests/fixtures/` copy — flag any new fixture unless the example chains `list[0].id` on a mocked/OAuth data source (#233)
 - Example configs exist under `examples/resources/<name>/` or `examples/data-sources/<name>/` — the main file must contain no `terraform {}` block (it is embedded in Registry docs); that block belongs in the sibling `versions.tf` (#231)
 
 **Configure method** — flag any inline nil check; must use helpers from `internal/errors/` (imported as `providerrors`):

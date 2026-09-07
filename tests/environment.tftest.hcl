@@ -4,7 +4,7 @@ test {
 
 run "environment_resource_creates_environment" {
   parallel = true
-  module { source = "./examples/resources/environment" }
+  module { source = "../examples/resources/environment" }
 
   assert {
     condition     = output.environment_id != ""

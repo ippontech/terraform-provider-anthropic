@@ -7,7 +7,7 @@ test {
 
 run "skill_versions_data_source_returns_results" {
   module {
-    source = "./examples/data-sources/skill_versions"
+    source = "../examples/data-sources/skill_versions"
   }
 
   assert {

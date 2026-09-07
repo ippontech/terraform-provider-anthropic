@@ -5,7 +5,7 @@ test {
 run "skill_resource_creates_skill" {
   parallel = true
   module {
-    source = "./examples/resources/skill"
+    source = "../examples/resources/skill"
   }
 
   assert {

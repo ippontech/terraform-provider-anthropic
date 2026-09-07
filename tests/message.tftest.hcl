@@ -7,7 +7,7 @@ test {
 
 run "message_resource_creates_successfully" {
   module {
-    source = "./examples/resources/message"
+    source = "../examples/resources/message"
   }
 
   assert {

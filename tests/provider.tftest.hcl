@@ -7,6 +7,6 @@ test {
 
 run "provider_initializes_successfully" {
   module {
-    source = "./examples/provider"
+    source = "../examples/provider"
   }
 }

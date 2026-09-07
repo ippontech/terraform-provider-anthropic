@@ -8,7 +8,7 @@ test {
 # exercise the full create/read path across all three auth types. Torn down
 # afterwards.
 run "vault_credential_apply" {
-  module { source = "./examples/resources/vault_credential" }
+  module { source = "../examples/resources/vault_credential" }
 
   assert {
     condition     = startswith(anthropic_vault_credential.bearer.id, "vcrd_")

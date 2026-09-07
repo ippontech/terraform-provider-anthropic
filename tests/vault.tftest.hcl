@@ -4,7 +4,7 @@ test {
 
 run "vault_resource_creates_vault" {
   module {
-    source = "./examples/resources/vault"
+    source = "../examples/resources/vault"
   }
 
   assert {

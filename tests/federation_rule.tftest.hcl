@@ -2,30 +2,38 @@ test {
   parallel = true
 }
 
-# Federation endpoints require an org:admin OAuth bearer token and reject API
-# keys outright (see internal/errors/auth_token.go), and no test org exists
-# yet for org-level writes (the same blocker as #58). This runs against a
-# fixture with a dummy auth_token and asserts command = plan, so it validates
-# the schema without ever making a live API call or needing a real token.
+# WIF resource: the endpoint only accepts an org:admin OAuth bearer token and
+# CI has no durable one (#137), so this test plans the public example with a
+# dummy token. Configure only needs a non-empty credential and a create plan
+# never calls the API (#233).
+provider "anthropic" {
+  auth_token = "dummy-auth-token"
+}
+
 run "federation_rule_plan_validates_schema" {
   command = plan
 
   module {
-    source = "./tests/fixtures/federation_rule_plan"
+    source = "../examples/resources/federation_rule"
   }
 
   assert {
-    condition     = output.federation_rule_name == "plan-test-rule"
-    error_message = "Expected name to be 'plan-test-rule'."
+    condition     = anthropic_federation_rule.gha_deploy.name == "gha-deploy"
+    error_message = "Expected name to be 'gha-deploy'."
   }
 
   assert {
-    condition     = output.federation_rule_oauth_scope == "workspace:developer"
+    condition     = anthropic_federation_rule.gha_deploy.oauth_scope == "workspace:developer"
     error_message = "Expected oauth_scope to be 'workspace:developer'."
   }
 
   assert {
-    condition     = output.federation_rule_token_lifetime_seconds == 1800
-    error_message = "Expected token_lifetime_seconds to be 1800."
+    condition     = anthropic_federation_rule.gha_deploy.token_lifetime_seconds == 900
+    error_message = "Expected token_lifetime_seconds to be 900."
+  }
+
+  assert {
+    condition     = anthropic_federation_rule.gha_deploy.match.subject_prefix == "repo:my-org/my-repo:ref:refs/heads/main"
+    error_message = "Expected match.subject_prefix to pin the main branch."
   }
 }

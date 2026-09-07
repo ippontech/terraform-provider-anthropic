@@ -5,7 +5,7 @@ test {
 run "skill_version_resource_creates_version" {
   parallel = true
   module {
-    source = "./examples/resources/skill_version"
+    source = "../examples/resources/skill_version"
   }
 
   assert {

@@ -11,7 +11,7 @@ run "workspace_members_data_source_lists_members" {
   parallel = true
 
   module {
-    source = "./examples/data-sources/workspace_members"
+    source = "../examples/data-sources/workspace_members"
   }
 
   variables {

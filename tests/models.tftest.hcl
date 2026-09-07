@@ -7,7 +7,7 @@ test {
 
 run "models_data_source_returns_results" {
   module {
-    source = "./examples/data-sources/models"
+    source = "../examples/data-sources/models"
   }
 
   assert {

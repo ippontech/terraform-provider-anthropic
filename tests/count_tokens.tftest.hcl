@@ -7,7 +7,7 @@ test {
 
 run "count_tokens_data_source_returns_results" {
   module {
-    source = "./examples/data-sources/count_tokens"
+    source = "../examples/data-sources/count_tokens"
   }
 
   assert {
