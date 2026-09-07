@@ -72,8 +72,9 @@ func findOtherWorkspaceID(t *testing.T, client anthropic.Client, exclude string)
 	pager := client.Beta.Organization.Workspaces.ListAutoPaging(ctx, anthropic.BetaOrganizationWorkspaceListParams{})
 	for pager.Next() {
 		ws := pager.Current()
-		// Skip archived workspaces; the federation rule creation will fail if bound to an archived workspace.
-		if ws.ID != exclude && (ws.ArchivedAt == nil || *ws.ArchivedAt == "") {
+		// Skip archived workspaces; binding the federation rule to one fails.
+		// The SDK's ArchivedAt is a time.Time: zero means never archived.
+		if ws.ID != exclude && ws.ArchivedAt.IsZero() {
 			return ws.ID
 		}
 	}
