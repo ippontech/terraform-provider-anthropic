@@ -11,5 +11,5 @@ test {
 run "federation_issuer_data_source_validates_schema" {
   command = plan
 
-  module { source = "./tests/fixtures/federation_issuer_data_source_plan" }
+  module { source = "./fixtures/federation_issuer_data_source_plan" }
 }

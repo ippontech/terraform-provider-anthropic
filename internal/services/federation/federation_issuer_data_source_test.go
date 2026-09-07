@@ -31,7 +31,7 @@ import (
 // branch). The deterministic mapping coverage — every jwks type, poll_status,
 // 404 — lives in federation_issuer_data_source_internal_test.go.
 
-func newTestFederationOAuthClient() anthropic.Client {
+func newTestFederationIssuerDataSourceClient() anthropic.Client {
 	return anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
 }
 
@@ -42,7 +42,7 @@ func setupFederationIssuerDataSourceFixture(t *testing.T) *anthropic.BetaFederat
 	t.Helper()
 	acctest.PreCheckOAuth(t)
 
-	client := newTestFederationOAuthClient()
+	client := newTestFederationIssuerDataSourceClient()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 

@@ -15,17 +15,6 @@ Fetches a Workload Identity Federation issuer by ID, including its JWKS configur
 ## Example Usage
 
 ```hcl
-terraform {
-  required_version = ">= 1.6"
-
-  required_providers {
-    anthropic = {
-      source  = "registry.terraform.io/ippontech/anthropic"
-      version = "~> 1.0"
-    }
-  }
-}
-
 # Resolve a real federation issuer ID from the list data source: a constant ID
 # would 404 against a live organization, and this also keeps the ID
 # unknown-at-plan so the read genuinely happens at apply time.
