@@ -17,18 +17,8 @@ Lists the workspaces where a Workload Identity Federation rule (beta) is enabled
 ## Example Usage
 
 ```hcl
-# When you already know the federation rule ID, look it up directly:
-#
-#   data "anthropic_federation_rule_workspaces" "example" {
-#     federation_rule_id = "fdrl_01ABC"
-#   }
-#
-# This example instead resolves a real rule ID from the rules list, so it can
-# run end-to-end once the anthropic_federation_rules data source is available.
-data "anthropic_federation_rules" "all" {}
-
 data "anthropic_federation_rule_workspaces" "example" {
-  federation_rule_id = data.anthropic_federation_rules.all.rules[0].id
+  federation_rule_id = "fdrl_01ABCDEFabcdef0123456789XY"
 }
 
 output "federation_rule_workspaces_count" {
