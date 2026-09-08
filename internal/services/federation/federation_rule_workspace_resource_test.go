@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
-
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // Federation rule workspace acceptance tests require an org:admin OAuth
@@ -80,7 +79,7 @@ func setupFederationRuleWorkspaceTestFixtures(t *testing.T) federationRuleWorksp
 	t.Helper()
 	acctest.PreCheckOAuth(t)
 
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 
@@ -147,7 +146,7 @@ func setupFederationRuleWorkspaceTestFixtures(t *testing.T) federationRuleWorksp
 // workspaces (the API has a hard-delete endpoint for this enablement, unlike
 // most other WIF resources).
 func testAccCheckFederationRuleWorkspaceRemoved(s *terraform.State) error {
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	ctx := context.Background()
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "anthropic_federation_rule_workspace" {

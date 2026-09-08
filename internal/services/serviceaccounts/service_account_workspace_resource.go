@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -294,5 +295,10 @@ func mapServiceAccountWorkspaceToState(member *anthropic.BetaServiceAccountWorks
 	data.WorkspaceID = types.StringValue(member.WorkspaceID)
 	data.WorkspaceRole = types.StringValue(string(member.WorkspaceRole))
 	data.Implicit = types.BoolValue(member.Implicit)
-	data.CreatedByActorID = types.StringValue(member.CreatedByActorID)
+	// The API omits the creating actor on implicit (default-workspace)
+	// memberships; an empty string must surface as null, not "". The resource
+	// itself only ever tracks explicit memberships, but the
+	// anthropic_service_account_workspaces data source maps implicit entries
+	// through this same helper.
+	data.CreatedByActorID = tfvalue.StringOrNull(member.CreatedByActorID)
 }

@@ -6,11 +6,9 @@ package federation_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
@@ -66,10 +64,7 @@ data "anthropic_federation_rule" "test" {
 func resolveExistingFederationRuleID(t *testing.T) string {
 	t.Helper()
 
-	client := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
-		option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")),
-	)
+	client := acctest.NewOAuthClient()
 
 	page, err := client.Beta.Organization.Federation.Rules.List(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
 		Limit: param.NewOpt(int64(1)),

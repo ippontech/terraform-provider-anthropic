@@ -6,7 +6,6 @@ package federation
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
@@ -17,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -55,26 +55,34 @@ type FederationIssuerDataSourceModel struct {
 	ArchivedByActorID     types.String `tfsdk:"archived_by_actor_id"`
 }
 
-// federationIssuerDataSourceJWKSAttrTypes describes the `jwks` nested object.
-// Named uniquely (suffixed with the data source name) rather than a generic
-// jwksAttrTypes: the sibling anthropic_federation_issuer resource, developed
-// on a different branch in the same eventual package, defines its own copy,
-// and this avoids a duplicate-symbol compile break once both branches merge.
-var federationIssuerDataSourceJWKSAttrTypes = map[string]attr.Type{
-	"type":           types.StringType,
-	"discovery_base": types.StringType,
-	"url":            types.StringType,
-	"keys":           jsontypes.NormalizedType{},
-	"ca_cert_pem":    types.StringType,
-}
-
-// federationIssuerDataSourcePollStatusAttrTypes describes the `poll_status`
-// nested object. See federationIssuerDataSourceJWKSAttrTypes for the naming
-// rationale.
-var federationIssuerDataSourcePollStatusAttrTypes = map[string]attr.Type{
+// federationIssuerPollStatusAttrTypes describes the `poll_status` nested
+// object. The `jwks` nested object reuses the resource's
+// federationIssuerJWKSAttrTypes.
+var federationIssuerPollStatusAttrTypes = map[string]attr.Type{
 	"consecutive_failures": types.Int64Type,
 	"last_fetched_at":      types.StringType,
 	"next_poll_at":         types.StringType,
+}
+
+// federationIssuerDataSourceAttrTypes mirrors FederationIssuerDataSourceModel
+// field for field. The anthropic_federation_issuers list data source uses it
+// as its element type, building each entry from that model through
+// types.ObjectValueFrom.
+var federationIssuerDataSourceAttrTypes = map[string]attr.Type{
+	"id":                       types.StringType,
+	"name":                     types.StringType,
+	"issuer_url":               types.StringType,
+	"jwks":                     types.ObjectType{AttrTypes: federationIssuerJWKSAttrTypes},
+	"check_jti":                types.BoolType,
+	"max_jwt_lifetime_seconds": types.Int64Type,
+	"jwks_polling_disabled_at": types.StringType,
+	"poll_status":              types.ObjectType{AttrTypes: federationIssuerPollStatusAttrTypes},
+	"created_at":               types.StringType,
+	"created_by_actor_id":      types.StringType,
+	"updated_at":               types.StringType,
+	"updated_by_actor_id":      types.StringType,
+	"archived_at":              types.StringType,
+	"archived_by_actor_id":     types.StringType,
 }
 
 func (d *FederationIssuerDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -221,7 +229,7 @@ func (d *FederationIssuerDataSource) Read(ctx context.Context, req datasource.Re
 		return
 	}
 
-	resp.Diagnostics.Append(mapFederationIssuerDataSourceToState(issuer, &data)...)
+	resp.Diagnostics.Append(mapFederationIssuerDataSourceToState(ctx, issuer, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -230,128 +238,50 @@ func (d *FederationIssuerDataSource) Read(ctx context.Context, req datasource.Re
 }
 
 // mapFederationIssuerDataSourceToState maps an API federation issuer response
-// onto the data source model. Named uniquely (suffixed with the data source
-// name) rather than the generic mapFederationIssuerToState the spec
-// describes sharing with the resource: that resource lives on a sibling
-// branch with no code on this one, so a shared helper cannot exist yet
-// without inventing symbols that don't compile here. Deduping is deferred
-// until both land on main.
-func mapFederationIssuerDataSourceToState(issuer *anthropic.BetaFederationIssuer, data *FederationIssuerDataSourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
-
-	data.ID = types.StringValue(issuer.ID)
-	data.Name = types.StringValue(issuer.Name)
-	data.IssuerURL = types.StringValue(issuer.IssuerURL)
-	data.CheckJTI = types.BoolValue(issuer.CheckJTI)
-	data.MaxJWTLifetimeSeconds = types.Int64Value(issuer.MaxJWTLifetimeSeconds)
-	data.CreatedAt = types.StringValue(issuer.CreatedAt.Format(time.RFC3339))
-	data.UpdatedAt = types.StringValue(issuer.UpdatedAt.Format(time.RFC3339))
-
-	if issuer.CreatedByActorID != "" {
-		data.CreatedByActorID = types.StringValue(issuer.CreatedByActorID)
-	} else {
-		data.CreatedByActorID = types.StringNull()
+// onto the data source model. Every attribute shared with the
+// anthropic_federation_issuer resource is taken from mapFederationIssuerToState
+// (jwks included), so the two views of an issuer agree on null handling and
+// timestamp formatting; only poll_status, which the resource does not expose,
+// is mapped here.
+func mapFederationIssuerDataSourceToState(ctx context.Context, issuer *anthropic.BetaFederationIssuer, data *FederationIssuerDataSourceModel) diag.Diagnostics {
+	var base FederationIssuerResourceModel
+	diags := mapFederationIssuerToState(ctx, issuer, &base)
+	if diags.HasError() {
+		return diags
 	}
 
-	if issuer.UpdatedByActorID != "" {
-		data.UpdatedByActorID = types.StringValue(issuer.UpdatedByActorID)
-	} else {
-		data.UpdatedByActorID = types.StringNull()
-	}
+	data.ID = base.ID
+	data.Name = base.Name
+	data.IssuerURL = base.IssuerURL
+	data.JWKS = base.JWKS
+	data.CheckJTI = base.CheckJTI
+	data.MaxJWTLifetimeSeconds = base.MaxJWTLifetimeSeconds
+	data.JWKSPollingDisabledAt = base.JWKSPollingDisabledAt
+	data.CreatedAt = base.CreatedAt
+	data.CreatedByActorID = base.CreatedByActorID
+	data.UpdatedAt = base.UpdatedAt
+	data.UpdatedByActorID = base.UpdatedByActorID
+	data.ArchivedAt = base.ArchivedAt
+	data.ArchivedByActorID = base.ArchivedByActorID
 
-	if issuer.ArchivedAt.IsZero() {
-		data.ArchivedAt = types.StringNull()
-	} else {
-		data.ArchivedAt = types.StringValue(issuer.ArchivedAt.Format(time.RFC3339))
-	}
-
-	if issuer.ArchivedByActorID != "" {
-		data.ArchivedByActorID = types.StringValue(issuer.ArchivedByActorID)
-	} else {
-		data.ArchivedByActorID = types.StringNull()
-	}
-
-	if issuer.JWKSPollingDisabledAt.IsZero() {
-		data.JWKSPollingDisabledAt = types.StringNull()
-	} else {
-		data.JWKSPollingDisabledAt = types.StringValue(issuer.JWKSPollingDisabledAt.Format(time.RFC3339))
-	}
-
-	jwksObj, d := mapFederationIssuerDataSourceJWKS(issuer.JWKS)
-	diags.Append(d...)
-	data.JWKS = jwksObj
-
-	pollStatusObj, d := mapFederationIssuerDataSourcePollStatus(issuer.PollStatus)
+	pollStatusObj, d := mapFederationIssuerPollStatus(issuer.PollStatus)
 	diags.Append(d...)
 	data.PollStatus = pollStatusObj
 
 	return diags
 }
 
-// mapFederationIssuerDataSourceJWKS maps the jwks union onto its flattened
-// Terraform object. All three JWKS shapes (discovery, explicit_url, inline)
-// share one object type, so fields that don't apply to the active type stay
-// null.
-//
-// keys is read from jwks.JSON.Keys.Raw() (the raw JSON the API returned for
-// that field) rather than json.Marshal(jwks.Keys), per the jsontypes.Normalized
-// convention: re-marshaling the decoded []map[string]any would risk drifting
-// from what the API actually sent if the SDK ever changes how it decodes it.
-func mapFederationIssuerDataSourceJWKS(jwks anthropic.BetaFederationIssuerJWKSUnion) (types.Object, diag.Diagnostics) {
+// mapFederationIssuerPollStatus maps the poll_status object. It is
+// data-source-only: the resource omits poll_status entirely, since a resource
+// only refreshes on plan/refresh cycles rather than the always-fresh read a
+// data source performs.
+func mapFederationIssuerPollStatus(status anthropic.BetaFederationIssuerPollStatus) (types.Object, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	discoveryBase := types.StringNull()
-	if jwks.DiscoveryBase != "" {
-		discoveryBase = types.StringValue(jwks.DiscoveryBase)
-	}
-
-	url := types.StringNull()
-	if jwks.URL != "" {
-		url = types.StringValue(jwks.URL)
-	}
-
-	caCertPEM := types.StringNull()
-	if jwks.CACertPEM != "" {
-		caCertPEM = types.StringValue(jwks.CACertPEM)
-	}
-
-	keys := jsontypes.NewNormalizedNull()
-	if raw := jwks.JSON.Keys.Raw(); raw != "" && raw != "null" {
-		keys = jsontypes.NewNormalizedValue(raw)
-	}
-
-	obj, d := types.ObjectValue(federationIssuerDataSourceJWKSAttrTypes, map[string]attr.Value{
-		"type":           types.StringValue(jwks.Type),
-		"discovery_base": discoveryBase,
-		"url":            url,
-		"keys":           keys,
-		"ca_cert_pem":    caCertPEM,
-	})
-	diags.Append(d...)
-	return obj, diags
-}
-
-// mapFederationIssuerDataSourcePollStatus maps the poll_status object.
-// It stays data-source-local per the spec: the resource omits poll_status
-// entirely, since a resource only refreshes on plan/refresh cycles rather
-// than the always-fresh read a data source performs.
-func mapFederationIssuerDataSourcePollStatus(status anthropic.BetaFederationIssuerPollStatus) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	lastFetchedAt := types.StringNull()
-	if !status.LastFetchedAt.IsZero() {
-		lastFetchedAt = types.StringValue(status.LastFetchedAt.Format(time.RFC3339))
-	}
-
-	nextPollAt := types.StringNull()
-	if !status.NextPollAt.IsZero() {
-		nextPollAt = types.StringValue(status.NextPollAt.Format(time.RFC3339))
-	}
-
-	obj, d := types.ObjectValue(federationIssuerDataSourcePollStatusAttrTypes, map[string]attr.Value{
+	obj, d := types.ObjectValue(federationIssuerPollStatusAttrTypes, map[string]attr.Value{
 		"consecutive_failures": types.Int64Value(status.ConsecutiveFailures),
-		"last_fetched_at":      lastFetchedAt,
-		"next_poll_at":         nextPollAt,
+		"last_fetched_at":      tfvalue.TimeOrNull(status.LastFetchedAt),
+		"next_poll_at":         tfvalue.TimeOrNull(status.NextPollAt),
 	})
 	diags.Append(d...)
 	return obj, diags

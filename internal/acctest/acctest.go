@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/ippontech/terraform-provider-anthropic/internal/provider"
@@ -51,4 +53,20 @@ func PreCheckOAuth(t *testing.T) {
 	if v := os.Getenv("ANTHROPIC_AUTH_TOKEN"); v == "" {
 		t.Skip("ANTHROPIC_AUTH_TOKEN must be set for OAuth acceptance tests; skipping")
 	}
+}
+
+// NewOAuthClient returns an SDK client authenticated with the org:admin OAuth
+// bearer token from ANTHROPIC_AUTH_TOKEN, for acceptance tests that seed
+// fixtures or verify destroy/archive behaviour directly against the live WIF
+// endpoints. Call PreCheckOAuth first: with the variable unset the client
+// carries an empty bearer and every request is rejected. Like the provider's
+// own clients it opts out of the SDK's environment defaults, so an exported
+// ANTHROPIC_API_KEY (always present in a test run) is not sent alongside the
+// bearer, which these endpoints reject.
+func NewOAuthClient() *anthropic.Client {
+	c := anthropic.NewClient(
+		option.WithoutEnvironmentDefaults(),
+		option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")),
+	)
+	return &c
 }
