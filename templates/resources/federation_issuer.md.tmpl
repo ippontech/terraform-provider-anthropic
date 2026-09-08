@@ -13,6 +13,7 @@ Registers an OIDC identity provider that Anthropic trusts for Workload Identity 
 > **Auth**: requires an org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`), from `ant auth login --scope org:admin` or a workload identity federation rule. Admin API keys (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`) are **not** accepted on this endpoint.
 > **Beta header**: none required.
 > **No hard delete**: destroying this resource always archives the issuer. Archiving is rejected with a 400 while a live federation rule still references the issuer — archive or recreate those rules first. Archiving is idempotent.
+> **One issuer per URL**: an organization can register only one issuer for a given `issuer_url`; creating a second one is rejected by the API. If the Console wizard already registered the provider (for GitHub Actions, `https://token.actions.githubusercontent.com`), import that issuer instead of declaring a new one.
 > **Console-only updates**: updating an issuer that backs a rule with a scope outside `workspace:developer` or `workspace:inference` requires a Console session; an OAuth caller gets an API error.
 
 ## Deliberate omissions
