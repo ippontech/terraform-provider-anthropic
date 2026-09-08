@@ -39,8 +39,29 @@ provider "anthropic" {
 Three things to know about this token:
 
 - **It is short-lived.** A long `terraform apply` can outlive it and start failing with `401`. Re-run the `export` line immediately before every run (the CLI refreshes the token on export); the provider does not refresh it.
-- **The provider does not perform the WIF token exchange itself.** The SDK federation variables (`ANTHROPIC_FEDERATION_RULE_ID` and friends, see [section 4](#4-how-the-workload-consumes-the-rule)) do not configure the provider: with no `auth_token`, configuration fails with `Missing Credentials`. In CI, exchange the identity token in a preceding step and export the resulting bearer token; see [Bootstrap a workload to manage WIF](https://platform.claude.com/docs/en/manage-claude/wif-admin-api#bootstrap-a-workload-to-manage-wif).
+- **The provider does not perform the WIF token exchange itself.** The SDK federation variables (`ANTHROPIC_FEDERATION_RULE_ID` and friends, see [section 4](#4-how-the-workload-consumes-the-rule)) do not configure the provider: with no `auth_token`, configuration fails with `Missing Credentials`. In CI, a preceding step has to exchange the identity token for the bearer and export it, see below.
 - **`ant auth login --profile admin` also makes that profile active for the CLI.** The provider ignores profiles (every client is built from the resolved credential and nothing else), but the `ant` CLI and SDKs in the same shell do not. Switch back with `ant profile activate default` and unset the variable when you are done.
+
+### Minting the token in CI
+
+Once the bootstrap rule of [section 2](#2-the-once-per-organization-bootstrap) exists, a pipeline mints its own `org:admin` bearer from the platform's identity token with the [jwt-bearer grant](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation#authenticate-from-your-workload), then hands it to the provider through `ANTHROPIC_AUTH_TOKEN`. On GitHub Actions (with `permissions: id-token: write` on the job):
+
+```yaml
+- name: Mint an org:admin token through WIF
+  run: |
+    JWT=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+      "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r .value)
+    TOKEN=$(curl --fail-with-body -sS https://api.anthropic.com/v1/oauth/token \
+      -H "content-type: application/json" \
+      -d "$(jq -n --arg jwt "$JWT" '{grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion:$jwt,federation_rule_id:"fdrl_...",organization_id:"00000000-0000-0000-0000-000000000000",service_account_id:"svac_..."}')" \
+      | jq -er .access_token)
+    echo "::add-mask::$TOKEN"
+    echo "ANTHROPIC_AUTH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+- run: terraform plan
+```
+
+The three IDs are those of the bootstrap rule, your organization and the rule's target service account. The same exchange works from any platform that issues OIDC tokens (on GitLab CI it goes in `before_script`, with the token requested through `id_tokens`, see [section 4](#4-how-the-workload-consumes-the-rule)). The minted token lives `token_lifetime_seconds` at most, so mint it in the job that runs Terraform, not in an earlier one.
 
 ## 2. The once-per-organization bootstrap
 
@@ -48,10 +69,22 @@ An OAuth caller can only create or modify federation rules whose `oauth_scope` i
 
 The consequence for Terraform is a single manual step per organization:
 
-1. In the Console, go to **Settings → Workload identity → Connect workload** and create one federation rule for your infrastructure workload (for example the GitHub Actions workflow of the repository holding this Terraform configuration). Under **Advanced rule options**, set the OAuth scope to `org:admin`. The wizard creates the target service account with the Admin organization role, or lets you pick an existing admin service account.
-2. Everything else, including issuers and every workspace-scoped rule, can now be created from Terraform, either by a human running `terraform apply` with the token from section 1, or by that bootstrapped workload once it exchanges its identity token.
+1. Declare the admin service account in Terraform and apply it from a workstation with the user token of section 1. Setting `organization_role = "admin"` needs an interactive credential, which that token is, and doing this first keeps the immutable `name` under Terraform's control and spares an import later:
+
+   ```hcl
+   resource "anthropic_service_account" "infra_bootstrap" {
+     name              = "infra-bootstrap"
+     description       = "Manages WIF configuration from the infrastructure repository"
+     organization_role = "admin"
+   }
+   ```
+
+2. In the Console, go to **Settings → Workload identity → Connect workload** and create one federation rule for your infrastructure workload (for example the GitHub Actions workflow of the repository holding this Terraform configuration). Under **Advanced rule options**, set the OAuth scope to `org:admin` and pick the **existing admin service account** created in step 1 as the target. The rule is then the only Console-owned object.
+3. Everything else, including issuers and every workspace-scoped rule, can now be created from Terraform, either by a human running `terraform apply` with the token from section 1, or by that bootstrapped workload once it exchanges its identity token ([Minting the token in CI](#minting-the-token-in-ci)).
 
 ~> **Warning**: Match the bootstrap rule to one exact workload identity, never a broad pattern. `subject_prefix` is an exact match unless the value ends in `*`. For GitHub Actions, pin it to a protected branch such as `repo:my-org/my-repo:ref:refs/heads/main`. A trailing wildcard such as `repo:my-org/my-repo:*` also matches `pull_request` runs, including runs from forks, so anyone able to open a pull request could mint an `org:admin` token.
+
+That pin has a cost: the WIF endpoints have no read-only scope, so a `terraform plan` needs `org:admin` exactly like the apply, and a rule pinned to `refs/heads/main` means no plan of the WIF configuration in pull-request pipelines. If plans on pull requests matter, the bounded alternative on GitHub is a prefix that still excludes `pull_request` subjects (their `sub` is `repo:my-org/my-repo:pull_request`, with no `ref:` segment): `subject_prefix = "repo:my-org/my-repo:ref:refs/heads/*"` together with `claims = { repository_owner = "my-org" }` matches any branch of the repository, so anyone who can push a branch, but never a fork. On GitLab the `project_path:` segment of `sub` already scopes a `ref:*` wildcard to the project, since forks carry another path.
 
 One consequence to plan for: an OAuth caller cannot update an issuer that backs a rule with a scope other than `workspace:developer` or `workspace:inference`, and an organization can hold only **one issuer per `issuer_url`**. With GitHub Actions there is a single issuer URL, so the bootstrap rule and every workspace-scoped rule necessarily share the same `github-actions` issuer, and that issuer becomes read-only for Terraform: `terraform plan` still tracks it (import it, see [section 5](#5-importing-console-created-objects)), but any change to its `jwks`, `max_jwt_lifetime_seconds` or `check_jti` must be made in the Console. Only a bootstrap workload on a different identity provider (with its own issuer URL) avoids this.
 
@@ -65,15 +98,18 @@ The configuration below trusts GitHub Actions, creates a developer service accou
 terraform {
   required_version = ">= 1.11"
   required_providers {
+    # WIF resources exist from 1.35, the list data sources of section 5
+    # from 1.40.
     anthropic = {
       source  = "ippontech/anthropic"
-      version = "~> 1.0"
+      version = "~> 1.40"
     }
   }
 }
 
 provider "anthropic" {
-  # ANTHROPIC_AUTH_TOKEN, see section 1.
+  # One block carries both credentials: ANTHROPIC_AUTH_TOKEN (section 1) for
+  # the WIF resources, ANTHROPIC_ADMIN_API_KEY for data.anthropic_organization.
 }
 
 variable "production_workspace_id" {
@@ -172,21 +208,24 @@ resource "anthropic_federation_rule_workspace" "gha_deploy_staging" {
 
 # The workload needs these three values (section 4).
 output "federation_rule_id" {
-  value = anthropic_federation_rule.gha_deploy.id
+  description = "Value of ANTHROPIC_FEDERATION_RULE_ID in the workload."
+  value       = anthropic_federation_rule.gha_deploy.id
 }
 
 output "service_account_id" {
-  value = anthropic_service_account.gha_deploy.id
+  description = "Value of ANTHROPIC_SERVICE_ACCOUNT_ID in the workload."
+  value       = anthropic_service_account.gha_deploy.id
 }
 
 output "organization_id" {
-  value = data.anthropic_organization.current.id
+  description = "Value of ANTHROPIC_ORGANIZATION_ID in the workload."
+  value       = data.anthropic_organization.current.id
 }
 
 data "anthropic_organization" "current" {}
 ```
 
-`data.anthropic_organization` needs the Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); drop it and read the organization ID from the Console if you do not want a second credential in this configuration. The token exchange ignores workspace membership for `org:admin` rules only; for the workspace-scoped rule above, both the membership and the rule enablement must exist.
+`data.anthropic_organization` is an Admin API call, so the provider block above also needs the Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); the three credentials are independent and one `provider` block can carry all of them. If you do not want a second credential in this configuration, drop the data source and pass the organization ID (Console, **Settings → Organization**) as a variable. The token exchange ignores workspace membership for `org:admin` rules only; for the workspace-scoped rule above, both the membership and the rule enablement must exist.
 
 ## 4. How the workload consumes the rule
 
@@ -231,6 +270,16 @@ Leave `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` unset in that job: both tak
 
 None of those three IDs is a secret: a token can only be minted by presenting a JWT from the trusted issuer whose claims match the rule. Store them as plain repository variables.
 
+**Other platforms.** Everything above transposes to any OIDC issuer: register its URL as an `anthropic_federation_issuer`, match its `sub` format in the rule, and give the workload its token in `ANTHROPIC_IDENTITY_TOKEN_FILE` (or `ANTHROPIC_IDENTITY_TOKEN`). On GitLab CI the job requests the token with
+
+```yaml
+id_tokens:
+  GITLAB_OIDC_TOKEN:
+    aud: https://api.anthropic.com
+```
+
+and the `sub` claim has the form `project_path:<group/project>:ref_type:branch:ref:<branch>` (`ref_type:tag` for tags), which is what `subject_prefix` matches against; the issuer URL is your GitLab instance's base URL.
+
 ## 5. Importing Console-created objects
 
 Teams that started with the **Connect workload** wizard must import what it created rather than recreate it: names are unique per organization (a second `gha-deploy` rule is a `409`), and so is an issuer's `issuer_url`, so the `github-actions` issuer the wizard registered is the only one the organization can have for `https://token.actions.githubusercontent.com`, and a `resource "anthropic_federation_issuer"` for that URL only ever succeeds as an import. List the existing objects with the data sources, then import by ID:
@@ -251,7 +300,31 @@ terraform import 'anthropic_service_account_workspace.gha_deploy_production' sva
 terraform import 'anthropic_federation_rule_workspace.gha_deploy_staging[0]' fdrl_01ABC...:wrkspc_01XYZ...
 ```
 
-Or, on Terraform 1.5+, declare `import` blocks next to the resources so the import is part of the plan. After importing, run `terraform plan` and reconcile until it is empty; the Console rule with `oauth_scope = "org:admin"` from section 2 can be imported and read but any change to it must still be made in the Console, so keep its configuration identical to what the API returns.
+Or declare `import` blocks next to the resources (Terraform 1.5+) so the import is part of the plan and can be reviewed like any other change; remove them once applied:
+
+```hcl
+import {
+  to = anthropic_federation_issuer.github_actions
+  id = "fdis_01ABC..."
+}
+
+import {
+  to = anthropic_service_account.gha_deploy
+  id = "svac_01ABC..."
+}
+
+import {
+  to = anthropic_federation_rule.gha_deploy
+  id = "fdrl_01ABC..."
+}
+
+import {
+  to = anthropic_service_account_workspace.gha_deploy_production
+  id = "svac_01ABC...:wrkspc_01XYZ..."
+}
+```
+
+After importing, run `terraform plan` and reconcile until it is empty. The Console rule with `oauth_scope = "org:admin"` from section 2 can be imported and read but any change to it must still be made in the Console, so its configuration has to match what the API returns exactly. Two wizard details cost a plan/reconcile round otherwise: the wizard requires a `workspace_id` even for an `org:admin` rule (ignored at exchange time but returned by the API), so set the same `workspace_id` in the resource; and it leaves `match.audience` unset, so do not set `audience` in the config even though the identity token carries `aud: https://api.anthropic.com`.
 
 ## 6. Operational notes
 
