@@ -42,7 +42,8 @@ resource "anthropic_federation_issuer" "github_actions" {
 }
 
 output "federation_issuer_id" {
-  value = anthropic_federation_issuer.github_actions.id
+  description = "ID of the federation issuer."
+  value       = anthropic_federation_issuer.github_actions.id
 }
 ```
 

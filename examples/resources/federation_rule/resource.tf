@@ -32,9 +32,11 @@ resource "anthropic_federation_rule" "gha_deploy" {
 }
 
 output "federation_rule_id" {
-  value = anthropic_federation_rule.gha_deploy.id
+  description = "ID of the federation rule."
+  value       = anthropic_federation_rule.gha_deploy.id
 }
 
 output "federation_rule_issuer_name" {
-  value = anthropic_federation_rule.gha_deploy.issuer_name
+  description = "Name of the issuer the rule is bound to."
+  value       = anthropic_federation_rule.gha_deploy.issuer_name
 }

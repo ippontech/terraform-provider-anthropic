@@ -13,9 +13,11 @@ resource "anthropic_skill" "example" {
 }
 
 output "skill_id" {
-  value = anthropic_skill.example.id
+  description = "ID of the skill."
+  value       = anthropic_skill.example.id
 }
 
 output "skill_source" {
-  value = anthropic_skill.example.source
+  description = "Source of the skill."
+  value       = anthropic_skill.example.source
 }

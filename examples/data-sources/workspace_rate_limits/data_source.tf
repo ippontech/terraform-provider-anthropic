@@ -8,5 +8,6 @@ variable "workspace_id" {
 }
 
 output "rate_limits_count" {
-  value = length(data.anthropic_workspace_rate_limits.example.rate_limits)
+  description = "Number of rate-limit overrides configured for the workspace."
+  value       = length(data.anthropic_workspace_rate_limits.example.rate_limits)
 }

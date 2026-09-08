@@ -32,7 +32,8 @@ resource "anthropic_message" "example" {
 }
 
 output "response" {
-  value = anthropic_message.example.content
+  description = "Content blocks of the model's reply."
+  value       = anthropic_message.example.content
 }
 
 # Example with system prompt and temperature
@@ -72,7 +73,8 @@ resource "anthropic_message" "conversation" {
 }
 
 output "conversation_response" {
-  value = anthropic_message.conversation.content
+  description = "Content blocks of the reply to the multi-turn conversation."
+  value       = anthropic_message.conversation.content
 }
 ```
 

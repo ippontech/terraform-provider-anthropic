@@ -62,15 +62,18 @@ resource "anthropic_environment" "unrestricted" {
 }
 
 output "environment_id" {
-  value = anthropic_environment.python_data.id
+  description = "ID of the environment."
+  value       = anthropic_environment.python_data.id
 }
 
 output "environment_type" {
-  value = anthropic_environment.python_data.type
+  description = "Type of the environment."
+  value       = anthropic_environment.python_data.type
 }
 
 output "environment_networking_type" {
-  value = anthropic_environment.python_data.config.networking.type
+  description = "Networking mode configured for the environment."
+  value       = anthropic_environment.python_data.config.networking.type
 }
 ```
 

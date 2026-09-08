@@ -34,7 +34,8 @@ data "anthropic_workspace_member" "example" {
 }
 
 output "workspace_role" {
-  value = data.anthropic_workspace_member.example.workspace_role
+  description = "Role of the member in the workspace."
+  value       = data.anthropic_workspace_member.example.workspace_role
 }
 ```
 

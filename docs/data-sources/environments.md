@@ -20,11 +20,13 @@ Lists all Anthropic cloud environments (beta). All pages are fetched automatical
 data "anthropic_environments" "all" {}
 
 output "environments_count" {
-  value = length(data.anthropic_environments.all.environments)
+  description = "Number of environments in the workspace."
+  value       = length(data.anthropic_environments.all.environments)
 }
 
 output "environment_names" {
-  value = [for e in data.anthropic_environments.all.environments : e.name]
+  description = "Names of all environments in the workspace."
+  value       = [for e in data.anthropic_environments.all.environments : e.name]
 }
 ```
 

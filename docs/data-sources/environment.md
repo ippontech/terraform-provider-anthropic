@@ -28,15 +28,18 @@ data "anthropic_environment" "example" {
 }
 
 output "environment_id" {
-  value = data.anthropic_environment.example.id
+  description = "ID of the environment."
+  value       = data.anthropic_environment.example.id
 }
 
 output "environment_name" {
-  value = data.anthropic_environment.example.name
+  description = "Name of the environment."
+  value       = data.anthropic_environment.example.name
 }
 
 output "environment_type" {
-  value = data.anthropic_environment.example.type
+  description = "Type of the environment."
+  value       = data.anthropic_environment.example.type
 }
 ```
 

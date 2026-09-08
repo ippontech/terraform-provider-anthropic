@@ -20,11 +20,13 @@ data "anthropic_federation_issuer" "example" {
 }
 
 output "federation_issuer_name" {
-  value = data.anthropic_federation_issuer.example.name
+  description = "Name of the federation issuer."
+  value       = data.anthropic_federation_issuer.example.name
 }
 
 output "federation_issuer_issuer_url" {
-  value = data.anthropic_federation_issuer.example.issuer_url
+  description = "OIDC issuer URL matched against the JWT `iss` claim."
+  value       = data.anthropic_federation_issuer.example.issuer_url
 }
 ```
 

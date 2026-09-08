@@ -40,19 +40,23 @@ resource "anthropic_skill_version" "example" {
 }
 
 output "skill_version_id" {
-  value = anthropic_skill_version.example.id
+  description = "ID of the skill version."
+  value       = anthropic_skill_version.example.id
 }
 
 output "version" {
-  value = anthropic_skill_version.example.version
+  description = "Version identifier of the skill version."
+  value       = anthropic_skill_version.example.version
 }
 
 output "name" {
-  value = anthropic_skill_version.example.name
+  description = "Name of the skill version."
+  value       = anthropic_skill_version.example.name
 }
 
 output "created_at" {
-  value = anthropic_skill_version.example.created_at
+  description = "Creation timestamp of the skill version (RFC 3339)."
+  value       = anthropic_skill_version.example.created_at
 }
 ```
 

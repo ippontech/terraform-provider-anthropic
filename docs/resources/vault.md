@@ -39,11 +39,13 @@ resource "anthropic_vault" "preserved" {
 }
 
 output "vault_id" {
-  value = anthropic_vault.minimal.id
+  description = "ID of the vault."
+  value       = anthropic_vault.minimal.id
 }
 
 output "vault_created_at" {
-  value = anthropic_vault.minimal.created_at
+  description = "Creation timestamp of the vault (RFC 3339)."
+  value       = anthropic_vault.minimal.created_at
 }
 ```
 

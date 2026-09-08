@@ -32,11 +32,13 @@ data "anthropic_api_keys" "workspace_active" {
 }
 
 output "active_key_count" {
-  value = length(data.anthropic_api_keys.workspace_active.api_keys)
+  description = "Number of active API keys in the workspace."
+  value       = length(data.anthropic_api_keys.workspace_active.api_keys)
 }
 
 output "active_key_names" {
-  value = [for k in data.anthropic_api_keys.workspace_active.api_keys : k.name]
+  description = "Names of the active API keys in the workspace."
+  value       = [for k in data.anthropic_api_keys.workspace_active.api_keys : k.name]
 }
 ```
 
