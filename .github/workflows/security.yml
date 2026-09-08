@@ -104,12 +104,14 @@ jobs:
       # checksums.txt: both files come from the same source, so a compromised
       # release would poison the checksum along with the binary. Bump
       # TFLINT_VERSION and TFLINT_SHA256 together (value from the target
-      # release's checksums.txt, tflint_linux_amd64.zip line).
+      # release's checksums.txt, tflint_linux_amd64.zip line). Renovate only
+      # bumps the version, so its PR goes red here until the hash is updated
+      # by hand; renovate.json therefore excludes tflint from automerge.
       - name: Install tflint
         env:
           # renovate: datasource=github-releases depName=terraform-linters/tflint
           TFLINT_VERSION: v0.64.0
-          TFLINT_SHA256: 16d062ebb3d2d199463fb93e17644c27feb57cb6175babecbce3e8d34f4956c6
+          TFLINT_SHA256: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
         run: |
           set -euo pipefail
           base="https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}"
