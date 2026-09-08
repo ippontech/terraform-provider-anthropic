@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,37 +34,6 @@ func makeTfsdkConfig(t *testing.T, rawVal tftypes.Value) tfsdk.Config {
 		Raw:    rawVal,
 		Schema: schemaResp.Schema,
 	}
-}
-
-// schemaType returns the tftypes.Type of the VaultCredentialResource schema.
-func schemaType(t *testing.T) tftypes.Type {
-	t.Helper()
-	var schemaResp resource.SchemaResponse
-	r := NewVaultCredentialResource()
-	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
-	ty, err := schemaResp.Schema.Type().ApplyTerraform5AttributePathStep(nil)
-	_ = ty
-	_ = err
-	// Return the schema's underlying tftypes.Object type.
-	tfType, ok := schemaResp.Schema.Type().(interface {
-		TerraformType(context.Context) tftypes.Type
-	})
-	if !ok {
-		t.Fatal("schema type does not implement TerraformType")
-	}
-	return tfType.TerraformType(context.Background())
-}
-
-// nullValuesForSchema returns a map of tftypes.Value with null values for
-// every attribute in the schema — used as a base to build test configs.
-func nullValuesForSchema(t *testing.T) map[string]tftypes.Value {
-	t.Helper()
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := make(map[string]tftypes.Value, len(schemaObjType.AttributeTypes))
-	for name, typ := range schemaObjType.AttributeTypes {
-		vals[name] = tftypes.NewValue(typ, nil)
-	}
-	return vals
 }
 
 // ---------------------------------------------------------------------------
@@ -277,14 +247,14 @@ func TestMapCredentialResponseToState_EnvironmentVariable(t *testing.T) {
 
 func TestVaultCredentialConfigValidator_StaticBearerValid(t *testing.T) {
 	ctx := context.Background()
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
 	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
 	// token is write-only; it appears in the schema but framework sends it as the zero value
 	// We simulate valid: token is non-null in config (framework sends the value).
 	// For testing purposes we just check that the validator doesn't reject a valid config.
 
-	schemaObjType := schemaType(t).(tftypes.Object)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
 	rawVal := tftypes.NewValue(schemaObjType, vals)
 	cfg := makeTfsdkConfig(t, rawVal)
 
@@ -304,11 +274,11 @@ func TestVaultCredentialConfigValidator_StaticBearerValid(t *testing.T) {
 
 func TestVaultCredentialConfigValidator_MissingRequired(t *testing.T) {
 	ctx := context.Background()
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
 	// mcp_server_url is null — should trigger an error
 
-	schemaObjType := schemaType(t).(tftypes.Object)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
 	rawVal := tftypes.NewValue(schemaObjType, vals)
 	cfg := makeTfsdkConfig(t, rawVal)
 
@@ -331,14 +301,14 @@ func TestVaultCredentialConfigValidator_MissingRequired(t *testing.T) {
 
 func TestVaultCredentialConfigValidator_EnvironmentVariableLimitedNoHosts(t *testing.T) {
 	ctx := context.Background()
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "environment_variable")
 	vals["secret_name"] = tftypes.NewValue(tftypes.String, "MY_KEY")
 	// secret_value is write-only but must be non-null for the validator to pass its required check.
 	vals["secret_value"] = tftypes.NewValue(tftypes.String, "my-secret")
 
 	// Build networking object: mode=limited, allowed_hosts=empty list
-	schemaObjType := schemaType(t).(tftypes.Object)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
 	networkingType := schemaObjType.AttributeTypes["networking"].(tftypes.Object)
 	allowedHostsType := networkingType.AttributeTypes["allowed_hosts"]
 
@@ -369,12 +339,12 @@ func TestVaultCredentialConfigValidator_EnvironmentVariableLimitedNoHosts(t *tes
 
 func TestVaultCredentialConfigValidator_ConflictingAttrs(t *testing.T) {
 	ctx := context.Background()
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
 	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
 	vals["secret_name"] = tftypes.NewValue(tftypes.String, "SHOULD_NOT_BE_SET")
 
-	schemaObjType := schemaType(t).(tftypes.Object)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
 	rawVal := tftypes.NewValue(schemaObjType, vals)
 	cfg := makeTfsdkConfig(t, rawVal)
 
@@ -441,7 +411,7 @@ const tokenWoVersionRequiredDetail = "\"token_wo_version\" must be set when a wr
 
 func validateConfig(t *testing.T, vals map[string]tftypes.Value) resource.ValidateConfigResponse {
 	t.Helper()
-	schemaObjType := schemaType(t).(tftypes.Object)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
 	rawVal := tftypes.NewValue(schemaObjType, vals)
 	cfg := makeTfsdkConfig(t, rawVal)
 	v := &vaultCredentialConfigValidator{}
@@ -451,7 +421,7 @@ func validateConfig(t *testing.T, vals map[string]tftypes.Value) resource.Valida
 }
 
 func TestVaultCredentialConfigValidator_RequiresTokenWoVersion(t *testing.T) {
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
 	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
 	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
@@ -464,7 +434,7 @@ func TestVaultCredentialConfigValidator_RequiresTokenWoVersion(t *testing.T) {
 }
 
 func TestVaultCredentialConfigValidator_TokenWoVersionSet(t *testing.T) {
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
 	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
 	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
@@ -479,7 +449,7 @@ func TestVaultCredentialConfigValidator_TokenWoVersionSet(t *testing.T) {
 // An unknown required attribute (e.g. var/output not yet resolved) must not be
 // reported as missing — it may resolve to a value at apply time.
 func TestVaultCredentialConfigValidator_UnknownRequiredNotMissing(t *testing.T) {
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
 	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
 	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
@@ -494,7 +464,7 @@ func TestVaultCredentialConfigValidator_UnknownRequiredNotMissing(t *testing.T) 
 // An unknown attribute that is forbidden for the type must not be reported as a
 // conflict — it was never definitively set.
 func TestVaultCredentialConfigValidator_UnknownConflictingNotFlagged(t *testing.T) {
-	vals := nullValuesForSchema(t)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
 	vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
 	vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
@@ -608,8 +578,8 @@ func TestBuildTokenEndpointAuthUnion_None(t *testing.T) {
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
 	// Build a minimal valid config (all-null base)
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := nullValuesForSchema(t)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	rawVal := tftypes.NewValue(schemaObjType, vals)
 	cfg := makeTfsdkConfig(t, rawVal)
 
@@ -625,8 +595,8 @@ func TestBuildTokenEndpointAuthUnion_None(t *testing.T) {
 func TestBuildTokenEndpointAuthUnion_ClientSecretPost(t *testing.T) {
 	ctx := context.Background()
 
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := nullValuesForSchema(t)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 
 	// Build a refresh.token_endpoint_auth with client_secret_post
 	refreshType := schemaObjType.AttributeTypes["refresh"].(tftypes.Object)
@@ -675,8 +645,8 @@ func TestVaultCredentialImportState_ValidID(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := nullValuesForSchema(t)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	rawVal := tftypes.NewValue(schemaObjType, vals)
 	state := tfsdk.State{
 		Raw:    rawVal,
@@ -712,8 +682,8 @@ func TestVaultCredentialImportState_InvalidID(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := nullValuesForSchema(t)
+	schemaObjType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
 	rawVal := tftypes.NewValue(schemaObjType, vals)
 	state := tfsdk.State{
 		Raw:    rawVal,

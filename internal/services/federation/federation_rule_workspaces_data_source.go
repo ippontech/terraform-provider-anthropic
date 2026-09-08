@@ -6,7 +6,6 @@ package federation
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -41,10 +40,8 @@ type FederationRuleWorkspacesDataSourceModel struct {
 }
 
 // federationRuleWorkspacesListItemAttrTypes describes the attribute types of
-// each element in the "workspaces" list. Named with the "List" suffix (as
-// opposed to a bare federationRuleWorkspaceAttrTypes) so it cannot collide with
-// the analogous helper the sibling federation_rule_workspace resource (enable
-// /disable, singular) is expected to define in this same package.
+// each element in the "workspaces" list: the anthropic_federation_rule_workspace
+// resource model minus its composite id and parent federation_rule_id.
 var federationRuleWorkspacesListItemAttrTypes = map[string]attr.Type{
 	"workspace_id":        types.StringType,
 	"workspace_name":      types.StringType,
@@ -164,21 +161,16 @@ func (d *FederationRuleWorkspacesDataSource) Read(ctx context.Context, req datas
 
 // mapFederationRuleWorkspacesListItem converts an API federation-rule-workspace
 // enablement into a Terraform object value for inclusion in the "workspaces"
-// list.
+// list. The entry is the anthropic_federation_rule_workspace resource model
+// minus the parent federation_rule_id and composite id, so it is derived from
+// the resource mapping rather than mapped a second time.
 func mapFederationRuleWorkspacesListItem(w *anthropic.BetaFederationRuleWorkspace) (attr.Value, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	createdByActorID := types.StringNull()
-	if w.CreatedByActorID != "" {
-		createdByActorID = types.StringValue(w.CreatedByActorID)
-	}
-
-	obj, d := types.ObjectValue(federationRuleWorkspacesListItemAttrTypes, map[string]attr.Value{
-		"workspace_id":        types.StringValue(w.WorkspaceID),
-		"workspace_name":      types.StringValue(w.WorkspaceName),
-		"created_at":          types.StringValue(w.CreatedAt.Format(time.RFC3339)),
-		"created_by_actor_id": createdByActorID,
+	var m FederationRuleWorkspaceResourceModel
+	mapFederationRuleWorkspaceToState(w, &m)
+	return types.ObjectValue(federationRuleWorkspacesListItemAttrTypes, map[string]attr.Value{
+		"workspace_id":        m.WorkspaceID,
+		"workspace_name":      m.WorkspaceName,
+		"created_at":          m.CreatedAt,
+		"created_by_actor_id": m.CreatedByActorID,
 	})
-	diags.Append(d...)
-	return obj, diags
 }

@@ -9,11 +9,10 @@ import (
 	"testing"
 	"time"
 
-	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
-
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // Federation rule acceptance tests require an org:admin OAuth bearer token
@@ -61,7 +60,7 @@ func setupFederationRuleTestFixtures(t *testing.T) federationRuleTestFixtures {
 	t.Helper()
 	acctest.PreCheckOAuth(t)
 
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 
@@ -101,7 +100,7 @@ func setupFederationRuleTestFixtures(t *testing.T) federationRuleTestFixtures {
 // (the API has no hard-delete endpoint, so Delete always archives) rather than
 // erroring as "still exists".
 func testAccCheckFederationRuleArchivedAndCleanup(s *terraform.State) error {
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "anthropic_federation_rule" {
 			continue

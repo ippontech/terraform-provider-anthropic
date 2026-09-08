@@ -13,18 +13,8 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-// newTestServiceAccountDataSourceClient builds a bare SDK client pointed at an
-// httptest server. Named distinctly from the (sibling-branch) resource's
-// newTestServiceAccountClient to avoid a symbol collision once both land in
-// the same package.
-func newTestServiceAccountDataSourceClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &c
-}
 
 func TestMapServiceAccountDataSourceToState_basicFields(t *testing.T) {
 	createdAt := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
@@ -43,7 +33,7 @@ func TestMapServiceAccountDataSourceToState_basicFields(t *testing.T) {
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountDataSourceToState(sa, &data)
+	diags := mapServiceAccountToState(sa, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -88,7 +78,7 @@ func TestMapServiceAccountDataSourceToState_emptyDescriptionMapsToNull(t *testin
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountDataSourceToState(sa, &data)
+	diags := mapServiceAccountToState(sa, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -112,7 +102,7 @@ func TestMapServiceAccountDataSourceToState_archivedFields(t *testing.T) {
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountDataSourceToState(sa, &data)
+	diags := mapServiceAccountToState(sa, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -139,7 +129,7 @@ func TestServiceAccountDataSource_readNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountDataSourceClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	_, err := client.Beta.Organization.ServiceAccounts.Get(context.Background(), "svac_missing", anthropic.BetaOrganizationServiceAccountGetParams{})
 	if err == nil {
@@ -179,7 +169,7 @@ func TestServiceAccountDataSource_readSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountDataSourceClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	sa, err := client.Beta.Organization.ServiceAccounts.Get(context.Background(), "svac_01ABC", anthropic.BetaOrganizationServiceAccountGetParams{})
 	if err != nil {
@@ -195,7 +185,7 @@ func TestServiceAccountDataSource_readSuccess(t *testing.T) {
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountDataSourceToState(sa, &data)
+	diags := mapServiceAccountToState(sa, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}

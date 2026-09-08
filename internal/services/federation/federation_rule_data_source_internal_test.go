@@ -12,16 +12,8 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
-	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-func newTestFederationRuleDataSourceClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
-	t.Helper()
-
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &providerdata.OAuthClient{Client: &c}
-}
 
 func TestMapFederationRuleDataSourceToState_FullyPopulated(t *testing.T) {
 	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -62,7 +54,8 @@ func TestMapFederationRuleDataSourceToState_FullyPopulated(t *testing.T) {
 		},
 	}
 
-	data, diags := mapFederationRuleDataSourceToState(rule)
+	var data FederationRuleDataSourceModel
+	diags := mapFederationRuleToState(context.Background(), rule, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -138,7 +131,8 @@ func TestMapFederationRuleDataSourceToState_NullableFieldsEmpty(t *testing.T) {
 		},
 	}
 
-	data, diags := mapFederationRuleDataSourceToState(rule)
+	var data FederationRuleDataSourceModel
+	diags := mapFederationRuleToState(context.Background(), rule, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -191,7 +185,7 @@ func TestFederationRuleDataSource_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleDataSourceClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	_, err := client.Beta.Organization.Federation.Rules.Get(context.Background(), "fdrl_missing", anthropic.BetaOrganizationFederationRuleGetParams{})
 	if err == nil {
@@ -243,14 +237,15 @@ func TestFederationRuleDataSource_get(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleDataSourceClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	rule, err := client.Beta.Organization.Federation.Rules.Get(context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleGetParams{})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 
-	data, diags := mapFederationRuleDataSourceToState(rule)
+	var data FederationRuleDataSourceModel
+	diags := mapFederationRuleToState(context.Background(), rule, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -264,8 +259,15 @@ func TestFederationRuleDataSource_get(t *testing.T) {
 	if !data.WorkspaceID.IsNull() {
 		t.Errorf("expected WorkspaceID to be null for empty string, got %q", data.WorkspaceID.ValueString())
 	}
-	if !data.WorkspaceIDs.IsNull() {
-		t.Errorf("expected WorkspaceIDs to be null for empty list, got %v", data.WorkspaceIDs)
+	// The wire payload carries "workspace_ids": [] (present, empty), which the
+	// shared resource mapping keeps as an empty known list — the same value
+	// the anthropic_federation_rule resource stores for that payload. Only an
+	// absent/null field maps to a null list (see _NullableFieldsEmpty above).
+	if data.WorkspaceIDs.IsNull() || data.WorkspaceIDs.IsUnknown() {
+		t.Errorf("expected WorkspaceIDs to be a known list for an empty payload list, got %v", data.WorkspaceIDs)
+	}
+	if got := len(data.WorkspaceIDs.Elements()); got != 0 {
+		t.Errorf("expected WorkspaceIDs to be empty, got %d elements", got)
 	}
 	if !data.Attributes.IsNull() {
 		t.Errorf("expected Attributes to be null for empty map, got %v", data.Attributes)

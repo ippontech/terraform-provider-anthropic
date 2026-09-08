@@ -6,7 +6,6 @@ package serviceaccounts
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -37,12 +36,11 @@ type ServiceAccountsDataSourceModel struct {
 	ServiceAccounts types.List `tfsdk:"service_accounts"`
 }
 
-// serviceAccountsListAttrTypes describes the attribute types of each element in
-// the "service_accounts" list. It mirrors the anthropic_service_account
-// resource/data source schema. Named distinctly from any sibling-branch
-// "serviceAccountAttrTypes" (singular) to avoid a duplicate declaration once
-// both land in the same package.
-var serviceAccountsListAttrTypes = map[string]attr.Type{
+// serviceAccountAttrTypes describes the attribute types of each element in
+// the "service_accounts" list. It mirrors ServiceAccountResourceModel field
+// for field, which is what lets mapServiceAccountsListEntry build an entry
+// from that model through types.ObjectValueFrom.
+var serviceAccountAttrTypes = map[string]attr.Type{
 	"id":                   types.StringType,
 	"name":                 types.StringType,
 	"description":          types.StringType,
@@ -163,7 +161,7 @@ func (d *ServiceAccountsDataSource) Read(ctx context.Context, req datasource.Rea
 	objs := make([]attr.Value, 0)
 	for pager.Next() {
 		sa := pager.Current()
-		obj, diags := mapServiceAccountsListEntry(&sa)
+		obj, diags := mapServiceAccountsListEntry(ctx, &sa)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
@@ -176,7 +174,7 @@ func (d *ServiceAccountsDataSource) Read(ctx context.Context, req datasource.Rea
 		return
 	}
 
-	list, diags := types.ListValue(types.ObjectType{AttrTypes: serviceAccountsListAttrTypes}, objs)
+	list, diags := types.ListValue(types.ObjectType{AttrTypes: serviceAccountAttrTypes}, objs)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -187,36 +185,17 @@ func (d *ServiceAccountsDataSource) Read(ctx context.Context, req datasource.Rea
 }
 
 // mapServiceAccountsListEntry converts an API service account into a Terraform
-// object value for inclusion in the "service_accounts" list. Named distinctly
-// from any sibling-branch "mapServiceAccountToState" to avoid a duplicate
-// declaration once both land in the same package.
-func mapServiceAccountsListEntry(sa *anthropic.BetaServiceAccount) (attr.Value, diag.Diagnostics) {
-	archivedAt := types.StringNull()
-	if !sa.ArchivedAt.IsZero() {
-		archivedAt = types.StringValue(sa.ArchivedAt.Format(time.RFC3339))
+// object value for inclusion in the "service_accounts" list. It reuses the
+// anthropic_service_account resource mapping so both views of a service
+// account agree on every attribute (null handling included).
+func mapServiceAccountsListEntry(ctx context.Context, sa *anthropic.BetaServiceAccount) (attr.Value, diag.Diagnostics) {
+	var model ServiceAccountResourceModel
+	diags := mapServiceAccountToState(sa, &model)
+	if diags.HasError() {
+		return types.ObjectNull(serviceAccountAttrTypes), diags
 	}
 
-	return types.ObjectValue(serviceAccountsListAttrTypes, map[string]attr.Value{
-		"id":                   types.StringValue(sa.ID),
-		"name":                 types.StringValue(sa.Name),
-		"description":          serviceAccountsStringOrNull(sa.Description),
-		"organization_role":    types.StringValue(string(sa.OrganizationRole)),
-		"created_at":           types.StringValue(sa.CreatedAt.Format(time.RFC3339)),
-		"updated_at":           types.StringValue(sa.UpdatedAt.Format(time.RFC3339)),
-		"archived_at":          archivedAt,
-		"created_by_actor_id":  serviceAccountsStringOrNull(sa.CreatedByActorID),
-		"updated_by_actor_id":  serviceAccountsStringOrNull(sa.UpdatedByActorID),
-		"archived_by_actor_id": serviceAccountsStringOrNull(sa.ArchivedByActorID),
-	})
-}
-
-// serviceAccountsStringOrNull maps an API "" (Go zero value for a
-// required-but-optional string field) to a null Terraform value. Named
-// distinctly from any sibling-branch "stringOrNull" to avoid a duplicate
-// declaration once both land in the same package.
-func serviceAccountsStringOrNull(s string) types.String {
-	if s == "" {
-		return types.StringNull()
-	}
-	return types.StringValue(s)
+	obj, d := types.ObjectValueFrom(ctx, serviceAccountAttrTypes, model)
+	diags.Append(d...)
+	return obj, diags
 }

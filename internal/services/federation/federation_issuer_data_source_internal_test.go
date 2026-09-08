@@ -43,7 +43,7 @@ func TestMapFederationIssuerDataSourceToState_Discovery(t *testing.T) {
 	}
 
 	var data FederationIssuerDataSourceModel
-	diags := mapFederationIssuerDataSourceToState(issuer, &data)
+	diags := mapFederationIssuerDataSourceToState(context.Background(), issuer, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -122,7 +122,7 @@ func TestMapFederationIssuerDataSourceToState_Archived(t *testing.T) {
 	}
 
 	var data FederationIssuerDataSourceModel
-	diags := mapFederationIssuerDataSourceToState(issuer, &data)
+	diags := mapFederationIssuerDataSourceToState(context.Background(), issuer, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -183,7 +183,7 @@ func TestMapFederationIssuerDataSourceToState_InlineKeys(t *testing.T) {
 	}
 
 	var data FederationIssuerDataSourceModel
-	diags := mapFederationIssuerDataSourceToState(&issuer, &data)
+	diags := mapFederationIssuerDataSourceToState(context.Background(), &issuer, &data)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}

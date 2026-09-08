@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -23,7 +22,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
-	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
 // ---------------------------------------------------------------------------
@@ -328,30 +328,6 @@ func TestBuildJWKSParams_InlineInvalidJSON(t *testing.T) {
 // ConfigValidator — jwks matrix, including Unknown handling
 // ---------------------------------------------------------------------------
 
-func federationIssuerSchemaType(t *testing.T) tftypes.Type {
-	t.Helper()
-	var schemaResp resource.SchemaResponse
-	r := NewFederationIssuerResource()
-	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
-	tfType, ok := schemaResp.Schema.Type().(interface {
-		TerraformType(context.Context) tftypes.Type
-	})
-	if !ok {
-		t.Fatal("schema type does not implement TerraformType")
-	}
-	return tfType.TerraformType(context.Background())
-}
-
-func federationIssuerNullValues(t *testing.T) map[string]tftypes.Value {
-	t.Helper()
-	schemaObjType := federationIssuerSchemaType(t).(tftypes.Object)
-	vals := make(map[string]tftypes.Value, len(schemaObjType.AttributeTypes))
-	for name, typ := range schemaObjType.AttributeTypes {
-		vals[name] = tftypes.NewValue(typ, nil)
-	}
-	return vals
-}
-
 func makeFederationIssuerConfig(t *testing.T, rawVal tftypes.Value) tfsdk.Config {
 	t.Helper()
 	var schemaResp resource.SchemaResponse
@@ -379,8 +355,8 @@ func jwksTfValue(t *testing.T, jwksType tftypes.Object, overrides map[string]tft
 
 func validateFederationIssuerConfig(t *testing.T, jwksOverrides map[string]tftypes.Value) resource.ValidateConfigResponse {
 	t.Helper()
-	vals := federationIssuerNullValues(t)
-	schemaObjType := federationIssuerSchemaType(t).(tftypes.Object)
+	vals := schematest.NullValues(t, NewFederationIssuerResource())
+	schemaObjType := schematest.ResourceObjectType(t, NewFederationIssuerResource())
 	jwksType := schemaObjType.AttributeTypes["jwks"].(tftypes.Object)
 	vals["jwks"] = jwksTfValue(t, jwksType, jwksOverrides)
 
@@ -496,9 +472,9 @@ func TestFederationIssuerConfigValidator_UnknownConflictingNotFlagged(t *testing
 // reference) must also skip validation.
 func TestFederationIssuerConfigValidator_UnknownJWKSObjectSkipsValidation(t *testing.T) {
 	t.Parallel()
-	schemaObjType := federationIssuerSchemaType(t).(tftypes.Object)
+	schemaObjType := schematest.ResourceObjectType(t, NewFederationIssuerResource())
 	jwksType := schemaObjType.AttributeTypes["jwks"].(tftypes.Object)
-	vals := federationIssuerNullValues(t)
+	vals := schematest.NullValues(t, NewFederationIssuerResource())
 	vals["jwks"] = tftypes.NewValue(jwksType, tftypes.UnknownValue)
 
 	rawVal := tftypes.NewValue(schemaObjType, vals)
@@ -516,12 +492,6 @@ func TestFederationIssuerConfigValidator_UnknownJWKSObjectSkipsValidation(t *tes
 // 404-on-read
 // ---------------------------------------------------------------------------
 
-func newTestFederationClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &providerdata.OAuthClient{Client: &c}
-}
-
 func TestFederationIssuerGet_notFound(t *testing.T) {
 	t.Parallel()
 
@@ -532,7 +502,7 @@ func TestFederationIssuerGet_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	_, err := client.Beta.Organization.Federation.Issuers.Get(context.Background(), "fdis_missing", anthropic.BetaOrganizationFederationIssuerGetParams{})
 
 	var apierr *anthropic.Error
@@ -559,7 +529,7 @@ func TestFederationIssuerDelete_archives(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	issuer, err := client.Beta.Organization.Federation.Issuers.Archive(context.Background(), "fdis_01ABC", anthropic.BetaOrganizationFederationIssuerArchiveParams{})
 	if err != nil {
 		t.Fatalf("archive: %v", err)

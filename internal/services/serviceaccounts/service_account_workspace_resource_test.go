@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
-
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // Service account workspace acceptance tests require an org:admin OAuth
@@ -41,7 +40,7 @@ func setupServiceAccountFixture(t *testing.T) string {
 	t.Helper()
 	acctest.PreCheckOAuth(t)
 
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 
@@ -66,7 +65,7 @@ func setupServiceAccountFixture(t *testing.T) string {
 // no longer show up in the service account's workspace list, or must have
 // reverted to its implicit membership.
 func testAccCheckServiceAccountWorkspaceDestroyed(s *terraform.State) error {
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	ctx := context.Background()
 
 	for _, rs := range s.RootModule().Resources {

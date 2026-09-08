@@ -6,15 +6,12 @@ package federation_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
-	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
-
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // This resource requires an org:admin OAuth bearer token (ANTHROPIC_AUTH_TOKEN);
@@ -28,17 +25,12 @@ import (
 // every poll), "inline" keys are taken as-is and never fetched over the
 // network, matching how vault credentials use fabricated secret material.
 
-func newTestOAuthClient() *anthropic.Client {
-	c := anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
-	return &c
-}
-
 // testAccCheckFederationIssuerArchived verifies that every federation issuer
 // tracked in state was archived rather than removed — the API has no
 // hard-delete endpoint, so CheckDestroy must assert archived_at is set instead
 // of expecting a 404.
 func testAccCheckFederationIssuerArchived(s *terraform.State) error {
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "anthropic_federation_issuer" {
 			continue
