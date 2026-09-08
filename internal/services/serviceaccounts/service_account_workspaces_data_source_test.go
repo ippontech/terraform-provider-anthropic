@@ -6,15 +6,12 @@ package serviceaccounts_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
-
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // This is a smoke acceptance test: it exercises the real API end to end, but
@@ -31,15 +28,6 @@ import (
 // service account this test lists workspaces for is created directly through
 // the SDK in test setup, not through that data source.
 
-// newTestOAuthClientForDataSource builds an SDK client authenticated with the
-// org:admin OAuth bearer token, used for out-of-band fixture setup/teardown.
-// Named distinctly from any equivalent helper a sibling WIF branch (e.g. the
-// anthropic_service_account_workspace resource) might add to this same
-// external test package, so the two can coexist once both branches merge.
-func newTestOAuthClientForDataSource() anthropic.Client {
-	return anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
-}
-
 // setupServiceAccountFixtureForDataSource creates the service account this
 // test's anthropic_service_account_workspaces data source lists, and
 // registers a t.Cleanup to archive it afterwards.
@@ -47,7 +35,7 @@ func setupServiceAccountFixtureForDataSource(t *testing.T) string {
 	t.Helper()
 	acctest.PreCheckOAuth(t)
 
-	client := newTestOAuthClientForDataSource()
+	client := acctest.NewOAuthClient()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 

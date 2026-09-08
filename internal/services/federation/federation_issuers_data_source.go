@@ -6,7 +6,6 @@ package federation
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -40,50 +39,6 @@ type FederationIssuersDataSource struct {
 type FederationIssuersDataSourceModel struct {
 	IncludeArchived types.Bool `tfsdk:"include_archived"`
 	Issuers         types.List `tfsdk:"issuers"`
-}
-
-// federationIssuersJWKSAttrTypes describes the attribute types of the "jwks"
-// nested object within each issuer entry.
-//
-// Named with the "federationIssuers" prefix (rather than a generic
-// "federationJWKSAttrTypes") because sibling branches for the singular
-// anthropic_federation_issuer data source/resource define their own
-// equivalents in the same "federation" package; the prefix keeps every
-// unexported symbol collision-free until those branches merge and a dedupe
-// refactor lands.
-var federationIssuersJWKSAttrTypes = map[string]attr.Type{
-	"type":           types.StringType,
-	"ca_cert_pem":    types.StringType,
-	"discovery_base": types.StringType,
-	"url":            types.StringType,
-	"keys":           jsontypes.NormalizedType{},
-}
-
-// federationIssuersPollStatusAttrTypes describes the attribute types of the
-// "poll_status" nested object within each issuer entry.
-var federationIssuersPollStatusAttrTypes = map[string]attr.Type{
-	"consecutive_failures": types.Int64Type,
-	"last_fetched_at":      types.StringType,
-	"next_poll_at":         types.StringType,
-}
-
-// federationIssuersListItemAttrTypes describes the attribute types of each
-// element in the "issuers" list.
-var federationIssuersListItemAttrTypes = map[string]attr.Type{
-	"id":                       types.StringType,
-	"issuer_url":               types.StringType,
-	"name":                     types.StringType,
-	"check_jti":                types.BoolType,
-	"max_jwt_lifetime_seconds": types.Int64Type,
-	"jwks":                     types.ObjectType{AttrTypes: federationIssuersJWKSAttrTypes},
-	"jwks_polling_disabled_at": types.StringType,
-	"poll_status":              types.ObjectType{AttrTypes: federationIssuersPollStatusAttrTypes},
-	"created_at":               types.StringType,
-	"created_by_actor_id":      types.StringType,
-	"updated_at":               types.StringType,
-	"updated_by_actor_id":      types.StringType,
-	"archived_at":              types.StringType,
-	"archived_by_actor_id":     types.StringType,
 }
 
 func (d *FederationIssuersDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -245,7 +200,7 @@ func (d *FederationIssuersDataSource) Read(ctx context.Context, req datasource.R
 	issuerObjs := make([]attr.Value, 0)
 	for pager.Next() {
 		issuer := pager.Current()
-		obj, diags := mapFederationIssuersListEntry(&issuer)
+		obj, diags := mapFederationIssuersListEntry(ctx, &issuer)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
@@ -258,7 +213,7 @@ func (d *FederationIssuersDataSource) Read(ctx context.Context, req datasource.R
 		return
 	}
 
-	issuersList, diags := types.ListValue(types.ObjectType{AttrTypes: federationIssuersListItemAttrTypes}, issuerObjs)
+	issuersList, diags := types.ListValue(types.ObjectType{AttrTypes: federationIssuerDataSourceAttrTypes}, issuerObjs)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -269,114 +224,17 @@ func (d *FederationIssuersDataSource) Read(ctx context.Context, req datasource.R
 }
 
 // mapFederationIssuersListEntry converts an API federation issuer response to
-// a Terraform object value for inclusion in the "issuers" list.
-func mapFederationIssuersListEntry(issuer *anthropic.BetaFederationIssuer) (attr.Value, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	jwksObj, d := mapFederationIssuersJWKS(issuer.JWKS)
-	diags.Append(d...)
-
-	pollStatusObj, d := mapFederationIssuersPollStatus(issuer.PollStatus)
-	diags.Append(d...)
-
-	jwksPollingDisabledAt := types.StringNull()
-	if !issuer.JWKSPollingDisabledAt.IsZero() {
-		jwksPollingDisabledAt = types.StringValue(issuer.JWKSPollingDisabledAt.Format(time.RFC3339))
+// a Terraform object value for inclusion in the "issuers" list. Each entry is
+// the anthropic_federation_issuer data source model, so it is produced by that
+// data source's mapping rather than mapped a third time.
+func mapFederationIssuersListEntry(ctx context.Context, issuer *anthropic.BetaFederationIssuer) (attr.Value, diag.Diagnostics) {
+	var model FederationIssuerDataSourceModel
+	diags := mapFederationIssuerDataSourceToState(ctx, issuer, &model)
+	if diags.HasError() {
+		return types.ObjectNull(federationIssuerDataSourceAttrTypes), diags
 	}
 
-	archivedAt := types.StringNull()
-	if !issuer.ArchivedAt.IsZero() {
-		archivedAt = types.StringValue(issuer.ArchivedAt.Format(time.RFC3339))
-	}
-
-	archivedByActorID := types.StringNull()
-	if issuer.ArchivedByActorID != "" {
-		archivedByActorID = types.StringValue(issuer.ArchivedByActorID)
-	}
-
-	obj, d := types.ObjectValue(federationIssuersListItemAttrTypes, map[string]attr.Value{
-		"id":                       types.StringValue(issuer.ID),
-		"issuer_url":               types.StringValue(issuer.IssuerURL),
-		"name":                     types.StringValue(issuer.Name),
-		"check_jti":                types.BoolValue(issuer.CheckJTI),
-		"max_jwt_lifetime_seconds": types.Int64Value(issuer.MaxJWTLifetimeSeconds),
-		"jwks":                     jwksObj,
-		"jwks_polling_disabled_at": jwksPollingDisabledAt,
-		"poll_status":              pollStatusObj,
-		"created_at":               types.StringValue(issuer.CreatedAt.Format(time.RFC3339)),
-		"created_by_actor_id":      types.StringValue(issuer.CreatedByActorID),
-		"updated_at":               types.StringValue(issuer.UpdatedAt.Format(time.RFC3339)),
-		"updated_by_actor_id":      types.StringValue(issuer.UpdatedByActorID),
-		"archived_at":              archivedAt,
-		"archived_by_actor_id":     archivedByActorID,
-	})
-	diags.Append(d...)
-	return obj, diags
-}
-
-// mapFederationIssuersJWKS converts the API's flat JWKS union to a Terraform
-// object. The union already carries every variant's fields flattened onto one
-// struct (response-side union types are not per-variant), so no type switch is
-// needed here — only the fields relevant to the issuer's actual jwks.type will
-// be non-empty.
-func mapFederationIssuersJWKS(jwks anthropic.BetaFederationIssuerJWKSUnion) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	caCertPEM := types.StringNull()
-	if jwks.CACertPEM != "" {
-		caCertPEM = types.StringValue(jwks.CACertPEM)
-	}
-
-	discoveryBase := types.StringNull()
-	if jwks.DiscoveryBase != "" {
-		discoveryBase = types.StringValue(jwks.DiscoveryBase)
-	}
-
-	url := types.StringNull()
-	if jwks.URL != "" {
-		url = types.StringValue(jwks.URL)
-	}
-
-	// Use the per-field raw JSON captured at unmarshal time rather than
-	// re-marshalling jwks.Keys: the field is only actually present (as opposed
-	// to omitted) for the "inline" variant, and Field.Raw() preserves that
-	// distinction without risking key-order/whitespace drift from a fresh
-	// json.Marshal.
-	keys := jsontypes.NewNormalizedNull()
-	if raw := jwks.JSON.Keys.Raw(); raw != "" && raw != "null" {
-		keys = jsontypes.NewNormalizedValue(raw)
-	}
-
-	obj, d := types.ObjectValue(federationIssuersJWKSAttrTypes, map[string]attr.Value{
-		"type":           types.StringValue(jwks.Type),
-		"ca_cert_pem":    caCertPEM,
-		"discovery_base": discoveryBase,
-		"url":            url,
-		"keys":           keys,
-	})
-	diags.Append(d...)
-	return obj, diags
-}
-
-// mapFederationIssuersPollStatus converts the API's poll status to a Terraform object.
-func mapFederationIssuersPollStatus(status anthropic.BetaFederationIssuerPollStatus) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	lastFetchedAt := types.StringNull()
-	if !status.LastFetchedAt.IsZero() {
-		lastFetchedAt = types.StringValue(status.LastFetchedAt.Format(time.RFC3339))
-	}
-
-	nextPollAt := types.StringNull()
-	if !status.NextPollAt.IsZero() {
-		nextPollAt = types.StringValue(status.NextPollAt.Format(time.RFC3339))
-	}
-
-	obj, d := types.ObjectValue(federationIssuersPollStatusAttrTypes, map[string]attr.Value{
-		"consecutive_failures": types.Int64Value(status.ConsecutiveFailures),
-		"last_fetched_at":      lastFetchedAt,
-		"next_poll_at":         nextPollAt,
-	})
+	obj, d := types.ObjectValueFrom(ctx, federationIssuerDataSourceAttrTypes, model)
 	diags.Append(d...)
 	return obj, diags
 }

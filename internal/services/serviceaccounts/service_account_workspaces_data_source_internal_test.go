@@ -13,21 +13,9 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-// newServiceAccountWorkspacesTestClient builds an OAuth-wrapped SDK client
-// pointed at an httptest server for CI-deterministic unit tests. Named
-// distinctly from any equivalent helper a sibling WIF branch (e.g. the
-// anthropic_service_account_workspace resource) might add to this same
-// package, so the two can coexist once both branches merge.
-func newServiceAccountWorkspacesTestClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &providerdata.OAuthClient{Client: &c}
-}
 
 // --- mapServiceAccountWorkspacesListEntry ---
 
@@ -143,7 +131,7 @@ func TestServiceAccountWorkspacesDataSource_pagination(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newServiceAccountWorkspacesTestClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	pager := client.Beta.Organization.ServiceAccounts.Workspaces.ListAutoPaging(context.Background(), "svac_01ABC", anthropic.BetaOrganizationServiceAccountWorkspaceListParams{})
 
@@ -182,7 +170,7 @@ func TestServiceAccountWorkspacesDataSource_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newServiceAccountWorkspacesTestClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	pager := client.Beta.Organization.ServiceAccounts.Workspaces.ListAutoPaging(context.Background(), "svac_doesnotexist", anthropic.BetaOrganizationServiceAccountWorkspaceListParams{})
 

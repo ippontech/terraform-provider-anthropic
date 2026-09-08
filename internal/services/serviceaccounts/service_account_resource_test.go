@@ -6,16 +6,13 @@ package serviceaccounts_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
-
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // The service-accounts Beta endpoint has not been probed for the same
@@ -39,13 +36,8 @@ const (
 // that the service account was archived rather than that it is gone: it remains
 // permanently in the organization's (archived) service account list.
 
-func newTestOAuthClient() *anthropic.Client {
-	c := anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
-	return &c
-}
-
 func testAccCheckServiceAccountArchived(s *terraform.State) error {
-	client := newTestOAuthClient()
+	client := acctest.NewOAuthClient()
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "anthropic_service_account" {
 			continue

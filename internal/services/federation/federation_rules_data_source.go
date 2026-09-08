@@ -6,7 +6,6 @@ package federation
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -40,13 +39,8 @@ type FederationRulesDataSourceModel struct {
 
 // --- attr.Type maps ---
 
-var federationRulesMatchAttrTypes = map[string]attr.Type{
-	"audience":       types.StringType,
-	"claims":         types.MapType{ElemType: types.StringType},
-	"condition":      types.StringType,
-	"subject_prefix": types.StringType,
-}
-
+// federationRulesTargetAttrTypes is the resource's federationRuleTargetAttrTypes
+// plus the discriminator `type`, which only this list exposes.
 var federationRulesTargetAttrTypes = map[string]attr.Type{
 	"type":                 types.StringType,
 	"service_account_id":   types.StringType,
@@ -64,7 +58,7 @@ var federationRulesItemAttrTypes = map[string]attr.Type{
 	"description":               types.StringType,
 	"issuer_id":                 types.StringType,
 	"issuer_name":               types.StringType,
-	"match":                     types.ObjectType{AttrTypes: federationRulesMatchAttrTypes},
+	"match":                     types.ObjectType{AttrTypes: federationRuleMatchAttrTypes},
 	"name":                      types.StringType,
 	"oauth_scope":               types.StringType,
 	"target":                    types.ObjectType{AttrTypes: federationRulesTargetAttrTypes},
@@ -305,108 +299,41 @@ func (d *FederationRulesDataSource) Read(ctx context.Context, req datasource.Rea
 // mapFederationRulesListEntry converts a single BetaFederationRule into a
 // Terraform object value matching federationRulesItemAttrTypes.
 //
-// Named uniquely to this data source (rather than a generic
-// mapFederationRuleToState) so that sibling branches in the same package
-// (federation_rule, federation_rule_workspace, ...) can define their own
-// mapping helpers without a symbol collision once every WIF PR lands on main.
+// Every attribute shared with the anthropic_federation_rule resource is taken
+// from mapFederationRuleToState, so the list and the resource agree on null
+// handling and timestamp formatting; only the two `type` discriminators (rule
+// and target) are mapped here, because the resource does not expose them.
 func mapFederationRulesListEntry(ctx context.Context, rule anthropic.BetaFederationRule) (attr.Value, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	archivedAt := types.StringNull()
-	if !rule.ArchivedAt.IsZero() {
-		archivedAt = types.StringValue(rule.ArchivedAt.Format(time.RFC3339Nano))
+	var model FederationRuleResourceModel
+	diags := mapFederationRuleToState(ctx, &rule, &model)
+	if diags.HasError() {
+		return types.ObjectNull(federationRulesItemAttrTypes), diags
 	}
-
-	archivedByActorID := types.StringNull()
-	if rule.ArchivedByActorID != "" {
-		archivedByActorID = types.StringValue(rule.ArchivedByActorID)
-	}
-
-	description := types.StringNull()
-	if rule.Description != "" {
-		description = types.StringValue(rule.Description)
-	}
-
-	workspaceID := types.StringNull()
-	if rule.WorkspaceID != "" {
-		workspaceID = types.StringValue(rule.WorkspaceID)
-	}
-
-	attributesMap := types.MapNull(types.StringType)
-	if len(rule.Attributes) > 0 {
-		var d diag.Diagnostics
-		attributesMap, d = types.MapValueFrom(ctx, types.StringType, rule.Attributes)
-		diags.Append(d...)
-	}
-
-	workspaceIDs, d := types.ListValueFrom(ctx, types.StringType, rule.WorkspaceIDs)
-	diags.Append(d...)
-
-	matchObj, d := mapFederationRulesMatch(ctx, rule.Match)
-	diags.Append(d...)
 
 	targetObj, d := mapFederationRulesTarget(rule.Target)
 	diags.Append(d...)
 
 	obj, d := types.ObjectValue(federationRulesItemAttrTypes, map[string]attr.Value{
-		"id":                        types.StringValue(rule.ID),
-		"applies_to_all_workspaces": types.BoolValue(rule.AppliesToAllWorkspaces),
-		"archived_at":               archivedAt,
-		"archived_by_actor_id":      archivedByActorID,
-		"attributes":                attributesMap,
-		"created_at":                types.StringValue(rule.CreatedAt.Format(time.RFC3339Nano)),
-		"created_by_actor_id":       types.StringValue(rule.CreatedByActorID),
-		"description":               description,
-		"issuer_id":                 types.StringValue(rule.IssuerID),
-		"issuer_name":               types.StringValue(rule.IssuerName),
-		"match":                     matchObj,
-		"name":                      types.StringValue(rule.Name),
-		"oauth_scope":               types.StringValue(rule.OAuthScope),
+		"id":                        model.ID,
+		"applies_to_all_workspaces": model.AppliesToAllWorkspaces,
+		"archived_at":               model.ArchivedAt,
+		"archived_by_actor_id":      model.ArchivedByActorID,
+		"attributes":                model.Attributes,
+		"created_at":                model.CreatedAt,
+		"created_by_actor_id":       model.CreatedByActorID,
+		"description":               model.Description,
+		"issuer_id":                 model.IssuerID,
+		"issuer_name":               model.IssuerName,
+		"match":                     model.Match,
+		"name":                      model.Name,
+		"oauth_scope":               model.OAuthScope,
 		"target":                    targetObj,
-		"token_lifetime_seconds":    types.Int64Value(rule.TokenLifetimeSeconds),
+		"token_lifetime_seconds":    model.TokenLifetimeSeconds,
 		"type":                      types.StringValue(string(rule.Type)),
-		"updated_at":                types.StringValue(rule.UpdatedAt.Format(time.RFC3339Nano)),
-		"updated_by_actor_id":       types.StringValue(rule.UpdatedByActorID),
-		"workspace_id":              workspaceID,
-		"workspace_ids":             workspaceIDs,
-	})
-	diags.Append(d...)
-
-	return obj, diags
-}
-
-// mapFederationRulesMatch converts a BetaFederationRuleMatch into a Terraform
-// object value matching federationRulesMatchAttrTypes.
-func mapFederationRulesMatch(ctx context.Context, match anthropic.BetaFederationRuleMatch) (attr.Value, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	audience := types.StringNull()
-	if match.Audience != "" {
-		audience = types.StringValue(match.Audience)
-	}
-
-	condition := types.StringNull()
-	if match.Condition != "" {
-		condition = types.StringValue(match.Condition)
-	}
-
-	subjectPrefix := types.StringNull()
-	if match.SubjectPrefix != "" {
-		subjectPrefix = types.StringValue(match.SubjectPrefix)
-	}
-
-	claims := types.MapNull(types.StringType)
-	if len(match.Claims) > 0 {
-		var d diag.Diagnostics
-		claims, d = types.MapValueFrom(ctx, types.StringType, match.Claims)
-		diags.Append(d...)
-	}
-
-	obj, d := types.ObjectValue(federationRulesMatchAttrTypes, map[string]attr.Value{
-		"audience":       audience,
-		"claims":         claims,
-		"condition":      condition,
-		"subject_prefix": subjectPrefix,
+		"updated_at":                model.UpdatedAt,
+		"updated_by_actor_id":       model.UpdatedByActorID,
+		"workspace_id":              model.WorkspaceID,
+		"workspace_ids":             model.WorkspaceIDs,
 	})
 	diags.Append(d...)
 
@@ -414,16 +341,18 @@ func mapFederationRulesMatch(ctx context.Context, match anthropic.BetaFederation
 }
 
 // mapFederationRulesTarget converts a BetaServiceAccountTarget into a
-// Terraform object value matching federationRulesTargetAttrTypes.
+// Terraform object value matching federationRulesTargetAttrTypes: the
+// resource's target object plus the `type` discriminator.
 func mapFederationRulesTarget(target anthropic.BetaServiceAccountTarget) (attr.Value, diag.Diagnostics) {
-	serviceAccountName := types.StringNull()
-	if target.ServiceAccountName != "" {
-		serviceAccountName = types.StringValue(target.ServiceAccountName)
+	base, diags := mapTargetResponseToObject(target)
+	if diags.HasError() {
+		return types.ObjectNull(federationRulesTargetAttrTypes), diags
 	}
 
-	return types.ObjectValue(federationRulesTargetAttrTypes, map[string]attr.Value{
-		"type":                 types.StringValue(string(target.Type)),
-		"service_account_id":   types.StringValue(target.ServiceAccountID),
-		"service_account_name": serviceAccountName,
-	})
+	attrs := base.Attributes()
+	attrs["type"] = types.StringValue(string(target.Type))
+
+	obj, d := types.ObjectValue(federationRulesTargetAttrTypes, attrs)
+	diags.Append(d...)
+	return obj, diags
 }

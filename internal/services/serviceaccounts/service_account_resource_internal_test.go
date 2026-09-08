@@ -14,10 +14,9 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
 func TestMapServiceAccountToState_basicFields(t *testing.T) {
@@ -260,12 +259,6 @@ func TestBuildServiceAccountUpdateParams(t *testing.T) {
 	})
 }
 
-func newTestServiceAccountClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &c
-}
-
 func TestServiceAccountResource_readNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -274,7 +267,7 @@ func TestServiceAccountResource_readNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	_, err := client.Beta.Organization.ServiceAccounts.Get(context.Background(), "svac_missing", anthropic.BetaOrganizationServiceAccountGetParams{})
 	if err == nil {
@@ -314,7 +307,7 @@ func TestServiceAccountResource_archiveOnDelete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	sa, err := client.Beta.Organization.ServiceAccounts.Archive(context.Background(), "svac_01ABC", anthropic.BetaOrganizationServiceAccountArchiveParams{})
 	if err != nil {
@@ -331,12 +324,6 @@ func TestServiceAccountResource_archiveOnDelete(t *testing.T) {
 	if sa.ArchivedAt.IsZero() {
 		t.Error("expected the archived service account to carry a non-zero archived_at")
 	}
-}
-
-func newTestServiceAccountOAuthClient(t *testing.T, srv *httptest.Server) *providerdata.OAuthClient {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &providerdata.OAuthClient{Client: &c}
 }
 
 // newStaleThenFreshServiceAccountServer serves the service account as it was
@@ -408,7 +395,7 @@ func TestAwaitServiceAccountUpdateVisible_pollsUntilFresh(t *testing.T) {
 	after := before.Add(time.Second)
 
 	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 3)
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 2*time.Second, time.Millisecond)
 
@@ -423,7 +410,7 @@ func TestAwaitServiceAccountUpdateVisible_returnsImmediatelyWhenFresh(t *testing
 	after := before.Add(time.Second)
 
 	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 0)
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 2*time.Second, time.Millisecond)
 
@@ -440,7 +427,7 @@ func TestAwaitServiceAccountUpdateVisible_givesUpAtTimeout(t *testing.T) {
 	after := before.Add(time.Second)
 
 	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 1_000_000)
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	start := time.Now()
 	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 120*time.Millisecond, 10*time.Millisecond)
@@ -462,7 +449,7 @@ func TestAwaitServiceAccountUpdateVisible_stopsOnTerminalReadError(t *testing.T)
 	for _, status := range []int{401, 403, 404} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			srv, gets := newFailingServiceAccountServer(t, status)
-			client := newTestServiceAccountOAuthClient(t, srv)
+			client := oauthtest.NewClient(t, srv)
 
 			writtenAt := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 
@@ -485,7 +472,7 @@ func TestAwaitServiceAccountUpdateVisible_honoursContextCancellation(t *testing.
 	after := before.Add(time.Second)
 
 	srv, _ := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 1_000_000)
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

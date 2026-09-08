@@ -58,7 +58,7 @@ output "federation_rule_target_service_account_id" {
 - `updated_at` (String) RFC 3339 timestamp of when this rule was last updated.
 - `updated_by_actor_id` (String) Tagged ID (`user_`/`svac_`) of the actor that last updated this rule.
 - `workspace_id` (String) Legacy single-workspace binding. Prefer `workspace_ids`. Null when unset.
-- `workspace_ids` (List of String) Tagged IDs of the workspaces this rule is enabled for. Null when empty.
+- `workspace_ids` (List of String) Tagged IDs of the workspaces this rule is enabled for. May be empty for older rules that only carry the legacy `workspace_id` binding.
 
 <a id="nestedatt--match"></a>
 ### Nested Schema for `match`

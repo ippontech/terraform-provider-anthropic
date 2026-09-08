@@ -12,24 +12,9 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-// newTestFederationRuleWorkspacesClient builds an SDK client pointed at an httptest
-// server, authenticated with a bearer token the way pd.OAuthClient is in
-// production. WithoutEnvironmentDefaults keeps the test hermetic: it must not
-// pick up ambient ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the test
-// process environment.
-func newTestFederationRuleWorkspacesClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
-		option.WithBaseURL(srv.URL),
-		option.WithAuthToken("test-oauth-token"),
-	)
-	return &c
-}
 
 func federationRuleWorkspaceFixture(workspaceID, workspaceName, createdAt, createdByActorID string) map[string]any {
 	return map[string]any{
@@ -119,7 +104,7 @@ func TestFederationRuleWorkspacesDataSource_singlePage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleWorkspacesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},
@@ -175,7 +160,7 @@ func TestFederationRuleWorkspacesDataSource_pagination(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleWorkspacesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},
@@ -216,7 +201,7 @@ func TestFederationRuleWorkspacesDataSource_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleWorkspacesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_missing", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},

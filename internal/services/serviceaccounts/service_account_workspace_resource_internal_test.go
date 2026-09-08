@@ -15,9 +15,9 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
 // --- mapServiceAccountWorkspaceToState ---
@@ -72,43 +72,12 @@ func TestMapServiceAccountWorkspaceToState_Implicit(t *testing.T) {
 
 // --- ImportState: composite-ID split ---
 
-func schemaType(t *testing.T) tftypes.Type {
-	t.Helper()
-	var schemaResp resource.SchemaResponse
-	(&ServiceAccountWorkspaceResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
-	tfType, ok := schemaResp.Schema.Type().(interface {
-		TerraformType(context.Context) tftypes.Type
-	})
-	if !ok {
-		t.Fatal("schema type does not implement TerraformType")
-	}
-	return tfType.TerraformType(context.Background())
-}
-
-func nullValuesForSchema(t *testing.T) map[string]tftypes.Value {
-	t.Helper()
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := make(map[string]tftypes.Value, len(schemaObjType.AttributeTypes))
-	for name, typ := range schemaObjType.AttributeTypes {
-		vals[name] = tftypes.NewValue(typ, nil)
-	}
-	return vals
-}
-
-func newNullState(t *testing.T) tfsdk.State {
-	t.Helper()
-	var schemaResp resource.SchemaResponse
-	(&ServiceAccountWorkspaceResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
-	rawVal := tftypes.NewValue(schemaType(t), nullValuesForSchema(t))
-	return tfsdk.State{Raw: rawVal, Schema: schemaResp.Schema}
-}
-
 func TestServiceAccountWorkspaceImportState_ValidCompositeID(t *testing.T) {
 	ctx := context.Background()
 	r := &ServiceAccountWorkspaceResource{}
 
 	req := resource.ImportStateRequest{ID: "svac_01ABC:wrkspc_01XYZ"}
-	resp := &resource.ImportStateResponse{State: newNullState(t)}
+	resp := &resource.ImportStateResponse{State: schematest.NullState(t, &ServiceAccountWorkspaceResource{})}
 
 	r.ImportState(ctx, req, resp)
 	if resp.Diagnostics.HasError() {
@@ -151,7 +120,7 @@ func TestServiceAccountWorkspaceImportState_InvalidFormat(t *testing.T) {
 			ctx := context.Background()
 			r := &ServiceAccountWorkspaceResource{}
 			req := resource.ImportStateRequest{ID: id}
-			resp := &resource.ImportStateResponse{State: newNullState(t)}
+			resp := &resource.ImportStateResponse{State: schematest.NullState(t, &ServiceAccountWorkspaceResource{})}
 
 			r.ImportState(ctx, req, resp)
 
@@ -189,7 +158,7 @@ func TestAddServiceAccountToWorkspace_SendsCorrectPathAndBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	member, err := addServiceAccountToWorkspace(context.Background(), client, "svac_01ABC", "wrkspc_01XYZ", "workspace_developer")
 	if err != nil {
 		t.Fatalf("addServiceAccountToWorkspace: %v", err)
@@ -235,7 +204,7 @@ func TestRemoveServiceAccountFromWorkspace_RequestPathArgumentOrder(t *testing.T
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	err := removeServiceAccountFromWorkspace(context.Background(), client, "svac_THESERVICEACCOUNT", "wrkspc_THEWORKSPACE")
 	if err != nil {
 		t.Fatalf("removeServiceAccountFromWorkspace: %v", err)
@@ -265,7 +234,7 @@ func TestFindServiceAccountWorkspaceMembership_FoundOnFirstPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -302,7 +271,7 @@ func TestFindServiceAccountWorkspaceMembership_FoundOnSecondPage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -323,7 +292,7 @@ func TestFindServiceAccountWorkspaceMembership_GoneFromList(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -349,7 +318,7 @@ func TestFindServiceAccountWorkspaceMembership_SkipsImplicitEntry(t *testing.T) 
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	member, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_01ABC", "wrkspc_01TARGET")
 	if err != nil {
 		t.Fatalf("findServiceAccountWorkspaceMembership: %v", err)
@@ -367,7 +336,7 @@ func TestFindServiceAccountWorkspaceMembership_NotFoundError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestServiceAccountOAuthClient(t, srv)
+	client := oauthtest.NewClient(t, srv)
 	_, err := findServiceAccountWorkspaceMembership(context.Background(), client, "svac_missing", "wrkspc_01TARGET")
 
 	var apierr *anthropic.Error
