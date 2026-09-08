@@ -314,7 +314,31 @@ Two details of that loop are load-bearing. The ceiling (5s) and interval (200ms)
 
 Compare the two timestamps with a **non-strict** comparison — `!vault.UpdatedAt.Before(writtenAt)`, not `vault.UpdatedAt.After(writtenAt)`: an `updated_at` **equal** to the write timestamp must count as visible, or the loop always times out. `anthropic_vault_credential` has the same structural exposure but no observed flakiness, and its endpoint was not probed — check before assuming it needs the same wait.
 
-`anthropic_service_account`'s `Update` (`internal/services/serviceaccounts/service_account_resource.go`) applies the same `awaitServiceAccountUpdateVisible` wait defensively, on the reasoning that the Beta service-accounts endpoint shares the vaults family's underlying managed-agents infrastructure — **its staleness has not itself been probed against the live API**. If it turns out to be consistent, the wait is a harmless no-op (one extra `Get` per update); do not remove it without first checking, the way `anthropic_vault_credential`'s exposure above was checked and found unnecessary.
+#### WIF endpoints (probed 2026-09-08)
+
+The WIF endpoints (`/v1/organizations/{service_accounts,federation_issuers,federation_rules}`) share the managed-agents backend family and were probed the same way on 2026-09-08 ([#238](https://github.com/ippontech/terraform-provider-anthropic/issues/238)). The probe is checked in as `TestAccWIFStalenessProbe` — `internal/services/federation/wif_staleness_probe_test.go` (issuer, rule, rule-workspaces) and `internal/services/serviceaccounts/wif_staleness_probe_test.go` (service account) — and is doubly gated: `acctest.PreCheckOAuth` (needs an org:admin bearer) plus an explicit `ANTHROPIC_WIF_STALENESS_PROBE=1` opt-in, so `make testacc` never runs it. It is an instrument, not a regression test: it never fails on a stale read, it prints a table. Re-run it before changing any of the waits below:
+
+```bash
+TF_ACC=1 ANTHROPIC_AUTH_TOKEN=... ANTHROPIC_WIF_STALENESS_PROBE=1 \
+  go test -run TestAccWIFStalenessProbe -v ./internal/services/...
+```
+
+Method per trial: one write (`POST …/{id}` update, or rule-workspace `Add`/`Remove`), then a read every 50ms up to 5s until it reflects the write — non-strict `updated_at` comparison against the write response's `updated_at` plus a check on the mutated field (presence/absence for the list endpoint, which carries no timestamp). The first read landed 220–340ms after the write (request latency), so "stale" below means the object was still stale at ≥220ms. Nine trials per endpoint over three runs (issuer: twelve, nine before any rule referenced it and three with a live rule):
+
+| Endpoint | Stale trials | Convergence when stale | Action |
+|---|---|---|---|
+| `GET /service_accounts/{id}` after `POST …/{id}` | 1 / 9 | 494ms | existing `awaitServiceAccountUpdateVisible` wait kept, now backed by measurement |
+| `GET /federation_issuers/{id}` after `POST …/{id}` | 0 / 12 | — | **no wait** (see caveat) |
+| `GET /federation_rules/{id}` after `POST …/{id}` | 1 / 9 | 556ms | `awaitFederationRuleUpdateVisible` added to `Update` |
+| `GET /federation_rules/{id}/workspaces` after `POST` Add | 1 / 9 | 1.07s (two stale reads) | `awaitFederationRuleWorkspaceListed` added to `Read` |
+| `GET /federation_rules/{id}/workspaces` after `DELETE` Remove | 0 / 9 | — | none (only the tests' `CheckDestroy` reads after a destroy) |
+
+Two details of the outcome are load-bearing:
+
+- **The rule-workspace hazard is state loss, not a phantom diff.** `anthropic_federation_rule_workspace`'s `Read` is find-in-list and treats an absent entry as an authoritative out-of-band removal (`RemoveResource`), and Terraform runs that `Read` right after `Create`. A stale, still-empty list there would drop a freshly created resource from state — hence the wait sits in `Read` (bounded by `federationRuleWorkspaceConsistencyTimeout`/`Interval`, 5s/200ms, passed as arguments; errors, including the 404 that means the rule itself is gone, return on the first occurrence and are not retried). The cost is symmetric: a `Read` of an entry that really is gone now waits the full 5s before reporting it, which only happens on genuine drift. `Create`'s own lookup (it only enriches the Computed `workspace_name`, which the post-apply refresh fills anyway) deliberately stays a single call, so an empty first list there is harmless and `TestFederationRuleWorkspaceCreate_AddWiring` does not spend 5s on its mocked empty list.
+- **The issuer's negative result is thin, not conclusive.** At the ~1-in-9 rate the sibling endpoints showed, twelve clean trials have roughly a one-in-four chance of simply missing the window. It gets no wait today because the coordinating rule for this section is measurement first, but if `TestAccFederationIssuerResource_*` ever shows a phantom diff, re-run the probe and add the same wait shape rather than debating it. One further oddity was seen once and never reproduced: on the very first probe run, the issuer `POST …/{id}` update — issued ~1–2s after the issuer's own create, and after a rule referencing it had been created successfully — answered `404 Federation issuer not found`; the 16 update writes of the following runs all returned 200 on the first attempt (the probe now retries a 404 on the write and would report it in the `write 404s` column). Treat a create-then-immediately-update 404 on issuers as a possible read-after-write effect on the write path, not as a client bug.
+
+`anthropic_service_account`'s `Update` (`internal/services/serviceaccounts/service_account_resource.go`) had applied `awaitServiceAccountUpdateVisible` defensively since before the probe existed; the 1-in-9 stale trial above is what justifies it. `anthropic_federation_rule`'s wait (`federation_rule_resource.go`) has the same shape and the same load-bearing details as the vaults one: 5s/200ms consts passed as arguments, terminal on 401/403/404, non-strict `!rule.UpdatedAt.Before(writtenAt)`, best-effort (never a diagnostic). Both are unit-tested against `httptest` servers in `*_await_internal_test.go` files.
 
 ### PII attributes and example outputs
 

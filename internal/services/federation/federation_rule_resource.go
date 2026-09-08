@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -26,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -35,6 +37,17 @@ import (
 var _ resource.Resource = &FederationRuleResource{}
 var _ resource.ResourceWithImportState = &FederationRuleResource{}
 var _ resource.ResourceWithConfigValidators = &FederationRuleResource{}
+
+// The production bounds of awaitFederationRuleUpdateVisible's wait. They are
+// consts, and the function takes them as arguments, so the unit tests can
+// shrink the loop to milliseconds without mutating shared state: the
+// acceptance tests exercise the real Update in the same test binary, and a
+// package-level knob would race with them the day any test opts into
+// t.Parallel(). Same bounds as the vaults wait (vault_resource.go).
+const (
+	federationRuleConsistencyTimeout  = 5 * time.Second
+	federationRuleConsistencyInterval = 200 * time.Millisecond
+)
 
 func NewFederationRuleResource() resource.Resource {
 	return &FederationRuleResource{}
@@ -478,6 +491,72 @@ func (r *FederationRuleResource) Read(ctx context.Context, req resource.ReadRequ
 
 // --- Update ---
 
+// isTerminalFederationRuleReadError reports whether a Get failure is one the
+// poll can never recover from: the rule is gone, or the credential no longer
+// has access to it. Retrying those until the deadline would stall the apply
+// for seconds on a read that will never converge.
+func isTerminalFederationRuleReadError(err error) bool {
+	var apierr *anthropic.Error
+	if !errors.As(err, &apierr) {
+		return false
+	}
+
+	switch apierr.StatusCode {
+	case 401, 403, 404:
+		return true
+	default:
+		return false
+	}
+}
+
+// awaitFederationRuleUpdateVisible polls Get until the stored rule is at least
+// as new as writtenAt, the updated_at returned by the write itself. Mirrors
+// awaitVaultUpdateVisible (vault_resource.go): probed on 2026-09-08, GET
+// /v1/organizations/federation_rules/{id} returned the pre-update rule in 1 of
+// 9 trials, converging 556ms after the write (see the read-after-write section
+// of CLAUDE.md). Left alone, Terraform's post-apply refresh lands inside that
+// window and the next plan shows a phantom in-place update.
+//
+// It is deliberately best-effort: on a read error, a timeout, or a cancelled
+// context it returns without reporting a diagnostic. The write has already
+// succeeded, so failing the apply here would turn a cosmetic staleness window
+// into a hard error; the worst case of giving up is the phantom diff we were
+// trying to avoid. The timestamp comparison is non-strict: an updated_at equal
+// to the write's counts as visible, or the loop would always time out.
+func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.OAuthClient, id string, writtenAt time.Time, timeout, interval time.Duration) {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		rule, err := client.Beta.Organization.Federation.Rules.Get(ctx, id, anthropic.BetaOrganizationFederationRuleGetParams{})
+		switch {
+		case err == nil:
+			if !rule.UpdatedAt.Before(writtenAt) {
+				return
+			}
+		case isTerminalFederationRuleReadError(err):
+			tflog.Warn(ctx, "federation rule became unreadable while waiting for the update to be visible; giving up on the consistency wait", map[string]any{
+				"federation_rule_id": id,
+				"error":              err.Error(),
+			})
+			return
+		}
+
+		if time.Now().After(deadline) {
+			tflog.Warn(ctx, "federation rule update not visible before the consistency timeout; the next plan may show a transient diff", map[string]any{
+				"federation_rule_id": id,
+				"timeout":            timeout.String(),
+			})
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+}
+
 func (r *FederationRuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan FederationRuleResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -571,6 +650,8 @@ func (r *FederationRuleResource) Update(ctx context.Context, req resource.Update
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	awaitFederationRuleUpdateVisible(ctx, r.client, state.ID.ValueString(), rule.UpdatedAt, federationRuleConsistencyTimeout, federationRuleConsistencyInterval)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
