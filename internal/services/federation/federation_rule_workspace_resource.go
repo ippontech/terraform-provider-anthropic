@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -25,6 +26,16 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &FederationRuleWorkspaceResource{}
 var _ resource.ResourceWithImportState = &FederationRuleWorkspaceResource{}
+
+// The production bounds of awaitFederationRuleWorkspaceListed's wait. Consts
+// passed as arguments, not package-level vars, so unit tests can shrink the
+// loop to milliseconds without racing the acceptance tests that exercise the
+// real Create/Read in the same binary. Same bounds as the vaults wait
+// (vault_resource.go).
+const (
+	federationRuleWorkspaceConsistencyTimeout  = 5 * time.Second
+	federationRuleWorkspaceConsistencyInterval = 200 * time.Millisecond
+)
 
 func NewFederationRuleWorkspaceResource() resource.Resource {
 	return &FederationRuleWorkspaceResource{}
@@ -147,7 +158,10 @@ func (r *FederationRuleWorkspaceResource) Create(ctx context.Context, req resour
 	// fully populated after the first apply instead of only after the next
 	// refresh. Best-effort: the enablement itself already succeeded, so a
 	// failed or empty lookup here falls back to the Add response rather than
-	// failing the apply.
+	// failing the apply. A single lookup, not the bounded wait Read uses: the
+	// list can lag the Add by ~1s, but workspace_name is Computed, so an
+	// empty lookup here only defers it to the post-apply refresh, whereas an
+	// empty list in Read would drop the resource from state.
 	if found, lookupErr := findFederationRuleWorkspace(ctx, r.client.Client, federationRuleID, workspaceID); lookupErr == nil && found != nil {
 		added = found
 	} else if lookupErr != nil {
@@ -172,7 +186,11 @@ func (r *FederationRuleWorkspaceResource) Read(ctx context.Context, req resource
 		return
 	}
 
-	found, err := findFederationRuleWorkspace(ctx, r.client.Client, data.FederationRuleID.ValueString(), data.WorkspaceID.ValueString())
+	// Bounded wait rather than a single lookup: the list can lag an Add by up
+	// to ~1s (see awaitFederationRuleWorkspaceListed), and this Read is what
+	// Terraform runs right after Create. Reading a stale, still-empty list
+	// there would remove a freshly created resource from state.
+	found, err := awaitFederationRuleWorkspaceListed(ctx, r.client.Client, data.FederationRuleID.ValueString(), data.WorkspaceID.ValueString(), federationRuleWorkspaceConsistencyTimeout, federationRuleWorkspaceConsistencyInterval)
 	if err != nil {
 		var apiErr *anthropic.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
@@ -184,7 +202,8 @@ func (r *FederationRuleWorkspaceResource) Read(ctx context.Context, req resource
 		return
 	}
 	if found == nil {
-		// The enablement was removed out-of-band (e.g. via the Console).
+		// Still absent after the whole wait: the enablement was removed
+		// out-of-band (e.g. via the Console), not merely not yet visible.
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -241,6 +260,42 @@ func (r *FederationRuleWorkspaceResource) ImportState(ctx context.Context, req r
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// awaitFederationRuleWorkspaceListed calls findFederationRuleWorkspace until
+// the entry is present or timeout elapses, returning (nil, nil) only once the
+// whole window has passed without a match. Probed on 2026-09-08: GET
+// /v1/organizations/federation_rules/{id}/workspaces did not yet list a
+// workspace just added by POST in 1 of 9 trials, converging 1.07s after the
+// Add (see the read-after-write section of CLAUDE.md). Read treats an absent
+// entry as an authoritative out-of-band removal, so a single stale list right
+// after Create would drop the resource from state; the bounded wait turns
+// that into a sub-second delay. The cost is symmetric: a Read of an entry that
+// really is gone waits the full timeout before reporting it, which only
+// happens on genuine drift.
+//
+// Errors are returned on the first occurrence rather than retried: a 404 means
+// the rule itself is gone, and any other failure is a hard Read error today.
+// A cancelled context returns ctx.Err().
+func awaitFederationRuleWorkspaceListed(ctx context.Context, client *anthropic.Client, federationRuleID, workspaceID string, timeout, interval time.Duration) (*anthropic.BetaFederationRuleWorkspace, error) {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		found, err := findFederationRuleWorkspace(ctx, client, federationRuleID, workspaceID)
+		if err != nil || found != nil {
+			return found, err
+		}
+
+		if time.Now().After(deadline) {
+			return nil, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
 
 // findFederationRuleWorkspace pages through the rule's enabled workspaces
 // looking for workspaceID. It returns (nil, nil) when pagination completes
