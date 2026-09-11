@@ -90,6 +90,8 @@ internal/
 6. Add a Terraform native test under `tests/<name>.tftest.hcl`
 7. Run `make generate` to regenerate docs
 
+Guides live under `templates/guides/<name>.md.tmpl` (rendered to `docs/guides/`, subcategory required as for resources). Every `.md.tmpl` is parsed as a Go text/template, so a literal `{{ ... }}` (a GitHub Actions `${{ vars.X }}` expression in a YAML snippet, say) fails `make generate` with `function "vars" not defined`; and because tfplugindocs wipes `docs/` before rendering, that failure leaves every `docs/**/*.md` deleted in the working tree until a successful re-run restores them. Use literal placeholder values instead, or escape as `{{"{{"}}`. A guide's HCL example is not covered by the native tests, so validate it by hand: extract it to a scratch directory and run `terraform validate` against a freshly built provider ([#240](https://github.com/ippontech/terraform-provider-anthropic/issues/240), `docs/guides/workload_identity_federation.md`).
+
 ### Testing pattern
 
 **Go acceptance tests** (`internal/services/<service>/`):
