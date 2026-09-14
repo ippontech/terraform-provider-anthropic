@@ -36,7 +36,7 @@ repos:
           - --error
         files: ^\.github/
   - repo: https://github.com/bridgecrewio/checkov
-    rev: 3.3.16
+    rev: 3.3.17
     hooks:
       - id: checkov
         pass_filenames: false
