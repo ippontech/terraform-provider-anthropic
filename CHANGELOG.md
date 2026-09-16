@@ -1,3 +1,9 @@
+## [1.43.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.0...v1.43.1) (2026-09-16)
+
+### 📚 Documentation
+
+* **wif:** add a "bootstrap Workload Identity Federation" guide ([#242](https://github.com/ippontech/terraform-provider-anthropic/issues/242)) ([aadaf5d](https://github.com/ippontech/terraform-provider-anthropic/commit/aadaf5daeacbbc8d53e72400ddd12b5b605f4e7c)), closes [#240](https://github.com/ippontech/terraform-provider-anthropic/issues/240) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137)
+
 ## [1.43.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.42.0...v1.43.0) (2026-09-07)
 
 ### ✨ Features
