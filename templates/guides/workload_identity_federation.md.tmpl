@@ -80,7 +80,51 @@ The consequence for Terraform is a single manual step per organization:
    ```
 
 2. In the Console, go to **Settings → Workload identity → Connect workload** and create one federation rule for your infrastructure workload (for example the GitHub Actions workflow of the repository holding this Terraform configuration). Under **Advanced rule options**, set the OAuth scope to `org:admin` and pick the **existing admin service account** created in step 1 as the target. The rule is then the only Console-owned object.
-3. Everything else, including issuers and every workspace-scoped rule, can now be created from Terraform, either by a human running `terraform apply` with the token from section 1, or by that bootstrapped workload once it exchanges its identity token ([Minting the token in CI](#minting-the-token-in-ci)).
+3. Bring the rule under Terraform's control. The provider cannot create or change an `org:admin` rule, but it can import and read one, so declare the rule exactly as the Console created it and import it by the `fdrl_...` ID shown in the Console (or listed by `data.anthropic_federation_rules`). The wizard also registered the issuer, which gets the same treatment (an organization holds one issuer per `issuer_url`, so a fresh `resource` for it would fail with a `409`):
+
+   ```hcl
+   # Registered by the Connect workload wizard; imported, never recreated.
+   resource "anthropic_federation_issuer" "github_actions" {
+     name       = "github-actions"
+     issuer_url = "https://token.actions.githubusercontent.com"
+   }
+
+   # Created in the Console (step 2). Read-only for the provider: any change
+   # to it happens in the Console and is then reflected here.
+   resource "anthropic_federation_rule" "infra_bootstrap" {
+     name        = "infra-bootstrap"
+     description = "Lets the infrastructure repository manage WIF"
+     issuer_id   = anthropic_federation_issuer.github_actions.id
+
+     match = {
+       # Pinned to one protected branch, see the warning below.
+       subject_prefix = "repo:my-org/infra:ref:refs/heads/main"
+     }
+
+     target = {
+       service_account_id = anthropic_service_account.infra_bootstrap.id
+     }
+
+     oauth_scope = "org:admin"
+     # The wizard requires a workspace even for an org:admin rule. Set the
+     # one you picked, or the plan will want to change it.
+     workspace_id = "wrkspc_01ABC..."
+   }
+
+   import {
+     to = anthropic_federation_issuer.github_actions
+     id = "fdis_01ABC..."
+   }
+
+   import {
+     to = anthropic_federation_rule.infra_bootstrap
+     id = "fdrl_01ABC..."
+   }
+   ```
+
+   Apply, then run `terraform plan` and adjust the configuration until it is empty: with `oauth_scope = "org:admin"` a non-empty plan cannot be applied, it only means the declaration does not match the Console. [Section 5](#5-importing-console-created-objects) lists the two wizard details that usually need reconciling (`workspace_id` and an unset `match.audience`). Drop the `import` blocks once the state holds both objects.
+
+4. Everything else, including every workspace-scoped rule, can now be created from Terraform, either by a human running `terraform apply` with the token from section 1, or by that bootstrapped workload once it exchanges its identity token ([Minting the token in CI](#minting-the-token-in-ci)).
 
 ~> **Warning**: Match the bootstrap rule to one exact workload identity, never a broad pattern. `subject_prefix` is an exact match unless the value ends in `*`. For GitHub Actions, pin it to a protected branch such as `repo:my-org/my-repo:ref:refs/heads/main`. A trailing wildcard such as `repo:my-org/my-repo:*` also matches `pull_request` runs, including runs from forks, so anyone able to open a pull request could mint an `org:admin` token.
 
