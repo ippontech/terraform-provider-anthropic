@@ -79,11 +79,11 @@ func (d *FederationRuleWorkspacesDataSource) Schema(_ context.Context, _ datasou
 						},
 						"workspace_name": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Display name of the workspace.",
+							MarkdownDescription: "Display name of the workspace. `null` if the API returned it empty (the list endpoint always populates it today).",
 						},
 						"created_at": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "RFC 3339 timestamp of when this workspace was enabled for the rule.",
+							MarkdownDescription: "RFC 3339 timestamp of when this workspace was enabled for the rule. `null` if the API returned it empty.",
 						},
 						"created_by_actor_id": schema.StringAttribute{
 							Computed:            true,
