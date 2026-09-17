@@ -12,24 +12,9 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-// newTestFederationRuleWorkspacesClient builds an SDK client pointed at an httptest
-// server, authenticated with a bearer token the way pd.OAuthClient is in
-// production. WithoutEnvironmentDefaults keeps the test hermetic: it must not
-// pick up ambient ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the test
-// process environment.
-func newTestFederationRuleWorkspacesClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
-		option.WithBaseURL(srv.URL),
-		option.WithAuthToken("test-oauth-token"),
-	)
-	return &c
-}
 
 func federationRuleWorkspaceFixture(workspaceID, workspaceName, createdAt, createdByActorID string) map[string]any {
 	return map[string]any{
@@ -79,12 +64,18 @@ func TestMapFederationRuleWorkspacesListItem(t *testing.T) {
 	}
 }
 
-func TestMapFederationRuleWorkspacesListItem_emptyCreatedByActorID(t *testing.T) {
+// Empty optional fields come out null, not "": the list item is derived from
+// mapFederationRuleWorkspaceToState (the resource's mapper, via
+// tfvalue.StringOrNull / TimeOrNull), so the data source shares the resource's
+// null-handling contract. The list endpoint populates workspace_name and
+// created_at today (per the SDK, workspace_name is only null in the enable
+// response), so this pins the intended behaviour should that ever change.
+func TestMapFederationRuleWorkspacesListItem_emptyFieldsAreNull(t *testing.T) {
 	w := &anthropic.BetaFederationRuleWorkspace{
 		FederationRuleID: "fdrl_01ABC",
 		WorkspaceID:      "wrkspc_01WS",
-		WorkspaceName:    "prod",
-		CreatedAt:        time.Now(),
+		WorkspaceName:    "",
+		CreatedAt:        time.Time{},
 		CreatedByActorID: "",
 	}
 
@@ -92,9 +83,18 @@ func TestMapFederationRuleWorkspacesListItem_emptyCreatedByActorID(t *testing.T)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
-
 	if obj.IsNull() || obj.IsUnknown() {
 		t.Fatalf("expected a known, non-null object")
+	}
+
+	attrs := obj.(types.Object).Attributes()
+	if got := attrs["workspace_id"].(types.String).ValueString(); got != "wrkspc_01WS" {
+		t.Errorf("workspace_id = %q, want %q", got, "wrkspc_01WS")
+	}
+	for _, name := range []string{"workspace_name", "created_at", "created_by_actor_id"} {
+		if v := attrs[name].(types.String); !v.IsNull() {
+			t.Errorf("%s = %q, want null for an empty API value", name, v.ValueString())
+		}
 	}
 }
 
@@ -119,7 +119,7 @@ func TestFederationRuleWorkspacesDataSource_singlePage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleWorkspacesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},
@@ -175,7 +175,7 @@ func TestFederationRuleWorkspacesDataSource_pagination(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleWorkspacesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},
@@ -216,7 +216,7 @@ func TestFederationRuleWorkspacesDataSource_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRuleWorkspacesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.Workspaces.ListAutoPaging(
 		context.Background(), "fdrl_missing", anthropic.BetaOrganizationFederationRuleWorkspaceListParams{},

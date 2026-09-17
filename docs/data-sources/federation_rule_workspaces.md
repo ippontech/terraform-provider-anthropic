@@ -48,7 +48,7 @@ output "federation_rule_workspace_ids" {
 
 Read-Only:
 
-- `created_at` (String) RFC 3339 timestamp of when this workspace was enabled for the rule.
+- `created_at` (String) RFC 3339 timestamp of when this workspace was enabled for the rule. `null` if the API returned it empty.
 - `created_by_actor_id` (String) Tagged ID (`user_...` or `svac_...`) of the actor that enabled this workspace for the rule, if known.
 - `workspace_id` (String) Tagged ID of the workspace this rule is enabled for.
-- `workspace_name` (String) Display name of the workspace.
+- `workspace_name` (String) Display name of the workspace. `null` if the API returned it empty (the list endpoint always populates it today).

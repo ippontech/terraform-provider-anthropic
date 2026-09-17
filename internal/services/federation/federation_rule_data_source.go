@@ -6,13 +6,10 @@ package federation
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -35,50 +32,11 @@ type FederationRuleDataSource struct {
 	client *providerdata.OAuthClient
 }
 
-// federationRuleDataSourceMatchAttrTypes and federationRuleDataSourceTargetAttrTypes
-// describe the "match" and "target" nested objects for types.ObjectValue /
-// types.ObjectType construction.
-//
-// Names in this file are suffixed with "federationRuleDataSource" (or, for
-// package-level helpers, prefixed with it) rather than reusing generic names
-// like "mapFederationRuleToState". The federation_rule *resource* lives on a
-// sibling, not-yet-merged branch and may define its own identically-purposed
-// but differently-shaped helpers; keeping names unique here avoids a compile
-// break when both land in the same package.
-var federationRuleDataSourceMatchAttrTypes = map[string]attr.Type{
-	"subject_prefix": types.StringType,
-	"audience":       types.StringType,
-	"claims":         types.MapType{ElemType: types.StringType},
-	"condition":      types.StringType,
-}
-
-var federationRuleDataSourceTargetAttrTypes = map[string]attr.Type{
-	"service_account_id":   types.StringType,
-	"service_account_name": types.StringType,
-}
-
-// FederationRuleDataSourceModel describes the data source data model.
-type FederationRuleDataSourceModel struct {
-	ID                     types.String `tfsdk:"id"`
-	Name                   types.String `tfsdk:"name"`
-	Description            types.String `tfsdk:"description"`
-	IssuerID               types.String `tfsdk:"issuer_id"`
-	IssuerName             types.String `tfsdk:"issuer_name"`
-	OAuthScope             types.String `tfsdk:"oauth_scope"`
-	WorkspaceID            types.String `tfsdk:"workspace_id"`
-	Match                  types.Object `tfsdk:"match"`
-	Target                 types.Object `tfsdk:"target"`
-	AppliesToAllWorkspaces types.Bool   `tfsdk:"applies_to_all_workspaces"`
-	TokenLifetimeSeconds   types.Int64  `tfsdk:"token_lifetime_seconds"`
-	Attributes             types.Map    `tfsdk:"attributes"`
-	WorkspaceIDs           types.List   `tfsdk:"workspace_ids"`
-	CreatedAt              types.String `tfsdk:"created_at"`
-	CreatedByActorID       types.String `tfsdk:"created_by_actor_id"`
-	UpdatedAt              types.String `tfsdk:"updated_at"`
-	UpdatedByActorID       types.String `tfsdk:"updated_by_actor_id"`
-	ArchivedAt             types.String `tfsdk:"archived_at"`
-	ArchivedByActorID      types.String `tfsdk:"archived_by_actor_id"`
-}
+// FederationRuleDataSourceModel describes the data source data model. The
+// data source exposes exactly the resource's attributes (match and target
+// nested objects included), so it shares the resource model and its
+// mapFederationRuleToState mapping.
+type FederationRuleDataSourceModel = FederationRuleResourceModel
 
 func (d *FederationRuleDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_federation_rule"
@@ -175,7 +133,7 @@ func (d *FederationRuleDataSource) Schema(_ context.Context, _ datasource.Schema
 			"workspace_ids": schema.ListAttribute{
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Tagged IDs of the workspaces this rule is enabled for. Null when empty.",
+				MarkdownDescription: "Tagged IDs of the workspaces this rule is enabled for. May be empty for older rules that only carry the legacy `workspace_id` binding.",
 			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
@@ -240,138 +198,10 @@ func (d *FederationRuleDataSource) Read(ctx context.Context, req datasource.Read
 		return
 	}
 
-	state, diags := mapFederationRuleDataSourceToState(rule)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(mapFederationRuleToState(ctx, rule, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
-}
-
-// mapFederationRuleDataSourceToState converts an SDK BetaFederationRule into
-// the Terraform state model. Kept as a standalone function (not a method) so
-// unit tests can exercise it directly without a live client.
-func mapFederationRuleDataSourceToState(rule *anthropic.BetaFederationRule) (*FederationRuleDataSourceModel, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	data := &FederationRuleDataSourceModel{
-		ID:                     types.StringValue(rule.ID),
-		Name:                   types.StringValue(rule.Name),
-		IssuerID:               types.StringValue(rule.IssuerID),
-		IssuerName:             types.StringValue(rule.IssuerName),
-		OAuthScope:             types.StringValue(rule.OAuthScope),
-		AppliesToAllWorkspaces: types.BoolValue(rule.AppliesToAllWorkspaces),
-		TokenLifetimeSeconds:   types.Int64Value(rule.TokenLifetimeSeconds),
-		CreatedAt:              types.StringValue(rule.CreatedAt.Format(time.RFC3339Nano)),
-		CreatedByActorID:       types.StringValue(rule.CreatedByActorID),
-		UpdatedAt:              types.StringValue(rule.UpdatedAt.Format(time.RFC3339Nano)),
-		UpdatedByActorID:       types.StringValue(rule.UpdatedByActorID),
-	}
-
-	if rule.Description != "" {
-		data.Description = types.StringValue(rule.Description)
-	} else {
-		data.Description = types.StringNull()
-	}
-
-	if rule.WorkspaceID != "" {
-		data.WorkspaceID = types.StringValue(rule.WorkspaceID)
-	} else {
-		data.WorkspaceID = types.StringNull()
-	}
-
-	if rule.ArchivedAt.IsZero() {
-		data.ArchivedAt = types.StringNull()
-	} else {
-		data.ArchivedAt = types.StringValue(rule.ArchivedAt.Format(time.RFC3339Nano))
-	}
-
-	if rule.ArchivedByActorID != "" {
-		data.ArchivedByActorID = types.StringValue(rule.ArchivedByActorID)
-	} else {
-		data.ArchivedByActorID = types.StringNull()
-	}
-
-	// match
-	var subjectPrefix, audience, condition types.String
-	if rule.Match.SubjectPrefix != "" {
-		subjectPrefix = types.StringValue(rule.Match.SubjectPrefix)
-	} else {
-		subjectPrefix = types.StringNull()
-	}
-	if rule.Match.Audience != "" {
-		audience = types.StringValue(rule.Match.Audience)
-	} else {
-		audience = types.StringNull()
-	}
-	if rule.Match.Condition != "" {
-		condition = types.StringValue(rule.Match.Condition)
-	} else {
-		condition = types.StringNull()
-	}
-
-	var claims types.Map
-	if len(rule.Match.Claims) > 0 {
-		elements := make(map[string]attr.Value, len(rule.Match.Claims))
-		for k, v := range rule.Match.Claims {
-			elements[k] = types.StringValue(v)
-		}
-		m, d := types.MapValue(types.StringType, elements)
-		diags.Append(d...)
-		claims = m
-	} else {
-		claims = types.MapNull(types.StringType)
-	}
-
-	match, d := types.ObjectValue(federationRuleDataSourceMatchAttrTypes, map[string]attr.Value{
-		"subject_prefix": subjectPrefix,
-		"audience":       audience,
-		"claims":         claims,
-		"condition":      condition,
-	})
-	diags.Append(d...)
-	data.Match = match
-
-	// target
-	var serviceAccountName types.String
-	if rule.Target.ServiceAccountName != "" {
-		serviceAccountName = types.StringValue(rule.Target.ServiceAccountName)
-	} else {
-		serviceAccountName = types.StringNull()
-	}
-
-	target, d := types.ObjectValue(federationRuleDataSourceTargetAttrTypes, map[string]attr.Value{
-		"service_account_id":   types.StringValue(rule.Target.ServiceAccountID),
-		"service_account_name": serviceAccountName,
-	})
-	diags.Append(d...)
-	data.Target = target
-
-	// attributes
-	if len(rule.Attributes) > 0 {
-		elements := make(map[string]attr.Value, len(rule.Attributes))
-		for k, v := range rule.Attributes {
-			elements[k] = types.StringValue(v)
-		}
-		m, d := types.MapValue(types.StringType, elements)
-		diags.Append(d...)
-		data.Attributes = m
-	} else {
-		data.Attributes = types.MapNull(types.StringType)
-	}
-
-	// workspace_ids
-	if len(rule.WorkspaceIDs) > 0 {
-		elements := make([]attr.Value, len(rule.WorkspaceIDs))
-		for i, id := range rule.WorkspaceIDs {
-			elements[i] = types.StringValue(id)
-		}
-		l, d := types.ListValue(types.StringType, elements)
-		diags.Append(d...)
-		data.WorkspaceIDs = l
-	} else {
-		data.WorkspaceIDs = types.ListNull(types.StringType)
-	}
-
-	return data, diags
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

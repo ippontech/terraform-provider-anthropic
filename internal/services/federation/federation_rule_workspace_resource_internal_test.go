@@ -14,51 +14,18 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
-	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// ruleWorkspaceSchemaType returns the tftypes.Type of the FederationRuleWorkspaceResource
-// schema.
-func ruleWorkspaceSchemaType(t *testing.T) tftypes.Type {
-	t.Helper()
-	var schemaResp resource.SchemaResponse
-	r := NewFederationRuleWorkspaceResource()
-	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
-	tfType, ok := schemaResp.Schema.Type().(interface {
-		TerraformType(context.Context) tftypes.Type
-	})
-	if !ok {
-		t.Fatal("schema type does not implement TerraformType")
-	}
-	return tfType.TerraformType(context.Background())
-}
-
-// nullValuesForRuleWorkspaceSchema returns a map of tftypes.Value with null values for
-// every attribute in the schema — used as a base to build test states.
-func nullValuesForRuleWorkspaceSchema(t *testing.T) map[string]tftypes.Value {
-	t.Helper()
-	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
-	vals := make(map[string]tftypes.Value, len(schemaObjType.AttributeTypes))
-	for name, typ := range schemaObjType.AttributeTypes {
-		vals[name] = tftypes.NewValue(typ, nil)
-	}
-	return vals
-}
-
-func newTestOAuthClient(srv *httptest.Server) *providerdata.OAuthClient {
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &providerdata.OAuthClient{Client: &c}
-}
 
 // newListWorkspacesServer serves a single-page ListAutoPaging response
 // containing entries, and records every request's method and path.
@@ -90,8 +57,8 @@ func TestFederationRuleWorkspaceImportState_ValidID(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
-	rawVal := tftypes.NewValue(schemaObjType, nullValuesForRuleWorkspaceSchema(t))
+	schemaObjType := schematest.ResourceObjectType(t, NewFederationRuleWorkspaceResource())
+	rawVal := tftypes.NewValue(schemaObjType, schematest.NullValues(t, NewFederationRuleWorkspaceResource()))
 	state := tfsdk.State{Raw: rawVal, Schema: schemaResp.Schema}
 
 	req := resource.ImportStateRequest{ID: "fdrl_01ABC:wrkspc_01XYZ"}
@@ -129,8 +96,8 @@ func TestFederationRuleWorkspaceImportState_InvalidID(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
-	rawVal := tftypes.NewValue(schemaObjType, nullValuesForRuleWorkspaceSchema(t))
+	schemaObjType := schematest.ResourceObjectType(t, NewFederationRuleWorkspaceResource())
+	rawVal := tftypes.NewValue(schemaObjType, schematest.NullValues(t, NewFederationRuleWorkspaceResource()))
 	state := tfsdk.State{Raw: rawVal, Schema: schemaResp.Schema}
 
 	for _, id := range []string{"no-colon-here", "", ":missing-rule-id", "missing-workspace-id:"} {
@@ -215,7 +182,7 @@ func TestFindFederationRuleWorkspace_Found(t *testing.T) {
 		{FederationRuleID: "fdrl_01ABC", WorkspaceID: "wrkspc_OTHER", WorkspaceName: "other"},
 		{FederationRuleID: "fdrl_01ABC", WorkspaceID: "wrkspc_01XYZ", WorkspaceName: "production"},
 	})
-	client := newTestOAuthClient(srv)
+	client := oauthtest.NewClient(t, srv)
 
 	found, err := findFederationRuleWorkspace(context.Background(), client.Client, "fdrl_01ABC", "wrkspc_01XYZ")
 	if err != nil {
@@ -237,7 +204,7 @@ func TestFindFederationRuleWorkspace_GoneFromList(t *testing.T) {
 	srv, _ := newListWorkspacesServer(t, []anthropic.BetaFederationRuleWorkspace{
 		{FederationRuleID: "fdrl_01ABC", WorkspaceID: "wrkspc_OTHER", WorkspaceName: "other"},
 	})
-	client := newTestOAuthClient(srv)
+	client := oauthtest.NewClient(t, srv)
 
 	found, err := findFederationRuleWorkspace(context.Background(), client.Client, "fdrl_01ABC", "wrkspc_01XYZ")
 	if err != nil {
@@ -255,7 +222,7 @@ func TestFindFederationRuleWorkspace_RuleGone404(t *testing.T) {
 		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"not_found_error","message":"rule not found"}}`)
 	}))
 	t.Cleanup(srv.Close)
-	client := newTestOAuthClient(srv)
+	client := oauthtest.NewClient(t, srv)
 
 	_, err := findFederationRuleWorkspace(context.Background(), client.Client, "fdrl_01GONE", "wrkspc_01XYZ")
 	if err == nil {
@@ -310,13 +277,13 @@ func TestFederationRuleWorkspaceCreate_AddWiring(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	r := &FederationRuleWorkspaceResource{client: newTestOAuthClient(srv)}
+	r := &FederationRuleWorkspaceResource{client: oauthtest.NewClient(t, srv)}
 
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
-	vals := nullValuesForRuleWorkspaceSchema(t)
+	schemaObjType := schematest.ResourceObjectType(t, NewFederationRuleWorkspaceResource())
+	vals := schematest.NullValues(t, NewFederationRuleWorkspaceResource())
 	vals["federation_rule_id"] = tftypes.NewValue(tftypes.String, "fdrl_01ABC")
 	vals["workspace_id"] = tftypes.NewValue(tftypes.String, "wrkspc_01XYZ")
 	rawVal := tftypes.NewValue(schemaObjType, vals)
@@ -368,13 +335,13 @@ func TestFederationRuleWorkspaceDelete_RemoveURLPath(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	r := &FederationRuleWorkspaceResource{client: newTestOAuthClient(srv)}
+	r := &FederationRuleWorkspaceResource{client: oauthtest.NewClient(t, srv)}
 
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
-	schemaObjType := ruleWorkspaceSchemaType(t).(tftypes.Object)
-	vals := nullValuesForRuleWorkspaceSchema(t)
+	schemaObjType := schematest.ResourceObjectType(t, NewFederationRuleWorkspaceResource())
+	vals := schematest.NullValues(t, NewFederationRuleWorkspaceResource())
 	vals["federation_rule_id"] = tftypes.NewValue(tftypes.String, "fdrl_01ABC")
 	vals["workspace_id"] = tftypes.NewValue(tftypes.String, "wrkspc_01XYZ")
 	rawVal := tftypes.NewValue(schemaObjType, vals)

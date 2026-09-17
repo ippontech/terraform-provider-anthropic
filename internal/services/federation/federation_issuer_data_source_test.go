@@ -6,15 +6,12 @@ package federation_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
-
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // anthropic_federation_issuer acceptance tests require an org:admin OAuth
@@ -31,10 +28,6 @@ import (
 // branch). The deterministic mapping coverage — every jwks type, poll_status,
 // 404 — lives in federation_issuer_data_source_internal_test.go.
 
-func newTestFederationIssuerDataSourceClient() anthropic.Client {
-	return anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
-}
-
 // setupFederationIssuerDataSourceFixture creates a federation issuer directly
 // through the SDK for the data source to read, and registers a t.Cleanup to
 // archive it afterwards.
@@ -42,7 +35,7 @@ func setupFederationIssuerDataSourceFixture(t *testing.T) *anthropic.BetaFederat
 	t.Helper()
 	acctest.PreCheckOAuth(t)
 
-	client := newTestFederationIssuerDataSourceClient()
+	client := acctest.NewOAuthClient()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 

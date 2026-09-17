@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -24,6 +23,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
 // --- mapFederationRuleToState ---
@@ -490,12 +491,6 @@ func TestFederationRuleConfigValidator_WorkspaceTargetingUnknownSkipsCheck(t *te
 
 // --- 404 on read / archive on delete (SDK-level, matching the Read/Delete handling) ---
 
-func newTestOAuthAnthropicClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &c
-}
-
 func TestFederationRuleGet_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/organizations/federation_rules/fdrl_missing" {
@@ -508,7 +503,7 @@ func TestFederationRuleGet_NotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthAnthropicClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	_, err := client.Beta.Organization.Federation.Rules.Get(context.Background(), "fdrl_missing", anthropic.BetaOrganizationFederationRuleGetParams{})
 
 	var apierr *anthropic.Error
@@ -552,7 +547,7 @@ func TestFederationRuleArchive_SendsCorrectPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestOAuthAnthropicClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	rule, err := client.Beta.Organization.Federation.Rules.Archive(context.Background(), "fdrl_01ABC", anthropic.BetaOrganizationFederationRuleArchiveParams{})
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
@@ -571,32 +566,6 @@ func TestFederationRuleArchive_SendsCorrectPath(t *testing.T) {
 
 // --- ImportState ---
 
-// schemaType returns the resource schema's underlying tftypes.Object type, so
-// a null-valued tfsdk.State can be built by hand for ImportState (which calls
-// resp.State.SetAttribute, requiring an existing Raw value tree).
-func schemaType(t *testing.T) tftypes.Type {
-	t.Helper()
-	var schemaResp resource.SchemaResponse
-	(&FederationRuleResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
-	tfType, ok := schemaResp.Schema.Type().(interface {
-		TerraformType(context.Context) tftypes.Type
-	})
-	if !ok {
-		t.Fatal("schema type does not implement TerraformType")
-	}
-	return tfType.TerraformType(context.Background())
-}
-
-func nullValuesForSchema(t *testing.T) map[string]tftypes.Value {
-	t.Helper()
-	schemaObjType := schemaType(t).(tftypes.Object)
-	vals := make(map[string]tftypes.Value, len(schemaObjType.AttributeTypes))
-	for name, typ := range schemaObjType.AttributeTypes {
-		vals[name] = tftypes.NewValue(typ, nil)
-	}
-	return vals
-}
-
 func TestFederationRuleImportState(t *testing.T) {
 	ctx := context.Background()
 	r := &FederationRuleResource{}
@@ -604,7 +573,7 @@ func TestFederationRuleImportState(t *testing.T) {
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
-	rawVal := tftypes.NewValue(schemaType(t), nullValuesForSchema(t))
+	rawVal := tftypes.NewValue(schematest.ResourceObjectType(t, &FederationRuleResource{}), schematest.NullValues(t, &FederationRuleResource{}))
 	state := tfsdk.State{Raw: rawVal, Schema: schemaResp.Schema}
 
 	req := resource.ImportStateRequest{ID: "fdrl_01ABC"}

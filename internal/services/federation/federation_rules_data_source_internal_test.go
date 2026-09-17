@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
 func TestMapFederationRulesListEntry_basicFields(t *testing.T) {
@@ -175,12 +175,6 @@ func TestMapFederationRulesListEntry_emptyOptionalFieldsMapToNull(t *testing.T) 
 	}
 }
 
-func newTestFederationRulesClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &c
-}
-
 const federationRuleJSONTemplate = `{
 	"id": "%s",
 	"applies_to_all_workspaces": false,
@@ -234,7 +228,7 @@ func TestFederationRulesList_paginatesAndForwardsQueryParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRulesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
 		IssuerID:        param.NewOpt("fdis_01ISSUER"),
@@ -280,7 +274,7 @@ func TestFederationRulesList_issuerIDOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRulesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
 		IssuerID: param.NewOpt("fdis_01ISSUER"),
@@ -311,7 +305,7 @@ func TestFederationRulesList_includeArchivedOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRulesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{
 		IncludeArchived: param.NewOpt(true),
@@ -337,7 +331,7 @@ func TestFederationRulesList_emptyList(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationRulesClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.Federation.Rules.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationRuleListParams{})
 

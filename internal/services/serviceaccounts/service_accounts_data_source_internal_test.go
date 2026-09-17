@@ -4,6 +4,7 @@
 package serviceaccounts
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,8 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
 // serviceAccountFixture builds a minimal, valid BetaServiceAccount JSON payload
@@ -38,12 +39,6 @@ func serviceAccountFixture(id, name string, archived bool) map[string]any {
 		"archived_at":          archivedAt,
 		"archived_by_actor_id": archivedBy,
 	}
-}
-
-func newTestServiceAccountsClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
-	return &c
 }
 
 // TestServiceAccountsDataSource_pagination verifies the SDK's ListAutoPaging
@@ -75,7 +70,7 @@ func TestServiceAccountsDataSource_pagination(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := newTestServiceAccountsClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.ServiceAccounts.ListAutoPaging(t.Context(), anthropic.BetaOrganizationServiceAccountListParams{})
 
@@ -112,7 +107,7 @@ func TestServiceAccountsDataSource_emptyList(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := newTestServiceAccountsClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.ServiceAccounts.ListAutoPaging(t.Context(), anthropic.BetaOrganizationServiceAccountListParams{})
 
@@ -145,7 +140,7 @@ func TestServiceAccountsDataSource_includeArchivedQueryParam(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := newTestServiceAccountsClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
 	pager := client.Beta.Organization.ServiceAccounts.ListAutoPaging(t.Context(), anthropic.BetaOrganizationServiceAccountListParams{
 		IncludeArchived: param.NewOpt(true),
@@ -187,7 +182,7 @@ func TestMapServiceAccountsListEntry_basicFields(t *testing.T) {
 		UpdatedByActorID: "user_01UPDATER",
 	}
 
-	obj, diags := mapServiceAccountsListEntry(sa)
+	obj, diags := mapServiceAccountsListEntry(context.Background(), sa)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -205,7 +200,7 @@ func TestMapServiceAccountsListEntry_archivedAtZero(t *testing.T) {
 		// ArchivedAt left at zero value (not archived).
 	}
 
-	_, diags := mapServiceAccountsListEntry(sa)
+	_, diags := mapServiceAccountsListEntry(context.Background(), sa)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -223,17 +218,8 @@ func TestMapServiceAccountsListEntry_archivedAtNonZero(t *testing.T) {
 		OrganizationRole:  anthropic.BetaServiceAccountOrganizationRoleAdmin,
 	}
 
-	_, diags := mapServiceAccountsListEntry(sa)
+	_, diags := mapServiceAccountsListEntry(context.Background(), sa)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
-}
-
-func TestServiceAccountsStringOrNull(t *testing.T) {
-	if v := serviceAccountsStringOrNull(""); !v.IsNull() {
-		t.Errorf("expected null for empty string, got %v", v)
-	}
-	if v := serviceAccountsStringOrNull("x"); v.ValueString() != "x" {
-		t.Errorf("expected value 'x', got %v", v)
 	}
 }

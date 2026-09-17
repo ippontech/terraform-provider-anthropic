@@ -6,11 +6,9 @@ package serviceaccounts_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
@@ -28,7 +26,7 @@ import (
 func TestAccServiceAccountDataSource(t *testing.T) {
 	acctest.PreCheckOAuth(t)
 
-	client := anthropic.NewClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
+	client := acctest.NewOAuthClient()
 
 	sa, err := client.Beta.Organization.ServiceAccounts.New(context.Background(), anthropic.BetaOrganizationServiceAccountNewParams{
 		Name: "tf-acc-service-account-ds",

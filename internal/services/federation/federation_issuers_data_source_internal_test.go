@@ -13,22 +13,10 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-// newTestFederationIssuersClient builds an SDK client pointed at srv, wrapped as the
-// OAuth client this data source requires. Unlike admin.Client (retried by
-// default), the SDK client's own MaxRetries default is small but nonzero;
-// these tests never return a transient status, so that default is harmless.
-func newTestFederationIssuersClient(srv *httptest.Server) *anthropic.Client {
-	c := anthropic.NewClient(
-		option.WithBaseURL(srv.URL),
-		option.WithAuthToken("test"),
-	)
-	return &c
-}
 
 const federationIssuerJSONTemplate = `{
 	"id": %q,
@@ -60,7 +48,7 @@ func TestFederationIssuersDataSource_ListAllSinglePage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationIssuersClient(srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 
 	var got []anthropic.BetaFederationIssuer
@@ -93,7 +81,7 @@ func TestFederationIssuersDataSource_ListAllMultiplePages(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationIssuersClient(srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 
 	var got []anthropic.BetaFederationIssuer
@@ -123,7 +111,7 @@ func TestFederationIssuersDataSource_EmptyList(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationIssuersClient(srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 
 	var got []anthropic.BetaFederationIssuer
@@ -148,7 +136,7 @@ func TestFederationIssuersDataSource_IncludeArchivedQueryParam(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationIssuersClient(srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{
 		IncludeArchived: param.NewOpt(true),
 	})
@@ -170,7 +158,7 @@ func Test404NotFoundSurfacesAsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestFederationIssuersClient(srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	pager := client.Beta.Organization.Federation.Issuers.ListAutoPaging(context.Background(), anthropic.BetaOrganizationFederationIssuerListParams{})
 	for pager.Next() {
 	}
@@ -197,7 +185,7 @@ func unmarshalIssuer(t *testing.T, raw string) *anthropic.BetaFederationIssuer {
 func TestMapFederationIssuersListEntry_DiscoveryNotArchived(t *testing.T) {
 	issuer := unmarshalIssuer(t, sprintfIssuer("fdis_01AAA"))
 
-	objVal, diags := mapFederationIssuersListEntry(issuer)
+	objVal, diags := mapFederationIssuersListEntry(context.Background(), issuer)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -220,13 +208,13 @@ func TestMapFederationIssuersListEntry_DiscoveryNotArchived(t *testing.T) {
 	}
 }
 
-func TestMapFederationIssuersJWKS_Discovery(t *testing.T) {
+func TestMapJWKSResponseToObject_Discovery(t *testing.T) {
 	var jwks anthropic.BetaFederationIssuerJWKSUnion
 	if err := json.Unmarshal([]byte(`{"type":"discovery","discovery_base":"https://alt.example.com"}`), &jwks); err != nil {
 		t.Fatalf("unmarshal jwks: %v", err)
 	}
 
-	obj, diags := mapFederationIssuersJWKS(jwks)
+	obj, diags := mapJWKSResponseToObject(jwks)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -246,14 +234,14 @@ func TestMapFederationIssuersJWKS_Discovery(t *testing.T) {
 	}
 }
 
-func TestMapFederationIssuersJWKS_InlineKeys(t *testing.T) {
+func TestMapJWKSResponseToObject_InlineKeys(t *testing.T) {
 	var jwks anthropic.BetaFederationIssuerJWKSUnion
 	raw := `{"type":"inline","keys":[{"kty":"RSA","kid":"key-1","n":"abc","e":"AQAB"}]}`
 	if err := json.Unmarshal([]byte(raw), &jwks); err != nil {
 		t.Fatalf("unmarshal jwks: %v", err)
 	}
 
-	obj, diags := mapFederationIssuersJWKS(jwks)
+	obj, diags := mapJWKSResponseToObject(jwks)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -272,13 +260,13 @@ func TestMapFederationIssuersJWKS_InlineKeys(t *testing.T) {
 	}
 }
 
-func TestMapFederationIssuersPollStatus_Zero(t *testing.T) {
+func TestMapFederationIssuerPollStatus_Zero(t *testing.T) {
 	var status anthropic.BetaFederationIssuerPollStatus
 	if err := json.Unmarshal([]byte(`{"consecutive_failures":0,"last_fetched_at":null,"next_poll_at":null}`), &status); err != nil {
 		t.Fatalf("unmarshal poll status: %v", err)
 	}
 
-	obj, diags := mapFederationIssuersPollStatus(status)
+	obj, diags := mapFederationIssuerPollStatus(status)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -292,14 +280,14 @@ func TestMapFederationIssuersPollStatus_Zero(t *testing.T) {
 	}
 }
 
-func TestMapFederationIssuersPollStatus_Populated(t *testing.T) {
+func TestMapFederationIssuerPollStatus_Populated(t *testing.T) {
 	var status anthropic.BetaFederationIssuerPollStatus
 	raw := `{"consecutive_failures":3,"last_fetched_at":"2024-06-01T12:00:00Z","next_poll_at":"2024-06-01T13:00:00Z"}`
 	if err := json.Unmarshal([]byte(raw), &status); err != nil {
 		t.Fatalf("unmarshal poll status: %v", err)
 	}
 
-	obj, diags := mapFederationIssuersPollStatus(status)
+	obj, diags := mapFederationIssuerPollStatus(status)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -333,7 +321,7 @@ func TestMapFederationIssuersListEntry_Archived(t *testing.T) {
 	}`
 	issuer := unmarshalIssuer(t, raw)
 
-	objVal, diags := mapFederationIssuersListEntry(issuer)
+	objVal, diags := mapFederationIssuersListEntry(context.Background(), issuer)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}

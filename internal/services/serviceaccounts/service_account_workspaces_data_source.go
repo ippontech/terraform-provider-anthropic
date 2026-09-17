@@ -154,18 +154,16 @@ func (d *ServiceAccountWorkspacesDataSource) Read(ctx context.Context, req datas
 // mapServiceAccountWorkspacesListEntry converts an API service account
 // workspace membership into a Terraform object value for inclusion in the
 // "workspaces" list.
+// The entry is the anthropic_service_account_workspace resource model minus
+// the parent service_account_id and composite id, so it is derived from the
+// resource mapping rather than mapped a second time.
 func mapServiceAccountWorkspacesListEntry(member *anthropic.BetaServiceAccountWorkspaceMember) (attr.Value, diag.Diagnostics) {
-	// The API omits the creating actor on implicit (default-workspace)
-	// memberships; an empty string must surface as null, not "".
-	createdByActorID := types.StringNull()
-	if member.CreatedByActorID != "" {
-		createdByActorID = types.StringValue(member.CreatedByActorID)
-	}
-	obj, diags := types.ObjectValue(serviceAccountWorkspacesListItemAttrTypes, map[string]attr.Value{
-		"workspace_id":        types.StringValue(member.WorkspaceID),
-		"workspace_role":      types.StringValue(string(member.WorkspaceRole)),
-		"implicit":            types.BoolValue(member.Implicit),
-		"created_by_actor_id": createdByActorID,
+	var m ServiceAccountWorkspaceResourceModel
+	mapServiceAccountWorkspaceToState(member, &m)
+	return types.ObjectValue(serviceAccountWorkspacesListItemAttrTypes, map[string]attr.Value{
+		"workspace_id":        m.WorkspaceID,
+		"workspace_role":      m.WorkspaceRole,
+		"implicit":            m.Implicit,
+		"created_by_actor_id": m.CreatedByActorID,
 	})
-	return obj, diags
 }
