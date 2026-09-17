@@ -1,3 +1,9 @@
+## [1.43.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.2...v1.43.3) (2026-09-17)
+
+### 🐛 Bug Fixes
+
+* **wif:** unify data-source state mapping with the resources and deduplicate the test helpers ([#245](https://github.com/ippontech/terraform-provider-anthropic/issues/245)) ([29533b8](https://github.com/ippontech/terraform-provider-anthropic/commit/29533b80199d4be47f71ead699d2b96907b22b06)), closes [#239](https://github.com/ippontech/terraform-provider-anthropic/issues/239) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#244](https://github.com/ippontech/terraform-provider-anthropic/issues/244)
+
 ## [1.43.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.1...v1.43.2) (2026-09-17)
 
 ### 🐛 Bug Fixes
