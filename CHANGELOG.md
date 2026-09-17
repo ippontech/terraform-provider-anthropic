@@ -1,3 +1,9 @@
+## [1.43.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.1...v1.43.2) (2026-09-17)
+
+### 🐛 Bug Fixes
+
+* **wif:** probe read-after-write staleness and add bounded waits where measured ([#244](https://github.com/ippontech/terraform-provider-anthropic/issues/244)) ([da611e6](https://github.com/ippontech/terraform-provider-anthropic/commit/da611e627b9f25049fed279ada8f640325779faa)), closes [#238](https://github.com/ippontech/terraform-provider-anthropic/issues/238) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58)
+
 ## [1.43.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.0...v1.43.1) (2026-09-16)
 
 ### 📚 Documentation
