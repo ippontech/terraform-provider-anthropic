@@ -1,3 +1,9 @@
+## [1.43.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.3...v1.43.4) (2026-09-17)
+
+### 🐛 Bug Fixes
+
+* **deps:** update module github.com/hashicorp/terraform-plugin-log to v0.11.0 ([#190](https://github.com/ippontech/terraform-provider-anthropic/issues/190)) ([05329bf](https://github.com/ippontech/terraform-provider-anthropic/commit/05329bfa3d079b0da6a04f30d468827a6a29e48b))
+
 ## [1.43.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.2...v1.43.3) (2026-09-17)
 
 ### 🐛 Bug Fixes
