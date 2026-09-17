@@ -273,20 +273,24 @@ func (r *FederationRuleWorkspaceResource) ImportState(ctx context.Context, req r
 // really is gone waits the full timeout before reporting it, which only
 // happens on genuine drift.
 //
-// Errors are returned on the first occurrence rather than retried: a 404 means
-// the rule itself is gone, and any other failure is a hard Read error today.
-// A cancelled context returns ctx.Err().
+// Errors are handled the way awaitFederationRuleUpdateVisible handles them
+// (federation_rule_resource.go). A terminal one — 401, 403 or 404, the last
+// meaning the rule itself is gone — is returned on the first occurrence, since
+// polling cannot change it and Read maps the 404 to RemoveResource. Any other
+// failure (a 5xx, a dropped connection) says nothing about visibility, so the
+// loop keeps polling and only surfaces the last such error once the deadline
+// has passed. A cancelled context returns ctx.Err().
 func awaitFederationRuleWorkspaceListed(ctx context.Context, client *anthropic.Client, federationRuleID, workspaceID string, timeout, interval time.Duration) (*anthropic.BetaFederationRuleWorkspace, error) {
 	deadline := time.Now().Add(timeout)
 
 	for {
 		found, err := findFederationRuleWorkspace(ctx, client, federationRuleID, workspaceID)
-		if err != nil || found != nil {
+		if found != nil || isTerminalFederationRuleReadError(err) {
 			return found, err
 		}
 
 		if time.Now().After(deadline) {
-			return nil, nil
+			return nil, err
 		}
 
 		select {

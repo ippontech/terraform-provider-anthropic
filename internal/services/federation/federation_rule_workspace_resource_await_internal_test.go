@@ -104,21 +104,32 @@ func TestAwaitFederationRuleWorkspaceListed_reportsAbsentAtTimeout(t *testing.T)
 	}
 }
 
-// A 404 (the rule itself is gone) is returned on the first occurrence, never
-// retried: Read maps it to RemoveResource and polling could not change that.
-func TestAwaitFederationRuleWorkspaceListed_returnsErrorsWithoutRetrying(t *testing.T) {
-	for _, status := range []int{401, 403, 404, 500} {
+// newStatusServer answers every request with status and a JSON error body,
+// counting the calls.
+func newStatusServer(t *testing.T, status int) (*httptest.Server, *int) {
+	t.Helper()
+
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		if _, err := fmt.Fprint(w, `{"type":"error","error":{"type":"api_error","message":"nope"}}`); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv, &calls
+}
+
+// A terminal error — 404 (the rule itself is gone), 401 or 403 — is returned
+// on the first occurrence, never retried: Read maps the 404 to RemoveResource
+// and polling could not change any of them.
+func TestAwaitFederationRuleWorkspaceListed_returnsTerminalErrorsWithoutRetrying(t *testing.T) {
+	for _, status := range []int{401, 403, 404} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			lists := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				lists++
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(status)
-				if _, err := fmt.Fprint(w, `{"type":"error","error":{"type":"api_error","message":"nope"}}`); err != nil {
-					t.Errorf("writing response: %v", err)
-				}
-			}))
-			t.Cleanup(srv.Close)
+			srv, lists := newStatusServer(t, status)
 
 			found, err := awaitFederationRuleWorkspaceListed(context.Background(), newAwaitTestClient(srv), "fdrl_01ABC", "wrkspc_01XYZ", 10*time.Second, 50*time.Millisecond)
 
@@ -129,10 +140,69 @@ func TestAwaitFederationRuleWorkspaceListed_returnsErrorsWithoutRetrying(t *test
 			if found != nil {
 				t.Errorf("found = %+v, want nil alongside the error", found)
 			}
-			if lists != 1 {
-				t.Errorf("List calls = %d, want exactly 1 (errors are not retried)", lists)
+			if *lists != 1 {
+				t.Errorf("List calls = %d, want exactly 1 (terminal errors are not retried)", *lists)
 			}
 		})
+	}
+}
+
+// A transient error (here a 500) inside the window is absorbed the way the
+// sibling awaitFederationRuleUpdateVisible absorbs it: the loop keeps polling
+// and returns the entry once the list recovers, instead of failing Read on
+// noise a later attempt would not have seen.
+func TestAwaitFederationRuleWorkspaceListed_retriesTransientErrors(t *testing.T) {
+	lists := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		lists++
+		w.Header().Set("Content-Type", "application/json")
+		if lists <= 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			if _, err := fmt.Fprint(w, `{"type":"error","error":{"type":"api_error","message":"nope"}}`); err != nil {
+				t.Errorf("writing response: %v", err)
+			}
+			return
+		}
+		if _, err := fmt.Fprint(w, `{"data":[{"type":"federation_rule_workspace","federation_rule_id":"fdrl_01ABC","workspace_id":"wrkspc_01XYZ","workspace_name":"terraform-tests"}],"next_page":null}`); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	found, err := awaitFederationRuleWorkspaceListed(context.Background(), newAwaitTestClient(srv), "fdrl_01ABC", "wrkspc_01XYZ", 2*time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found == nil || found.WorkspaceID != "wrkspc_01XYZ" {
+		t.Fatalf("found = %+v, want the wrkspc_01XYZ entry", found)
+	}
+	if lists != 3 {
+		t.Errorf("List calls = %d, want 3 (two 500s then the populated list)", lists)
+	}
+}
+
+// A transient error that never clears is surfaced, not swallowed as "absent":
+// once the deadline passes the last error is returned, so Read reports a
+// failure instead of removing the resource from state on an API outage.
+func TestAwaitFederationRuleWorkspaceListed_surfacesPersistentTransientErrorAtTimeout(t *testing.T) {
+	srv, lists := newStatusServer(t, http.StatusInternalServerError)
+
+	start := time.Now()
+	found, err := awaitFederationRuleWorkspaceListed(context.Background(), newAwaitTestClient(srv), "fdrl_01ABC", "wrkspc_01XYZ", 120*time.Millisecond, 10*time.Millisecond)
+	elapsed := time.Since(start)
+
+	var apierr *anthropic.Error
+	if !errors.As(err, &apierr) || apierr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("err = %v, want the last 500 to be returned at timeout", err)
+	}
+	if found != nil {
+		t.Errorf("found = %+v, want nil alongside the error", found)
+	}
+	if elapsed > time.Second {
+		t.Errorf("took %s, want it to give up near the 120ms timeout", elapsed)
+	}
+	if *lists < 2 {
+		t.Errorf("List calls = %d, want it to have retried at least once", *lists)
 	}
 }
 
