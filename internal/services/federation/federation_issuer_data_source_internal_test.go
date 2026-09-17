@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
 func TestMapFederationIssuerDataSourceToState_Discovery(t *testing.T) {
@@ -213,7 +213,7 @@ func TestFederationIssuerDataSource_Get404(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"))
+	c := oauthtest.NewSDKClient(t, srv)
 
 	_, err := c.Beta.Organization.Federation.Issuers.Get(context.Background(), "fdis_missing", anthropic.BetaOrganizationFederationIssuerGetParams{})
 	if err == nil {

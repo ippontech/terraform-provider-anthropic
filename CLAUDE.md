@@ -24,7 +24,7 @@ internal/
   admin/           — HTTP client for Admin API (/v1/organizations/*)
   admintest/       — shared unit-test helper: admintest.NewClient(t, srv) builds an admin.Client pointed at an httptest server
   wifprobetest/    — shared harness behind the TestAccWIFStalenessProbe tests (federation, serviceaccounts): PreCheck gate, Write/Read polling, LogTable, NewClient
-  oauthtest/       — shared unit-test helper: oauthtest.NewClient(t, srv) builds a *providerdata.OAuthClient pointed at an httptest server; oauthtest.NewSDKClient(t, srv) the bare *anthropic.Client it wraps
+  oauthtest/       — shared unit-test helper: oauthtest.NewClient(t, srv) builds a *providerdata.OAuthClient pointed at an httptest server; oauthtest.NewSDKClient(t, srv) the bare *anthropic.Client it wraps; both take extra option.RequestOption (e.g. option.WithMaxRetries(0) for request-counting tests)
   schematest/      — shared unit-test helper: schematest.ResourceObjectType / NullValues / NullState derive a null tfsdk.State from any resource.Resource, for ImportState tests
   acctest/         — shared acceptance test helpers (ProtoV6ProviderFactories, PreCheck)
   errors/          — nil-client guards for Configure methods (import alias: providerrors)

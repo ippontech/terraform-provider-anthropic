@@ -11,19 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-
-	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-// newAwaitTestOAuthClient points an OAuth client at srv. Built inline rather
-// than through the package's other test constructors so this file stays
-// independent of their ongoing consolidation (#239).
-func newAwaitTestOAuthClient(srv *httptest.Server) *providerdata.OAuthClient {
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"), option.WithoutEnvironmentDefaults())
-	return &providerdata.OAuthClient{Client: &c}
-}
 
 // newStaleThenFreshRuleServer serves GET /v1/organizations/federation_rules/{id}
 // with updated_at = stale for the first staleReads calls, then fresh forever
@@ -78,7 +68,7 @@ func TestAwaitFederationRuleUpdateVisible_pollsUntilFresh(t *testing.T) {
 
 	srv, gets := newStaleThenFreshRuleServer(t, "fdrl_01ABC", before, after, 3)
 
-	awaitFederationRuleUpdateVisible(context.Background(), newAwaitTestOAuthClient(srv), "fdrl_01ABC", after, 2*time.Second, time.Millisecond)
+	awaitFederationRuleUpdateVisible(context.Background(), oauthtest.NewClient(t, srv), "fdrl_01ABC", after, 2*time.Second, time.Millisecond)
 
 	if *gets != 4 {
 		t.Errorf("Get calls = %d, want 4 (three stale reads then the fresh one)", *gets)
@@ -92,7 +82,7 @@ func TestAwaitFederationRuleUpdateVisible_returnsImmediatelyWhenFresh(t *testing
 
 	srv, gets := newStaleThenFreshRuleServer(t, "fdrl_01ABC", before, after, 0)
 
-	awaitFederationRuleUpdateVisible(context.Background(), newAwaitTestOAuthClient(srv), "fdrl_01ABC", after, 2*time.Second, time.Millisecond)
+	awaitFederationRuleUpdateVisible(context.Background(), oauthtest.NewClient(t, srv), "fdrl_01ABC", after, 2*time.Second, time.Millisecond)
 
 	if *gets != 1 {
 		t.Errorf("Get calls = %d, want 1", *gets)
@@ -106,7 +96,7 @@ func TestAwaitFederationRuleUpdateVisible_equalTimestampCountsAsVisible(t *testi
 
 	srv, gets := newStaleThenFreshRuleServer(t, "fdrl_01ABC", writtenAt, writtenAt, 0)
 
-	awaitFederationRuleUpdateVisible(context.Background(), newAwaitTestOAuthClient(srv), "fdrl_01ABC", writtenAt, 200*time.Millisecond, time.Millisecond)
+	awaitFederationRuleUpdateVisible(context.Background(), oauthtest.NewClient(t, srv), "fdrl_01ABC", writtenAt, 200*time.Millisecond, time.Millisecond)
 
 	if *gets != 1 {
 		t.Errorf("Get calls = %d, want 1", *gets)
@@ -123,7 +113,7 @@ func TestAwaitFederationRuleUpdateVisible_givesUpAtTimeout(t *testing.T) {
 	srv, gets := newStaleThenFreshRuleServer(t, "fdrl_01ABC", before, after, 1_000_000)
 
 	start := time.Now()
-	awaitFederationRuleUpdateVisible(context.Background(), newAwaitTestOAuthClient(srv), "fdrl_01ABC", after, 120*time.Millisecond, 10*time.Millisecond)
+	awaitFederationRuleUpdateVisible(context.Background(), oauthtest.NewClient(t, srv), "fdrl_01ABC", after, 120*time.Millisecond, 10*time.Millisecond)
 
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("took %s, want it to give up near the 120ms timeout", elapsed)
@@ -144,7 +134,7 @@ func TestAwaitFederationRuleUpdateVisible_honoursContextCancellation(t *testing.
 	cancel()
 
 	start := time.Now()
-	awaitFederationRuleUpdateVisible(ctx, newAwaitTestOAuthClient(srv), "fdrl_01ABC", after, 10*time.Second, 50*time.Millisecond)
+	awaitFederationRuleUpdateVisible(ctx, oauthtest.NewClient(t, srv), "fdrl_01ABC", after, 10*time.Second, 50*time.Millisecond)
 
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("took %s, want an immediate return on a cancelled context", elapsed)
@@ -162,7 +152,7 @@ func TestAwaitFederationRuleUpdateVisible_stopsOnTerminalReadError(t *testing.T)
 			writtenAt := time.Date(2026, 9, 8, 11, 0, 0, 0, time.UTC)
 
 			start := time.Now()
-			awaitFederationRuleUpdateVisible(context.Background(), newAwaitTestOAuthClient(srv), "fdrl_01ABC", writtenAt, 10*time.Second, 50*time.Millisecond)
+			awaitFederationRuleUpdateVisible(context.Background(), oauthtest.NewClient(t, srv), "fdrl_01ABC", writtenAt, 10*time.Second, 50*time.Millisecond)
 
 			if elapsed := time.Since(start); elapsed > time.Second {
 				t.Errorf("took %s, want an immediate return on a %d", elapsed, status)
@@ -179,8 +169,7 @@ func TestAwaitFederationRuleUpdateVisible_stopsOnTerminalReadError(t *testing.T)
 // counter reflects the wait loop alone.
 func TestAwaitFederationRuleUpdateVisible_keepsPollingOnOtherReadErrors(t *testing.T) {
 	srv, gets := newFailingRuleServer(t, http.StatusInternalServerError)
-	c := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAuthToken("test"), option.WithoutEnvironmentDefaults(), option.WithMaxRetries(0))
-	client := &providerdata.OAuthClient{Client: &c}
+	client := oauthtest.NewClient(t, srv, option.WithMaxRetries(0))
 	writtenAt := time.Date(2026, 9, 8, 11, 0, 0, 0, time.UTC)
 
 	awaitFederationRuleUpdateVisible(context.Background(), client, "fdrl_01ABC", writtenAt, 100*time.Millisecond, 10*time.Millisecond)
