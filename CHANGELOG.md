@@ -1,3 +1,9 @@
+## [1.43.5](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.4...v1.43.5) (2026-09-17)
+
+### 🐛 Bug Fixes
+
+* **federation:** read issuer_name back after creating a federation rule ([#253](https://github.com/ippontech/terraform-provider-anthropic/issues/253)) ([7644ea2](https://github.com/ippontech/terraform-provider-anthropic/commit/7644ea290f2868ec327e93479dfc5ed3f5f7fbe0)), closes [#243](https://github.com/ippontech/terraform-provider-anthropic/issues/243) [#238](https://github.com/ippontech/terraform-provider-anthropic/issues/238) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#243](https://github.com/ippontech/terraform-provider-anthropic/issues/243)
+
 ## [1.43.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.3...v1.43.4) (2026-09-17)
 
 ### 🐛 Bug Fixes
