@@ -451,12 +451,43 @@ func (r *FederationRuleResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	rule = completeFederationRuleIssuerName(ctx, r.client, rule)
+
 	resp.Diagnostics.Append(mapFederationRuleToState(ctx, rule, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// completeFederationRuleIssuerName fills in issuer_name after a create. The
+// create response (POST /v1/organizations/federation_rules) can come back with
+// an empty issuer_name even though GET /v1/organizations/federation_rules/{id}
+// and the list endpoint return it (checked against the live API on
+// 2026-09-17, #243). Since issuer_name is Computed and the SDK zero value is
+// "", the state would otherwise carry an empty string until the next refresh,
+// which is what TestAccFederationRuleResource_basic tripped on.
+//
+// A single read-back, not a bounded wait: the probe behind #238 found a GET
+// straight after a create to be consistent, and the value is cosmetic. If the
+// read fails for any reason the create response is returned as-is, so the
+// apply never fails on a field the refresh will fill anyway.
+func completeFederationRuleIssuerName(ctx context.Context, client *providerdata.OAuthClient, rule *anthropic.BetaFederationRule) *anthropic.BetaFederationRule {
+	if rule.IssuerName != "" {
+		return rule
+	}
+
+	fresh, err := client.Beta.Organization.Federation.Rules.Get(ctx, rule.ID, anthropic.BetaOrganizationFederationRuleGetParams{})
+	if err != nil {
+		tflog.Warn(ctx, "federation rule create response had no issuer_name and the read-back failed; issuer_name will be filled on the next refresh", map[string]any{
+			"federation_rule_id": rule.ID,
+			"error":              err.Error(),
+		})
+		return rule
+	}
+
+	return fresh
 }
 
 // --- Read ---
