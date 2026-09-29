@@ -86,15 +86,18 @@ func (r *UserProfileResource) Schema(_ context.Context, _ resource.SchemaRequest
 
 			// --- Optional ---
 			"external_id": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "Platform's own identifier for this user. Not enforced unique. Maximum 255 characters.",
-				Validators:          []validator.String{stringvalidator.LengthAtMost(255)},
+				Optional: true,
+				MarkdownDescription: "Platform's own identifier for this user. Not enforced unique. 1-255 characters " +
+					"(the API's own maximum is 255; a minimum of 1 is enforced here because an empty string round-trips " +
+					"through the API as null, which would otherwise make `external_id = \"\"` an inconsistent-apply error).",
+				Validators: []validator.String{stringvalidator.LengthBetween(1, 255)},
 			},
 			"name": schema.StringAttribute{
 				Optional: true,
 				MarkdownDescription: "Real-world name of the entity this profile represents (company or individual). " +
-					"For a resold-to company this is that company's name. Maximum 255 characters.",
-				Validators: []validator.String{stringvalidator.LengthAtMost(255)},
+					"For a resold-to company this is that company's name. 1-255 characters (see `external_id` for why " +
+					"the empty string is rejected).",
+				Validators: []validator.String{stringvalidator.LengthBetween(1, 255)},
 			},
 			"metadata": schema.MapAttribute{
 				Optional:    true,
@@ -178,22 +181,10 @@ func (r *UserProfileResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	params := anthropic.BetaUserProfileNewParams{
-		AccessType: anthropic.BetaUserProfileNewParamsAccessType(data.AccessType.ValueString()),
-	}
-	if !data.ExternalID.IsNull() {
-		params.ExternalID = param.NewOpt(data.ExternalID.ValueString())
-	}
-	if !data.Name.IsNull() {
-		params.Name = param.NewOpt(data.Name.ValueString())
-	}
-	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
+	params, diags := buildUserProfileCreateParams(ctx, data)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	plannedMetadata := data.Metadata
@@ -228,6 +219,24 @@ func (r *UserProfileResource) Read(ctx context.Context, req resource.ReadRequest
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+			// A 404 here is ambiguous: it means the profile really was deleted
+			// out-of-band, but it is also what this same endpoint returns for an
+			// organization where the user profiles beta is not (or is no longer)
+			// enabled, or for a key that lost access to it (see the resource's
+			// MarkdownDescription). In the latter cases every profile in state
+			// looks "gone" on the next refresh, which silently drops them from
+			// state; a subsequent apply would then try to recreate them, and
+			// since there is no delete endpoint, any duplicates created once the
+			// beta comes back can never be cleaned up automatically. There is no
+			// way to distinguish the two cases from the response alone, so warn
+			// instead of failing outright.
+			resp.Diagnostics.AddWarning(
+				"User Profile Not Found",
+				fmt.Sprintf("User profile %q was not found (404) and has been removed from Terraform state. "+
+					"This also occurs if the user profiles beta is not enabled for the organization, or if the "+
+					"configured API key no longer has access to it — in either case the profile may still exist. "+
+					"Verify independently before assuming it was deleted.", data.ID.ValueString()),
+			)
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -259,31 +268,10 @@ func (r *UserProfileResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	params := anthropic.BetaUserProfileUpdateParams{
-		AccessType: anthropic.BetaUserProfileUpdateParamsAccessType(data.AccessType.ValueString()),
-	}
-	if !data.ExternalID.Equal(state.ExternalID) {
-		if data.ExternalID.IsNull() {
-			params.ExternalID = param.NewOpt("")
-		} else {
-			params.ExternalID = param.NewOpt(data.ExternalID.ValueString())
-		}
-	}
-	if !data.Name.Equal(state.Name) {
-		if data.Name.IsNull() {
-			params.Name = param.NewOpt("")
-		} else {
-			params.Name = param.NewOpt(data.Name.ValueString())
-		}
-	}
-
-	metaUpdate, d := buildUserProfileMetadataUpdate(ctx, data.Metadata, state.Metadata)
-	resp.Diagnostics.Append(d...)
+	params, diags := buildUserProfileUpdateParams(ctx, data, state)
+	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
-	}
-	if len(metaUpdate) > 0 {
-		params.Metadata = metaUpdate
 	}
 
 	plannedMetadata := data.Metadata
@@ -330,6 +318,73 @@ func (r *UserProfileResource) ImportState(ctx context.Context, req resource.Impo
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// buildUserProfileCreateParams builds the New params from the planned config.
+func buildUserProfileCreateParams(ctx context.Context, data UserProfileResourceModel) (anthropic.BetaUserProfileNewParams, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	params := anthropic.BetaUserProfileNewParams{
+		AccessType: anthropic.BetaUserProfileNewParamsAccessType(data.AccessType.ValueString()),
+	}
+	if !data.ExternalID.IsNull() {
+		params.ExternalID = param.NewOpt(data.ExternalID.ValueString())
+	}
+	if !data.Name.IsNull() {
+		params.Name = param.NewOpt(data.Name.ValueString())
+	}
+	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
+		var meta map[string]string
+		diags.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
+		if diags.HasError() {
+			return params, diags
+		}
+		params.Metadata = meta
+	}
+
+	return params, diags
+}
+
+// buildUserProfileUpdateParams builds the Update params by diffing the
+// planned config against prior state. access_type is always resent (the API
+// requires it on every update); external_id and name are only sent when
+// changed, and a value removed from config is cleared by sending an explicit
+// JSON null (param.Null[string]()) rather than an empty string, since the API
+// documents both fields as nullable and the repo's PATCH convention (see
+// buildMetadataPatch in vaults) is to null a field to clear it rather than
+// send an empty string, which some APIs reject as invalid input for a field
+// that is otherwise validated as non-empty. metadata keeps its own
+// merge-semantics helper (buildUserProfileMetadataUpdate) since it behaves
+// differently: a key is cleared with an empty string, not null.
+func buildUserProfileUpdateParams(ctx context.Context, data, state UserProfileResourceModel) (anthropic.BetaUserProfileUpdateParams, diag.Diagnostics) {
+	params := anthropic.BetaUserProfileUpdateParams{
+		AccessType: anthropic.BetaUserProfileUpdateParamsAccessType(data.AccessType.ValueString()),
+	}
+
+	if !data.ExternalID.Equal(state.ExternalID) {
+		if data.ExternalID.IsNull() {
+			params.ExternalID = param.Null[string]()
+		} else {
+			params.ExternalID = param.NewOpt(data.ExternalID.ValueString())
+		}
+	}
+	if !data.Name.Equal(state.Name) {
+		if data.Name.IsNull() {
+			params.Name = param.Null[string]()
+		} else {
+			params.Name = param.NewOpt(data.Name.ValueString())
+		}
+	}
+
+	metaUpdate, diags := buildUserProfileMetadataUpdate(ctx, data.Metadata, state.Metadata)
+	if diags.HasError() {
+		return params, diags
+	}
+	if len(metaUpdate) > 0 {
+		params.Metadata = metaUpdate
+	}
+
+	return params, diags
+}
 
 // mapUserProfileToState maps the API response into the resource's state model.
 func mapUserProfileToState(profile *anthropic.BetaUserProfile, data *UserProfileResourceModel) diag.Diagnostics {

@@ -16,7 +16,14 @@ resold-to company, on whose behalf the platform's API key calls the API.
 
 > ⚠️ Not generally available: as of 2026-09-30 this beta was not enabled for Ippon's test organization, and both
 > the list and single-resource `/v1/user_profiles` endpoints returned a plain `404` regardless of beta header.
-> Verify the feature is enabled for your organization before relying on this resource.
+> Verify the feature is enabled for your organization before relying on this resource. This same `404` is what
+> `GET /v1/user_profiles/{id}` returns for a profile that was genuinely deleted out-of-band — the two cases are
+> indistinguishable from the response alone. `Read` treats either case as "gone" and drops the resource from
+> Terraform state (emitting a warning), so if the beta is disabled or the API key loses access, every managed
+> profile silently disappears from state on the next refresh; the next apply then tries to re-create it, which
+> either fails (beta still disabled) or, once the beta is enabled again, creates a duplicate — one that this
+> resource cannot delete, since there is no delete endpoint. Investigate a "not found" warning before assuming a
+> profile was actually deleted.
 
 > ⚠️ No delete endpoint: the Anthropic API does not currently expose a way to delete a user profile. Running
 > `terraform destroy` (or removing the resource from configuration) only forgets it in Terraform state — a warning
@@ -61,9 +68,9 @@ output "user_profile_access_type" {
 
 ### Optional
 
-- `external_id` (String) Platform's own identifier for this user. Not enforced unique. Maximum 255 characters.
+- `external_id` (String) Platform's own identifier for this user. Not enforced unique. 1-255 characters (the API's own maximum is 255; a minimum of 1 is enforced here because an empty string round-trips through the API as null, which would otherwise make `external_id = ""` an inconsistent-apply error).
 - `metadata` (Map of String) Arbitrary key-value metadata. Up to 16 pairs; keys 1-64 characters; values 1-512 characters (empty values are rejected by the API — updates use an empty string internally to remove a key, but a value configured here must be non-empty).
-- `name` (String) Real-world name of the entity this profile represents (company or individual). For a resold-to company this is that company's name. Maximum 255 characters.
+- `name` (String) Real-world name of the entity this profile represents (company or individual). For a resold-to company this is that company's name. 1-255 characters (see `external_id` for why the empty string is rejected).
 
 ### Read-Only
 
