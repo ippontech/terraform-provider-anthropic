@@ -377,6 +377,8 @@ Commits and MR titles must follow [conventional commits](https://www.conventiona
 
 PRs are squash-merged; the MR title becomes the commit message.
 
+Breaking changes (`feat!:`, `BREAKING CHANGE:` footer) never target `main` directly: they go to the long-lived staging branch for the next major (`major/2.0.0` for the first one) and reach `main` in a single merge commit at release time. `.releaserc` pins `branches` to `["main"]` so no staging branch name can become a semantic-release release branch. Full procedure in `RELEASE.md`, section "Major versions".
+
 ### Go unit tests
 
 After any bug fix, refactoring, or new helper added under `internal/`, write or update Go unit tests in the same package before considering the task done. Unit tests live next to the code they test (e.g. `internal/retry/multipart_test.go` for `internal/retry/multipart.go`). Run `make test` to verify they pass.
