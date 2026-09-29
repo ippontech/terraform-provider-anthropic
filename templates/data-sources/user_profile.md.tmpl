@@ -1,0 +1,22 @@
+---
+page_title: "anthropic_user_profile Data Source - anthropic"
+subcategory: "User Profiles"
+description: |-
+  Fetches a single user profile by ID.
+---
+
+# anthropic_user_profile (Data Source)
+
+Fetches a single user profile by ID (beta). A user profile represents an end-user or resold-to company on whose behalf the API is used.
+
+-> This beta is not generally available. As of 2026-09-30 the endpoint returns `404` for organizations that have not been enrolled.
+
+> **API**: `GET /v1/user_profiles/{id}` (beta).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `user-profiles-2026-08-18`.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/user_profile/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
