@@ -1,3 +1,14 @@
+## [1.46.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.46.0...v1.46.1) (2026-09-29)
+
+### 🐛 Bug Fixes
+
+* **ci:** pin conventionalcommits preset to 8.0.0 to fix the semrel job ([#287](https://github.com/ippontech/terraform-provider-anthropic/issues/287)) ([ec06512](https://github.com/ippontech/terraform-provider-anthropic/commit/ec06512698a6a1b0112430c5aaa7f4a3aac68348)), closes [#185](https://github.com/ippontech/terraform-provider-anthropic/issues/185)
+
+### 📚 Documentation
+
+* align the major-version procedure with the rulesets and CI triggers ([#286](https://github.com/ippontech/terraform-provider-anthropic/issues/286)) ([18eedb0](https://github.com/ippontech/terraform-provider-anthropic/commit/18eedb0cb39788f4a72d4fadb2722d78abaaefa3)), closes [#268](https://github.com/ippontech/terraform-provider-anthropic/issues/268)
+* document the major-version release strategy and pin semantic-release to main ([#268](https://github.com/ippontech/terraform-provider-anthropic/issues/268)) ([017e703](https://github.com/ippontech/terraform-provider-anthropic/commit/017e703b2f1d0cad02749da5a3a60c0e865906cf)), closes [#187](https://github.com/ippontech/terraform-provider-anthropic/issues/187) [#91](https://github.com/ippontech/terraform-provider-anthropic/issues/91)
+
 ## [1.46.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.45.0...v1.46.0) (2026-09-29)
 
 ### ✨ Features
