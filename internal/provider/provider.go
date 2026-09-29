@@ -173,6 +173,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		federation.NewFederationRuleResource,
 		federation.NewFederationRuleWorkspaceResource,
 		files.NewFileResource,
+		memorystores.NewMemoryResource,
 		memorystores.NewMemoryStoreResource,
 		messages.NewMessageResource,
 		organizations.NewInviteResource,

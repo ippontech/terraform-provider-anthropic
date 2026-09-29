@@ -1,0 +1,32 @@
+---
+page_title: "anthropic_memory Resource - anthropic"
+subcategory: "Memory Stores"
+description: |-
+  Creates and manages a memory: a single text document at a hierarchical path inside an anthropic_memory_store (beta).
+---
+
+# anthropic_memory (Resource)
+
+Creates and manages a memory: a single text document at a hierarchical path inside an `anthropic_memory_store` (beta). Memories are addressed by a stable `mem_...` ID, independent of their `path`, so renaming a memory (changing `path`) preserves its `id` and version history.
+
+> **API**: `POST/GET/POST/DELETE /v1/memory_stores/{memory_store_id}/memories[/{id}]` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `agent-memory-2026-07-22`.
+
+> ⚠️ Optimistic concurrency: every update sends a `content_sha256` precondition built from the last known state. If the memory was modified out-of-band (e.g. by an agent session) since Terraform last read it, the API rejects the update with a `memory_precondition_failed_error` (HTTP 409), and this provider surfaces it as an error rather than overwriting the remote content. Run `terraform plan` or `terraform apply -refresh-only` to pick up the current remote content, then re-apply.
+
+Content is capped at 100 kB (102,400 bytes); this is validated client-side at plan time as well as enforced by the API. Deleting a memory does not erase its version history: prior versions remain retrievable via the API for at least the version retention period.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/memory/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing memory using a composite ID in the form `<memory_store_id>:<memory_id>`:
+
+```shell
+terraform import anthropic_memory.example <memory_store_id>:<memory_id>
+```
