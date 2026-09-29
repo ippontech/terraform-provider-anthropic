@@ -8,3 +8,4 @@
 - [Go toolchain mismatch in worktrees](project_go_toolchain_mismatch.md) — "does not match go tool version": GOTOOLCHAIN=local + prepend mise go bin + unset GOROOT; also `mise trust` for poutine hook
 - [OAuth/WIF resource series (#137)](project_oauth_wif_series.md) — PreCheckOAuth skips (not Fatal); command=plan native test needs no assert block when Computed attrs are unknown; param.IsNull/IsOmitted for testing param.Opt
 - [Memory store SDK quirks](project_memory_store_sdk_quirks.md) — client.Beta.MemoryStores (plural field), real beta header agent-memory-2026-07-22, metadata PATCH needs SetExtraFields since field is map[string]string
+- [Invites beta query param](project_invites_beta_query_param.md) — /v1/organizations/invites[/{id}] need ?beta=true; list filter is `statuses` (plural), not `status`
