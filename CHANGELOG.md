@@ -1,3 +1,9 @@
+## [1.45.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.44.0...v1.45.0) (2026-09-29)
+
+### ✨ Features
+
+* add anthropic_deployment resource (scheduled deployments) ([#266](https://github.com/ippontech/terraform-provider-anthropic/issues/266)) ([fe4229e](https://github.com/ippontech/terraform-provider-anthropic/commit/fe4229e51ed724113fcb8e50acceae0b0f79a0f4)), closes [#140](https://github.com/ippontech/terraform-provider-anthropic/issues/140)
+
 ## [1.44.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.6...v1.44.0) (2026-09-29)
 
 ### ✨ Features
