@@ -240,7 +240,11 @@ func (r *MemoryStoreResource) Update(ctx context.Context, req resource.UpdateReq
 	// key). BetaMemoryStoreUpdateParams.Metadata is a plain map[string]string,
 	// which cannot represent a per-key null in Go, so a patch that needs to
 	// clear a key is sent via SetExtraFields as map[string]any instead — same
-	// escape hatch as vaults' buildMetadataPatch.
+	// escape hatch as vaults' buildMetadataPatch. This depends on the SDK
+	// keeping Metadata typed as map[string]string: if a future SDK version
+	// retypes it to map[string]any (able to carry a JSON null natively), this
+	// escape hatch becomes unnecessary and should be removed in favor of the
+	// typed field.
 	metaPatch, d := buildMemoryStoreMetadataPatch(ctx, data.Metadata, state.Metadata)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
