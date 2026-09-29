@@ -13,7 +13,7 @@ Uploads and manages a file on the Anthropic platform (Files API, generally avail
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
 > **Cost**: Free.
 
-There is no update endpoint: files cannot be modified or renamed after upload. Changing `source_path`, `filename`, or `mime_type` — or editing the local file's content, detected via `source_hash` — forces a new resource.
+There is no update endpoint: files cannot be modified or renamed after upload. Changing `source_path`, `filename`, `mime_type`, or `expires_in_seconds` — or editing the local file's content, detected via `source_hash` — forces a new resource.
 
 ## Example Usage
 
