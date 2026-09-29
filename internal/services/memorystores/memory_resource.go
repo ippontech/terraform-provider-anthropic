@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -21,8 +23,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -58,11 +62,13 @@ const maxMemoryContentBytes = 102400 // 100 kB
 
 // memoryPathValidator enforces the memory path shape documented by the API:
 // starts with "/", at least one non-empty segment, no "." or ".." segments,
-// no empty segments, and at most 1024 bytes.
+// no empty segments, at most 1024 bytes, no control or format characters
+// (including the line/paragraph separators U+2028/U+2029), and NFC-normalized.
 type memoryPathValidator struct{}
 
 func (v memoryPathValidator) Description(_ context.Context) string {
-	return "must start with '/', contain at least one non-empty segment, be at most 1024 bytes, and contain no empty, '.' or '..' segments"
+	return "must start with '/', contain at least one non-empty segment, be at most 1024 bytes, contain no empty, '.' or '..' segments, " +
+		"contain no control or format characters (including U+2028/U+2029), and be NFC-normalized"
 }
 
 func (v memoryPathValidator) MarkdownDescription(ctx context.Context) string {
@@ -78,12 +84,26 @@ func (v memoryPathValidator) ValidateString(_ context.Context, req validator.Str
 	}
 }
 
+// lineParagraphSeparators holds U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
+// SEPARATOR): both are category Zl/Zp, so unicode.IsControl and the Cf
+// (format) category check below don't catch them, but the API rejects them
+// alongside true control/format characters.
+var lineParagraphSeparators = []rune{' ', ' '}
+
 func validateMemoryPath(p string) error {
 	if len(p) > 1024 {
 		return fmt.Errorf("path must be at most 1024 bytes, got %d", len(p))
 	}
 	if !strings.HasPrefix(p, "/") {
 		return errors.New("path must start with '/'")
+	}
+	for _, r := range p {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) || slices.Contains(lineParagraphSeparators, r) {
+			return fmt.Errorf("path must not contain control or format characters, found %U", r)
+		}
+	}
+	if !norm.NFC.IsNormalString(p) {
+		return errors.New("path must be NFC-normalized")
 	}
 	segments := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	if len(segments) == 0 {
@@ -327,7 +347,7 @@ func (r *MemoryResource) Update(ctx context.Context, req resource.UpdateRequest,
 	memory, err := r.client.Beta.MemoryStores.Memories.Update(ctx, state.ID.ValueString(), params)
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 409 {
+		if errors.As(err, &apierr) && apierr.StatusCode == 409 && string(apierr.Type()) == memoryPreconditionFailedErrorType {
 			resp.Diagnostics.AddError(
 				"Memory Modified Out-Of-Band",
 				fmt.Sprintf("Memory %q was modified since it was last read (content_sha256 precondition failed). "+
@@ -340,12 +360,97 @@ func (r *MemoryResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
+	awaitMemoryUpdateVisible(ctx, r.client, state.MemoryStoreID.ValueString(), state.ID.ValueString(), memory.UpdatedAt, memory.ContentSha256, memoryConsistencyTimeout, memoryConsistencyInterval)
+
 	resp.Diagnostics.Append(mapMemoryToState(memory, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// memoryPreconditionFailedErrorType is the API's error type for a failed
+// content_sha256 precondition on update, distinguishing it from any other 409
+// (e.g. a rename colliding with an existing path) that a generic "modified
+// out-of-band" message could not help the operator fix.
+const memoryPreconditionFailedErrorType = "memory_precondition_failed_error"
+
+// The production bounds of the read-after-write consistency wait below. They
+// are consts, and awaitMemoryUpdateVisible takes them as arguments, so the
+// unit tests can shrink the loop to milliseconds without mutating shared
+// state — mirrors vaultConsistencyTimeout/Interval in vault_resource.go.
+const (
+	memoryConsistencyTimeout  = 5 * time.Second
+	memoryConsistencyInterval = 200 * time.Millisecond
+)
+
+// isTerminalMemoryReadError reports whether a Get failure is one the poll can
+// never recover from: the memory (or its store) is gone, or the key no longer
+// has access to it. Retrying those until the deadline would stall the apply
+// for seconds on a read that will never converge.
+func isTerminalMemoryReadError(err error) bool {
+	var apierr *anthropic.Error
+	if !errors.As(err, &apierr) {
+		return false
+	}
+
+	switch apierr.StatusCode {
+	case 401, 403, 404:
+		return true
+	default:
+		return false
+	}
+}
+
+// awaitMemoryUpdateVisible polls Get until the stored memory is at least as
+// new as writtenAt (the updated_at returned by the write itself) and its
+// content_sha256 matches the write response.
+//
+// This endpoint has not been probed for read-after-write staleness the way
+// vaults and WIF were (see CLAUDE.md); the wait is added defensively because
+// Update's next apply builds its content_sha256 precondition from whatever
+// Terraform's post-apply refresh reads, and a stale read there would turn
+// into a spurious 409 on an unrelated next apply, not just a phantom diff.
+//
+// It is deliberately best-effort: on a read error, a timeout, or a cancelled
+// context it returns without reporting a diagnostic. The write has already
+// succeeded, so failing the apply here would turn a cosmetic staleness window
+// into a hard error.
+func awaitMemoryUpdateVisible(ctx context.Context, client *anthropic.Client, memoryStoreID, memoryID string, writtenAt time.Time, writtenSha256 string, timeout, interval time.Duration) {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		memory, err := client.Beta.MemoryStores.Memories.Get(ctx, memoryID, anthropic.BetaMemoryStoreMemoryGetParams{
+			MemoryStoreID: memoryStoreID,
+		})
+		switch {
+		case err == nil:
+			if !memory.UpdatedAt.Before(writtenAt) && memory.ContentSha256 == writtenSha256 {
+				return
+			}
+		case isTerminalMemoryReadError(err):
+			tflog.Warn(ctx, "memory became unreadable while waiting for the update to be visible; giving up on the consistency wait", map[string]any{
+				"memory_id": memoryID,
+				"error":     err.Error(),
+			})
+			return
+		}
+
+		if time.Now().After(deadline) {
+			tflog.Warn(ctx, "memory update not visible before the consistency timeout; the next plan may show a transient diff or a spurious precondition failure", map[string]any{
+				"memory_id": memoryID,
+				"timeout":   timeout.String(),
+			})
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
 }
 
 // --- Delete ---

@@ -28,15 +28,15 @@ resource "anthropic_memory_store" "notes" {
 # A top-level memory
 resource "anthropic_memory" "readme" {
   memory_store_id = anthropic_memory_store.notes.id
-  path             = "/README.md"
-  content          = "# Notes\n\nThis store holds cross-session context for the agent."
+  path            = "/README.md"
+  content         = "# Notes\n\nThis store holds cross-session context for the agent."
 }
 
 # A memory nested under a subdirectory-like path
 resource "anthropic_memory" "project_notes" {
   memory_store_id = anthropic_memory_store.notes.id
-  path             = "/projects/acme/notes.md"
-  content          = "Acme project: prefers concise responses, uses Terraform for infra."
+  path            = "/projects/acme/notes.md"
+  content         = "Acme project: prefers concise responses, uses Terraform for infra."
 }
 
 output "memory_id" {
