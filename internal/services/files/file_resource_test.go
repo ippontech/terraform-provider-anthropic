@@ -47,7 +47,7 @@ func awaitFileGone(client anthropic.Client, id string) error {
 	deadline := time.Now().Add(destroyCheckTimeout)
 	var lastErr error
 	for {
-		_, err := client.Beta.Files.GetMetadata(context.Background(), id, anthropic.BetaFileGetMetadataParams{})
+		_, err := client.Files.GetMetadata(context.Background(), id)
 		if isNotFoundError(err) {
 			return nil
 		}
@@ -124,6 +124,46 @@ func TestAccFileResource_basic(t *testing.T) {
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"source_path", "source_hash"},
+			},
+		},
+	})
+}
+
+func testAccFileResourceExpiresConfig(sourcePath string, expiresInSeconds int) string {
+	return fmt.Sprintf(`
+resource "anthropic_file" "test" {
+  source_path         = %q
+  expires_in_seconds  = %d
+}
+`, sourcePath, expiresInSeconds)
+}
+
+func TestAccFileResource_expiresInSeconds(t *testing.T) {
+	sourcePath := writeFixtureFile(t, "tf-acc-test-file-expires.txt", "expiring content")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFileDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccFileResourceExpiresConfig(sourcePath, 3600),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("anthropic_file.test", "id"),
+					resource.TestCheckResourceAttr("anthropic_file.test", "expires_in_seconds", "3600"),
+					resource.TestCheckResourceAttrSet("anthropic_file.test", "expires_at"),
+				),
+			},
+			{
+				Config: testAccFileResourceExpiresConfig(sourcePath, 7200),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("anthropic_file.test", plancheck.ResourceActionReplace),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_file.test", "expires_in_seconds", "7200"),
+				),
 			},
 		},
 	})

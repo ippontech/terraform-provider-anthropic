@@ -15,10 +15,13 @@ import (
 	"unicode"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -46,14 +49,16 @@ type FileResource struct {
 
 // FileResourceModel describes the resource data model.
 type FileResourceModel struct {
-	ID           types.String `tfsdk:"id"`
-	SourcePath   types.String `tfsdk:"source_path"`
-	SourceHash   types.String `tfsdk:"source_hash"`
-	Filename     types.String `tfsdk:"filename"`
-	MimeType     types.String `tfsdk:"mime_type"`
-	SizeBytes    types.Int64  `tfsdk:"size_bytes"`
-	CreatedAt    types.String `tfsdk:"created_at"`
-	Downloadable types.Bool   `tfsdk:"downloadable"`
+	ID               types.String `tfsdk:"id"`
+	SourcePath       types.String `tfsdk:"source_path"`
+	SourceHash       types.String `tfsdk:"source_hash"`
+	Filename         types.String `tfsdk:"filename"`
+	MimeType         types.String `tfsdk:"mime_type"`
+	SizeBytes        types.Int64  `tfsdk:"size_bytes"`
+	CreatedAt        types.String `tfsdk:"created_at"`
+	Downloadable     types.Bool   `tfsdk:"downloadable"`
+	ExpiresInSeconds types.Int64  `tfsdk:"expires_in_seconds"`
+	ExpiresAt        types.String `tfsdk:"expires_at"`
 }
 
 func (r *FileResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -62,7 +67,7 @@ func (r *FileResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 func (r *FileResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Uploads and manages a file on the Anthropic platform (Files API, beta). " +
+		MarkdownDescription: "Uploads and manages a file on the Anthropic platform (Files API, generally available). " +
 			"Files are uploaded once and referenced by `id` from Messages requests. The file's content is " +
 			"never stored in Terraform state; only its local path, a content hash used to detect local " +
 			"changes, and the metadata returned by the API are tracked.",
@@ -111,6 +116,19 @@ func (r *FileResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"downloadable": schema.BoolAttribute{
 				Computed:            true,
 				MarkdownDescription: "Whether the file can be downloaded. Always `false` for files uploaded by this resource.",
+			},
+			"expires_in_seconds": schema.Int64Attribute{
+				Optional: true,
+				MarkdownDescription: "Seconds from upload until the file expires and its bytes become permanently unavailable. " +
+					"Must be between `3600` (one hour) and `7776000` (ninety days). Leave unset for a file that never expires. " +
+					"Changing this forces a new resource.",
+				PlanModifiers: []planmodifier.Int64{int64planmodifier.RequiresReplace()},
+				Validators:    []validator.Int64{int64validator.Between(3600, 7776000)},
+			},
+			"expires_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp of when the file will expire and become unavailable for download. Null if the file does not expire.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -164,6 +182,11 @@ func (r *FileResource) Create(ctx context.Context, req resource.CreateRequest, r
 		filename = data.Filename.ValueString()
 	}
 
+	var expiresInSeconds param.Opt[int64]
+	if !data.ExpiresInSeconds.IsNull() && !data.ExpiresInSeconds.IsUnknown() {
+		expiresInSeconds = param.NewOpt(data.ExpiresInSeconds.ValueInt64())
+	}
+
 	// The Anthropic SDK cannot retry a streaming multipart body on its own
 	// (see internal/retry's package doc), but that package's MultipartUpload
 	// helper is shaped for a bundle of files uploaded together under a common
@@ -171,7 +194,7 @@ func (r *FileResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// filename. Reusing it would force an artificial "dirName/filename"
 	// multipart name that does not match this resource's `filename`
 	// attribute, so a small local retry loop is used instead.
-	file, err := uploadFileWithRetry(ctx, r.client, sourcePath, filename)
+	file, err := uploadFileWithRetry(ctx, r.client, sourcePath, filename, expiresInSeconds)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to upload file: %s", err))
 		return
@@ -196,7 +219,7 @@ func (r *FileResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	file, err := r.client.Beta.Files.GetMetadata(ctx, data.ID.ValueString(), anthropic.BetaFileGetMetadataParams{})
+	file, err := r.client.Files.GetMetadata(ctx, data.ID.ValueString())
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
@@ -225,7 +248,7 @@ func (r *FileResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	_, err := r.client.Beta.Files.Delete(ctx, data.ID.ValueString(), anthropic.BetaFileDeleteParams{})
+	_, err := r.client.Files.Delete(ctx, data.ID.ValueString())
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
@@ -246,10 +269,15 @@ func (r *FileResource) ImportState(ctx context.Context, req resource.ImportState
 // ============================================================================
 
 // uploadFileWithRetry opens sourcePath fresh on each attempt and uploads it,
-// retrying up to 3 times with a short backoff on 5xx API errors — multipart
+// retrying up to 3 times with a short backoff on a 429 API error — multipart
 // uploads set req.Body without req.GetBody, so the SDK's own retry logic
-// (which requires a replayable body) never fires for them.
-func uploadFileWithRetry(ctx context.Context, client *anthropic.Client, sourcePath, filename string) (*anthropic.BetaFileMetadata, error) {
+// (which requires a replayable body) never fires for them. POST /v1/files is
+// not idempotent (each call creates a new file object), so per the same
+// caution documented for internal/admin's DoRequest, only 429 (the one
+// response that guarantees the write was never processed) is retried; a 5xx,
+// a 409 or a dropped connection may mean the file was already created, and
+// retrying then would silently upload a duplicate.
+func uploadFileWithRetry(ctx context.Context, client *anthropic.Client, sourcePath, filename string, expiresInSeconds param.Opt[int64]) (*anthropic.FileMetadata, error) {
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -267,14 +295,14 @@ func uploadFileWithRetry(ctx context.Context, client *anthropic.Client, sourcePa
 		}
 
 		named := namedReader{Reader: f, name: filename}
-		file, err := client.Beta.Files.Upload(ctx, anthropic.BetaFileUploadParams{File: named})
+		file, err := client.Files.Upload(ctx, anthropic.FileUploadParams{File: named, ExpiresInSeconds: expiresInSeconds})
 		_ = f.Close()
 		if err == nil {
 			return file, nil
 		}
 
 		var apierr *anthropic.Error
-		if !errors.As(err, &apierr) || apierr.StatusCode < 500 {
+		if !errors.As(err, &apierr) || apierr.StatusCode != 429 {
 			return nil, err
 		}
 		lastErr = err
@@ -315,13 +343,18 @@ func computeFileHash(path string) (string, diag.Diagnostics) {
 	return hex.EncodeToString(h.Sum(nil)), diags
 }
 
-func mapFileToState(file *anthropic.BetaFileMetadata, data *FileResourceModel) {
+func mapFileToState(file *anthropic.FileMetadata, data *FileResourceModel) {
 	data.ID = types.StringValue(file.ID)
 	data.Filename = types.StringValue(file.Filename)
 	data.MimeType = types.StringValue(file.MimeType)
 	data.SizeBytes = types.Int64Value(file.SizeBytes)
 	data.CreatedAt = types.StringValue(file.CreatedAt.Format(time.RFC3339))
 	data.Downloadable = types.BoolValue(file.Downloadable)
+	if file.ExpiresAt.IsZero() {
+		data.ExpiresAt = types.StringNull()
+	} else {
+		data.ExpiresAt = types.StringValue(file.ExpiresAt.Format(time.RFC3339))
+	}
 }
 
 // ============================================================================

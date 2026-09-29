@@ -2,16 +2,15 @@
 page_title: "anthropic_file Resource - anthropic"
 subcategory: "Files"
 description: |-
-  Uploads and manages a file on the Anthropic platform (Files API, beta).
+  Uploads and manages a file on the Anthropic platform (Files API, generally available).
 ---
 
 # anthropic_file (Resource)
 
-Uploads and manages a file on the Anthropic platform (Files API, beta). Files are uploaded once and referenced by `id` from Messages requests. The file's content is never stored in Terraform state; only its local path, a content hash used to detect local changes, and the metadata returned by the API are tracked.
+Uploads and manages a file on the Anthropic platform (Files API, generally available). Files are uploaded once and referenced by `id` from Messages requests. The file's content is never stored in Terraform state; only its local path, a content hash used to detect local changes, and the metadata returned by the API are tracked.
 
 > **API**: `POST/GET/DELETE /v1/files[/{id}]` (Files API).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
-> **Beta header**: `anthropic-beta: files-api-2025-04-14`.
 > **Cost**: Free.
 
 There is no update endpoint: files cannot be modified or renamed after upload. Changing `source_path`, `filename`, or `mime_type` — or editing the local file's content, detected via `source_hash` — forces a new resource.
@@ -38,6 +37,7 @@ output "file_id" {
 
 ### Optional
 
+- `expires_in_seconds` (Number) Seconds from upload until the file expires and its bytes become permanently unavailable. Must be between `3600` (one hour) and `7776000` (ninety days). Leave unset for a file that never expires. Changing this forces a new resource.
 - `filename` (String) Filename recorded for the uploaded file. Defaults to the base name of `source_path`. 1-255 characters; cannot contain `<`, `>`, `:`, `"`, `|`, `?`, `*`, `\`, `/`, or Unicode control characters 0-31.
 - `mime_type` (String) MIME type of the file. Detected from `source_path` if not set.
 - `source_hash` (String) SHA256 hash (hex-encoded) of the local file's content. Computed automatically from `source_path` on every plan, so an out-of-band change to the file's content is detected and forces a new resource even though `source_path` itself did not change.
@@ -46,6 +46,7 @@ output "file_id" {
 
 - `created_at` (String) RFC 3339 timestamp of when the file was created.
 - `downloadable` (Boolean) Whether the file can be downloaded. Always `false` for files uploaded by this resource.
+- `expires_at` (String) RFC 3339 timestamp of when the file will expire and become unavailable for download. Null if the file does not expire.
 - `id` (String) Unique file identifier assigned by the API.
 - `size_bytes` (Number) Size of the file in bytes.
 
