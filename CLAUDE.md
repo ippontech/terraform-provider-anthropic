@@ -36,7 +36,7 @@ internal/
     apikeys/       — anthropic_api_key resource (import/update/delete only; no create) + api_key/api_keys data sources
     deployments/   — deployment_runs data source (Beta managed-agents API; `client.Beta.DeploymentRuns`, `GET /v1/deployment_runs`); the anthropic_deployment resource is #140
     environments/  — anthropic_environment resource + environment/environments data sources
-    memorystores/  — anthropic_memory_store + anthropic_memory resources + memory_store/memory_stores data sources (Beta managed-agents API; `client.Beta.MemoryStores`/`client.Beta.MemoryStores.Memories`; workspace-scoped, standard API key)
+    memorystores/  — anthropic_memory_store + anthropic_memory resources + memory_store/memory_stores/memory/memories data sources (Beta managed-agents API; `client.Beta.MemoryStores`/`client.Beta.MemoryStores.Memories`; workspace-scoped, standard API key)
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
     organizations/ — organization data source (anthropic_organization; admin API GET /v1/organizations/me, no input) + organization_member/organization_members data sources (admin API GET /v1/organizations/users[/{id}]; members are Users)
@@ -96,6 +96,8 @@ internal/
 - `anthropic_memory_stores` (`internal/services/memorystores/memory_stores_data_source.go`) — lists memory stores with transparent cursor pagination; optional `include_archived` filter (default `false`, matches the API's own default of excluding archived stores)
 - `anthropic_user_profile` (`internal/services/userprofiles/user_profile_data_source.go`) — fetches a single user profile by ID (`client.Beta.UserProfiles`, beta header `user-profiles-2026-08-18`); this beta is not enabled for the `terraform-tests` organization (verified 2026-09-30: `GET /v1/user_profiles` returns 404 for the standard key, 401 for the admin key), so acceptance tests are gated on an explicit `ANTHROPIC_USER_PROFILES_ACC=1` opt-in on top of `acctest.PreCheck` and native tests use `mock_provider`
 - `anthropic_user_profiles` (`internal/services/userprofiles/user_profiles_data_source.go`) — lists user profiles with transparent cursor pagination and an optional `order` (`asc`/`desc`) filter; same beta-not-enabled caveat as `anthropic_user_profile`
+- `anthropic_memory` (`internal/services/memorystores/memory_data_source.go`) — fetches a single memory by ID from a memory store, always with `view=full` so `content` is populated
+- `anthropic_memories` (`internal/services/memorystores/memories_data_source.go`) — lists memories in a memory store with transparent cursor pagination; optional `path_prefix` (segment-aligned, must start and end with `/`) and `depth` (`0` recursive default, `1` immediate children with deeper entries rolled up into `prefixes`) filters; `include_content` (default `false`) switches the request to `view=full`, which caps the page size fetched per request at 20
 
 ### Adding a resource or data source
 
