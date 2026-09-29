@@ -31,9 +31,9 @@ resource "anthropic_environment" "sessions" {
 
 # Minimal deployment: no schedule, runs only when triggered manually.
 resource "anthropic_deployment" "minimal" {
-  name            = "minimal-deployment"
-  agent_id        = anthropic_agent.assistant.id
-  environment_id  = anthropic_environment.sessions.id
+  name           = "minimal-deployment"
+  agent_id       = anthropic_agent.assistant.id
+  environment_id = anthropic_environment.sessions.id
   initial_events = jsonencode([
     {
       type = "user.message"
