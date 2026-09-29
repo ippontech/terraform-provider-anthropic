@@ -1,3 +1,9 @@
+## [1.44.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.6...v1.44.0) (2026-09-29)
+
+### ✨ Features
+
+* add anthropic_deployment_runs data source ([#261](https://github.com/ippontech/terraform-provider-anthropic/issues/261)) ([1aaa838](https://github.com/ippontech/terraform-provider-anthropic/commit/1aaa8380522ad4e36e71552f21f879263883d81c)), closes [#140](https://github.com/ippontech/terraform-provider-anthropic/issues/140) [#141](https://github.com/ippontech/terraform-provider-anthropic/issues/141) [#141](https://github.com/ippontech/terraform-provider-anthropic/issues/141)
+
 ## [1.43.6](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.5...v1.43.6) (2026-09-29)
 
 ### 📚 Documentation
