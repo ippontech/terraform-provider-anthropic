@@ -15,7 +15,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 )
 
-const inviteFixture = `{
+const inviteDataSourceFixture = `{
 	"id": "invite_015gWxCN9Hfg2QhZwTK7",
 	"email": "jane@example.com",
 	"role": "developer",
@@ -37,7 +37,7 @@ func TestInviteDataSource_read(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, inviteFixture)
+		_, _ = io.WriteString(w, inviteDataSourceFixture)
 	}))
 	defer srv.Close()
 
@@ -53,7 +53,7 @@ func TestInviteDataSource_read(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	data := mapInviteToState(invite)
+	data := mapInviteToDataSourceState(invite)
 
 	if got := data.ID.ValueString(); got != "invite_015gWxCN9Hfg2QhZwTK7" {
 		t.Errorf("ID = %q, want %q", got, "invite_015gWxCN9Hfg2QhZwTK7")

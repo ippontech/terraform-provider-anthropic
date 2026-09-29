@@ -38,18 +38,6 @@ type InviteDataSourceModel struct {
 	Type       types.String `tfsdk:"type"`
 }
 
-// inviteAPIResponse mirrors the Invite object returned by the Admin API.
-type inviteAPIResponse struct {
-	ID         string `json:"id"`
-	Email      string `json:"email"`
-	Role       string `json:"role"`
-	Status     string `json:"status"`
-	InvitedAt  string `json:"invited_at"`
-	ExpiresAt  string `json:"expires_at"`
-	AcceptedAt string `json:"accepted_at"`
-	Type       string `json:"type"`
-}
-
 func (d *InviteDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_invite"
 }
@@ -136,11 +124,14 @@ func (d *InviteDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, mapInviteToState(invite))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, mapInviteToDataSourceState(invite))...)
 }
 
-// mapInviteToState copies the API Invite object into the Terraform state model.
-func mapInviteToState(invite inviteAPIResponse) InviteDataSourceModel {
+// mapInviteToDataSourceState copies the API Invite object into the Terraform
+// data source state model. Named distinctly from invite_resource.go's
+// mapInviteToState (same inviteAPIResponse input, but a different target
+// model: InviteDataSourceModel here vs InviteResourceModel there).
+func mapInviteToDataSourceState(invite inviteAPIResponse) InviteDataSourceModel {
 	return InviteDataSourceModel{
 		ID:         types.StringValue(invite.ID),
 		Email:      types.StringValue(invite.Email),
