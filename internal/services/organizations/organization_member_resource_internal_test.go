@@ -47,6 +47,92 @@ func TestOrganizationMemberResource_CreateErrors(t *testing.T) {
 	}
 }
 
+// --- Read ---
+
+func TestOrganizationMemberResource_Read(t *testing.T) {
+	t.Parallel()
+
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotMethod = req.Method
+		gotPath = req.URL.Path
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, organizationMemberResourceFixture)
+	}))
+	defer srv.Close()
+
+	r := &OrganizationMemberResource{client: admintest.NewClient(t, srv)}
+
+	schema := schematest.ResourceSchema(t, r)
+	objType := schematest.ResourceObjectType(t, r)
+	vals := schematest.NullValues(t, r)
+	vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "user_01WCz1FkmYMm4gnmykNKUu3Q")
+
+	state := tfsdk.State{
+		Raw:    tftypes.NewValue(objType, vals),
+		Schema: schema,
+	}
+
+	var resp resource.ReadResponse
+	resp.State = tfsdk.State{Schema: schema}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read returned errors: %v", resp.Diagnostics)
+	}
+
+	if gotMethod != http.MethodGet {
+		t.Errorf("expected GET, got %s", gotMethod)
+	}
+	if gotPath != "/v1/organizations/users/user_01WCz1FkmYMm4gnmykNKUu3Q" {
+		t.Errorf("expected users read path, got %s", gotPath)
+	}
+
+	var data OrganizationMemberResourceModel
+	if diags := resp.State.Get(context.Background(), &data); diags.HasError() {
+		t.Fatalf("failed to read state: %v", diags)
+	}
+	if data.Email.ValueString() != "user@example.com" {
+		t.Errorf("expected email to be mapped from response, got %s", data.Email.ValueString())
+	}
+	if data.Role.ValueString() != "developer" {
+		t.Errorf("expected role to be mapped from response, got %s", data.Role.ValueString())
+	}
+}
+
+func TestOrganizationMemberResource_Read_notFoundRemovesFromState(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, `{"error":{"type":"not_found_error","message":"user not found"}}`)
+	}))
+	defer srv.Close()
+
+	r := &OrganizationMemberResource{client: admintest.NewClient(t, srv)}
+
+	schema := schematest.ResourceSchema(t, r)
+	objType := schematest.ResourceObjectType(t, r)
+	vals := schematest.NullValues(t, r)
+	vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "user_01WCz1FkmYMm4gnmykNKUu3Q")
+
+	state := tfsdk.State{
+		Raw:    tftypes.NewValue(objType, vals),
+		Schema: schema,
+	}
+
+	var resp resource.ReadResponse
+	resp.State = state
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read returned errors: %v", resp.Diagnostics)
+	}
+
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected state to be removed (null) after a 404, but it was not")
+	}
+}
+
 // --- Update ---
 
 func TestOrganizationMemberResource_Update(t *testing.T) {

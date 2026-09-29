@@ -9,7 +9,7 @@ description: |-
 
 Manages an existing organization member (User) via the Admin API.
 
-Organization membership is created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept the invite — use `terraform import` to bring an existing member under Terraform management. This resource supports changing a member's organization role and removing them from the organization.
+Organization membership is created by inviting a user (via the Admin API's invites endpoint or the Anthropic Console) and having them accept the invite — use `terraform import` to bring an existing member under Terraform management. This resource supports changing a member's organization role and removing them from the organization.
 
 Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
 
