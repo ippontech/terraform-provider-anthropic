@@ -1,3 +1,9 @@
+## [1.52.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.51.0...v1.52.0) (2026-09-29)
+
+### ✨ Features
+
+* add anthropic_memory resource ([#290](https://github.com/ippontech/terraform-provider-anthropic/issues/290)) ([eab5dad](https://github.com/ippontech/terraform-provider-anthropic/commit/eab5dad2d157acbfa8bb196258b4723cef3e9f89)), closes [#121](https://github.com/ippontech/terraform-provider-anthropic/issues/121)
+
 ## [1.51.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.50.0...v1.51.0) (2026-09-29)
 
 ### ✨ Features
