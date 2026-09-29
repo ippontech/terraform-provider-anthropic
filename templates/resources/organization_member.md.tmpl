@@ -1,0 +1,35 @@
+---
+page_title: "anthropic_organization_member Resource - anthropic"
+subcategory: "Organization"
+description: |-
+  Manages an existing organization member (User) via the Admin API. Import only — membership must be created by an accepted invite.
+---
+
+# anthropic_organization_member (Resource)
+
+Manages an existing organization member (User) via the Admin API.
+
+Organization membership is created by inviting a user (via the Admin API's invites endpoint or the Anthropic Console) and having them accept the invite — use `terraform import` to bring an existing member under Terraform management. This resource supports changing a member's organization role and removing them from the organization.
+
+Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
+
+> **API**: `GET/POST/DELETE /v1/organizations/users/{user_id}` (Admin API). No create endpoint.
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+> **Note on deletion:** Deleting this resource removes the member from the organization. This is **irreversible** — unlike other Admin API resources, there is no archive/deactivate alternative for organization membership.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/organization_member/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing organization member using their user ID:
+
+```shell
+terraform import anthropic_organization_member.example <user_id>
+```
