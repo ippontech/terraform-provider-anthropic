@@ -47,7 +47,7 @@ output "invite_status" {
 ### Required
 
 - `email` (String) Email address of the person to invite. Immutable after creation — changing this forces a new resource.
-- `role` (String) Organization role to grant once the invite is accepted. One of `user`, `developer`, `billing`, `admin`, `claude_code_user`. Immutable after creation — changing this forces a new resource.
+- `role` (String) Organization role to grant once the invite is accepted. The valid set depends on the organization's type: Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise organizations use `user`, `managed`, `owner`, `membership_admin`, `primary_owner`. Not validated against a fixed list here since the valid set is organization-type-dependent; an invalid value is rejected by the API at apply time. Immutable after creation — changing this forces a new resource.
 
 ### Read-Only
 

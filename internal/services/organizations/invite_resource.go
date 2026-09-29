@@ -65,9 +65,6 @@ type inviteCreateRequest struct {
 	Role  string `json:"role"`
 }
 
-// organizationRoles mirrors the roles accepted by the Admin API for organization-level assignments.
-var organizationRoles = []string{"user", "developer", "billing", "admin", "claude_code_user"}
-
 // --- Schema ---
 
 func (r *InviteResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -89,9 +86,12 @@ func (r *InviteResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"role": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Organization role to grant once the invite is accepted. One of `user`, `developer`, `billing`, `admin`, `claude_code_user`. " +
+				MarkdownDescription: "Organization role to grant once the invite is accepted. The valid set depends on the organization's " +
+					"type: Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise organizations " +
+					"use `user`, `managed`, `owner`, `membership_admin`, `primary_owner`. Not validated against a fixed list here since the " +
+					"valid set is organization-type-dependent; an invalid value is rejected by the API at apply time. " +
 					"Immutable after creation — changing this forces a new resource.",
-				Validators:    []validator.String{stringvalidator.OneOf(organizationRoles...)},
+				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 
