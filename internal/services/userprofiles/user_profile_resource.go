@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -51,13 +50,6 @@ type UserProfileResourceModel struct {
 	Type        types.String `tfsdk:"type"`
 	CreatedAt   types.String `tfsdk:"created_at"`
 	UpdatedAt   types.String `tfsdk:"updated_at"`
-}
-
-// trustGrantAttrType is the object type of each element of the trust_grants map.
-var trustGrantAttrType = types.ObjectType{
-	AttrTypes: map[string]attr.Type{
-		"status": types.StringType,
-	},
 }
 
 // --- Schema ---
@@ -393,48 +385,20 @@ func mapUserProfileToState(profile *anthropic.BetaUserProfile, data *UserProfile
 	data.ID = types.StringValue(profile.ID)
 	data.AccessType = types.StringValue(string(profile.AccessType))
 	data.Type = types.StringValue(string(profile.Type))
-	data.CreatedAt = types.StringValue(profile.CreatedAt.Format(time.RFC3339))
-	data.UpdatedAt = types.StringValue(profile.UpdatedAt.Format(time.RFC3339))
+	data.CreatedAt, data.UpdatedAt = userProfileTimestamps(profile)
+	data.ExternalID = userProfileNullableString(profile.ExternalID)
+	data.Name = userProfileNullableString(profile.Name)
 
-	if profile.ExternalID == "" {
-		data.ExternalID = types.StringNull()
-	} else {
-		data.ExternalID = types.StringValue(profile.ExternalID)
-	}
+	metaMap, d := userProfileMetadataToMap(profile.Metadata)
+	diags.Append(d...)
+	data.Metadata = metaMap
 
-	if profile.Name == "" {
-		data.Name = types.StringNull()
-	} else {
-		data.Name = types.StringValue(profile.Name)
-	}
-
-	if len(profile.Metadata) > 0 {
-		elements := make(map[string]attr.Value, len(profile.Metadata))
-		for k, v := range profile.Metadata {
-			elements[k] = types.StringValue(v)
-		}
-		metaMap, d := types.MapValue(types.StringType, elements)
-		diags.Append(d...)
-		data.Metadata = metaMap
-	} else {
-		data.Metadata = types.MapNull(types.StringType)
-	}
-
-	if len(profile.TrustGrants) > 0 {
-		elements := make(map[string]attr.Value, len(profile.TrustGrants))
-		for k, v := range profile.TrustGrants {
-			obj, d := types.ObjectValue(
-				trustGrantAttrType.AttrTypes,
-				map[string]attr.Value{"status": types.StringValue(string(v.Status))},
-			)
-			diags.Append(d...)
-			elements[k] = obj
-		}
-		grantsMap, d := types.MapValue(trustGrantAttrType, elements)
+	if grantsMap, ok, d := userProfileTrustGrantsToMap(profile.TrustGrants); ok {
 		diags.Append(d...)
 		data.TrustGrants = grantsMap
 	} else {
-		grantsMap, d := types.MapValue(trustGrantAttrType, map[string]attr.Value{})
+		diags.Append(d...)
+		grantsMap, d := types.MapValue(userProfileTrustGrantObjectType, map[string]attr.Value{})
 		diags.Append(d...)
 		data.TrustGrants = grantsMap
 	}

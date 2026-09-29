@@ -45,7 +45,7 @@ var userProfileDSListItemAttrTypes = map[string]attr.Type{
 	"external_id":  types.StringType,
 	"name":         types.StringType,
 	"metadata":     types.MapType{ElemType: types.StringType},
-	"trust_grants": types.MapType{ElemType: types.ObjectType{AttrTypes: userProfileDSTrustGrantAttrTypes}},
+	"trust_grants": types.MapType{ElemType: userProfileTrustGrantObjectType},
 	"type":         types.StringType,
 	"created_at":   types.StringType,
 	"updated_at":   types.StringType,

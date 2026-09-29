@@ -4,28 +4,15 @@
 package userprofiles_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
-// userProfilesAccOptInEnvVar gates the live smoke tests below. The
-// user_profiles beta is not enabled for the terraform-tests organization
-// (verified 2026-09-30: GET /v1/user_profiles returns 404 for the standard
-// key, 401 for the admin key), so acctest.PreCheck alone would fail these
-// tests in CI. Set this to "1" only against an organization known to have
-// the beta enabled.
-const userProfilesAccOptInEnvVar = "ANTHROPIC_USER_PROFILES_ACC"
-
-func preCheckUserProfilesAcc(t *testing.T) {
-	acctest.PreCheck(t)
-	if os.Getenv(userProfilesAccOptInEnvVar) != "1" {
-		t.Skipf("skipping: the user_profiles beta is not enabled for the terraform-tests organization (404 as of 2026-09-30); "+
-			"set %s=1 to run this against an organization with the beta enabled", userProfilesAccOptInEnvVar)
-	}
-}
+// preCheckUserProfilesAcc is defined once, in user_profile_resource_test.go,
+// and shared by every acceptance test in this package (resource and both
+// data sources).
 
 const testAccUserProfilesDataSourceConfig = `
 data "anthropic_user_profiles" "test" {}

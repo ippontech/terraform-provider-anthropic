@@ -6,10 +6,8 @@ package userprofiles
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -28,12 +26,6 @@ func NewUserProfileDataSource() datasource.DataSource {
 // UserProfileDataSource defines the data source implementation.
 type UserProfileDataSource struct {
 	client *anthropic.Client
-}
-
-// userProfileDSTrustGrantAttrTypes describes the attribute types of each
-// element in the "trust_grants" map.
-var userProfileDSTrustGrantAttrTypes = map[string]attr.Type{
-	"status": types.StringType,
 }
 
 // userProfileDSModel describes the fields shared by the singular data source
@@ -88,7 +80,7 @@ func userProfileDSAttributes(idRequired bool) map[string]schema.Attribute {
 		},
 		"trust_grants": schema.MapAttribute{
 			Computed:    true,
-			ElementType: types.ObjectType{AttrTypes: userProfileDSTrustGrantAttrTypes},
+			ElementType: userProfileTrustGrantObjectType,
 			MarkdownDescription: "Trust grants for this profile, keyed by grant name. A grant name is absent from the " +
 				"map when it has no active or in-flight grant. Each entry has a `status` (`active`, `pending`, or `rejected`).",
 		},
@@ -169,57 +161,27 @@ func (d *UserProfileDataSource) Read(ctx context.Context, req datasource.ReadReq
 func mapUserProfileDSToModel(profile *anthropic.BetaUserProfile) (userProfileDSModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
+	createdAt, updatedAt := userProfileTimestamps(profile)
 	m := userProfileDSModel{
-		ID:        types.StringValue(profile.ID),
-		Type:      types.StringValue(string(profile.Type)),
-		CreatedAt: types.StringValue(profile.CreatedAt.Format(time.RFC3339)),
-		UpdatedAt: types.StringValue(profile.UpdatedAt.Format(time.RFC3339)),
+		ID:         types.StringValue(profile.ID),
+		Type:       types.StringValue(string(profile.Type)),
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+		AccessType: userProfileNullableString(string(profile.AccessType)),
+		ExternalID: userProfileNullableString(profile.ExternalID),
+		Name:       userProfileNullableString(profile.Name),
 	}
 
-	if profile.AccessType == "" {
-		m.AccessType = types.StringNull()
-	} else {
-		m.AccessType = types.StringValue(string(profile.AccessType))
-	}
+	metaMap, d := userProfileMetadataToMap(profile.Metadata)
+	diags.Append(d...)
+	m.Metadata = metaMap
 
-	if profile.ExternalID == "" {
-		m.ExternalID = types.StringNull()
-	} else {
-		m.ExternalID = types.StringValue(profile.ExternalID)
-	}
-
-	if profile.Name == "" {
-		m.Name = types.StringNull()
-	} else {
-		m.Name = types.StringValue(profile.Name)
-	}
-
-	if len(profile.Metadata) > 0 {
-		elements := make(map[string]attr.Value, len(profile.Metadata))
-		for k, v := range profile.Metadata {
-			elements[k] = types.StringValue(v)
-		}
-		metaMap, d := types.MapValue(types.StringType, elements)
-		diags.Append(d...)
-		m.Metadata = metaMap
-	} else {
-		m.Metadata = types.MapNull(types.StringType)
-	}
-
-	if len(profile.TrustGrants) > 0 {
-		elements := make(map[string]attr.Value, len(profile.TrustGrants))
-		for k, v := range profile.TrustGrants {
-			obj, d := types.ObjectValue(userProfileDSTrustGrantAttrTypes, map[string]attr.Value{
-				"status": types.StringValue(string(v.Status)),
-			})
-			diags.Append(d...)
-			elements[k] = obj
-		}
-		grantsMap, d := types.MapValue(types.ObjectType{AttrTypes: userProfileDSTrustGrantAttrTypes}, elements)
+	if grantsMap, ok, d := userProfileTrustGrantsToMap(profile.TrustGrants); ok {
 		diags.Append(d...)
 		m.TrustGrants = grantsMap
 	} else {
-		m.TrustGrants = types.MapNull(types.ObjectType{AttrTypes: userProfileDSTrustGrantAttrTypes})
+		diags.Append(d...)
+		m.TrustGrants = types.MapNull(userProfileTrustGrantObjectType)
 	}
 
 	return m, diags
