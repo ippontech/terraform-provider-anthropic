@@ -51,7 +51,7 @@ output "user_profiles" {
 
 Read-Only:
 
-- `access_type` (String) How the platform uses the API on behalf of the entity this profile represents. `application`: the platform sells a product that uses the API behind the scenes, and the profile represents an individual end-user of that product. `passthrough`: the platform resells raw inference, and the profile identifies the resold-to company.
+- `access_type` (String) How the platform uses the API on behalf of the entity this profile represents. `application`: the platform sells a product that uses the API behind the scenes, and the profile represents an individual end-user of that product. `passthrough`: the platform resells raw inference, and the profile identifies the resold-to company. Null if not set.
 - `created_at` (String) Creation timestamp (RFC 3339).
 - `external_id` (String) Platform's own identifier for this user. Not enforced unique. Null if not set.
 - `id` (String) Unique identifier for the user profile (e.g. `uprof_...`).

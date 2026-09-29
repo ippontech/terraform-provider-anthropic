@@ -71,7 +71,7 @@ func userProfileDSAttributes(idRequired bool) map[string]schema.Attribute {
 			MarkdownDescription: "How the platform uses the API on behalf of the entity this profile represents. " +
 				"`application`: the platform sells a product that uses the API behind the scenes, and the profile " +
 				"represents an individual end-user of that product. `passthrough`: the platform resells raw inference, " +
-				"and the profile identifies the resold-to company.",
+				"and the profile identifies the resold-to company. Null if not set.",
 		},
 		"external_id": schema.StringAttribute{
 			Computed:            true,
@@ -170,11 +170,16 @@ func mapUserProfileDSToModel(profile *anthropic.BetaUserProfile) (userProfileDSM
 	var diags diag.Diagnostics
 
 	m := userProfileDSModel{
-		ID:         types.StringValue(profile.ID),
-		AccessType: types.StringValue(string(profile.AccessType)),
-		Type:       types.StringValue(string(profile.Type)),
-		CreatedAt:  types.StringValue(profile.CreatedAt.Format(time.RFC3339)),
-		UpdatedAt:  types.StringValue(profile.UpdatedAt.Format(time.RFC3339)),
+		ID:        types.StringValue(profile.ID),
+		Type:      types.StringValue(string(profile.Type)),
+		CreatedAt: types.StringValue(profile.CreatedAt.Format(time.RFC3339)),
+		UpdatedAt: types.StringValue(profile.UpdatedAt.Format(time.RFC3339)),
+	}
+
+	if profile.AccessType == "" {
+		m.AccessType = types.StringNull()
+	} else {
+		m.AccessType = types.StringValue(string(profile.AccessType))
 	}
 
 	if profile.ExternalID == "" {

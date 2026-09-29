@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
@@ -102,6 +105,10 @@ func TestMapUserProfileDSToModel_nullableFieldsAndEmptyMaps(t *testing.T) {
 	}
 }
 
+// TestUserProfileDataSourceRead_notFound drives UserProfileDataSource.Read
+// itself (not just the SDK call it wraps) against a 404 stub, so a future
+// change that swallowed the error instead of surfacing a diagnostic would
+// fail this test.
 func TestUserProfileDataSourceRead_notFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -110,9 +117,43 @@ func TestUserProfileDataSourceRead_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := oauthtest.NewSDKClient(t, srv)
-	_, err := client.Beta.UserProfiles.Get(context.Background(), "uprof_missing", anthropic.BetaUserProfileGetParams{})
-	if err == nil {
-		t.Fatal("expected an error for a 404 response")
+	d := &UserProfileDataSource{client: oauthtest.NewSDKClient(t, srv)}
+
+	var schemaResp datasource.SchemaResponse
+	d.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	if schemaResp.Diagnostics.HasError() {
+		t.Fatalf("schema: %v", schemaResp.Diagnostics)
+	}
+
+	objType, ok := schemaResp.Schema.Type().(interface {
+		TerraformType(context.Context) tftypes.Type
+	})
+	if !ok {
+		t.Fatal("schema type does not implement TerraformType")
+	}
+	tfObjType, ok := objType.TerraformType(context.Background()).(tftypes.Object)
+	if !ok {
+		t.Fatal("schema type is not a tftypes.Object")
+	}
+
+	vals := make(map[string]tftypes.Value, len(tfObjType.AttributeTypes))
+	for name, typ := range tfObjType.AttributeTypes {
+		vals[name] = tftypes.NewValue(typ, nil)
+	}
+	vals["id"] = tftypes.NewValue(tftypes.String, "uprof_missing")
+
+	req := datasource.ReadRequest{
+		Config: tfsdk.Config{
+			Raw:    tftypes.NewValue(tfObjType, vals),
+			Schema: schemaResp.Schema,
+		},
+	}
+	var resp datasource.ReadResponse
+	resp.State = tfsdk.State{Schema: schemaResp.Schema}
+
+	d.Read(context.Background(), req, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected Read to report an error diagnostic for a 404 response")
 	}
 }

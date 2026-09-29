@@ -48,7 +48,14 @@ func TestAccUserProfilesDataSource_basic(t *testing.T) {
 
 func testAccUserProfileDataSourceConfig() string {
 	return `
-data "anthropic_user_profiles" "all" {}
+data "anthropic_user_profiles" "all" {
+  lifecycle {
+    postcondition {
+      condition     = length(self.user_profiles) > 0
+      error_message = "This test needs at least one user profile in the organization to look up by id; create one first."
+    }
+  }
+}
 
 data "anthropic_user_profile" "test" {
   id = data.anthropic_user_profiles.all.user_profiles[0].id
