@@ -164,6 +164,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 	return []func() resource.Resource{
 		agents.NewAgentResource,
 		apikeys.NewAPIKeyResource,
+		deployments.NewDeploymentResource,
 		environments.NewEnvironmentResource,
 		federation.NewFederationIssuerResource,
 		federation.NewFederationRuleResource,
