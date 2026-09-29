@@ -1,0 +1,43 @@
+---
+page_title: "anthropic_user_profile Resource - anthropic"
+subcategory: "User Profiles"
+description: |-
+  Creates and manages a user profile: an identity representing an end-user or resold-to company that a platform acts on behalf of when calling the API (beta).
+---
+
+# anthropic_user_profile (Resource)
+
+Creates and manages a user profile (beta): an identity representing an end-user of a platform's product, or a
+resold-to company, on whose behalf the platform's API key calls the API.
+
+> **API**: `POST/GET/POST /v1/user_profiles[/{id}]` (beta, no `DELETE`).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `user-profiles-2026-08-18`.
+
+> ⚠️ Not generally available: as of 2026-09-30 this beta was not enabled for Ippon's test organization, and both
+> the list and single-resource `/v1/user_profiles` endpoints returned a plain `404` regardless of beta header.
+> Verify the feature is enabled for your organization before relying on this resource.
+
+> ⚠️ No delete endpoint: the Anthropic API does not currently expose a way to delete a user profile. Running
+> `terraform destroy` (or removing the resource from configuration) only forgets it in Terraform state — a warning
+> is emitted — the profile itself continues to exist at Anthropic.
+
+`metadata` uses merge semantics on update, not the null-based PATCH semantics used elsewhere in this provider
+(vaults, memory stores): a key present in config overwrites the stored value, a key omitted from config is left
+untouched server-side, and a key removed from config is cleared by sending it with an empty string value. This is
+handled transparently; configuring `metadata` declaratively works the same way as any other resource in this
+provider.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/user_profile/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing user profile using its ID:
+
+```shell
+terraform import anthropic_user_profile.example <user_profile_id>
+```
