@@ -51,7 +51,7 @@ output "organization_member_email" {
 ### Required
 
 - `id` (String) The ID of the user. Also used as the import ID.
-- `role` (String) Organization role of the user. Valid values: `user`, `developer`, `billing`, `admin`, `claude_code_user`.
+- `role` (String) Organization role of the user. The valid set depends on the organization's type: Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise organizations use `user`, `managed`, `owner`, `membership_admin`, `primary_owner` (though the API currently only assigns `user`/`managed` via this endpoint). Not validated against a fixed list here since the valid set is organization-type-dependent; an invalid value is rejected by the API at apply time.
 
 ### Read-Only
 
