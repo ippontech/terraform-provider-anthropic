@@ -165,7 +165,7 @@ func (r *InviteResource) Create(ctx context.Context, req resource.CreateRequest,
 		Role:  data.Role.ValueString(),
 	}
 
-	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/invites", body)
+	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/invites?beta=true", body)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create invite: %s", err))
 		return
@@ -191,7 +191,7 @@ func (r *InviteResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	respBytes, err := r.adminClient.DoRequest(ctx, "GET", "/v1/organizations/invites/"+data.ID.ValueString(), nil)
+	respBytes, err := r.adminClient.DoRequest(ctx, "GET", "/v1/organizations/invites/"+data.ID.ValueString()+"?beta=true", nil)
 	if err != nil {
 		if admin.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -237,7 +237,7 @@ func (r *InviteResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	_, err := r.adminClient.DoRequest(ctx, "DELETE", "/v1/organizations/invites/"+data.ID.ValueString(), nil)
+	_, err := r.adminClient.DoRequest(ctx, "DELETE", "/v1/organizations/invites/"+data.ID.ValueString()+"?beta=true", nil)
 	if err != nil {
 		if admin.IsNotFound(err) {
 			return
