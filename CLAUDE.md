@@ -41,7 +41,7 @@ internal/
     models/        — model/models data sources
     organizations/ — organization data source (anthropic_organization; admin API GET /v1/organizations/me, no input) + organization_member/organization_members data sources (admin API GET /v1/organizations/users[/{id}]; members are Users)
     skills/        — skill/skill_version resources + skill/skills/skill_version/skill_versions data sources
-    userprofiles/  — anthropic_user_profile resource (Beta; `client.Beta.UserProfiles`; standard API key; no delete endpoint; returned 404 for this organization when probed 2026-09-30)
+    userprofiles/  — anthropic_user_profile resource + user_profile/user_profiles data sources (Beta; `client.Beta.UserProfiles`; beta header user-profiles-2026-08-18 sent by the SDK; standard API key; no delete endpoint; endpoint returned 404 for the test org on 2026-09-30, so tests are httptest + plan/mock only)
     workspaces/    — anthropic_workspace + anthropic_workspace_member resources + workspace/workspaces/workspace_member/workspace_members data sources (shared test helpers in workspacetest.go)
     vaults/        — anthropic_vault + anthropic_vault_credential resources (Beta managed-agents API; vault_credential uses write-only secret attributes)
     serviceaccounts/ — anthropic_service_account + anthropic_service_account_workspace resources (Beta managed-agents API; WIF non-human identity + its explicit workspace memberships, org:admin OAuth bearer only)
@@ -94,6 +94,8 @@ internal/
 - `anthropic_api_keys` (`internal/services/apikeys/api_keys_data_source.go`) — lists API keys (admin API) with optional `status` and `workspace_id` filters; transparent pagination
 - `anthropic_memory_store` (`internal/services/memorystores/memory_store_data_source.go`) — fetches a single memory store by ID regardless of archived state; shares `mapMemoryStoreCommon` with the resource and the plural data source
 - `anthropic_memory_stores` (`internal/services/memorystores/memory_stores_data_source.go`) — lists memory stores with transparent cursor pagination; optional `include_archived` filter (default `false`, matches the API's own default of excluding archived stores)
+- `anthropic_user_profile` (`internal/services/userprofiles/user_profile_data_source.go`) — fetches a single user profile by ID (`client.Beta.UserProfiles`, beta header `user-profiles-2026-08-18`); this beta is not enabled for the `terraform-tests` organization (verified 2026-09-30: `GET /v1/user_profiles` returns 404 for the standard key, 401 for the admin key), so acceptance tests are gated on an explicit `ANTHROPIC_USER_PROFILES_ACC=1` opt-in on top of `acctest.PreCheck` and native tests use `mock_provider`
+- `anthropic_user_profiles` (`internal/services/userprofiles/user_profiles_data_source.go`) — lists user profiles with transparent cursor pagination and an optional `order` (`asc`/`desc`) filter; same beta-not-enabled caveat as `anthropic_user_profile`
 
 ### Adding a resource or data source
 
