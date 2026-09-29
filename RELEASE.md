@@ -124,25 +124,17 @@ The first major planned this way is 2.0.0; candidates are the issues labelled as
 ## Staging branch
 
 1. Create `major/2.0.0` from `main`. Do **not** add it to the semantic-release workflow trigger or to `.releaserc`.
-2. Add a ruleset on `major/2.0.0` that requires the same status checks as `main`, but no pull request and no merge queue: the branch must accept merge commits pushed directly (step 4).
+2. The `major-upgrades` ruleset (`refs/heads/major/*`) requires the same status checks as `main` but no pull request and no merge queue. It must **not** require linear history: syncs from `main` (step 4) are merge commits. Because the CI workflows only run on `pull_request` and `merge_group`, a direct push never carries status checks and is rejected, so every change to the branch, syncs included, goes through a PR. The repository therefore keeps **Allow merge commits** enabled alongside squash; this does not weaken `main`, whose ruleset restricts merges to squash on its own.
 3. Open every breaking-change PR against `major/2.0.0`. Squash-merge it with a `feat!:` / `fix!:` type or a `BREAKING CHANGE:` footer that states what changed and how to migrate. That text is what ends up in the 2.0.0 release notes, so write it for users, not for reviewers.
-4. Keep the branch in sync with `main` with a plain merge, at least after every release on `main`:
-
-   ```bash
-   git checkout major/2.0.0 && git pull --ff-only
-   git merge main
-   git push
-   ```
-
-   Resolve conflicts in favour of the breaking change, never by reverting it. Do not squash this sync (a PR into `major/2.0.0` would be squashed): the merge keeps `main`'s commits as ancestors, which is what lets the final merge below go through cleanly.
+4. Keep the branch in sync with `main` at least after every release on `main`: open a PR `main` → `major/2.0.0` (from a throwaway `sync/major-2.0.0` branch if conflicts need resolving) and merge it with a **merge commit**, never squash. Resolve conflicts in favour of the breaking change, never by reverting it. The merge keeps `main`'s commits as ancestors, which is what lets the final merge below go through cleanly.
 5. Write the upgrade guide as you go, in `templates/guides/version_2_upgrade.md.tmpl` on the staging branch, one section per breaking change. Every `BREAKING CHANGE:` footer should have a matching section.
 
 ## Cutting the release
 
 1. Merge `main` into `major/2.0.0` one last time and make sure `make` and `make terraform-test` pass there.
-2. Temporarily enable **Allow merge commits** in the repository settings (`Settings > General > Pull Requests`) and check that the `main` ruleset's merge queue does not force squash. The repository is squash-only by default, and a squash would flatten every breaking-change commit into one message, losing the `BREAKING CHANGE:` footers that drive the version bump and the notes.
+2. Temporarily edit the `main` ruleset (`Settings > Rules > Rulesets`): add **Merge** to the allowed merge methods of the pull request rule, untick **Require linear history**, and disable the **merge queue** rule (it squashes). A squash would flatten every breaking-change commit into one message, losing the `BREAKING CHANGE:` footers that drive the version bump and the notes.
 3. Open a PR `major/2.0.0` → `main` and merge it with a **merge commit**. semantic-release then analyses every commit since the last `v1.x` tag, finds the `BREAKING CHANGE:` footers, publishes a single `v2.0.0` and lists each breaking change in the release notes and in `CHANGELOG.md`.
-4. Disable **Allow merge commits** again and delete `major/2.0.0`.
+4. Restore the `main` ruleset (squash only, linear history, merge queue) and delete `major/2.0.0`.
 
 If a `1.x` maintenance line is needed after 2.0.0, create `1.x` from the last `v1.*` tag, add it to the workflow trigger and to `.releaserc` (`"branches": ["1.x", "main"]`); semantic-release then restricts it to `1.*` versions and refuses anything that would collide with `main`.
 
