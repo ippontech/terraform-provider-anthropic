@@ -18,8 +18,10 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/federation"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/memorystores"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/messages"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
@@ -163,10 +165,12 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 	return []func() resource.Resource{
 		agents.NewAgentResource,
 		apikeys.NewAPIKeyResource,
+		deployments.NewDeploymentResource,
 		environments.NewEnvironmentResource,
 		federation.NewFederationIssuerResource,
 		federation.NewFederationRuleResource,
 		federation.NewFederationRuleWorkspaceResource,
+		memorystores.NewMemoryStoreResource,
 		messages.NewMessageResource,
 		serviceaccounts.NewServiceAccountResource,
 		serviceaccounts.NewServiceAccountWorkspaceResource,
@@ -186,6 +190,7 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		apikeys.NewAPIKeysDataSource,
 		agents.NewAgentsDataSource,
 		messages.NewCountTokensDataSource,
+		deployments.NewDeploymentRunsDataSource,
 		environments.NewEnvironmentDataSource,
 		environments.NewEnvironmentsDataSource,
 		federation.NewFederationIssuersDataSource,
@@ -193,6 +198,8 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		federation.NewFederationIssuerDataSource,
 		federation.NewFederationRuleDataSource,
 		federation.NewFederationRuleWorkspacesDataSource,
+		memorystores.NewMemoryStoreDataSource,
+		memorystores.NewMemoryStoresDataSource,
 		models.NewModelDataSource,
 		models.NewModelsDataSource,
 		organizations.NewOrganizationDataSource,

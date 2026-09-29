@@ -1,0 +1,31 @@
+---
+page_title: "anthropic_deployment Resource - anthropic"
+subcategory: "Managed Agents"
+description: |-
+  Manages a scheduled deployment (beta): a configured instance of an agent bound to an environment, credentials, initial events, and an optional cron schedule.
+---
+
+# anthropic_deployment (Resource)
+
+Manages a scheduled deployment (beta): a configured instance of an agent that binds it to an environment, credentials, initial events, and an optional cron schedule so it can run autonomously. There is no hard-delete endpoint for deployments: destroying this resource always archives it.
+
+`initial_events`, `resources`, and `budget` accept raw JSON matching the API's own request shape, since Terraform-native modeling of their deeply nested unions would dwarf the rest of this schema.
+
+> **API**: `POST/GET/POST/POST/POST/POST /v1/deployments[/{id}][/pause|/unpause|/archive]` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free for management; sessions triggered by the deployment are billed as usual.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/deployment/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing deployment using its ID:
+
+```shell
+terraform import anthropic_deployment.example <deployment_id>
+```

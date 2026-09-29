@@ -1,0 +1,30 @@
+---
+page_title: "anthropic_memory_store Resource - anthropic"
+subcategory: "Memory Stores"
+description: |-
+  Creates and manages a memory store: a workspace-scoped collection of text documents that an agent reads and writes across sessions (beta).
+---
+
+# anthropic_memory_store (Resource)
+
+Creates and manages a memory store: a workspace-scoped collection of text documents that an agent reads and writes across sessions (beta). When attached to a session via `resources[]` at session creation time, it is mounted as a directory inside the session container, and its description is automatically added to the system prompt so the agent knows what it contains. A maximum of 8 stores can be attached per session, typically used to map memory to product structure (one per end-user, per team, per project) or to share reference material across many sessions.
+
+> **API**: `POST/GET/POST/DELETE /v1/memory_stores[/{id}]` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `agent-memory-2026-07-22`.
+
+> ⚠️ Archive notice: archiving is permanent. There is no unarchive operation on the Anthropic API. Once archived, this memory store becomes read-only and cannot be attached to new sessions. Existing sessions that hold an attachment continue to read it. Use `archive_on_destroy = true` to preserve the data on `terraform destroy`; the default `false` permanently deletes the store and all its memories.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/memory_store/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing memory store using its ID:
+
+```shell
+terraform import anthropic_memory_store.example <memory_store_id>
+```
