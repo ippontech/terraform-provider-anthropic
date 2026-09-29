@@ -34,6 +34,7 @@ internal/
   services/
     agents/        — anthropic_agent resource + agent/agents data sources
     apikeys/       — anthropic_api_key resource (import/update/delete only; no create) + api_key/api_keys data sources
+    deployments/   — deployment_runs data source (Beta managed-agents API; `client.Beta.DeploymentRuns`, `GET /v1/deployment_runs`); the anthropic_deployment resource is #140
     environments/  — anthropic_environment resource + environment/environments data sources
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
@@ -69,6 +70,7 @@ internal/
 - `anthropic_count_tokens` (`internal/services/messages/count_tokens_data_source.go`) — counts tokens for a given prompt
 - `anthropic_agent` (`internal/services/agents/agent_data_source.go`) — fetches a single agent
 - `anthropic_agents` (`internal/services/agents/agents_data_source.go`) — lists all agents
+- `anthropic_deployment_runs` (`internal/services/deployments/deployment_runs_data_source.go`) — lists the run history of scheduled deployments (`GET /v1/deployment_runs`, **not** `/v1/deployments/{id}/runs`) with optional `deployment_id`, `has_error` and `trigger_type` filters and transparent pagination; `session_id` and `error` are mutually exclusive (one is always null). A well-formed but unknown `deployment_id` (`depl_` + 24 base62 characters, e.g. `depl_01AAAAAAAAAAAAAAAAAAAAAA`) returns 200 with an empty list, but a malformed one (`depl_01xyz` from the public docs, or all zeros) is rejected with `400 Invalid deployment ID` — verified live 2026-09-21; the example and native test rely on the former so they apply for real without any deployment in the test workspace
 - `anthropic_environment` (`internal/services/environments/environment_data_source.go`) — fetches a single environment
 - `anthropic_environments` (`internal/services/environments/environments_data_source.go`) — lists all environments
 - `anthropic_skill` (`internal/services/skills/skill_data_source.go`) — fetches a single skill

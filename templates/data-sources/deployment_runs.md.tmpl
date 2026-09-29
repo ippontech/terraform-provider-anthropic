@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_deployment_runs Data Source - anthropic"
+subcategory: "Managed Agents"
+description: |-
+  Lists the run history of scheduled deployments (beta): each run records either the resulting session ID or the error that prevented session creation. Supports filtering by deployment, outcome and trigger type; all pages are fetched automatically.
+---
+
+# anthropic_deployment_runs (Data Source)
+
+Lists the run history of scheduled deployments (beta). Each run records one attempt at starting a session: either the resulting `session_id` or the `error` that prevented session creation. Supports filtering by deployment, outcome and trigger type; all pages are fetched automatically.
+
+> **API**: `GET /v1/deployment_runs` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/deployment_runs/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
