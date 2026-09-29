@@ -1,0 +1,20 @@
+---
+page_title: "anthropic_memory_stores Data Source - anthropic"
+subcategory: "Memory Stores"
+description: |-
+  Lists memory stores (beta).
+---
+
+# anthropic_memory_stores (Data Source)
+
+Lists memory stores (beta). All pages are fetched automatically. Archived stores are excluded by default, mirroring the API's default behavior; set `include_archived = true` to include them.
+
+> **API**: `GET /v1/memory_stores` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `agent-memory-2026-07-22`.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/memory_stores/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
