@@ -1,3 +1,9 @@
+## [1.53.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.52.0...v1.53.0) (2026-09-29)
+
+### ✨ Features
+
+* add anthropic_user_profile and anthropic_user_profiles data sources ([#289](https://github.com/ippontech/terraform-provider-anthropic/issues/289)) ([042bbfd](https://github.com/ippontech/terraform-provider-anthropic/commit/042bbfd4205d3531ee5e57f7ff54757b2a087137)), closes [#118](https://github.com/ippontech/terraform-provider-anthropic/issues/118)
+
 ## [1.52.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.51.0...v1.52.0) (2026-09-29)
 
 ### ✨ Features
