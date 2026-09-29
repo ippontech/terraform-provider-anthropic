@@ -10,21 +10,8 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
-
-// newTestSDKClient returns a bare *anthropic.Client authenticated with a
-// dummy API key and pointed at srv, for unit tests that drive the SDK
-// directly against a fake server.
-func newTestSDKClient(t *testing.T, srv *httptest.Server) *anthropic.Client {
-	t.Helper()
-	c := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
-		option.WithBaseURL(srv.URL),
-		option.WithAPIKey("test"),
-	)
-	return &c
-}
 
 func TestMapMemoryDSToState_withContent(t *testing.T) {
 	createdAt := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
@@ -47,7 +34,7 @@ func TestMapMemoryDSToState_withContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestSDKClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	memory, err := client.Beta.MemoryStores.Memories.Get(t.Context(), "mem_01ABC", anthropic.BetaMemoryStoreMemoryGetParams{
 		MemoryStoreID: "memstore_01ABC",
 		View:          anthropic.BetaManagedAgentsMemoryViewFull,
@@ -100,7 +87,7 @@ func TestMapMemoryDSToState_nullContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestSDKClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	memory, err := client.Beta.MemoryStores.Memories.Get(t.Context(), "mem_02DEF", anthropic.BetaMemoryStoreMemoryGetParams{
 		MemoryStoreID: "memstore_01ABC",
 	})
@@ -124,7 +111,7 @@ func TestMemoryGet_404(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestSDKClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 	_, err := client.Beta.MemoryStores.Memories.Get(t.Context(), "mem_missing", anthropic.BetaMemoryStoreMemoryGetParams{
 		MemoryStoreID: "memstore_01ABC",
 	})

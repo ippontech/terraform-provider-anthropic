@@ -6,6 +6,7 @@ package memorystores_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -18,8 +19,9 @@ import (
 // SDK directly. anthropic_memory is a read-only lookup with no managed
 // resource counterpart on this branch (the sibling anthropic_memory resource
 // is implemented on a different branch, #121), so the fixture it reads has to
-// be created out of band. Cleanup (memory store delete, which the API does
-// not cascade-restrict) is registered via t.Cleanup.
+// be created out of band. Cleanup is registered via t.Cleanup in LIFO order
+// (memory deleted before the store that holds it), so the test never relies
+// on the store delete cascading to its memories.
 func setUpMemoryFixture(t *testing.T, namePrefix, path, content string) (storeID, memoryID string) {
 	t.Helper()
 	client := newAccTestClient()
@@ -44,11 +46,21 @@ func setUpMemoryFixture(t *testing.T, namePrefix, path, content string) (storeID
 	if err != nil {
 		t.Fatalf("unable to create memory fixture: %s", err)
 	}
+	t.Cleanup(func() {
+		if _, err := client.Beta.MemoryStores.Memories.Delete(context.Background(), memory.ID, anthropic.BetaMemoryStoreMemoryDeleteParams{
+			MemoryStoreID: store.ID,
+		}); err != nil && !isNotFoundError(err) {
+			t.Errorf("cleanup: unable to delete memory fixture %s: %s", memory.ID, err)
+		}
+	})
 
 	return store.ID, memory.ID
 }
 
 func TestAccMemoryDataSource_basic(t *testing.T) {
+	if os.Getenv(resource.EnvTfAcc) == "" {
+		t.Skipf("acceptance test skipped unless %s is set", resource.EnvTfAcc)
+	}
 	storeID, memoryID := setUpMemoryFixture(t, "tf-acc-test-memstore-for-memory-ds", "/notes/foo.md", "hello from acceptance test")
 
 	config := fmt.Sprintf(`

@@ -27,7 +27,6 @@ resource "anthropic_memory_store" "example" {
 
 data "anthropic_memories" "all" {
   memory_store_id = anthropic_memory_store.example.id
-  depends_on      = [anthropic_memory_store.example]
 }
 
 output "memories" {

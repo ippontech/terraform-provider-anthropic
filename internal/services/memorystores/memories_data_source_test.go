@@ -6,6 +6,7 @@ package memorystores_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -16,7 +17,9 @@ import (
 
 // setUpMemoriesFixture creates a memory store with a top-level memory and a
 // memory nested one level deeper, to exercise both depth=1 -> prefixes
-// roll-up and the path_prefix filter.
+// roll-up and the path_prefix filter. Cleanup is registered via t.Cleanup in
+// LIFO order (memories deleted before the store that holds them), so the
+// test never relies on the store delete cascading to its memories.
 func setUpMemoriesFixture(t *testing.T) (storeID string) {
 	t.Helper()
 	client := newAccTestClient()
@@ -34,23 +37,43 @@ func setUpMemoriesFixture(t *testing.T) (storeID string) {
 		}
 	})
 
-	if _, err := client.Beta.MemoryStores.Memories.New(ctx, store.ID, anthropic.BetaMemoryStoreMemoryNewParams{
+	topLevel, err := client.Beta.MemoryStores.Memories.New(ctx, store.ID, anthropic.BetaMemoryStoreMemoryNewParams{
 		Path:    "/top.md",
 		Content: param.NewOpt("top-level memory"),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("unable to create top-level memory fixture: %s", err)
 	}
-	if _, err := client.Beta.MemoryStores.Memories.New(ctx, store.ID, anthropic.BetaMemoryStoreMemoryNewParams{
+	t.Cleanup(func() {
+		if _, err := client.Beta.MemoryStores.Memories.Delete(context.Background(), topLevel.ID, anthropic.BetaMemoryStoreMemoryDeleteParams{
+			MemoryStoreID: store.ID,
+		}); err != nil && !isNotFoundError(err) {
+			t.Errorf("cleanup: unable to delete top-level memory fixture %s: %s", topLevel.ID, err)
+		}
+	})
+
+	nested, err := client.Beta.MemoryStores.Memories.New(ctx, store.ID, anthropic.BetaMemoryStoreMemoryNewParams{
 		Path:    "/nested/deep.md",
 		Content: param.NewOpt("nested memory"),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("unable to create nested memory fixture: %s", err)
 	}
+	t.Cleanup(func() {
+		if _, err := client.Beta.MemoryStores.Memories.Delete(context.Background(), nested.ID, anthropic.BetaMemoryStoreMemoryDeleteParams{
+			MemoryStoreID: store.ID,
+		}); err != nil && !isNotFoundError(err) {
+			t.Errorf("cleanup: unable to delete nested memory fixture %s: %s", nested.ID, err)
+		}
+	})
 
 	return store.ID
 }
 
 func TestAccMemoriesDataSource_basic(t *testing.T) {
+	if os.Getenv(resource.EnvTfAcc) == "" {
+		t.Skipf("acceptance test skipped unless %s is set", resource.EnvTfAcc)
+	}
 	storeID := setUpMemoriesFixture(t)
 
 	recursiveConfig := fmt.Sprintf(`

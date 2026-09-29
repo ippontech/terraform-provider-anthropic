@@ -4,6 +4,7 @@
 package memorystores
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,8 +13,12 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
 func TestMapMemoryDSToListObject_withAndWithoutContent(t *testing.T) {
@@ -76,10 +81,84 @@ func sprintfMemoryPrefix(path string) string {
 	return fmt.Sprintf(memoryPrefixJSONTemplate, path)
 }
 
-// TestMemoriesList_paginatesAndSplitsUnion exercises the SDK call the Read
-// method makes against a fake two-page server, asserting that both pages are
-// fetched and that memory / memory_prefix items are routed correctly.
-func TestMemoriesList_paginatesAndSplitsUnion(t *testing.T) {
+// memoriesDataSourceSchema returns the schema MemoriesDataSource declares.
+func memoriesDataSourceSchema(t *testing.T) dsschema.Schema {
+	t.Helper()
+	var resp datasource.SchemaResponse
+	(&MemoriesDataSource{}).Schema(context.Background(), datasource.SchemaRequest{}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("schema: %v", resp.Diagnostics)
+	}
+	return resp.Schema
+}
+
+// memoriesConfigObjectType returns the underlying tftypes.Object type of the
+// MemoriesDataSource schema.
+func memoriesConfigObjectType(t *testing.T) tftypes.Object {
+	t.Helper()
+	tfType, ok := memoriesDataSourceSchema(t).Type().(interface {
+		TerraformType(context.Context) tftypes.Type
+	})
+	if !ok {
+		t.Fatal("schema type does not implement TerraformType")
+	}
+	obj, ok := tfType.TerraformType(context.Background()).(tftypes.Object)
+	if !ok {
+		t.Fatal("schema type is not a tftypes.Object")
+	}
+	return obj
+}
+
+// memoriesNullConfigValues returns a null tftypes.Value for every top-level
+// attribute of the MemoriesDataSource schema.
+func memoriesNullConfigValues(t *testing.T) map[string]tftypes.Value {
+	t.Helper()
+	obj := memoriesConfigObjectType(t)
+	vals := make(map[string]tftypes.Value, len(obj.AttributeTypes))
+	for name, typ := range obj.AttributeTypes {
+		vals[name] = tftypes.NewValue(typ, nil)
+	}
+	return vals
+}
+
+// readMemoriesDataSource drives MemoriesDataSource.Read directly (bypassing
+// Configure) against client, with the given config attribute overrides
+// applied on top of an otherwise-null config. This exercises the actual
+// Read wiring (view selection, param forwarding, union split) rather than
+// just the SDK call it makes.
+func readMemoriesDataSource(t *testing.T, client *anthropic.Client, overrides map[string]tftypes.Value) (memoriesDSModel, datasource.ReadResponse) {
+	t.Helper()
+	sch := memoriesDataSourceSchema(t)
+	objType := memoriesConfigObjectType(t)
+	vals := memoriesNullConfigValues(t)
+	for k, v := range overrides {
+		vals[k] = v
+	}
+
+	d := &MemoriesDataSource{client: client}
+	req := datasource.ReadRequest{
+		Config: tfsdk.Config{
+			Raw:    tftypes.NewValue(objType, vals),
+			Schema: sch,
+		},
+	}
+	resp := datasource.ReadResponse{
+		State: tfsdk.State{Schema: sch},
+	}
+	d.Read(context.Background(), req, &resp)
+
+	var data memoriesDSModel
+	if !resp.Diagnostics.HasError() {
+		resp.Diagnostics.Append(resp.State.Get(context.Background(), &data)...)
+	}
+	return data, resp
+}
+
+// TestMemoriesDataSourceRead_paginatesAndSplitsUnion exercises Read itself
+// (not just the SDK call it makes) against a fake two-page server, asserting
+// that both pages are fetched and that memory / memory_prefix items are
+// routed into "memories" and "prefixes" respectively.
+func TestMemoriesDataSourceRead_paginatesAndSplitsUnion(t *testing.T) {
 	var gotQueries []url.Values
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,33 +173,24 @@ func TestMemoriesList_paginatesAndSplitsUnion(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestSDKClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
-	pager := client.Beta.MemoryStores.Memories.ListAutoPaging(t.Context(), "memstore_01ABC", anthropic.BetaMemoryStoreMemoryListParams{
-		PathPrefix: param.NewOpt("/notes/"),
-		Depth:      param.NewOpt(int64(1)),
+	data, resp := readMemoriesDataSource(t, client, map[string]tftypes.Value{
+		"memory_store_id": tftypes.NewValue(tftypes.String, "memstore_01ABC"),
+		"path_prefix":     tftypes.NewValue(tftypes.String, "/notes/"),
+		"depth":           tftypes.NewValue(tftypes.Number, 1),
 	})
-
-	var memoryIDs []string
-	var prefixPaths []string
-	for pager.Next() {
-		item := pager.Current()
-		switch item.Type {
-		case "memory_prefix":
-			prefixPaths = append(prefixPaths, item.AsMemoryPrefix().Path)
-		default:
-			memoryIDs = append(memoryIDs, item.AsMemory().ID)
-		}
-	}
-	if err := pager.Err(); err != nil {
-		t.Fatalf("unexpected pagination error: %v", err)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
 	}
 
-	if len(memoryIDs) != 2 || memoryIDs[0] != "mem_01ABC" || memoryIDs[1] != "mem_02DEF" {
-		t.Fatalf("expected 2 memories across 2 pages, got %v", memoryIDs)
+	memories := data.Memories.Elements()
+	prefixes := data.Prefixes.Elements()
+	if len(memories) != 2 {
+		t.Fatalf("expected 2 memories across 2 pages, got %d", len(memories))
 	}
-	if len(prefixPaths) != 1 || prefixPaths[0] != "/projects/" {
-		t.Fatalf("expected 1 memory_prefix, got %v", prefixPaths)
+	if len(prefixes) != 1 || prefixes[0].(types.String).ValueString() != "/projects/" {
+		t.Fatalf("expected 1 prefix /projects/, got %v", prefixes)
 	}
 
 	if len(gotQueries) != 2 {
@@ -137,7 +207,10 @@ func TestMemoriesList_paginatesAndSplitsUnion(t *testing.T) {
 	}
 }
 
-func TestMemoriesList_viewFullWhenIncludeContent(t *testing.T) {
+// TestMemoriesDataSourceRead_includeContentSelectsViewFull pins the wiring
+// deleting `params.View = ...Full` in Read would silently break: setting
+// include_content = true must send view=full.
+func TestMemoriesDataSourceRead_includeContentSelectsViewFull(t *testing.T) {
 	var gotQuery url.Values
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -147,15 +220,14 @@ func TestMemoriesList_viewFullWhenIncludeContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestSDKClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
-	pager := client.Beta.MemoryStores.Memories.ListAutoPaging(t.Context(), "memstore_01ABC", anthropic.BetaMemoryStoreMemoryListParams{
-		View: anthropic.BetaManagedAgentsMemoryViewFull,
+	_, resp := readMemoriesDataSource(t, client, map[string]tftypes.Value{
+		"memory_store_id": tftypes.NewValue(tftypes.String, "memstore_01ABC"),
+		"include_content": tftypes.NewValue(tftypes.Bool, true),
 	})
-	for pager.Next() {
-	}
-	if err := pager.Err(); err != nil {
-		t.Fatalf("unexpected pagination error: %v", err)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
 	}
 
 	if got := gotQuery.Get("view"); got != "full" {
@@ -163,7 +235,10 @@ func TestMemoriesList_viewFullWhenIncludeContent(t *testing.T) {
 	}
 }
 
-func TestMemoriesList_defaultViewBasicOmitsPathPrefixAndDepth(t *testing.T) {
+// TestMemoriesDataSourceRead_defaultOmitsViewAndFilters pins the opposite
+// direction: without include_content (or path_prefix/depth), the request
+// carries view=basic and omits the optional filters entirely.
+func TestMemoriesDataSourceRead_defaultOmitsViewAndFilters(t *testing.T) {
 	var gotQuery url.Values
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -173,15 +248,13 @@ func TestMemoriesList_defaultViewBasicOmitsPathPrefixAndDepth(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestSDKClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
-	pager := client.Beta.MemoryStores.Memories.ListAutoPaging(t.Context(), "memstore_01ABC", anthropic.BetaMemoryStoreMemoryListParams{
-		View: anthropic.BetaManagedAgentsMemoryViewBasic,
+	data, resp := readMemoriesDataSource(t, client, map[string]tftypes.Value{
+		"memory_store_id": tftypes.NewValue(tftypes.String, "memstore_01ABC"),
 	})
-	for pager.Next() {
-	}
-	if err := pager.Err(); err != nil {
-		t.Fatalf("unexpected pagination error: %v", err)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
 	}
 
 	if got := gotQuery.Get("view"); got != "basic" {
@@ -193,31 +266,15 @@ func TestMemoriesList_defaultViewBasicOmitsPathPrefixAndDepth(t *testing.T) {
 	if _, present := gotQuery["depth"]; present {
 		t.Errorf("depth sent as %q, want omitted", gotQuery.Get("depth"))
 	}
-}
-
-func TestMemoriesList_emptyList(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"data":[],"next_page":""}`)
-	}))
-	defer srv.Close()
-
-	client := newTestSDKClient(t, srv)
-
-	pager := client.Beta.MemoryStores.Memories.ListAutoPaging(t.Context(), "memstore_01ABC", anthropic.BetaMemoryStoreMemoryListParams{})
-	count := 0
-	for pager.Next() {
-		count++
+	if len(data.Memories.Elements()) != 0 {
+		t.Errorf("expected 0 memories, got %d", len(data.Memories.Elements()))
 	}
-	if err := pager.Err(); err != nil {
-		t.Fatalf("unexpected pagination error: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("expected 0 items, got %d", count)
+	if len(data.Prefixes.Elements()) != 0 {
+		t.Errorf("expected 0 prefixes, got %d", len(data.Prefixes.Elements()))
 	}
 }
 
-func TestMemoriesList_404(t *testing.T) {
+func TestMemoriesDataSourceRead_404(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -225,12 +282,12 @@ func TestMemoriesList_404(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestSDKClient(t, srv)
+	client := oauthtest.NewSDKClient(t, srv)
 
-	pager := client.Beta.MemoryStores.Memories.ListAutoPaging(t.Context(), "memstore_missing", anthropic.BetaMemoryStoreMemoryListParams{})
-	for pager.Next() {
-	}
-	if err := pager.Err(); err == nil {
-		t.Fatal("expected an error for a 404 response")
+	_, resp := readMemoriesDataSource(t, client, map[string]tftypes.Value{
+		"memory_store_id": tftypes.NewValue(tftypes.String, "memstore_missing"),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected diagnostics for a 404 response")
 	}
 }
