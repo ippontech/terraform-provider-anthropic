@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_invite Data Source - anthropic"
+subcategory: "Organization"
+description: |-
+  Fetches a single organization invite by ID via the Admin API.
+---
+
+# anthropic_invite (Data Source)
+
+Fetches a single organization invite by ID.
+
+> **API**: `GET /v1/organizations/invites/{invite_id}` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/invite/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
