@@ -1,3 +1,9 @@
+## [1.43.6](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.5...v1.43.6) (2026-09-29)
+
+### 📚 Documentation
+
+* move WIF guide to its own Guides subcategory ([#265](https://github.com/ippontech/terraform-provider-anthropic/issues/265)) ([0657650](https://github.com/ippontech/terraform-provider-anthropic/commit/0657650219e1366a4c4899cb22b5e305294ca4e7))
+
 ## [1.43.5](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.43.4...v1.43.5) (2026-09-17)
 
 ### 🐛 Bug Fixes
