@@ -21,6 +21,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/federation"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/files"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/memorystores"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/messages"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
@@ -170,6 +171,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		federation.NewFederationIssuerResource,
 		federation.NewFederationRuleResource,
 		federation.NewFederationRuleWorkspaceResource,
+		files.NewFileResource,
 		memorystores.NewMemoryStoreResource,
 		messages.NewMessageResource,
 		organizations.NewInviteResource,

@@ -1,0 +1,31 @@
+---
+page_title: "anthropic_file Resource - anthropic"
+subcategory: "Files"
+description: |-
+  Uploads and manages a file on the Anthropic platform (Files API, beta).
+---
+
+# anthropic_file (Resource)
+
+Uploads and manages a file on the Anthropic platform (Files API, beta). Files are uploaded once and referenced by `id` from Messages requests. The file's content is never stored in Terraform state; only its local path, a content hash used to detect local changes, and the metadata returned by the API are tracked.
+
+> **API**: `POST/GET/DELETE /v1/files[/{id}]` (Files API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: files-api-2025-04-14`.
+> **Cost**: Free.
+
+There is no update endpoint: files cannot be modified or renamed after upload. Changing `source_path`, `filename`, or `mime_type` — or editing the local file's content, detected via `source_hash` — forces a new resource.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/file/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing file using its ID:
+
+```shell
+terraform import anthropic_file.example <file_id>
+```
