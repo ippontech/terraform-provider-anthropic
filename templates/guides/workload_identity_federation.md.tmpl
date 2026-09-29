@@ -1,6 +1,6 @@
 ---
 page_title: "Bootstrap Workload Identity Federation with Terraform"
-subcategory: "Workload Identity Federation"
+subcategory: "Guides"
 description: |-
   End-to-end walkthrough: obtain an org:admin token, create the one Console-only rule, then manage issuers, service accounts and workspace-scoped rules with this provider so CI workloads call the Anthropic API without a long-lived key.
 ---
