@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -205,5 +206,58 @@ func TestMemoryStoreResource_UpdateRejectsArchivedStoreWithChangedFields(t *test
 	sameChanged := !unchanged.Name.Equal(state.Name) || !unchanged.Description.Equal(state.Description) || !unchanged.Metadata.Equal(state.Metadata)
 	if sameChanged {
 		t.Fatal("expected no diff to be detected when plan equals state")
+	}
+
+	// archive_on_destroy has no API counterpart: changing only it must not be
+	// treated as an API-facing diff, or Update would call the API (and reject
+	// on an archived store) for a change that should stay local to state.
+	onlyArchiveOnDestroyChanged := state
+	onlyArchiveOnDestroyChanged.ArchiveOnDestroy = types.BoolValue(true)
+	apiFieldsChanged := !onlyArchiveOnDestroyChanged.Name.Equal(state.Name) ||
+		!onlyArchiveOnDestroyChanged.Description.Equal(state.Description) ||
+		!onlyArchiveOnDestroyChanged.Metadata.Equal(state.Metadata)
+	if apiFieldsChanged {
+		t.Fatal("expected archive_on_destroy alone to not be flagged as an API-facing change")
+	}
+}
+
+func TestPreserveEmptyMetadata(t *testing.T) {
+	emptyMap, diags := types.MapValue(types.StringType, map[string]attr.Value{})
+	if diags.HasError() {
+		t.Fatalf("failed to build empty map: %v", diags)
+	}
+	nonEmptyMap, diags := types.MapValue(types.StringType, map[string]attr.Value{"k": types.StringValue("v")})
+	if diags.HasError() {
+		t.Fatalf("failed to build non-empty map: %v", diags)
+	}
+	nullMap := types.MapNull(types.StringType)
+
+	tests := map[string]struct {
+		known, fromAPI, want types.Map
+	}{
+		"empty known, null from API: keeps known empty map": {
+			known: emptyMap, fromAPI: nullMap, want: emptyMap,
+		},
+		"null known, null from API: stays null": {
+			known: nullMap, fromAPI: nullMap, want: nullMap,
+		},
+		"non-empty known, null from API: real deletion, stays null": {
+			known: nonEmptyMap, fromAPI: nullMap, want: nullMap,
+		},
+		"unknown known, null from API: stays null (Create with no metadata set)": {
+			known: types.MapUnknown(types.StringType), fromAPI: nullMap, want: nullMap,
+		},
+		"non-null from API always wins": {
+			known: emptyMap, fromAPI: nonEmptyMap, want: nonEmptyMap,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := preserveEmptyMetadata(tc.known, tc.fromAPI)
+			if !got.Equal(tc.want) {
+				t.Fatalf("preserveEmptyMetadata() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -151,6 +151,8 @@ func (r *MemoryStoreResource) Create(ctx context.Context, req resource.CreateReq
 		params.Metadata = meta
 	}
 
+	plannedMetadata := data.Metadata
+
 	store, err := r.client.Beta.MemoryStores.New(ctx, params)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create memory store: %s", err))
@@ -161,6 +163,7 @@ func (r *MemoryStoreResource) Create(ctx context.Context, req resource.CreateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	data.Metadata = preserveEmptyMetadata(plannedMetadata, data.Metadata)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -173,6 +176,8 @@ func (r *MemoryStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	priorMetadata := data.Metadata
 
 	store, err := r.client.Beta.MemoryStores.Get(ctx, data.ID.ValueString(), anthropic.BetaMemoryStoreGetParams{})
 	if err != nil {
@@ -191,6 +196,7 @@ func (r *MemoryStoreResource) Read(ctx context.Context, req resource.ReadRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	data.Metadata = preserveEmptyMetadata(priorMetadata, data.Metadata)
 
 	// archive_on_destroy is local-only (not in the API); default to false when not already set (e.g. on import).
 	if data.ArchiveOnDestroy.IsNull() || data.ArchiveOnDestroy.IsUnknown() {
@@ -215,20 +221,30 @@ func (r *MemoryStoreResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
+	// archive_on_destroy is local-only and has no API counterpart. If it's the
+	// only thing that changed, there's nothing to send: skip the API call
+	// entirely (keeping server-derived fields from state) rather than
+	// resending unchanged name/description, which the API rejects on an
+	// archived store even though nothing API-facing actually changed.
+	apiFieldsChanged := !data.Name.Equal(state.Name) || !data.Description.Equal(state.Description) || !data.Metadata.Equal(state.Metadata)
+	if !apiFieldsChanged {
+		data.ID = state.ID
+		data.CreatedAt = state.CreatedAt
+		data.ArchivedAt = state.ArchivedAt
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		return
+	}
+
 	// The API rejects updates to an archived store. Fail fast with a clear
-	// message instead of letting a confusing 4xx surface from the SDK, but
-	// only when a mutable field actually changed — re-applying an unchanged
-	// config against an archived store is a no-op, not an error.
+	// message instead of letting a confusing 4xx surface from the SDK.
 	if !state.ArchivedAt.IsNull() && state.ArchivedAt.ValueString() != "" {
-		if !data.Name.Equal(state.Name) || !data.Description.Equal(state.Description) || !data.Metadata.Equal(state.Metadata) {
-			resp.Diagnostics.AddError(
-				"Memory Store Is Archived",
-				fmt.Sprintf("Memory store %q was archived on %s and can no longer be updated. "+
-					"Remove it from configuration, or restore the prior name/description/metadata to stop this diff.",
-					state.ID.ValueString(), state.ArchivedAt.ValueString()),
-			)
-			return
-		}
+		resp.Diagnostics.AddError(
+			"Memory Store Is Archived",
+			fmt.Sprintf("Memory store %q was archived on %s and can no longer be updated. "+
+				"Remove it from configuration, or restore the prior name/description/metadata to stop this diff.",
+				state.ID.ValueString(), state.ArchivedAt.ValueString()),
+		)
+		return
 	}
 
 	params := anthropic.BetaMemoryStoreUpdateParams{
@@ -254,6 +270,8 @@ func (r *MemoryStoreResource) Update(ctx context.Context, req resource.UpdateReq
 		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
+	plannedMetadata := data.Metadata
+
 	store, err := r.client.Beta.MemoryStores.Update(ctx, state.ID.ValueString(), params)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update memory store: %s", err))
@@ -264,6 +282,7 @@ func (r *MemoryStoreResource) Update(ctx context.Context, req resource.UpdateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	data.Metadata = preserveEmptyMetadata(plannedMetadata, data.Metadata)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -348,6 +367,21 @@ func mapMemoryStoreCommon(store *anthropic.BetaManagedAgentsMemoryStore) (memory
 	}
 
 	return m, diags
+}
+
+// preserveEmptyMetadata keeps the caller's previously known metadata value
+// (the plan on Create/Update, prior state on Read) when the API response maps
+// to a null map. metadata is Optional but not Computed, so Terraform requires
+// the final state to exactly equal the planned/config value; but the API
+// response can't distinguish an empty map ({}) from metadata being absent —
+// both round-trip through mapMemoryStoreCommon as a zero-length Go map, which
+// maps to MapNull. Without this, `metadata = {}` in config would flip to null
+// in state and fail with "Provider produced inconsistent result after apply".
+func preserveEmptyMetadata(known, fromAPI types.Map) types.Map {
+	if fromAPI.IsNull() && !known.IsNull() && !known.IsUnknown() && len(known.Elements()) == 0 {
+		return known
+	}
+	return fromAPI
 }
 
 // mapMemoryStoreToState maps the API response into the resource's state
