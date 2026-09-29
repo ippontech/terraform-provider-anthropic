@@ -1,3 +1,9 @@
+## [1.46.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.45.0...v1.46.0) (2026-09-29)
+
+### ✨ Features
+
+* add anthropic_memory_store resource and data sources ([#267](https://github.com/ippontech/terraform-provider-anthropic/issues/267)) ([857218d](https://github.com/ippontech/terraform-provider-anthropic/commit/857218da91a4b18719de87a7ad522007567a1841)), closes [#119](https://github.com/ippontech/terraform-provider-anthropic/issues/119) [#120](https://github.com/ippontech/terraform-provider-anthropic/issues/120)
+
 ## [1.45.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.44.0...v1.45.0) (2026-09-29)
 
 ### ✨ Features
