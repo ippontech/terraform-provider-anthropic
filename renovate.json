@@ -78,6 +78,12 @@
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
       "allowedVersions": "<1.68.0"
+    },
+    {
+      "description": "Hold conventional-changelog-conventionalcommits below 9: 10.x needs conventional-changelog-writer@9, but the latest stable @semantic-release/release-notes-generator (14.1.1) pins writer ^8, so generateNotes fails with 'Missing helper'. Lift once release-notes-generator 15 ships with writer 9.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["conventional-changelog-conventionalcommits"],
+      "allowedVersions": "<9.0.0"
     }
   ]
 }
