@@ -107,13 +107,13 @@ output "deployment_status" {
 
 ### Optional
 
-- `budget` (String) JSON object for a hard spend ceiling: sessions stop issuing new model requests once the tracked list cost reaches `max_list_cost`, e.g. `jsonencode({max_list_cost = {amount = "2500", currency = "USD"}, type = "limit"})`.
+- `budget` (String) JSON object for a hard spend ceiling: sessions stop issuing new model requests once the tracked list cost reaches `max_list_cost`, e.g. `jsonencode({max_list_cost = {amount = "2500", currency = "USD"}, type = "limit"})`. Cannot be cleared once set — clearing it in config forces replacement of the deployment.
 - `description` (String) Description of what the deployment does.
 - `metadata` (Map of String) Arbitrary key-value metadata. Maximum 16 pairs, keys up to 64 characters, values up to 512 characters.
 - `paused` (Boolean) Whether the deployment is paused. Changing this calls the dedicated pause/unpause endpoints rather than the general update endpoint. Default: `false`.
-- `resources` (String) JSON array of resources (e.g. repositories, files, memory stores) mounted into each session's container. Maximum 500. Full replacement on update; cannot be cleared once set.
-- `schedule` (Attributes) 5-field POSIX cron schedule. A deployment without a schedule only runs when triggered manually (outside the scope of this resource). Cannot be cleared once set — the update API has no way to remove a schedule. (see [below for nested schema](#nestedatt--schedule))
-- `vault_ids` (List of String) Vault IDs supplying stored credentials for sessions created from this deployment. Maximum 50. Full replacement on update; cannot be cleared once set.
+- `resources` (String) JSON array of resources (e.g. repositories, files, memory stores) mounted into each session's container. Maximum 500. Full replacement on update; cannot be cleared once set — clearing it in config forces replacement of the deployment.
+- `schedule` (Attributes) 5-field POSIX cron schedule. A deployment without a schedule only runs when triggered manually (outside the scope of this resource). Cannot be cleared once set — the update API has no way to remove a schedule, so clearing it in config forces replacement of the deployment. (see [below for nested schema](#nestedatt--schedule))
+- `vault_ids` (List of String) Vault IDs supplying stored credentials for sessions created from this deployment. Maximum 50. Full replacement on update; cannot be cleared once set — clearing it in config forces replacement of the deployment.
 
 ### Read-Only
 

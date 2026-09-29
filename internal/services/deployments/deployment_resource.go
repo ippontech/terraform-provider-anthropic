@@ -19,6 +19,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -92,6 +94,28 @@ type DeploymentScheduleModel struct {
 	Timezone   types.String `tfsdk:"timezone"`
 }
 
+// requiresReplaceIfClearedString forces replacement when a previously-set
+// string attribute (resources, budget) is cleared in the new config. The
+// update API cannot clear these fields once set (they're sent with
+// `omitzero`, which has no way to encode an explicit empty value), so an
+// in-place "clear" would silently leave the old value in place and then fail
+// apply with "inconsistent result" once the response is mapped back to state.
+func requiresReplaceIfClearedString(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+	resp.RequiresReplace = !req.StateValue.IsNull() && req.PlanValue.IsNull()
+}
+
+// requiresReplaceIfClearedList is the vault_ids equivalent of
+// requiresReplaceIfClearedString.
+func requiresReplaceIfClearedList(_ context.Context, req planmodifier.ListRequest, resp *listplanmodifier.RequiresReplaceIfFuncResponse) {
+	resp.RequiresReplace = !req.StateValue.IsNull() && req.PlanValue.IsNull()
+}
+
+// requiresReplaceIfClearedObject is the schedule equivalent of
+// requiresReplaceIfClearedString.
+func requiresReplaceIfClearedObject(_ context.Context, req planmodifier.ObjectRequest, resp *objectplanmodifier.RequiresReplaceIfFuncResponse) {
+	resp.RequiresReplace = !req.StateValue.IsNull() && req.PlanValue.IsNull()
+}
+
 // --- Schema ---
 
 func (r *DeploymentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -142,25 +166,43 @@ func (r *DeploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Optional:   true,
 				CustomType: jsontypes.NormalizedType{},
 				MarkdownDescription: "JSON array of resources (e.g. repositories, files, memory stores) mounted into each session's " +
-					"container. Maximum 500. Full replacement on update; cannot be cleared once set.",
+					"container. Maximum 500. Full replacement on update; cannot be cleared once set — clearing it in config forces " +
+					"replacement of the deployment.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplaceIf(requiresReplaceIfClearedString,
+						"Requires replacement if resources is cleared after being set; the update API cannot clear it.",
+						"Requires replacement if `resources` is cleared after being set; the update API cannot clear it."),
+				},
 			},
 			"budget": schema.StringAttribute{
 				Optional:   true,
 				CustomType: jsontypes.NormalizedType{},
 				MarkdownDescription: "JSON object for a hard spend ceiling: sessions stop issuing new model requests once the tracked " +
 					"list cost reaches `max_list_cost`, e.g. " +
-					"`jsonencode({max_list_cost = {amount = \"2500\", currency = \"USD\"}, type = \"limit\"})`.",
+					"`jsonencode({max_list_cost = {amount = \"2500\", currency = \"USD\"}, type = \"limit\"})`. Cannot be cleared once " +
+					"set — clearing it in config forces replacement of the deployment.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplaceIf(requiresReplaceIfClearedString,
+						"Requires replacement if budget is cleared after being set; the update API cannot clear it.",
+						"Requires replacement if `budget` is cleared after being set; the update API cannot clear it."),
+				},
 			},
 			"vault_ids": schema.ListAttribute{
 				Optional:    true,
 				ElementType: types.StringType,
 				MarkdownDescription: "Vault IDs supplying stored credentials for sessions created from this deployment. Maximum 50. Full " +
-					"replacement on update; cannot be cleared once set.",
+					"replacement on update; cannot be cleared once set — clearing it in config forces replacement of the deployment.",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplaceIf(requiresReplaceIfClearedList,
+						"Requires replacement if vault_ids is cleared after being set; the update API cannot clear it.",
+						"Requires replacement if `vault_ids` is cleared after being set; the update API cannot clear it."),
+				},
 			},
 			"schedule": schema.SingleNestedAttribute{
 				Optional: true,
 				MarkdownDescription: "5-field POSIX cron schedule. A deployment without a schedule only runs when triggered manually " +
-					"(outside the scope of this resource). Cannot be cleared once set — the update API has no way to remove a schedule.",
+					"(outside the scope of this resource). Cannot be cleared once set — the update API has no way to remove a " +
+					"schedule, so clearing it in config forces replacement of the deployment.",
 				Attributes: map[string]schema.Attribute{
 					"expression": schema.StringAttribute{
 						Required: true,
@@ -171,6 +213,11 @@ func (r *DeploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 						Required:            true,
 						MarkdownDescription: "IANA timezone identifier (e.g. `America/Los_Angeles`, `UTC`).",
 					},
+				},
+				PlanModifiers: []planmodifier.Object{
+					objectplanmodifier.RequiresReplaceIf(requiresReplaceIfClearedObject,
+						"Requires replacement if schedule is cleared after being set; the update API cannot clear it.",
+						"Requires replacement if `schedule` is cleared after being set; the update API cannot clear it."),
 				},
 			},
 			"paused": schema.BoolAttribute{
@@ -246,9 +293,28 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	plannedMetadata, plannedVaultIDs := data.Metadata, data.VaultIDs
+
 	deployment, err := r.client.Beta.Deployments.New(ctx, params)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create deployment: %s", err))
+		return
+	}
+
+	// Save state as soon as the deployment exists server-side, before the
+	// optional Pause call. If Pause fails below, Terraform still has this
+	// (active) deployment tracked and tainted, so the next apply can pause it
+	// again or clean it up — instead of the deployment existing untracked
+	// server-side forever (there is no delete endpoint, only archive, so an
+	// orphan here can never be cleaned up automatically).
+	resp.Diagnostics.Append(mapDeploymentToState(ctx, deployment, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	data.Metadata = preserveEmptyMap(plannedMetadata, data.Metadata)
+	data.VaultIDs = preserveEmptyList(plannedVaultIDs, data.VaultIDs)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
@@ -258,14 +324,15 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to pause newly created deployment: %s", err))
 			return
 		}
-	}
 
-	resp.Diagnostics.Append(mapDeploymentToState(ctx, deployment, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
+		resp.Diagnostics.Append(mapDeploymentToState(ctx, deployment, &data)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		data.Metadata = preserveEmptyMap(plannedMetadata, data.Metadata)
+		data.VaultIDs = preserveEmptyList(plannedVaultIDs, data.VaultIDs)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 	}
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 // --- Read ---
@@ -276,6 +343,8 @@ func (r *DeploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	priorMetadata, priorVaultIDs := data.Metadata, data.VaultIDs
 
 	deployment, err := r.client.Beta.Deployments.Get(ctx, data.ID.ValueString(), anthropic.BetaDeploymentGetParams{})
 	if err != nil {
@@ -292,6 +361,18 @@ func (r *DeploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// A deployment archived out-of-band (there is no unarchive endpoint) is
+	// permanently read-only and can never be attached, updated, or converged
+	// back to the configured state — treat it the same as a 404 and let the
+	// next apply recreate it, rather than reporting no drift forever.
+	if !data.ArchivedAt.IsNull() && data.ArchivedAt.ValueString() != "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
+	data.Metadata = preserveEmptyMap(priorMetadata, data.Metadata)
+	data.VaultIDs = preserveEmptyList(priorVaultIDs, data.VaultIDs)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -382,6 +463,8 @@ func (r *DeploymentResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
+	plannedMetadata, plannedVaultIDs := plan.Metadata, plan.VaultIDs
+
 	deployment, err := r.client.Beta.Deployments.Update(ctx, state.ID.ValueString(), params)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update deployment: %s", err))
@@ -406,6 +489,8 @@ func (r *DeploymentResource) Update(ctx context.Context, req resource.UpdateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	plan.Metadata = preserveEmptyMap(plannedMetadata, plan.Metadata)
+	plan.VaultIDs = preserveEmptyList(plannedVaultIDs, plan.VaultIDs)
 
 	awaitDeploymentUpdateVisible(ctx, r.client, state.ID.ValueString(), deployment.UpdatedAt, deploymentConsistencyTimeout, deploymentConsistencyInterval)
 
@@ -421,8 +506,22 @@ func (r *DeploymentResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 
+	// Read already treats a non-null archived_at as gone (RemoveResource), so
+	// this is normally unreachable in the standard refresh-then-destroy flow.
+	// Guard it anyway (e.g. a destroy run with -refresh=false) rather than
+	// resend an Archive call whose double-archive behavior on this endpoint
+	// hasn't been verified against the live API.
+	if !data.ArchivedAt.IsNull() && data.ArchivedAt.ValueString() != "" {
+		return
+	}
+
 	_, err := r.client.Beta.Deployments.Archive(ctx, data.ID.ValueString(), anthropic.BetaDeploymentArchiveParams{})
 	if err != nil {
+		var apierr *anthropic.Error
+		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+			// Already gone — nothing left to archive.
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive deployment: %s", err))
 	}
 }
@@ -772,6 +871,29 @@ func mapDeploymentToState(ctx context.Context, deployment *anthropic.BetaManaged
 	}
 
 	return diags
+}
+
+// preserveEmptyMap keeps the caller's previously known metadata value (the
+// plan on Create/Update, prior state on Read) when the API response maps to
+// a null map. metadata is Optional but not Computed, so Terraform requires
+// the final state to exactly equal the planned/config value; but the API
+// can't distinguish an empty map ({}) from metadata being absent — both
+// round-trip as a Go zero-length map, which mapDeploymentToState reports as
+// MapNull. Without this, `metadata = {}` in config would flip to null in
+// state and fail with "Provider produced inconsistent result after apply".
+func preserveEmptyMap(known, fromAPI types.Map) types.Map {
+	if fromAPI.IsNull() && !known.IsNull() && !known.IsUnknown() && len(known.Elements()) == 0 {
+		return known
+	}
+	return fromAPI
+}
+
+// preserveEmptyList is the vault_ids equivalent of preserveEmptyMap.
+func preserveEmptyList(known, fromAPI types.List) types.List {
+	if fromAPI.IsNull() && !known.IsNull() && !known.IsUnknown() && len(known.Elements()) == 0 {
+		return known
+	}
+	return fromAPI
 }
 
 // descriptionOrNull maps the API's description the same way

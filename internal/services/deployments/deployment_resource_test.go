@@ -164,6 +164,71 @@ resource "anthropic_deployment" "test" {
 }
 `
 
+const testAccDeploymentResourceBudgetAndEmptyCollectionsConfig = `
+resource "anthropic_agent" "test" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-deployment-agent-budget"
+}
+
+resource "anthropic_environment" "test" {
+  name = "tf-acc-test-deployment-environment-budget"
+}
+
+resource "anthropic_deployment" "test" {
+  name           = "tf-acc-test-deployment-budget"
+  agent_id       = anthropic_agent.test.id
+  environment_id = anthropic_environment.test.id
+
+  initial_events = jsonencode([
+    {
+      type = "user.message"
+      content = [
+        { type = "text", text = "hello" }
+      ]
+    }
+  ])
+
+  budget = jsonencode({
+    max_list_cost = { amount = "2500", currency = "USD" }
+    type          = "limit"
+  })
+
+  metadata  = {}
+  vault_ids = []
+}
+`
+
+// TestAccDeploymentResource_budgetAndEmptyCollectionsEmptyPlan guards two
+// review findings: (1) that jsontypes.Normalized JSON round-tripped through
+// the SDK's typed budget param and back via RawJSON() doesn't drift from the
+// planned config (e.g. from server-populated fields or key reordering beyond
+// what jsontypes.Normalized tolerates), and (2) that an empty (not null)
+// `metadata`/`vault_ids` in config stays empty rather than collapsing to null
+// once mapped from the API's own empty response, which would otherwise fail
+// with "Provider produced inconsistent result after apply". The second apply
+// step repeats the same config and asserts an empty plan.
+func TestAccDeploymentResource_budgetAndEmptyCollectionsEmptyPlan(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckDeploymentArchived,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccDeploymentResourceBudgetAndEmptyCollectionsConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("anthropic_deployment.test", "budget"),
+					resource.TestCheckResourceAttr("anthropic_deployment.test", "metadata.%", "0"),
+					resource.TestCheckResourceAttr("anthropic_deployment.test", "vault_ids.#", "0"),
+				),
+			},
+			{
+				Config:   testAccDeploymentResourceBudgetAndEmptyCollectionsConfig,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
 func TestAccDeploymentResource_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },
