@@ -110,7 +110,7 @@ func TestAccFileResource_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("anthropic_file.test", "source_path", sourcePath),
 					resource.TestCheckResourceAttrSet("anthropic_file.test", "source_hash"),
 					resource.TestCheckResourceAttr("anthropic_file.test", "filename", "tf-acc-test-file.txt"),
-					resource.TestCheckResourceAttrSet("anthropic_file.test", "mime_type"),
+					resource.TestCheckResourceAttr("anthropic_file.test", "mime_type", "text/plain"),
 					resource.TestCheckResourceAttr("anthropic_file.test", "size_bytes", fmt.Sprintf("%d", len("tf acceptance test fixture content"))),
 					resource.TestCheckResourceAttrSet("anthropic_file.test", "created_at"),
 					resource.TestCheckResourceAttr("anthropic_file.test", "downloadable", "false"),
@@ -124,6 +124,37 @@ func TestAccFileResource_basic(t *testing.T) {
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"source_path", "source_hash"},
+			},
+		},
+	})
+}
+
+func testAccFileResourceMimeTypeConfig(sourcePath, mimeType string) string {
+	return fmt.Sprintf(`
+resource "anthropic_file" "test" {
+  source_path = %q
+  mime_type   = %q
+}
+`, sourcePath, mimeType)
+}
+
+func TestAccFileResource_explicitMimeType(t *testing.T) {
+	// A .txt file whose detected MIME type would be "text/plain": force an
+	// explicit mismatched value to confirm it's actually sent to the API and
+	// echoed back, not silently dropped (which previously caused a
+	// "Provider produced inconsistent result after apply" on the next plan).
+	sourcePath := writeFixtureFile(t, "tf-acc-test-file-mime.txt", "not really json")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFileDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccFileResourceMimeTypeConfig(sourcePath, "application/json"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_file.test", "mime_type", "application/json"),
+				),
 			},
 		},
 	})

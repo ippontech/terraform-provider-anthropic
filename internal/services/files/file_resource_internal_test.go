@@ -177,7 +177,7 @@ func TestUploadFileWithRetry_successFirstTry(t *testing.T) {
 	client := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAPIKey("test"))
 	p := writeTempFile(t, "hello")
 
-	file, err := uploadFileWithRetry(context.Background(), &client, p, "f.txt", param.Opt[int64]{})
+	file, err := uploadFileWithRetry(context.Background(), &client, p, "f.txt", "text/plain", param.Opt[int64]{})
 	if err != nil {
 		t.Fatalf("uploadFileWithRetry: %s", err)
 	}
@@ -203,7 +203,7 @@ func TestUploadFileWithRetry_serverErrorNotRetried(t *testing.T) {
 	client := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAPIKey("test"), option.WithMaxRetries(0))
 	p := writeTempFile(t, "hello")
 
-	_, err := uploadFileWithRetry(context.Background(), &client, p, "f.txt", param.Opt[int64]{})
+	_, err := uploadFileWithRetry(context.Background(), &client, p, "f.txt", "text/plain", param.Opt[int64]{})
 	if err == nil {
 		t.Fatal("expected an error, got none")
 	}
@@ -217,10 +217,15 @@ func TestUploadFileWithRetry_serverErrorNotRetried(t *testing.T) {
 }
 
 func TestUploadFileWithRetry_rateLimitedThenSucceeds(t *testing.T) {
+	t.Parallel()
+
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&calls, 1)
 		if n == 1 {
+			// A short retry-after-ms is honored (see TestRetryDelay_honorsServerHeader),
+			// so this test doesn't have to sleep the full fixed 5s/10s schedule.
+			w.Header().Set("retry-after-ms", "10")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"slow down"}}`))
 			return
@@ -233,7 +238,7 @@ func TestUploadFileWithRetry_rateLimitedThenSucceeds(t *testing.T) {
 	client := anthropic.NewClient(option.WithBaseURL(srv.URL), option.WithAPIKey("test"), option.WithMaxRetries(0))
 	p := writeTempFile(t, "hello")
 
-	file, err := uploadFileWithRetry(context.Background(), &client, p, "f.txt", param.Opt[int64]{})
+	file, err := uploadFileWithRetry(context.Background(), &client, p, "f.txt", "text/plain", param.Opt[int64]{})
 	if err != nil {
 		t.Fatalf("uploadFileWithRetry: %s", err)
 	}
@@ -245,11 +250,87 @@ func TestUploadFileWithRetry_rateLimitedThenSucceeds(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// retryDelay / parseRetryAfter
+// ============================================================================
+
+func TestRetryDelay_fallsBackToFixedScheduleWithoutHeader(t *testing.T) {
+	t.Parallel()
+
+	if got, want := retryDelay(nil, 1), 5*time.Second; got != want {
+		t.Errorf("retryDelay(nil, 1) = %v, want %v", got, want)
+	}
+	if got, want := retryDelay(&http.Response{Header: http.Header{}}, 2), 10*time.Second; got != want {
+		t.Errorf("retryDelay(no-header, 2) = %v, want %v", got, want)
+	}
+}
+
+func TestRetryDelay_honorsServerHeader(t *testing.T) {
+	t.Parallel()
+
+	resp := &http.Response{Header: http.Header{"Retry-After-Ms": []string{"250"}}}
+	if got, want := retryDelay(resp, 1), 250*time.Millisecond; got != want {
+		t.Errorf("retryDelay with retry-after-ms = %v, want %v", got, want)
+	}
+}
+
+func TestRetryDelay_capsAtMaxRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	resp := &http.Response{Header: http.Header{"Retry-After": []string{"3600"}}}
+	if got, want := retryDelay(resp, 1), maxRetryAfter; got != want {
+		t.Errorf("retryDelay with a huge retry-after = %v, want capped %v", got, want)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		headers http.Header
+		wantOK  bool
+		want    time.Duration
+	}{
+		{name: "no headers", headers: http.Header{}, wantOK: false},
+		{name: "retry-after-ms wins over retry-after", headers: http.Header{"Retry-After-Ms": {"500"}, "Retry-After": {"30"}}, wantOK: true, want: 500 * time.Millisecond},
+		{name: "retry-after in seconds", headers: http.Header{"Retry-After": {"5"}}, wantOK: true, want: 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d, ok := parseRetryAfter(&http.Response{Header: tt.headers})
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && d != tt.want {
+				t.Errorf("duration = %v, want %v", d, tt.want)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// detectMimeType
+// ============================================================================
+
+func TestDetectMimeType(t *testing.T) {
+	t.Parallel()
+
+	if got, want := detectMimeType("document.pdf"), "application/pdf"; got != want {
+		t.Errorf("detectMimeType(document.pdf) = %q, want %q", got, want)
+	}
+	if got, want := detectMimeType("no-extension"), "application/octet-stream"; got != want {
+		t.Errorf("detectMimeType(no-extension) = %q, want %q", got, want)
+	}
+}
+
 func TestUploadFileWithRetry_missingFile(t *testing.T) {
 	t.Parallel()
 
 	client := anthropic.NewClient(option.WithAPIKey("test"))
-	_, err := uploadFileWithRetry(context.Background(), &client, filepath.Join(t.TempDir(), "nope.txt"), "f.txt", param.Opt[int64]{})
+	_, err := uploadFileWithRetry(context.Background(), &client, filepath.Join(t.TempDir(), "nope.txt"), "f.txt", "text/plain", param.Opt[int64]{})
 	if err == nil {
 		t.Fatal("expected an error for a missing source file, got none")
 	}
