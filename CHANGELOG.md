@@ -1,3 +1,9 @@
+## [1.48.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.47.0...v1.48.0) (2026-09-29)
+
+### ✨ Features
+
+* add anthropic_invite resource ([#270](https://github.com/ippontech/terraform-provider-anthropic/issues/270)) ([7bee6f1](https://github.com/ippontech/terraform-provider-anthropic/commit/7bee6f1fff6d3a42285ccb1ef77ab10b2120f49e)), closes [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#82](https://github.com/ippontech/terraform-provider-anthropic/issues/82)
+
 ## [1.47.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.46.1...v1.47.0) (2026-09-29)
 
 ### ✨ Features
