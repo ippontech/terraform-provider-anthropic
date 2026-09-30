@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -231,21 +230,19 @@ func (d *MemoriesDataSource) Read(ctx context.Context, req datasource.ReadReques
 }
 
 // mapMemoryDSToListObject maps a single memory into the "memories" list's
-// nested object value.
+// nested object value, via the mapping shared with the resource and the
+// singular data source (see memory_common.go).
 func mapMemoryDSToListObject(memory *anthropic.BetaManagedAgentsMemory) (attr.Value, diag.Diagnostics) {
-	content := types.StringNull()
-	if memory.JSON.Content.Valid() {
-		content = types.StringValue(memory.Content)
-	}
+	common := mapMemoryCommon(memory)
 
 	return types.ObjectValue(memoriesDSItemAttrTypes, map[string]attr.Value{
-		"id":                 types.StringValue(memory.ID),
-		"path":               types.StringValue(memory.Path),
-		"content":            content,
-		"content_sha256":     types.StringValue(memory.ContentSha256),
-		"content_size_bytes": types.Int64Value(memory.ContentSizeBytes),
-		"memory_version_id":  types.StringValue(memory.MemoryVersionID),
-		"created_at":         types.StringValue(memory.CreatedAt.Format(time.RFC3339)),
-		"updated_at":         types.StringValue(memory.UpdatedAt.Format(time.RFC3339)),
+		"id":                 common.ID,
+		"path":               common.Path,
+		"content":            common.Content,
+		"content_sha256":     common.ContentSha256,
+		"content_size_bytes": common.ContentSizeBytes,
+		"memory_version_id":  common.MemoryVersionID,
+		"created_at":         common.CreatedAt,
+		"updated_at":         common.UpdatedAt,
 	})
 }

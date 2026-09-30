@@ -6,7 +6,6 @@ package memorystores
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -141,20 +140,18 @@ func (d *MemoryDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 }
 
 // mapMemoryDSToState maps the API response into the memory data source's
-// state model.
+// state model, via the mapping shared with the resource (see
+// memory_common.go).
 func mapMemoryDSToState(memory *anthropic.BetaManagedAgentsMemory, data *memoryDSModel) {
-	data.ID = types.StringValue(memory.ID)
-	data.Path = types.StringValue(memory.Path)
-	data.ContentSha256 = types.StringValue(memory.ContentSha256)
-	data.ContentSizeBytes = types.Int64Value(memory.ContentSizeBytes)
-	data.MemoryVersionID = types.StringValue(memory.MemoryVersionID)
-	data.Type = types.StringValue(string(memory.Type))
-	data.CreatedAt = types.StringValue(memory.CreatedAt.Format(time.RFC3339))
-	data.UpdatedAt = types.StringValue(memory.UpdatedAt.Format(time.RFC3339))
+	common := mapMemoryCommon(memory)
 
-	if memory.JSON.Content.Valid() {
-		data.Content = types.StringValue(memory.Content)
-	} else {
-		data.Content = types.StringNull()
-	}
+	data.ID = common.ID
+	data.Path = common.Path
+	data.Content = common.Content
+	data.ContentSha256 = common.ContentSha256
+	data.ContentSizeBytes = common.ContentSizeBytes
+	data.MemoryVersionID = common.MemoryVersionID
+	data.Type = common.Type
+	data.CreatedAt = common.CreatedAt
+	data.UpdatedAt = common.UpdatedAt
 }
