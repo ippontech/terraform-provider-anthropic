@@ -500,20 +500,28 @@ func parseMemoryImportID(id string) (memoryStoreID, memoryID string, err error) 
 // Helper functions
 // ============================================================================
 
-// mapMemoryToState maps the API response into the resource's state model.
+// mapMemoryToState maps the API response into the resource's state model,
+// via the mapping shared with the memory data sources (see memory_common.go).
+//
+// Content is deliberately NOT taken from the shared mapper: the resource
+// always requests view=full and unconditionally trusts memory.Content
+// (matching its pre-refactor behavior, including against a hand-built
+// BetaManagedAgentsMemory whose JSON.Content validity flag was never set by
+// an unmarshal). The one case where the API's response genuinely omits
+// content is handled by the caller (Read's priorContent fallback), not here.
 func mapMemoryToState(memory *anthropic.BetaManagedAgentsMemory, data *MemoryResourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
+	common := mapMemoryCommon(memory)
 
-	data.ID = types.StringValue(memory.ID)
+	data.ID = common.ID
 	data.MemoryStoreID = types.StringValue(memory.MemoryStoreID)
-	data.Path = types.StringValue(memory.Path)
+	data.Path = common.Path
 	data.Content = types.StringValue(memory.Content)
-	data.ContentSha256 = types.StringValue(memory.ContentSha256)
-	data.ContentSizeBytes = types.Int64Value(memory.ContentSizeBytes)
-	data.MemoryVersionID = types.StringValue(memory.MemoryVersionID)
-	data.Type = types.StringValue(string(memory.Type))
-	data.CreatedAt = types.StringValue(memory.CreatedAt.Format(time.RFC3339))
-	data.UpdatedAt = types.StringValue(memory.UpdatedAt.Format(time.RFC3339))
+	data.ContentSha256 = common.ContentSha256
+	data.ContentSizeBytes = common.ContentSizeBytes
+	data.MemoryVersionID = common.MemoryVersionID
+	data.Type = common.Type
+	data.CreatedAt = common.CreatedAt
+	data.UpdatedAt = common.UpdatedAt
 
-	return diags
+	return nil
 }

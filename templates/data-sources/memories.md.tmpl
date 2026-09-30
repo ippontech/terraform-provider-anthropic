@@ -1,0 +1,24 @@
+---
+page_title: "anthropic_memories Data Source - anthropic"
+subcategory: "Memory Stores"
+description: |-
+  Lists memories in a memory store (beta).
+---
+
+# anthropic_memories (Data Source)
+
+Lists memories in a memory store (beta). All pages are fetched automatically.
+
+`path_prefix` must be segment-aligned: it has to start and end with `/` (e.g. `/notes/`). `depth = 0` (the default) returns every descendant below `path_prefix` recursively, like `find`. `depth = 1` returns immediate children only; anything deeper rolls up into `prefixes` instead of `memories`, like `ls`.
+
+`content` is `null` on every memory unless `include_content = true`. Setting it populates `content` on each item, but caps the page size the provider fetches per request at 20 (the API's own limit when `view=full`).
+
+> **API**: `GET /v1/memory_stores/{memory_store_id}/memories` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `agent-memory-2026-07-22`.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/memories/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
