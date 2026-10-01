@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -385,9 +386,10 @@ func mapUserProfileToState(profile *anthropic.BetaUserProfile, data *UserProfile
 	data.ID = types.StringValue(profile.ID)
 	data.AccessType = types.StringValue(string(profile.AccessType))
 	data.Type = types.StringValue(string(profile.Type))
-	data.CreatedAt, data.UpdatedAt = userProfileTimestamps(profile)
-	data.ExternalID = userProfileNullableString(profile.ExternalID)
-	data.Name = userProfileNullableString(profile.Name)
+	data.CreatedAt = tfvalue.TimeOrNull(profile.CreatedAt)
+	data.UpdatedAt = tfvalue.TimeOrNull(profile.UpdatedAt)
+	data.ExternalID = tfvalue.StringOrNull(profile.ExternalID)
+	data.Name = tfvalue.StringOrNull(profile.Name)
 
 	metaMap, d := userProfileMetadataToMap(profile.Metadata)
 	diags.Append(d...)

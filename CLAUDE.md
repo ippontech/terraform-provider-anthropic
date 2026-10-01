@@ -29,6 +29,7 @@ internal/
   acctest/         — shared acceptance test helpers (ProtoV6ProviderFactories, PreCheck)
   errors/          — nil-client guards for Configure methods (import alias: providerrors)
   providerdata/    — ProviderData struct passed to every resource/data source Configure call
+  tfvalue/         — StringOrNull / TimeOrNull: map the SDK zero values ("" and the zero time) of absent API fields to null; use these in every state mapping instead of a per-package helper
   retry/           — multipart upload with 5xx retry (import alias: provretry)
   provider/        — AnthropicProvider implementation only (provider.go)
   services/

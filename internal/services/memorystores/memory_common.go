@@ -4,10 +4,9 @@
 package memorystores
 
 import (
-	"time"
-
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // memoryCommonModel holds the BetaManagedAgentsMemory fields mapped
@@ -44,8 +43,8 @@ func mapMemoryCommon(memory *anthropic.BetaManagedAgentsMemory) memoryCommonMode
 		ContentSizeBytes: types.Int64Value(memory.ContentSizeBytes),
 		MemoryVersionID:  types.StringValue(memory.MemoryVersionID),
 		Type:             types.StringValue(string(memory.Type)),
-		CreatedAt:        types.StringValue(memory.CreatedAt.Format(time.RFC3339)),
-		UpdatedAt:        types.StringValue(memory.UpdatedAt.Format(time.RFC3339)),
+		CreatedAt:        tfvalue.TimeOrNull(memory.CreatedAt),
+		UpdatedAt:        tfvalue.TimeOrNull(memory.UpdatedAt),
 	}
 
 	if memory.JSON.Content.Valid() {

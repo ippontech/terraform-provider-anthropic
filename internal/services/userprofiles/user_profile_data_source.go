@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -161,15 +162,15 @@ func (d *UserProfileDataSource) Read(ctx context.Context, req datasource.ReadReq
 func mapUserProfileDSToModel(profile *anthropic.BetaUserProfile) (userProfileDSModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	createdAt, updatedAt := userProfileTimestamps(profile)
+	createdAt, updatedAt := tfvalue.TimeOrNull(profile.CreatedAt), tfvalue.TimeOrNull(profile.UpdatedAt)
 	m := userProfileDSModel{
 		ID:         types.StringValue(profile.ID),
 		Type:       types.StringValue(string(profile.Type)),
 		CreatedAt:  createdAt,
 		UpdatedAt:  updatedAt,
-		AccessType: userProfileNullableString(string(profile.AccessType)),
-		ExternalID: userProfileNullableString(profile.ExternalID),
-		Name:       userProfileNullableString(profile.Name),
+		AccessType: tfvalue.StringOrNull(string(profile.AccessType)),
+		ExternalID: tfvalue.StringOrNull(profile.ExternalID),
+		Name:       tfvalue.StringOrNull(profile.Name),
 	}
 
 	metaMap, d := userProfileMetadataToMap(profile.Metadata)
