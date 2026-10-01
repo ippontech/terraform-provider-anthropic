@@ -9,3 +9,5 @@
 - [OAuth/WIF resource series (#137)](project_oauth_wif_series.md) — PreCheckOAuth skips (not Fatal); command=plan native test needs no assert block when Computed attrs are unknown; param.IsNull/IsOmitted for testing param.Opt
 - [Memory store SDK quirks](project_memory_store_sdk_quirks.md) — client.Beta.MemoryStores (plural field), real beta header agent-memory-2026-07-22, metadata PATCH needs SetExtraFields since field is map[string]string
 - [Invites beta query param](project_invites_beta_query_param.md) — /v1/organizations/invites[/{id}] need ?beta=true; list filter is `statuses` (plural), not `status`
+- [Data source native tests call the API even under plan](project_data_source_plan_still_calls_api.md) — command=plan doesn't skip a data source's Read; use mock_provider for constant-input data-source-only tests
+- [tfvalue helpers](project_tfvalue_helpers.md) — use tfvalue.StringOrNull / TimeOrNull in state mapping; no per-package nullable-string or RFC 3339 helper
