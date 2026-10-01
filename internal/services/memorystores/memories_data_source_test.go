@@ -6,7 +6,6 @@ package memorystores_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -71,9 +70,7 @@ func setUpMemoriesFixture(t *testing.T) (storeID string) {
 }
 
 func TestAccMemoriesDataSource_basic(t *testing.T) {
-	if os.Getenv(resource.EnvTfAcc) == "" {
-		t.Skipf("acceptance test skipped unless %s is set", resource.EnvTfAcc)
-	}
+	acctest.PreCheck(t)
 	storeID := setUpMemoriesFixture(t)
 
 	recursiveConfig := fmt.Sprintf(`

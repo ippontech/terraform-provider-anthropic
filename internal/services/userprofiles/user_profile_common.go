@@ -4,8 +4,6 @@
 package userprofiles
 
 import (
-	"time"
-
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -22,22 +20,6 @@ var userProfileTrustGrantAttrTypes = map[string]attr.Type{
 // userProfileTrustGrantObjectType is the types.ObjectType built from
 // userProfileTrustGrantAttrTypes, ready to use as a map's ElemType.
 var userProfileTrustGrantObjectType = types.ObjectType{AttrTypes: userProfileTrustGrantAttrTypes}
-
-// userProfileNullableString maps an SDK field that round-trips through the
-// API as an empty string when unset (external_id, name) to a null
-// types.String, so state distinguishes "unset" from an actual empty value.
-func userProfileNullableString(s string) types.String {
-	if s == "" {
-		return types.StringNull()
-	}
-	return types.StringValue(s)
-}
-
-// userProfileTimestamps formats the API's created_at/updated_at fields as
-// RFC 3339 strings.
-func userProfileTimestamps(profile *anthropic.BetaUserProfile) (createdAt, updatedAt types.String) {
-	return types.StringValue(profile.CreatedAt.Format(time.RFC3339)), types.StringValue(profile.UpdatedAt.Format(time.RFC3339))
-}
 
 // userProfileMetadataToMap converts the API's metadata into a types.Map,
 // mapping the empty case to null since the API response can't distinguish
