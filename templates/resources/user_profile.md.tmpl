@@ -14,11 +14,11 @@ resold-to company, on whose behalf the platform's API key calls the API.
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
 > **Beta header**: `user-profiles-2026-08-18`.
 
-> ⚠️ Not generally available: as of 2026-09-30 this beta was not enabled for Ippon's test organization, and both
-> the list and single-resource `/v1/user_profiles` endpoints returned a plain `404` regardless of beta header.
-> Verify the feature is enabled for your organization before relying on this resource. This same `404` is what
-> `GET /v1/user_profiles/{id}` returns for a profile that was genuinely deleted out-of-band — the two cases are
-> indistinguishable from the response alone. `Read` treats either case as "gone" and drops the resource from
+-> This beta is not generally available. As of 2026-09-30 the endpoint returns `404` for organizations that have not been enrolled.
+
+> ⚠️ Verify the feature is enabled for your organization before relying on this resource. The `404` returned when
+> it is not is the same response `GET /v1/user_profiles/{id}` gives for a profile that was genuinely deleted
+> out-of-band — the two cases are indistinguishable from the response alone. `Read` treats either case as "gone" and drops the resource from
 > Terraform state (emitting a warning), so if the beta is disabled or the API key loses access, every managed
 > profile silently disappears from state on the next refresh; the next apply then tries to re-create it, which
 > either fails (beta still disabled) or, once the beta is enabled again, creates a duplicate — one that this
