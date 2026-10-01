@@ -1,3 +1,9 @@
+## [1.54.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.54.0...v1.54.1) (2026-10-01)
+
+### 🐛 Bug Fixes
+
+* post-merge follow-ups on user profiles and memories ([#293](https://github.com/ippontech/terraform-provider-anthropic/issues/293)) ([d4cc203](https://github.com/ippontech/terraform-provider-anthropic/commit/d4cc2039f9a14c5804044a42554d92fe5a7149dd)), closes [#288](https://github.com/ippontech/terraform-provider-anthropic/issues/288) [#289](https://github.com/ippontech/terraform-provider-anthropic/issues/289) [#290](https://github.com/ippontech/terraform-provider-anthropic/issues/290)
+
 ## [1.54.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.53.0...v1.54.0) (2026-09-30)
 
 ### ✨ Features
