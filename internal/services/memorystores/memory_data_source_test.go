@@ -6,7 +6,6 @@ package memorystores_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -58,9 +57,7 @@ func setUpMemoryFixture(t *testing.T, namePrefix, path, content string) (storeID
 }
 
 func TestAccMemoryDataSource_basic(t *testing.T) {
-	if os.Getenv(resource.EnvTfAcc) == "" {
-		t.Skipf("acceptance test skipped unless %s is set", resource.EnvTfAcc)
-	}
+	acctest.PreCheck(t)
 	storeID, memoryID := setUpMemoryFixture(t, "tf-acc-test-memstore-for-memory-ds", "/notes/foo.md", "hello from acceptance test")
 
 	config := fmt.Sprintf(`

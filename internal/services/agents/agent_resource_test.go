@@ -6,19 +6,17 @@ package agents_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func testAccCheckAgentDestroyed(s *terraform.State) error {
-	client := anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+	client := acctest.NewAPIKeyClient()
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "anthropic_agent" {
 			continue

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -33,7 +32,7 @@ const (
 )
 
 func newAccTestClient() anthropic.Client {
-	return anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+	return *acctest.NewAPIKeyClient()
 }
 
 func isNotFoundError(err error) bool {

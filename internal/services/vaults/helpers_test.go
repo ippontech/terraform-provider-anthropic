@@ -17,12 +17,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 const (
@@ -33,7 +32,7 @@ const (
 // newAccTestClient builds the out-of-band client the destroy/archive checks
 // use to observe the API directly, with the same key as the provider under test.
 func newAccTestClient() anthropic.Client {
-	return anthropic.NewClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+	return *acctest.NewAPIKeyClient()
 }
 
 // isNotFoundError reports whether err is an API 404.
