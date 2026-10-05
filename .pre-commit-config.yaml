@@ -28,7 +28,7 @@ repos:
         pass_filenames: false
         always_run: true
   - repo: https://github.com/semgrep/semgrep
-    rev: v1.178.0
+    rev: v1.179.0
     hooks:
       - id: semgrep
         args:
