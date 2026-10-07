@@ -181,13 +181,14 @@ pre-commit run -a
 
 ### API key model
 
-The provider has three optional credentials — at least one must be configured:
+The provider has three optional credentials, and a fourth way to obtain the third. At least one must be configured:
 
 | Credential | Provider arg | Env var | Client field | Used by |
 |---|---|---|---|---|
 | Standard | `api_key` | `ANTHROPIC_API_KEY` | `pd.Client` | All standard resources and data sources |
 | Admin | `admin_api_key` | `ANTHROPIC_ADMIN_API_KEY` | `pd.AdminClient` | Organization endpoints (`/v1/organizations/*`, e.g. workspaces) |
 | OAuth bearer (`org:admin`) | `auth_token` | `ANTHROPIC_AUTH_TOKEN` | `pd.OAuthClient` | Endpoints that reject API keys and require `Authorization: Bearer` (Workload Identity Federation, [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137)) |
+| OAuth bearer, minted by WIF | `federation` block | `ANTHROPIC_FEDERATION_RULE_ID` etc. fill it, never enable it | `pd.OAuthClient` | Same endpoints as `auth_token`, which it conflicts with |
 
 Each is resolved by `resolveCredential` (`internal/provider/provider.go`): the provider argument wins when set, the env var otherwise, and an Unknown value (an unresolved reference at plan time) counts as unset.
 
@@ -196,7 +197,10 @@ Two details are load-bearing:
 - **`pd.OAuthClient` is a `*providerdata.OAuthClient` wrapper, not a bare `*anthropic.Client`.** The SDK carries no notion of which credential a client holds, so two bare clients are mutually assignable and mixing them up compiles silently, surfacing only as a 401 at apply time. The wrapper keeps the compiler in the loop; [#187](https://github.com/ippontech/terraform-provider-anthropic/issues/187) extends the same treatment to the other clients when `internal/admin` is retired. Because the wrapper adds a level of indirection the other guards do not have, `requireOAuthClient` checks `client.Client != nil` as well as `client != nil` — a non-nil wrapper around a nil SDK client would otherwise pass the guard and nil-deref on the first API call.
 - **Every SDK client is built through `newSDKClient`, which passes `option.WithoutEnvironmentDefaults()`.** `anthropic.NewClient` otherwise prepends `DefaultClientOptions()`, whose chain has five sources: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, the profile named by `ANTHROPIC_PROFILE`, env-var federation, and the fallback profile under the SDK config dir. The first two set a header *before* the explicit option is applied, so with both variables exported — the normal case — a client would present both credentials and the endpoints behind each reject the other. The last three are worse than a stray header: `option.WithConfig` applies a profile's non-credential settings **unconditionally**, so a profile left active by `ant auth login` (the command the provider docs tell operators to run) would override the base URL and stamp its `workspace_id` as an `anthropic-workspace-id` header on every request, none of it visible in the Terraform config. The marker option closes all five. Three tests cover it — `TestConfigureClientsCarryExactlyOneCredential`, `TestConfigureStandardClientDropsInheritedBearer`, `TestConfigureIgnoresTheAmbientProfile` (which plants a profile via `ANTHROPIC_CONFIG_DIR`) — and all fail if it is dropped.
 - **`ANTHROPIC_BASE_URL` is re-applied by hand**, because the marker option skips it too. It is read with an explicit `!= ""` check: an exported-but-empty value must not replace the SDK's production default with `""`. The same trap applies in tests, so `clearCredentialEnv` genuinely `os.Unsetenv`s each variable (after a `t.Setenv` whose only purpose is the restore-on-cleanup it registers) rather than setting it to `""`.
-- **The provider does not do the WIF token exchange**, so the SDK's federation variables alone cannot configure it — `Configure` fails with `Missing Credentials`. Documented as a caveat in `templates/index.md.tmpl`; revisit under [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) if native federation is wanted.
+- **The `federation` block is the provider's own WIF exchange** (`internal/provider/federation.go`). It fills `pd.OAuthClient` through `option.WithFederationTokenProvider`, whose token cache re-exchanges inside the SDK's refresh window (advisory 120s, mandatory 30s before expiry) and calls the identity source each time. That is why the sources are functions: `identity_token_file` is re-read and `identity_token_command` re-run per exchange, so single-use assertions (GitHub Actions, Kubernetes) are never replayed. Three rules are load-bearing, each with a test in `federation_test.go`:
+  - **Opt-in by block only.** The SDK's federation variables fill the block's attributes but never activate it, because other tools in the same job export them (`TestConfigureFederationEnvironmentAloneDoesNothing`).
+  - **It conflicts with `auth_token`/`ANTHROPIC_AUTH_TOKEN`.** Both would fill `pd.OAuthClient`, and a silent winner hides a leftover token (`TestConfigureFederationConflictsWithAuthToken`).
+  - **The client still goes through `newSDKClient`**, so `WithoutEnvironmentDefaults` keeps profiles and env credentials out of it.
 
 ### Configure method pattern
 
