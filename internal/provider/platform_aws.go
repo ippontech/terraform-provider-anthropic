@@ -118,6 +118,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 		{"admin_api_key", data.AdminApiKey},
 		{"auth_token", data.AuthToken},
 		{"federation", data.Federation},
+		{"cli", data.CLI},
 	} {
 		if !other.value.IsNull() {
 			diags.AddAttributeError(path.Root("aws"), "Conflicting Platform Configuration",

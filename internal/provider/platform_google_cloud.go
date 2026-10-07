@@ -135,6 +135,7 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel, tokenT
 		{"admin_api_key", data.AdminApiKey},
 		{"auth_token", data.AuthToken},
 		{"federation", data.Federation},
+		{"cli", data.CLI},
 	} {
 		if !other.value.IsNull() {
 			diags.AddAttributeError(path.Root("google_cloud"), "Conflicting Platform Configuration",
