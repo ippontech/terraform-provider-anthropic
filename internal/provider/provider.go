@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/config"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -52,6 +53,7 @@ type AnthropicProviderModel struct {
 	WorkspaceID types.String `tfsdk:"workspace_id"`
 	AWS         types.Object `tfsdk:"aws"`
 	GoogleCloud types.Object `tfsdk:"google_cloud"`
+	CLI         types.Object `tfsdk:"cli"`
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -100,6 +102,7 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 			},
 			"aws":          awsSchema(),
 			"google_cloud": googleCloudSchema(),
+			"cli":          cliSchema(),
 		},
 	}
 }
@@ -203,12 +206,24 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		}
 	}
 
-	if apiKey == "" && adminApiKey == "" && authToken == "" && federation == nil {
+	// The cli block is the fallback for an operator's workstation: CI supplies
+	// auth_token or federation, and the same configuration then never reads
+	// a profile left on the runner.
+	var cliConfig *config.Config
+	if authToken == "" && federation == nil {
+		cliConfig, diags = resolveCLI(ctx, data.CLI)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	if apiKey == "" && adminApiKey == "" && authToken == "" && federation == nil && cliConfig == nil {
 		resp.Diagnostics.AddError(
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
-				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token. "+
+				"or auth_token (ANTHROPIC_AUTH_TOKEN), a federation block or a cli block for endpoints that require an org:admin OAuth bearer token. "+
 				"For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or "+
 				"google_cloud block instead.",
 		)
@@ -240,6 +255,11 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(
 			option.WithFederationTokenProvider(federation.identity, federation.options),
 		)}
+	}
+	if cliConfig != nil {
+		// Quiet: the provider already rejects the static credentials the
+		// SDK's shadowing warning is about.
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithConfigQuiet(cliConfig))}
 	}
 
 	p.serve(resp, pd)

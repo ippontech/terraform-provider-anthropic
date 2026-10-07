@@ -530,6 +530,7 @@ func TestConfigureAWSRejects(t *testing.T) {
 		{"admin_api_key", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(keys), "admin_api_key": tfString("sk-ant-admin01-x")}, nil, "Conflicting Platform Configuration", "aws and admin_api_key"},
 		{"auth_token", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(keys), "auth_token": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)}, nil, "Conflicting Platform Configuration", "aws and auth_token"},
 		{"federation", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(keys), "federation": federationValue(t, nil)}, nil, "Conflicting Platform Configuration", "aws and federation"},
+		{"cli", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(keys), "cli": cliValue(t, map[string]string{"profile": "admin"})}, nil, "Conflicting Platform Configuration", "aws and cli"},
 		{"unknown block", map[string]tftypes.Value{"workspace_id": ws, "aws": tftypes.NewValue(tftypes.Object{AttributeTypes: awsAttrTypes}, tftypes.UnknownValue)}, nil, "Unknown AWS Configuration", "aws block"},
 		{"unknown region", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"region": tftypes.UnknownValue}))}, nil, "Unknown AWS Configuration", "aws.region"},
 		{"unknown secret", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"secret_key": tftypes.UnknownValue}))}, nil, "Unknown AWS Configuration", "aws.secret_key"},

@@ -46,6 +46,7 @@ func clearCredentialEnv(t *testing.T) {
 		"ANTHROPIC_WORKSPACE_ID",
 		"ANTHROPIC_IDENTITY_TOKEN",
 		"ANTHROPIC_IDENTITY_TOKEN_FILE",
+		"ANTHROPIC_PROFILE",
 	} {
 		t.Setenv(k, "")
 		if err := os.Unsetenv(k); err != nil {
