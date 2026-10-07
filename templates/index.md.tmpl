@@ -92,7 +92,7 @@ provider "anthropic" {
 }
 ```
 
-~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` block below when it needs to.
+~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` or `cli` block below when it needs to.
 
 The `auth_token` is optional — you only need it for federation resources.
 
@@ -127,7 +127,32 @@ Give the rule a `token_lifetime_seconds` well above 120 (the default, 3600, is f
 
 Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation.
 
-Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
+### `ant` CLI login (`cli`)
+
+On an operator's workstation, the provider can use the `org:admin` login that the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) stores, and refresh it with the profile's refresh token, so an apply never outlives the login:
+
+```bash
+ant auth login --profile admin --scope "org:admin"
+```
+
+```hcl
+provider "anthropic" {
+  cli = {
+    profile = "admin"
+    # Or, with no profile named, find the one org:admin login for:
+    # organization_id = "00000000-0000-0000-0000-000000000000"
+    # workspace_id    = "wrkspc_..."   # only to tell several apart
+  }
+}
+```
+
+The `cli` block is a fallback. It is used only when neither `auth_token` (or `ANTHROPIC_AUTH_TOKEN`) nor `federation` supplies the token, so one configuration can carry both: CI provides its token and never reads a profile, and an operator without one uses their own login.
+
+- The profile is `profile`, else `ANTHROPIC_PROFILE`. With neither set, the provider looks among the `user_oauth` profiles with the `org:admin` scope for the one whose login is for `organization_id` (else `ANTHROPIC_ORGANIZATION_ID`) and, when set, `workspace_id` (else `ANTHROPIC_WORKSPACE_ID`). Finding none or several is an error.
+- The profile must be logged in, and an expired login must be refreshable; otherwise the error names the `ant auth login` command to run.
+- A profile whose `base_url` differs from the provider's (`ANTHROPIC_BASE_URL`, else production) is rejected. The profile's `workspace_id` is never sent: an `org:admin` token is organization-wide.
+
+Without a `cli` block, profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 
 ~> **Warning**: Never hardcode API keys in your Terraform configuration files.
 Use environment variables or a secrets manager instead.
