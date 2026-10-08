@@ -82,8 +82,18 @@ func validateMultiagentConfig(ctx context.Context, obj types.Object) diag.Diagno
 	if diags.HasError() || ma.Agents.IsNull() || ma.Agents.IsUnknown() {
 		return diags
 	}
-	var entries []agentMultiagentEntryModel
-	diags.Append(ma.Agents.ElementsAs(ctx, &entries, false)...)
+	// Decode element by element: ElementsAs fails on a single unknown element
+	// object (e.g. a conditional entry), which must stay valid at plan time.
+	// Unknown elements keep a zero-valued slot (null type) and are skipped below.
+	elems := ma.Agents.Elements()
+	entries := make([]agentMultiagentEntryModel, len(elems))
+	for i, el := range elems {
+		o, ok := el.(types.Object)
+		if !ok || o.IsNull() || o.IsUnknown() {
+			continue
+		}
+		diags.Append(o.As(ctx, &entries[i], basetypes.ObjectAsOptions{})...)
+	}
 	if diags.HasError() {
 		return diags
 	}
@@ -150,7 +160,12 @@ func validateMultiagentConfig(ctx context.Context, obj types.Object) diag.Diagno
 
 // buildMultiagentParams converts the planned multiagent object into SDK params.
 // It returns the zero value (omitted by the SDK) for a null or unknown object.
-func buildMultiagentParams(ctx context.Context, obj types.Object) (anthropic.BetaManagedAgentsMultiagentParams, diag.Diagnostics) {
+//
+// prior is the roster from state (null on create). An `agent` entry whose planned
+// version is unknown (not set in config) reuses the version prior state holds for
+// the same id, so an unrelated update does not re-pin the member to its latest
+// version; a member absent from prior state is sent without version (API pins latest).
+func buildMultiagentParams(ctx context.Context, obj, prior types.Object) (anthropic.BetaManagedAgentsMultiagentParams, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	var out anthropic.BetaManagedAgentsMultiagentParams
 	if obj.IsNull() || obj.IsUnknown() {
@@ -167,6 +182,21 @@ func buildMultiagentParams(ctx context.Context, obj types.Object) (anthropic.Bet
 		return out, diags
 	}
 
+	priorVersions := map[string]int64{}
+	if !prior.IsNull() && !prior.IsUnknown() {
+		var pm agentMultiagentModel
+		if !prior.As(ctx, &pm, basetypes.ObjectAsOptions{}).HasError() && !pm.Agents.IsNull() && !pm.Agents.IsUnknown() {
+			var pe []agentMultiagentEntryModel
+			if !pm.Agents.ElementsAs(ctx, &pe, false).HasError() {
+				for _, e := range pe {
+					if e.Type.ValueString() == multiagentEntryAgent && !e.ID.IsNull() && !e.Version.IsNull() && !e.Version.IsUnknown() {
+						priorVersions[e.ID.ValueString()] = e.Version.ValueInt64()
+					}
+				}
+			}
+		}
+	}
+
 	out.Type = anthropic.BetaManagedAgentsMultiagentParamsType(ma.Type.ValueString())
 	out.Agents = make([]anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion, 0, len(entries))
 	for _, e := range entries {
@@ -178,6 +208,10 @@ func buildMultiagentParams(ctx context.Context, obj types.Object) (anthropic.Bet
 			}
 			if !e.Version.IsNull() && !e.Version.IsUnknown() {
 				p.Version = param.NewOpt(e.Version.ValueInt64())
+			} else if e.Version.IsUnknown() {
+				if v, ok := priorVersions[e.ID.ValueString()]; ok {
+					p.Version = param.NewOpt(v)
+				}
 			}
 			out.Agents = append(out.Agents, anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{OfBetaManagedAgentsAgents: &p})
 		case multiagentEntrySelf:

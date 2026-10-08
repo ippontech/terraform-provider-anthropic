@@ -518,7 +518,7 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	params.Tools = tools
 
 	// Multiagent
-	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent)
+	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent, types.ObjectNull(agentMultiagentAttrTypes))
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -665,7 +665,7 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	params.Tools = updateTools
 
 	// Multiagent: clearing must send an explicit null, an omitted field keeps the roster.
-	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent)
+	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent, state.Multiagent)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

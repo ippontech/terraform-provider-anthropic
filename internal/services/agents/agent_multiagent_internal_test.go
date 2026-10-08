@@ -54,7 +54,7 @@ func TestBuildMultiagentParams_allEntryKinds(t *testing.T) {
 		multiagentEntryObj(t, "self", types.StringNull(), types.Int64Unknown(), types.StringNull()),
 		multiagentEntryObj(t, "advisor", types.StringNull(), types.Int64Null(), types.StringValue("claude-opus-4-6")),
 	)
-	p, diags := buildMultiagentParams(context.Background(), obj)
+	p, diags := buildMultiagentParams(context.Background(), obj, types.ObjectNull(agentMultiagentAttrTypes))
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -70,7 +70,7 @@ func TestBuildMultiagentParams_allEntryKinds(t *testing.T) {
 
 func TestBuildMultiagentParams_nullIsOmitted(t *testing.T) {
 	t.Parallel()
-	p, diags := buildMultiagentParams(context.Background(), types.ObjectNull(agentMultiagentAttrTypes))
+	p, diags := buildMultiagentParams(context.Background(), types.ObjectNull(agentMultiagentAttrTypes), types.ObjectNull(agentMultiagentAttrTypes))
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -293,5 +293,49 @@ func TestMapAgentResponseToDataSource_multiagent(t *testing.T) {
 	}
 	if !pdata.Multiagent.IsNull() {
 		t.Fatalf("expected null multiagent, got %v", pdata.Multiagent)
+	}
+}
+
+func TestBuildMultiagentParams_keepsPinnedVersionOnUpdate(t *testing.T) {
+	t.Parallel()
+	prior := multiagentObj(t,
+		multiagentEntryObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(1), types.StringNull()),
+		multiagentEntryObj(t, "agent", types.StringValue("agent_b"), types.Int64Value(5), types.StringNull()),
+	)
+	// Planned roster reordered: unknown versions for a (unpinned) and c (new member),
+	// explicit config version for b.
+	planned := multiagentObj(t,
+		multiagentEntryObj(t, "agent", types.StringValue("agent_b"), types.Int64Value(9), types.StringNull()),
+		multiagentEntryObj(t, "agent", types.StringValue("agent_c"), types.Int64Unknown(), types.StringNull()),
+		multiagentEntryObj(t, "agent", types.StringValue("agent_a"), types.Int64Unknown(), types.StringNull()),
+	)
+	p, diags := buildMultiagentParams(context.Background(), planned, prior)
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	b, _ := json.Marshal(p)
+	const want = `{"agents":[{"id":"agent_b","type":"agent","version":9},{"id":"agent_c","type":"agent"},{"id":"agent_a","type":"agent","version":1}],"type":"coordinator"}`
+	if string(b) != want {
+		t.Fatalf("got  %s\nwant %s", b, want)
+	}
+}
+
+func TestValidateMultiagentConfig_unknownElement(t *testing.T) {
+	t.Parallel()
+	list, d := types.ListValue(types.ObjectType{AttrTypes: agentMultiagentEntryAttrTypes}, []attr.Value{
+		multiagentEntryObj(t, "agent", types.StringValue("a"), types.Int64Null(), types.StringNull()),
+		types.ObjectUnknown(agentMultiagentEntryAttrTypes),
+	})
+	if d.HasError() {
+		t.Fatalf("list: %+v", d)
+	}
+	obj, d := types.ObjectValue(agentMultiagentAttrTypes, map[string]attr.Value{
+		"type": types.StringValue("coordinator"), "agents": list,
+	})
+	if d.HasError() {
+		t.Fatalf("obj: %+v", d)
+	}
+	if d := validateMultiagentConfig(context.Background(), obj); d.HasError() {
+		t.Fatalf("unknown element must be accepted: %+v", d)
 	}
 }

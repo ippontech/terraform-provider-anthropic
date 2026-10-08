@@ -418,3 +418,53 @@ resource "anthropic_agent" "coordinator" {
 }
 `, block)
 }
+
+// An unrelated update of the coordinator must not re-pin an unpinned member to the
+// member's newer version.
+func TestAccAgentResource_multiagentKeepsPinnedVersion(t *testing.T) {
+	const coord = "anthropic_agent.coordinator"
+	cfg := func(memberDesc, coordDesc string) string {
+		return fmt.Sprintf(`
+resource "anthropic_agent" "member" {
+  model       = "claude-sonnet-4-6"
+  name        = "tf-acc-test-multiagent-pin-member"
+  description = %q
+}
+
+resource "anthropic_agent" "coordinator" {
+  model       = "claude-sonnet-4-6"
+  name        = "tf-acc-test-multiagent-pin-coordinator"
+  description = %q
+
+  multiagent = {
+    type   = "coordinator"
+    agents = [{ type = "agent", id = anthropic_agent.member.id }]
+  }
+}
+`, memberDesc, coordDesc)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg("v1", "c1"),
+				Check:  resource.TestCheckResourceAttr(coord, "multiagent.agents.0.version", "1"),
+			},
+			// Bump the member to version 2; the coordinator is untouched.
+			{
+				Config: cfg("v2", "c1"),
+				Check:  resource.TestCheckResourceAttr("anthropic_agent.member", "version", "2"),
+			},
+			// Edit only the coordinator: the roster must keep the member at version 1.
+			{
+				Config: cfg("v2", "c2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(coord, "description", "c2"),
+					resource.TestCheckResourceAttr(coord, "multiagent.agents.0.version", "1"),
+				),
+			},
+		},
+	})
+}
