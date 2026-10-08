@@ -14,14 +14,6 @@ The `anthropic_count_tokens` data source counts the number of tokens that would 
 > **Beta header**: None.
 > **Cost**: The token counting endpoint is free of charge and subject to per-organization rate limits independent from the Messages API limits.
 
-## Request parameters
-
-Beyond `model`, `messages` and `system`, the data source accepts the same request-shaping parameters as `anthropic_message`, so the count matches what the real request would consume:
-
-- `thinking`: extended thinking configuration (`type` = `enabled`, `disabled` or `adaptive`). `budget_tokens` (at least 1024) is required with `enabled` and rejected otherwise; `display` (`summarized` or `omitted`) is rejected with `disabled`. Probed live on 2026-10-08: `{ type = "disabled" }` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools`, which this provider does not support). Other models were not verified. No beta header is needed (verified against the live API on 2026-10-08).
-- `output_config`: `effort` (`low`, `medium`, `high`, `xhigh`, `max`; unsupported models answer 400) and `format`, a JSON schema object (use `jsonencode()`) for structured outputs.
-- `cache_control`: top-level prompt-caching breakpoint with an optional `ttl` of `5m` or `1h`.
-
 ## Example Usage
 
 ```hcl
@@ -153,7 +145,7 @@ output "tokens_with_output_format" {
 - `cache_control` (Attributes) Top-level automatic prompt-caching breakpoint that the real request would carry. (see [below for nested schema](#nestedatt--cache_control))
 - `output_config` (Attributes) Output configuration (effort level and structured-output format) that the real request would carry. (see [below for nested schema](#nestedatt--output_config))
 - `system` (String) System prompt providing context and instructions to the model.
-- `thinking` (Attributes) Extended thinking configuration, so the count includes the thinking overhead the real request would carry. Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = "disabled"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools` instead, which this provider does not support). Other models were not verified. (see [below for nested schema](#nestedatt--thinking))
+- `thinking` (Attributes) Extended thinking configuration, so the count includes the thinking overhead the real request would carry. Same shape as `anthropic_message`; no beta header is needed (verified against the live API on 2026-10-08). Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = "disabled"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools` instead, which this provider does not support). Other models were not verified. (see [below for nested schema](#nestedatt--thinking))
 
 ### Read-Only
 

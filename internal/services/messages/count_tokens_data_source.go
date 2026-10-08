@@ -106,7 +106,7 @@ func (d *CountTokensDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 			},
 			"thinking": schema.SingleNestedAttribute{
 				Optional: true,
-				MarkdownDescription: "Extended thinking configuration, so the count includes the thinking overhead the real request would carry. " +
+				MarkdownDescription: "Extended thinking configuration, so the count includes the thinking overhead the real request would carry. Same shape as `anthropic_message`; no beta header is needed (verified against the live API on 2026-10-08). " +
 					"Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = \"disabled\"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools` instead, which this provider does not support). Other models were not verified.",
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
