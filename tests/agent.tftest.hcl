@@ -1,4 +1,4 @@
-# Tests for the anthropic_agent data source example.
+# Tests for the anthropic_agent data source example and the coordinator roster of the resource example.
 # Verifies that the data source returns expected attributes for a freshly-created agent.
 
 test {
@@ -46,7 +46,7 @@ run "agent_data_source_returns_agent" {
   }
 }
 
-run "agent_resource_example_model_effort" {
+run "agent_resource_example" {
   module {
     source = "../examples/resources/agent"
   }
@@ -54,5 +54,25 @@ run "agent_resource_example_model_effort" {
   assert {
     condition     = output.simple_agent_model_effort == "high"
     error_message = "Expected model_effort to be high."
+  }
+
+  assert {
+    condition     = output.coordinator_roster_size == 2
+    error_message = "Expected the coordinator roster to hold the support agent and self."
+  }
+
+  assert {
+    condition     = anthropic_agent.coordinator.multiagent.type == "coordinator"
+    error_message = "Expected a coordinator topology."
+  }
+
+  assert {
+    condition     = anthropic_agent.coordinator.multiagent.agents[0].id == anthropic_agent.assistant.id
+    error_message = "Expected the first roster entry to reference the assistant agent."
+  }
+
+  assert {
+    condition     = anthropic_agent.coordinator.multiagent.agents[1].type == "self"
+    error_message = "Expected the second roster entry to be self."
   }
 }

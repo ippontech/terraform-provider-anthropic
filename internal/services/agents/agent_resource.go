@@ -31,6 +31,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &AgentResource{}
 var _ resource.ResourceWithImportState = &AgentResource{}
+var _ resource.ResourceWithConfigValidators = &AgentResource{}
 
 func NewAgentResource() resource.Resource {
 	return &AgentResource{}
@@ -57,6 +58,7 @@ type AgentResourceModel struct {
 	AgentToolset      types.Object `tfsdk:"agent_toolset"`
 	MCPToolsets       types.List   `tfsdk:"mcp_toolsets"`
 	CustomTools       types.List   `tfsdk:"custom_tools"`
+	Multiagent        types.Object `tfsdk:"multiagent"`
 	ID                types.String `tfsdk:"id"`
 	Version           types.Int64  `tfsdk:"version"`
 	CreatedAt         types.String `tfsdk:"created_at"`
@@ -354,6 +356,51 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 
+			"multiagent": schema.SingleNestedAttribute{
+				Optional: true,
+				MarkdownDescription: "Coordinator topology (beta): the agent orchestrates work by spawning session threads, each running an agent from the roster. " +
+					"Entries must reference distinct agents, referenced agents must not have their own `multiagent` roster (depth limit 1), " +
+					"and `inference_geo` must match across the coordinator and all members. " +
+					"The roster is snapshotted on create/update: to pick up a newer version of a member, change its `version`. " +
+					"The API resolves a `self` entry into an `agent` reference carrying the coordinator's own ID and echoes the `advisor` entry last; " +
+					"state keeps the configured order and `self` entries as configured. " +
+					"When imported (no configuration to correlate with), a `self` entry is therefore read back as an `agent` entry whose `id` is the agent's own ID.",
+				Attributes: map[string]schema.Attribute{
+					"type": schema.StringAttribute{
+						Required:            true,
+						MarkdownDescription: "Topology type. Only `coordinator` is supported.",
+						Validators:          []validator.String{stringvalidator.OneOf("coordinator")},
+					},
+					"agents": schema.ListNestedAttribute{
+						Required:            true,
+						MarkdownDescription: "Roster of agents the coordinator may spawn. 1-20 entries, at most one `self` and one `advisor`.",
+						Validators:          []validator.List{listvalidator.SizeBetween(1, 20)},
+						NestedObject: schema.NestedAttributeObject{
+							Attributes: map[string]schema.Attribute{
+								"type": schema.StringAttribute{
+									Required:            true,
+									MarkdownDescription: "Entry type: `agent` (another agent), `self` (recursive self-invocation) or `advisor` (a model the coordinator may consult mid-turn).",
+									Validators:          []validator.String{stringvalidator.OneOf("agent", "self", "advisor")},
+								},
+								"id": schema.StringAttribute{
+									Optional:            true,
+									MarkdownDescription: "ID of the referenced agent. Required when `type` is `agent`, forbidden otherwise.",
+								},
+								"version": schema.Int64Attribute{
+									Optional:            true,
+									Computed:            true,
+									MarkdownDescription: "Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.",
+								},
+								"model": schema.StringAttribute{
+									Optional:            true,
+									MarkdownDescription: "Advisor model ID. Required when `type` is `advisor`, forbidden otherwise.",
+								},
+							},
+						},
+					},
+				},
+			},
+
 			// --- Computed ---
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -380,6 +427,10 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 		},
 	}
+}
+
+func (r *AgentResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{&multiagentConfigValidator{}}
 }
 
 // --- Configure ---
@@ -465,6 +516,14 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 	params.Tools = tools
+
+	// Multiagent
+	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent, types.ObjectNull(agentMultiagentAttrTypes))
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	params.Multiagent = multiagent
 
 	agent, err := r.client.Beta.Agents.New(ctx, params)
 	if err != nil {
@@ -604,6 +663,17 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		}
 	}
 	params.Tools = updateTools
+
+	// Multiagent: clearing must send an explicit null, an omitted field keeps the roster.
+	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent, state.Multiagent)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	params.Multiagent = multiagent
+	if data.Multiagent.IsNull() && !state.Multiagent.IsNull() {
+		params.SetExtraFields(multiagentClearField())
+	}
 
 	agent, err := r.client.Beta.Agents.Update(ctx, state.ID.ValueString(), params)
 	if err != nil {
@@ -1011,6 +1081,11 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	} else if !data.CustomTools.IsNull() {
 		data.CustomTools = types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes})
 	}
+
+	// Multiagent: correlate with the planned/prior roster (see mapMultiagentToState).
+	multiagent, d := mapMultiagentToState(ctx, agent.Multiagent, agent.ID, data.Multiagent)
+	diags.Append(d...)
+	data.Multiagent = multiagent
 
 	return diags
 }

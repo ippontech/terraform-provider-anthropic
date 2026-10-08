@@ -66,6 +66,7 @@ Read-Only:
 - `model_effort` (String) Effort level of the agent's model (`low`, `medium`, `high`, `xhigh` or `max`).
 - `model_inference_geo` (String) Geographic region pinned for the agent's model requests, or null when unpinned.
 - `model_speed` (String) Inference speed mode: `standard` or `fast`.
+- `multiagent` (Attributes) Coordinator topology, null when the agent has none. A `self` roster entry is resolved by the API into an `agent` entry carrying the agent's own ID. (see [below for nested schema](#nestedatt--agents--multiagent))
 - `name` (String) Human-readable name for the agent.
 - `skills` (Attributes List) Skills available to the agent. (see [below for nested schema](#nestedatt--agents--skills))
 - `system` (String) System prompt for the agent.
@@ -129,6 +130,26 @@ Read-Only:
 - `enabled` (Boolean) Whether this tool is enabled.
 - `name` (String) Name of the MCP tool.
 - `permission_policy` (String) Permission policy: `always_allow` or `always_ask`.
+
+
+
+<a id="nestedatt--agents--multiagent"></a>
+### Nested Schema for `agents.multiagent`
+
+Read-Only:
+
+- `agents` (Attributes List) Resolved roster of agents the coordinator may spawn. (see [below for nested schema](#nestedatt--agents--multiagent--agents))
+- `type` (String) Topology type (`coordinator`).
+
+<a id="nestedatt--agents--multiagent--agents"></a>
+### Nested Schema for `agents.multiagent.agents`
+
+Read-Only:
+
+- `id` (String) Referenced agent ID (`agent` entries).
+- `model` (String) Advisor model ID (`advisor` entries).
+- `type` (String) Entry type: `agent` or `advisor`.
+- `version` (Number) Resolved version of the referenced agent (`agent` entries).
 
 
 
