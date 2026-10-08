@@ -82,3 +82,47 @@ data "anthropic_count_tokens" "test_system" {
   ]
 }
 `
+
+func TestAccCountTokensDataSource_withThinking(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCountTokensDataSourceWithThinkingConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.anthropic_count_tokens.test_thinking", "thinking.type", "enabled"),
+					resource.TestCheckResourceAttr("data.anthropic_count_tokens.test_thinking", "thinking.budget_tokens", "1024"),
+					resource.TestCheckResourceAttrWith("data.anthropic_count_tokens.test_thinking", "input_tokens", func(v string) error {
+						n, err := strconv.ParseInt(v, 10, 64)
+						if err != nil {
+							return err
+						}
+						if n <= 0 {
+							return fmt.Errorf("expected input_tokens > 0, got %d", n)
+						}
+						return nil
+					}),
+				),
+			},
+		},
+	})
+}
+
+const testAccCountTokensDataSourceWithThinkingConfig = `
+data "anthropic_count_tokens" "test_thinking" {
+  model = "claude-haiku-4-5-20251001"
+
+  thinking = {
+    type          = "enabled"
+    budget_tokens = 1024
+  }
+
+  messages = [
+    {
+      role    = "user"
+      content = "Hello, Claude"
+    }
+  ]
+}
+`

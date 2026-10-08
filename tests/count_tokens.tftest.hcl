@@ -24,4 +24,14 @@ run "count_tokens_data_source_returns_results" {
     condition     = output.conversation_token_count > output.simple_token_count
     error_message = "Expected token count for multi-turn conversation to be greater than a single message."
   }
+
+  assert {
+    condition     = output.tokens_with_thinking > output.simple_token_count
+    error_message = "Expected token count with extended thinking to be greater than without."
+  }
+
+  assert {
+    condition     = output.tokens_with_output_format > output.simple_token_count
+    error_message = "Expected token count with an output format schema to be greater than without."
+  }
 }
