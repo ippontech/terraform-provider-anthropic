@@ -1,3 +1,9 @@
+## [1.60.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.59.0...v1.60.0) (2026-10-08)
+
+### ✨ Features
+
+* **message:** add stop_sequences, metadata, service_tier, inference_geo, thinking, output_config and cache_control ([#316](https://github.com/ippontech/terraform-provider-anthropic/issues/316)) ([52a55be](https://github.com/ippontech/terraform-provider-anthropic/commit/52a55be82dd1c6211f30d383ba91e8d1afe96f4a)), closes [#312](https://github.com/ippontech/terraform-provider-anthropic/issues/312) [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192) [#92](https://github.com/ippontech/terraform-provider-anthropic/issues/92)
+
 ## [1.59.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.58.0...v1.59.0) (2026-10-08)
 
 ### ✨ Features
