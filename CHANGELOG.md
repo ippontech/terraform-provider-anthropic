@@ -1,3 +1,9 @@
+## [1.58.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.57.0...v1.58.0) (2026-10-08)
+
+### ✨ Features
+
+* **files:** add anthropic_file and anthropic_files data sources ([#314](https://github.com/ippontech/terraform-provider-anthropic/issues/314)) ([001cc28](https://github.com/ippontech/terraform-provider-anthropic/commit/001cc28e1f42b68b9338ec7eb59b3417af59ebfb)), closes [#87](https://github.com/ippontech/terraform-provider-anthropic/issues/87)
+
 ## [1.57.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.56.1...v1.57.0) (2026-10-08)
 
 ### ✨ Features
