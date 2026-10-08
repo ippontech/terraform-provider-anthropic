@@ -151,7 +151,7 @@ func TestMapWorkspaceToListObject_noArchivedAt(t *testing.T) {
 	}
 }
 
-func TestMapWorkspaceToListObject_newAttributes(t *testing.T) {
+func TestMapWorkspaceToListObject_tagsKeyAndRetention(t *testing.T) {
 	key, comp, prof := "ekey_01", "comp-1", "uprof_01"
 	ws := workspacesListFixture("wrkspc_01", "full", nil)
 	ws.Tags = map[string]string{"env": "prod"}
@@ -178,7 +178,7 @@ func TestMapWorkspaceToListObject_newAttributes(t *testing.T) {
 	}
 }
 
-func TestMapWorkspaceToListObject_newAttributesAbsent(t *testing.T) {
+func TestMapWorkspaceToListObject_tagsKeyAndRetentionAbsent(t *testing.T) {
 	ws := workspacesListFixture("wrkspc_01", "bare", nil)
 
 	obj, diags := mapWorkspaceToListObject(&ws)

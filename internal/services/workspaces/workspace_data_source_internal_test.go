@@ -67,11 +67,11 @@ func TestWorkspaceDataSource_read(t *testing.T) {
 		t.Error("DataResidency should not be null")
 	}
 	if !data.CompartmentID.IsNull() || !data.ExternalKeyID.IsNull() || !data.InferenceDataRetention.IsNull() {
-		t.Error("absent new attributes should map to null")
+		t.Error("absent tags, external_key_id, compartment_id, user_profile_id and inference_data_retention should map to null")
 	}
 }
 
-func TestWorkspaceDataSource_mapsNewAttributes(t *testing.T) {
+func TestWorkspaceDataSource_mapsTagsKeyAndRetention(t *testing.T) {
 	var ws workspaceAPIResponse
 	if err := json.Unmarshal([]byte(workspaceFullFixture), &ws); err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestWorkspaceDataSource_mapsNewAttributes(t *testing.T) {
 		t.Fatalf("diags: %v", diags)
 	}
 	if data.CompartmentID.ValueString() == "" || data.Tags.IsNull() || data.InferenceDataRetention.IsNull() {
-		t.Errorf("new attributes not mapped: %+v", data)
+		t.Errorf("tags, external_key_id, compartment_id, user_profile_id or inference_data_retention not mapped: %+v", data)
 	}
 	// The data source reuses the resource model, so it must fit the data source schema too.
 	var resp datasource.SchemaResponse

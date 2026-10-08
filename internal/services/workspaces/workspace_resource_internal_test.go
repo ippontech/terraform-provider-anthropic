@@ -51,7 +51,7 @@ func mapFixture(t *testing.T, raw string) WorkspaceResourceModel {
 	return data
 }
 
-func TestMapWorkspaceToState_newAttributesPresent(t *testing.T) {
+func TestMapWorkspaceToState_tagsKeyAndRetentionPresent(t *testing.T) {
 	data := mapFixture(t, workspaceFullFixture)
 
 	if got := data.ExternalKeyID.ValueString(); got != "ekey_01ABC" {
@@ -72,7 +72,7 @@ func TestMapWorkspaceToState_newAttributesPresent(t *testing.T) {
 	}
 }
 
-func TestMapWorkspaceToState_newAttributesNull(t *testing.T) {
+func TestMapWorkspaceToState_tagsKeyAndRetentionNull(t *testing.T) {
 	data := mapFixture(t, workspaceFixture())
 
 	if !data.ExternalKeyID.IsNull() || !data.CompartmentID.IsNull() || !data.UserProfileID.IsNull() {
