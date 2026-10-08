@@ -148,7 +148,7 @@ func TestWorkspaceCreateRequest_tagsAndExternalKey(t *testing.T) {
 	}
 }
 
-func TestBuildWorkspaceTagsUpdate(t *testing.T) {
+func TestBuildWorkspaceTagsPatch(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		name        string
@@ -159,29 +159,32 @@ func TestBuildWorkspaceTagsUpdate(t *testing.T) {
 		{"plan null", nil, map[string]string{"a": "1"}, "null"},
 		{"added", map[string]string{"a": "1", "b": "2"}, map[string]string{"a": "1"}, `{"a":"1","b":"2"}`},
 		{"changed", map[string]string{"a": "2"}, map[string]string{"a": "1"}, `{"a":"2"}`},
-		{"removed key: full map, no null", map[string]string{"a": "1"}, map[string]string{"a": "1", "b": "2"}, `{"a":"1"}`},
-		{"all removed: empty map", map[string]string{}, map[string]string{"a": "1"}, `{}`},
+		{"removed", map[string]string{"a": "1"}, map[string]string{"a": "1", "b": "2"}, `{"a":"1","b":null}`},
+		{"clear all", map[string]string{}, map[string]string{"a": "1", "b": "2"}, `{"a":null,"b":null}`},
+		{"empty over null state", map[string]string{}, nil, "null"},
+		{"empty over empty state", map[string]string{}, map[string]string{}, "null"},
 		{"from null state", map[string]string{"a": "1"}, nil, `{"a":"1"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, diags := buildWorkspaceTagsUpdate(ctx, tagsMap(t, tc.plan), tagsMap(t, tc.state))
+			got, diags := buildWorkspaceTagsPatch(ctx, tagsMap(t, tc.plan), tagsMap(t, tc.state))
 			if diags.HasError() {
 				t.Fatal(diags)
 			}
 			gj, _ := json.Marshal(got)
 			if string(gj) != tc.want {
-				t.Errorf("tags = %s, want %s", gj, tc.want)
+				t.Errorf("patch = %s, want %s", gj, tc.want)
 			}
 		})
 	}
 }
 
 func TestWorkspaceUpdateRequest_body(t *testing.T) {
-	empty := map[string]string{}
-	b, _ := json.Marshal(workspaceUpdateRequest{Name: "ws", Tags: &empty})
-	if !strings.Contains(string(b), `"tags":{}`) {
-		t.Errorf("empty tags must serialise as {}, got %s", b)
+	patch, _ := buildWorkspaceTagsPatch(context.Background(),
+		tagsMap(t, map[string]string{"a": "1"}), tagsMap(t, map[string]string{"a": "1", "b": "2"}))
+	b, _ := json.Marshal(workspaceUpdateRequest{Name: "ws", Tags: patch})
+	if !strings.Contains(string(b), `"tags":{"a":"1","b":null}`) {
+		t.Errorf("removed key must be sent as null, got %s", b)
 	}
 	b, _ = json.Marshal(workspaceUpdateRequest{Name: "ws"})
 	if strings.Contains(string(b), "tags") || strings.Contains(string(b), "external_key_id") {

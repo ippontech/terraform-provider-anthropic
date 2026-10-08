@@ -124,9 +124,9 @@ type workspaceCreateDataResidency struct {
 type workspaceUpdateRequest struct {
 	Name          string                        `json:"name"`
 	DataResidency *workspaceUpdateDataResidency `json:"data_residency,omitempty"`
-	// Tags is the full planned map (a pointer, so an empty map still serialises
-	// as {}); nil omits the key (see buildWorkspaceTagsUpdate).
-	Tags *map[string]string `json:"tags,omitempty"`
+	// Tags is the merge patch: planned keys upsert and keys removed since prior
+	// state are null (see buildWorkspaceTagsPatch).
+	Tags map[string]any `json:"tags,omitempty"`
 	// ExternalKeyID attaches a CMEK key to a workspace that has none yet.
 	ExternalKeyID string `json:"external_key_id,omitempty"`
 }
@@ -188,7 +188,7 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Computed:    true,
 				ElementType: types.StringType,
 				MarkdownDescription: "User-defined tags as string key-value pairs. Keys must not begin with `anthropic` (case-insensitive). " +
-					"Omit to leave the tags unmanaged; to remove all tags, set `tags = {}`.",
+					"The API merges tags: keys removed from the configuration are deleted on update. Omit to leave the tags unmanaged; to remove all tags, set `tags = {}`.",
 				PlanModifiers: []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
 				Validators:    []validator.Map{mapvalidator.KeysAre(noAnthropicPrefixValidator{})},
 			},
@@ -386,12 +386,12 @@ func (r *WorkspaceResource) Update(ctx context.Context, req resource.UpdateReque
 
 	body := workspaceUpdateRequest{Name: data.Name.ValueString()}
 
-	tagsUpdate, diags := buildWorkspaceTagsUpdate(ctx, data.Tags, state.Tags)
+	tagsPatch, diags := buildWorkspaceTagsPatch(ctx, data.Tags, state.Tags)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	body.Tags = tagsUpdate
+	body.Tags = tagsPatch
 	body.ExternalKeyID = buildWorkspaceExternalKeyUpdate(data.ExternalKeyID, state.ExternalKeyID)
 
 	if !data.DataResidency.IsNull() && !data.DataResidency.IsUnknown() {
@@ -622,22 +622,41 @@ func workspaceRetentionToObject(r *workspaceAPIInferenceDataRetention) (types.Ob
 	})
 }
 
-// buildWorkspaceTagsUpdate builds the tags payload of an update. The Update
-// Workspace reference declares tags as a map of strings (or null) and does not
-// document per-key deletion, so the full planned map is sent and a removed key
-// relies on whole-map replacement (unverified live, #58). It returns nil (no
-// "tags" key) when the plan is null/unknown or equal to the state.
-func buildWorkspaceTagsUpdate(ctx context.Context, plan, state types.Map) (*map[string]string, diag.Diagnostics) {
+// buildWorkspaceTagsPatch builds the tags payload of an update. Verified live
+// on 2026-10-08: the API merges tags, a per-key null deletes a key, an empty
+// object is a no-op and a whole-map null is rejected. Planned keys are therefore
+// upserted and every key present in prior state but absent from the plan is sent
+// as null. It returns nil (no "tags" key) when the plan is null/unknown or
+// there is nothing to send.
+func buildWorkspaceTagsPatch(ctx context.Context, plan, state types.Map) (map[string]any, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if plan.IsNull() || plan.IsUnknown() || plan.Equal(state) {
 		return nil, diags
 	}
+
 	planned := map[string]string{}
 	diags.Append(plan.ElementsAs(ctx, &planned, false)...)
+	prior := map[string]string{}
+	if !state.IsNull() && !state.IsUnknown() {
+		diags.Append(state.ElementsAs(ctx, &prior, false)...)
+	}
 	if diags.HasError() {
 		return nil, diags
 	}
-	return &planned, diags
+
+	patch := make(map[string]any, len(planned)+len(prior))
+	for k, v := range planned {
+		patch[k] = v
+	}
+	for k := range prior {
+		if _, kept := planned[k]; !kept {
+			patch[k] = nil
+		}
+	}
+	if len(patch) == 0 {
+		return nil, diags
+	}
+	return patch, diags
 }
 
 // buildWorkspaceExternalKeyUpdate returns the external_key_id to send on update:

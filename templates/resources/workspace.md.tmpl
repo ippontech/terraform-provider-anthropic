@@ -22,7 +22,7 @@ Creates and manages an Anthropic Workspace via the Admin API.
 
 ## Tags
 
-On update, `tags` sends the full planned map whenever it changed (an empty map when `tags = {}`). The API reference does not document per-key deletion, so removing a key relies on the API replacing the whole map; this is not verified against the live API. Keys must not begin with `anthropic` (case-insensitive), which is rejected at plan time. Omitting `tags` leaves them unmanaged (the API's current tags are kept in state); set `tags = {}` to remove all of them.
+The API merges tags on update (verified against the live API on 2026-10-08): keys sent are upserted, keys not sent are kept, a key sent as `null` is deleted, and an empty object changes nothing. The provider therefore sends the planned keys plus `null` for every key removed from the configuration since the last apply, and omits `tags` when nothing changed. Keys must not begin with `anthropic` (case-insensitive); this is rejected at plan time, and the API rejects it as well. Omitting `tags` leaves them unmanaged (the API's current tags are kept in state); set `tags = {}` to remove all of them.
 
 ## Customer-managed encryption key
 

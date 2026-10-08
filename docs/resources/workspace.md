@@ -57,7 +57,7 @@ output "workspace_compartment_id" {
 
 ## Tags
 
-On update, `tags` sends the full planned map whenever it changed (an empty map when `tags = {}`). The API reference does not document per-key deletion, so removing a key relies on the API replacing the whole map; this is not verified against the live API. Keys must not begin with `anthropic` (case-insensitive), which is rejected at plan time. Omitting `tags` leaves them unmanaged (the API's current tags are kept in state); set `tags = {}` to remove all of them.
+The API merges tags on update (verified against the live API on 2026-10-08): keys sent are upserted, keys not sent are kept, a key sent as `null` is deleted, and an empty object changes nothing. The provider therefore sends the planned keys plus `null` for every key removed from the configuration since the last apply, and omits `tags` when nothing changed. Keys must not begin with `anthropic` (case-insensitive); this is rejected at plan time, and the API rejects it as well. Omitting `tags` leaves them unmanaged (the API's current tags are kept in state); set `tags = {}` to remove all of them.
 
 ## Customer-managed encryption key
 
@@ -74,7 +74,7 @@ On update, `tags` sends the full planned map whenever it changed (an empty map w
 
 - `data_residency` (Attributes) Data-residency configuration. Defaults applied by the API when omitted. (see [below for nested schema](#nestedatt--data_residency))
 - `external_key_id` (String) ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration used to encrypt this workspace's data. Requires CMEK to be enabled for the organization. **Write-once**: a key can be attached to a workspace that has none, but the API cannot detach or replace it afterwards, so changing an attached key forces a new workspace. When omitted, a key attached outside Terraform is kept in state without forcing a replacement.
-- `tags` (Map of String) User-defined tags as string key-value pairs. Keys must not begin with `anthropic` (case-insensitive). Omit to leave the tags unmanaged; to remove all tags, set `tags = {}`.
+- `tags` (Map of String) User-defined tags as string key-value pairs. Keys must not begin with `anthropic` (case-insensitive). The API merges tags: keys removed from the configuration are deleted on update. Omit to leave the tags unmanaged; to remove all tags, set `tags = {}`.
 
 ### Read-Only
 
