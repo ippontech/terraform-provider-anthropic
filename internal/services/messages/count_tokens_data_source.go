@@ -107,7 +107,7 @@ func (d *CountTokensDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 			"thinking": schema.SingleNestedAttribute{
 				Optional: true,
 				MarkdownDescription: "Extended thinking configuration, so the count includes the thinking overhead the real request would carry. " +
-					"`type = \"disabled\"` is rejected with a 400 by Claude Fable 5/5.1, Claude Opus 5.5 and Claude Sonnet 5.5.",
+					"Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = \"disabled\"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools` instead, which this provider does not support). Other models were not verified.",
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
 						Required:            true,
@@ -342,9 +342,9 @@ func buildCountTokensParams(ctx context.Context, data CountTokensDataSourceModel
 		}
 		if !o.Format.IsNull() && !o.Format.IsUnknown() {
 			var schemaObj map[string]any
-			if err := json.Unmarshal([]byte(o.Format.ValueString()), &schemaObj); err != nil {
+			if err := json.Unmarshal([]byte(o.Format.ValueString()), &schemaObj); err != nil || schemaObj == nil {
 				diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid format",
-					fmt.Sprintf("`format` must be a JSON object holding a JSON schema: %s", err))
+					fmt.Sprintf("`format` must be a JSON object holding a JSON schema: %v", err))
 				return params, diags
 			}
 			params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: schemaObj}

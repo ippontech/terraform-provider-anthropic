@@ -18,7 +18,7 @@ The `anthropic_count_tokens` data source counts the number of tokens that would 
 
 Beyond `model`, `messages` and `system`, the data source accepts the same request-shaping parameters as `anthropic_message`, so the count matches what the real request would consume:
 
-- `thinking`: extended thinking configuration (`type` = `enabled`, `disabled` or `adaptive`). `budget_tokens` (at least 1024) is required with `enabled` and rejected otherwise; `display` (`summarized` or `omitted`) is rejected with `disabled`. The API rejects `{ type = "disabled" }` with a 400 on Claude Fable 5/5.1, Claude Opus 5.5 and Claude Sonnet 5.5. No beta header is needed (verified against the live API on 2026-10-08).
+- `thinking`: extended thinking configuration (`type` = `enabled`, `disabled` or `adaptive`). `budget_tokens` (at least 1024) is required with `enabled` and rejected otherwise; `display` (`summarized` or `omitted`) is rejected with `disabled`. Probed live on 2026-10-08: `{ type = "disabled" }` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools`, which this provider does not support). Other models were not verified. No beta header is needed (verified against the live API on 2026-10-08).
 - `output_config`: `effort` (`low`, `medium`, `high`, `xhigh`, `max`; unsupported models answer 400) and `format`, a JSON schema object (use `jsonencode()`) for structured outputs.
 - `cache_control`: top-level prompt-caching breakpoint with an optional `ttl` of `5m` or `1h`.
 

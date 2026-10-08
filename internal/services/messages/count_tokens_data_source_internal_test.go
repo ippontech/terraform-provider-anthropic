@@ -141,12 +141,17 @@ func TestBuildCountTokensParams_OmitsUnsetBlocks(t *testing.T) {
 }
 
 func TestBuildCountTokensParams_InvalidFormat(t *testing.T) {
-	m := ctModel(t)
-	m.OutputConfig = types.ObjectValueMust(ctOutputConfigAttrTypes, map[string]attr.Value{
-		"effort": types.StringNull(), "format": jsontypes.NewNormalizedValue(`[1]`),
-	})
-	if _, diags := buildCountTokensParams(context.Background(), m); !diags.HasError() {
-		t.Fatal("expected an error for a non-object format")
+	for _, format := range []string{`[1]`, `null`} {
+		t.Run(format, func(t *testing.T) {
+			m := ctModel(t)
+			m.OutputConfig = types.ObjectValueMust(ctOutputConfigAttrTypes, map[string]attr.Value{
+				"effort": types.StringNull(), "format": jsontypes.NewNormalizedValue(format),
+			})
+			_, diags := buildCountTokensParams(context.Background(), m)
+			if !diags.HasError() || diags[0].Summary() != "Invalid format" {
+				t.Fatalf("expected an Invalid format error for %s, got %v", format, diags)
+			}
+		})
 	}
 }
 
