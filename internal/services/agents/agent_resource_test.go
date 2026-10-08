@@ -328,3 +328,93 @@ resource "anthropic_agent" "test_skills" {
   ]
 }
 `
+
+func TestAccAgentResource_multiagent(t *testing.T) {
+	const coord = "anthropic_agent.coordinator"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			// Create: a member agent plus self.
+			{
+				Config: testAccAgentResourceMultiagentConfig("a", "self_last"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(coord, "multiagent.type", "coordinator"),
+					resource.TestCheckResourceAttr(coord, "multiagent.agents.#", "2"),
+					resource.TestCheckResourceAttr(coord, "multiagent.agents.0.type", "agent"),
+					resource.TestCheckResourceAttrPair(coord, "multiagent.agents.0.id", "anthropic_agent.member_a", "id"),
+					resource.TestCheckResourceAttrSet(coord, "multiagent.agents.0.version"),
+					resource.TestCheckResourceAttr(coord, "multiagent.agents.1.type", "self"),
+				),
+			},
+			// Import: a self entry cannot be told apart from an explicit reference
+			// without configuration, so the roster is not compared.
+			{
+				ResourceName:            coord,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"multiagent"},
+			},
+			// Update: reorder (self first) and swap the member; correlation is by key.
+			{
+				Config: testAccAgentResourceMultiagentConfig("b", "self_first"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(coord, "multiagent.agents.#", "2"),
+					resource.TestCheckResourceAttr(coord, "multiagent.agents.0.type", "self"),
+					resource.TestCheckResourceAttr(coord, "multiagent.agents.1.type", "agent"),
+					resource.TestCheckResourceAttrPair(coord, "multiagent.agents.1.id", "anthropic_agent.member_b", "id"),
+				),
+			},
+			// Remove the block: sends multiagent null.
+			{
+				Config: testAccAgentResourceMultiagentConfig("b", "none"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(coord, "multiagent.type"),
+					resource.TestCheckNoResourceAttr(coord, "multiagent.agents.#"),
+				),
+			},
+		},
+	})
+}
+
+func testAccAgentResourceMultiagentConfig(member, layout string) string {
+	var block string
+	switch layout {
+	case "self_last":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type = "coordinator"
+    agents = [
+      { type = "agent", id = anthropic_agent.member_%s.id },
+      { type = "self" },
+    ]
+  }`, member)
+	case "self_first":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type = "coordinator"
+    agents = [
+      { type = "self" },
+      { type = "agent", id = anthropic_agent.member_%s.id },
+    ]
+  }`, member)
+	}
+	return fmt.Sprintf(`
+resource "anthropic_agent" "member_a" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-member-a"
+}
+
+resource "anthropic_agent" "member_b" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-member-b"
+}
+
+resource "anthropic_agent" "coordinator" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-coordinator"
+%s
+}
+`, block)
+}
