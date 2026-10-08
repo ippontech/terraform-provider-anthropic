@@ -144,3 +144,7 @@ spring/
 *.tfstate.backup
 *.terraform.lock.hcl
 .dev.tfrc
+
+# Per-worktree Go build cache and GOBIN used by parallel agents
+.gocache/
+.gobin/

@@ -16,6 +16,8 @@ Sends a message to an Anthropic model via the Messages API and stores the respon
 
 ~> **Note:** This resource implements an immutable, write-only pattern. There is no persistent storage of messages beyond Terraform state; the resource calls the Anthropic Messages API during `terraform apply` and stores the response. Modifying any input attribute causes the resource to be replaced (a new API call is made). There is no `terraform refresh` from a remote API state.
 
+~> **Not yet supported:** the `diagnostics` request parameter (`previous_message_id`) and the `between_tools` thinking type (`thinking.type = "between_tools"`) need a newer Anthropic Go SDK than the pinned v1.67.0 and will follow with the SDK bump (see [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192)). `top_p`, `top_k`, `tools`, `tool_choice`, `container`, `compaction` and `fallbacks` are not exposed.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/message/resource.tf" }}
