@@ -33,23 +33,25 @@ type AgentDataSource struct {
 
 // AgentDataSourceModel describes the data source data model.
 type AgentDataSourceModel struct {
-	AgentID      types.String `tfsdk:"agent_id"`
-	ID           types.String `tfsdk:"id"`
-	Name         types.String `tfsdk:"name"`
-	Model        types.String `tfsdk:"model"`
-	ModelSpeed   types.String `tfsdk:"model_speed"`
-	Description  types.String `tfsdk:"description"`
-	System       types.String `tfsdk:"system"`
-	Metadata     types.Map    `tfsdk:"metadata"`
-	MCPServers   types.List   `tfsdk:"mcp_servers"`
-	Skills       types.List   `tfsdk:"skills"`
-	AgentToolset types.Object `tfsdk:"agent_toolset"`
-	MCPToolsets  types.List   `tfsdk:"mcp_toolsets"`
-	CustomTools  types.List   `tfsdk:"custom_tools"`
-	Version      types.Int64  `tfsdk:"version"`
-	CreatedAt    types.String `tfsdk:"created_at"`
-	UpdatedAt    types.String `tfsdk:"updated_at"`
-	ArchivedAt   types.String `tfsdk:"archived_at"`
+	AgentID           types.String `tfsdk:"agent_id"`
+	ID                types.String `tfsdk:"id"`
+	Name              types.String `tfsdk:"name"`
+	Model             types.String `tfsdk:"model"`
+	ModelSpeed        types.String `tfsdk:"model_speed"`
+	ModelEffort       types.String `tfsdk:"model_effort"`
+	ModelInferenceGeo types.String `tfsdk:"model_inference_geo"`
+	Description       types.String `tfsdk:"description"`
+	System            types.String `tfsdk:"system"`
+	Metadata          types.Map    `tfsdk:"metadata"`
+	MCPServers        types.List   `tfsdk:"mcp_servers"`
+	Skills            types.List   `tfsdk:"skills"`
+	AgentToolset      types.Object `tfsdk:"agent_toolset"`
+	MCPToolsets       types.List   `tfsdk:"mcp_toolsets"`
+	CustomTools       types.List   `tfsdk:"custom_tools"`
+	Version           types.Int64  `tfsdk:"version"`
+	CreatedAt         types.String `tfsdk:"created_at"`
+	UpdatedAt         types.String `tfsdk:"updated_at"`
+	ArchivedAt        types.String `tfsdk:"archived_at"`
 }
 
 func (d *AgentDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -82,6 +84,14 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 			"model_speed": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Inference speed mode (`standard` or `fast`).",
+			},
+			"model_effort": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Effort level of the agent's model (`low`, `medium`, `high`, `xhigh` or `max`).",
+			},
+			"model_inference_geo": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Geographic region pinned for the agent's model requests, or null when unpinned.",
 			},
 			"description": schema.StringAttribute{
 				Computed:            true,
@@ -314,6 +324,9 @@ func mapAgentResponseToDataSource(agent *anthropic.BetaManagedAgentsAgent, data 
 	} else {
 		data.ModelSpeed = types.StringNull()
 	}
+
+	data.ModelEffort = modelEffortFromResponse(agent.Model)
+	data.ModelInferenceGeo = modelInferenceGeoFromResponse(agent.Model)
 
 	// Description / System: empty string maps to null.
 	if agent.Description != "" {

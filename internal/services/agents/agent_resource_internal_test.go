@@ -12,6 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 // TestMapAgentResponseToState_customToolInputSchema is a regression test for the
@@ -239,4 +240,120 @@ func TestBuildAgentToolConfigParams_unknownName(t *testing.T) {
 	if got := diags.Errors()[0].Detail(); !strings.Contains(got, "not_a_tool") {
 		t.Errorf("diagnostic detail = %q, want it to name the offending value", got)
 	}
+}
+
+func modelParamsJSON(t *testing.T, m anthropic.BetaManagedAgentsModelConfigParams) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal model params: %s", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal model params: %s", err)
+	}
+	return out
+}
+
+func TestBuildModelConfigParams(t *testing.T) {
+	t.Parallel()
+
+	base := func(effort, geo types.String) AgentResourceModel {
+		return AgentResourceModel{
+			Model:             types.StringValue("claude-sonnet-4-6"),
+			ModelSpeed:        types.StringNull(),
+			ModelEffort:       effort,
+			ModelInferenceGeo: geo,
+		}
+	}
+
+	tests := []struct {
+		name string
+		plan AgentResourceModel
+		want map[string]any
+	}{
+		{
+			name: "create with effort and geo",
+			plan: base(types.StringValue("high"), types.StringValue("us")),
+			want: map[string]any{"id": "claude-sonnet-4-6", "effort": "high", "inference_geo": "us"},
+		},
+		{
+			name: "create with unknown effort omits it",
+			plan: base(types.StringUnknown(), types.StringNull()),
+			want: map[string]any{"id": "claude-sonnet-4-6"},
+		},
+		{
+			name: "update sends planned effort",
+			plan: base(types.StringValue("low"), types.StringNull()),
+			want: map[string]any{"id": "claude-sonnet-4-6", "effort": "low"},
+		},
+		{
+			name: "update with null geo omits it so the pin is cleared",
+			plan: base(types.StringValue("high"), types.StringNull()),
+			want: map[string]any{"id": "claude-sonnet-4-6", "effort": "high"},
+		},
+		{
+			name: "update keeps unchanged geo",
+			plan: base(types.StringValue("high"), types.StringValue("us")),
+			want: map[string]any{"id": "claude-sonnet-4-6", "effort": "high", "inference_geo": "us"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := modelParamsJSON(t, buildModelConfigParams(tt.plan))
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for k, v := range tt.want {
+				if got[k] != v {
+					t.Errorf("%s: got %v, want %v (full: %v)", k, got[k], v, got)
+				}
+			}
+		})
+	}
+}
+
+func TestMapAgentResponseToState_modelEffortAndGeo(t *testing.T) {
+	t.Parallel()
+
+	t.Run("present", func(t *testing.T) {
+		t.Parallel()
+		data := AgentResourceModel{ModelEffort: types.StringUnknown()}
+		agent := parseAgentFixture(t, `{"id":"claude-sonnet-4-6","effort":{"type":"xhigh"},"inference_geo":"us"}`)
+		if diags := mapAgentResponseToState(context.Background(), agent, &data); diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		if data.ModelEffort.ValueString() != "xhigh" || data.ModelInferenceGeo.ValueString() != "us" {
+			t.Errorf("got effort=%v geo=%v", data.ModelEffort, data.ModelInferenceGeo)
+		}
+	})
+
+	t.Run("absent resolves unknown to null", func(t *testing.T) {
+		t.Parallel()
+		data := AgentResourceModel{ModelEffort: types.StringUnknown()}
+		agent := parseAgentFixture(t, `{"id":"claude-sonnet-4-6"}`)
+		if diags := mapAgentResponseToState(context.Background(), agent, &data); diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		if !data.ModelEffort.IsNull() || !data.ModelInferenceGeo.IsNull() {
+			t.Errorf("got effort=%v geo=%v, want null", data.ModelEffort, data.ModelInferenceGeo)
+		}
+	})
+
+	t.Run("empty and null map to null", func(t *testing.T) {
+		t.Parallel()
+		for _, model := range []string{
+			`{"id":"claude-sonnet-4-6","effort":null,"inference_geo":""}`,
+			`{"id":"claude-sonnet-4-6","inference_geo":null}`,
+		} {
+			data := AgentResourceModel{}
+			if diags := mapAgentResponseToState(context.Background(), parseAgentFixture(t, model), &data); diags.HasError() {
+				t.Fatalf("diags: %+v", diags)
+			}
+			if !data.ModelEffort.IsNull() || !data.ModelInferenceGeo.IsNull() {
+				t.Errorf("%s: got effort=%v geo=%v, want null", model, data.ModelEffort, data.ModelInferenceGeo)
+			}
+		}
+	})
 }

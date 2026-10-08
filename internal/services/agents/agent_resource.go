@@ -44,22 +44,24 @@ type AgentResource struct {
 // --- Terraform data models ---
 
 type AgentResourceModel struct {
-	Model        types.String `tfsdk:"model"`
-	Name         types.String `tfsdk:"name"`
-	ModelSpeed   types.String `tfsdk:"model_speed"`
-	Description  types.String `tfsdk:"description"`
-	System       types.String `tfsdk:"system"`
-	Metadata     types.Map    `tfsdk:"metadata"`
-	MCPServers   types.List   `tfsdk:"mcp_servers"`
-	Skills       types.List   `tfsdk:"skills"`
-	AgentToolset types.Object `tfsdk:"agent_toolset"`
-	MCPToolsets  types.List   `tfsdk:"mcp_toolsets"`
-	CustomTools  types.List   `tfsdk:"custom_tools"`
-	ID           types.String `tfsdk:"id"`
-	Version      types.Int64  `tfsdk:"version"`
-	CreatedAt    types.String `tfsdk:"created_at"`
-	UpdatedAt    types.String `tfsdk:"updated_at"`
-	ArchivedAt   types.String `tfsdk:"archived_at"`
+	Model             types.String `tfsdk:"model"`
+	Name              types.String `tfsdk:"name"`
+	ModelSpeed        types.String `tfsdk:"model_speed"`
+	ModelEffort       types.String `tfsdk:"model_effort"`
+	ModelInferenceGeo types.String `tfsdk:"model_inference_geo"`
+	Description       types.String `tfsdk:"description"`
+	System            types.String `tfsdk:"system"`
+	Metadata          types.Map    `tfsdk:"metadata"`
+	MCPServers        types.List   `tfsdk:"mcp_servers"`
+	Skills            types.List   `tfsdk:"skills"`
+	AgentToolset      types.Object `tfsdk:"agent_toolset"`
+	MCPToolsets       types.List   `tfsdk:"mcp_toolsets"`
+	CustomTools       types.List   `tfsdk:"custom_tools"`
+	ID                types.String `tfsdk:"id"`
+	Version           types.Int64  `tfsdk:"version"`
+	CreatedAt         types.String `tfsdk:"created_at"`
+	UpdatedAt         types.String `tfsdk:"updated_at"`
+	ArchivedAt        types.String `tfsdk:"archived_at"`
 }
 
 type agentMCPServerModel struct {
@@ -173,6 +175,24 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Computed:            true,
 				MarkdownDescription: "Inference speed mode. `fast` provides faster output at premium pricing. Not all models support `fast`.",
 				Validators:          []validator.String{stringvalidator.OneOf("standard", "fast")},
+			},
+			"model_effort": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				MarkdownDescription: "How hard Claude works on each turn: `low`, `medium`, `high`, `xhigh` or `max`. " +
+					"`xhigh` and `max` spend noticeably more tokens, so they are cost-relevant. " +
+					"When omitted on create, the API resolves a per-model default and it is stored here. " +
+					"Effort follows the model: changing `model` without setting `model_effort` resolves the new model's default (known after apply). " +
+					"With an unchanged `model`, removing the attribute from the configuration keeps the last value rather than resetting it to the default.",
+				Validators:    []validator.String{stringvalidator.OneOf("low", "medium", "high", "xhigh", "max")},
+				PlanModifiers: []planmodifier.String{modelEffortFollowsModel()},
+			},
+			"model_inference_geo": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Geographic region that serves the agent's model requests (for example `us` or `global`). " +
+					"The value is not validated locally because the data residency documentation does not state that these are the only values. " +
+					"When unset, requests follow the workspace's default inference geo. " +
+					"Removing the attribute clears the pin on the next update.",
 			},
 			"description": schema.StringAttribute{
 				Optional:            true,
@@ -395,14 +415,8 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	params := anthropic.BetaAgentNewParams{
-		Model: anthropic.BetaManagedAgentsModelConfigParams{
-			ID: anthropic.BetaManagedAgentsModel(data.Model.ValueString()),
-		},
-		Name: data.Name.ValueString(),
-	}
-
-	if !data.ModelSpeed.IsNull() && !data.ModelSpeed.IsUnknown() {
-		params.Model.Speed = anthropic.BetaManagedAgentsModelConfigParamsSpeed(data.ModelSpeed.ValueString())
+		Model: buildModelConfigParams(data),
+		Name:  data.Name.ValueString(),
 	}
 	if !data.Description.IsNull() {
 		params.Description = param.NewOpt(data.Description.ValueString())
@@ -512,20 +526,14 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	params := anthropic.BetaAgentUpdateParams{
-		Model: anthropic.BetaManagedAgentsModelConfigParams{
-			ID: anthropic.BetaManagedAgentsModel(data.Model.ValueString()),
-		},
-		Name: param.NewOpt(data.Name.ValueString()),
+		Model: buildModelConfigParams(data),
+		Name:  param.NewOpt(data.Name.ValueString()),
 	}
 
 	// Optimistic locking: the API requires a version of at least 1 when supplied,
 	// and applies the update unconditionally when omitted.
 	if v := state.Version.ValueInt64(); v > 0 {
 		params.Version = param.NewOpt(v)
-	}
-
-	if !data.ModelSpeed.IsNull() && !data.ModelSpeed.IsUnknown() {
-		params.Model.Speed = anthropic.BetaManagedAgentsModelConfigParamsSpeed(data.ModelSpeed.ValueString())
 	}
 
 	if !data.Description.IsNull() {
@@ -637,7 +645,51 @@ func (r *AgentResource) ImportState(ctx context.Context, req resource.ImportStat
 // Helper functions
 // ============================================================================
 
-// buildSkillsParams converts Terraform skills list to SDK params.
+// buildModelConfigParams builds the model object sent on create and update. On
+// update the API replaces `model` as a whole: omitting inference_geo clears it,
+// and omitting effort keeps the stored value only when the model id is unchanged
+// (otherwise it resolves the new model's default). Effort is therefore sent only
+// when the plan knows it (the model_effort plan modifier makes it unknown when
+// `model` changes); a null planned inference_geo is deliberately omitted so that
+// removing it from the configuration clears the pin.
+func buildModelConfigParams(plan AgentResourceModel) anthropic.BetaManagedAgentsModelConfigParams {
+	model := anthropic.BetaManagedAgentsModelConfigParams{
+		ID: anthropic.BetaManagedAgentsModel(plan.Model.ValueString()),
+	}
+	if !plan.ModelSpeed.IsNull() && !plan.ModelSpeed.IsUnknown() {
+		model.Speed = anthropic.BetaManagedAgentsModelConfigParamsSpeed(plan.ModelSpeed.ValueString())
+	}
+
+	if !plan.ModelEffort.IsNull() && !plan.ModelEffort.IsUnknown() {
+		model.Effort = anthropic.BetaManagedAgentsModelConfigParamsEffortUnion{
+			OfBetaManagedAgentsModelConfigsEffortBetaManagedAgentsEffortLevel: param.NewOpt(plan.ModelEffort.ValueString()),
+		}
+	}
+
+	if !plan.ModelInferenceGeo.IsNull() && !plan.ModelInferenceGeo.IsUnknown() {
+		model.InferenceGeo = param.NewOpt(plan.ModelInferenceGeo.ValueString())
+	}
+	return model
+}
+
+// modelEffortFromResponse returns the effort level of an API model config, or
+// null when the field is absent or empty.
+func modelEffortFromResponse(m anthropic.BetaManagedAgentsModelConfig) types.String {
+	if m.JSON.Effort.Valid() && m.Effort.Type != "" {
+		return types.StringValue(m.Effort.Type)
+	}
+	return types.StringNull()
+}
+
+// modelInferenceGeoFromResponse returns the inference geo of an API model
+// config, or null when the field is absent or empty.
+func modelInferenceGeoFromResponse(m anthropic.BetaManagedAgentsModelConfig) types.String {
+	if m.JSON.InferenceGeo.Valid() && m.InferenceGeo != "" {
+		return types.StringValue(m.InferenceGeo)
+	}
+	return types.StringNull()
+}
+
 func buildSkillsParams(ctx context.Context, skillsList types.List, target *[]anthropic.BetaManagedAgentsSkillParamsUnion) diag.Diagnostics {
 	var diags diag.Diagnostics
 
@@ -833,6 +885,9 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		data.ModelSpeed = types.StringNull()
 	}
 	// else: keep existing data.ModelSpeed (e.g. "standard") to avoid drift
+
+	data.ModelEffort = modelEffortFromResponse(agent.Model)
+	data.ModelInferenceGeo = modelInferenceGeoFromResponse(agent.Model)
 
 	// Description
 	if agent.Description != "" {

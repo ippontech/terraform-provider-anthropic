@@ -63,6 +63,8 @@ Read-Only:
 - `mcp_toolsets` (Attributes List) Tool configurations for MCP servers. (see [below for nested schema](#nestedatt--agents--mcp_toolsets))
 - `metadata` (Map of String) Arbitrary key-value metadata attached to the agent.
 - `model` (String) The model that powers the agent.
+- `model_effort` (String) Effort level of the agent's model (`low`, `medium`, `high`, `xhigh` or `max`).
+- `model_inference_geo` (String) Geographic region pinned for the agent's model requests, or null when unpinned.
 - `model_speed` (String) Inference speed mode: `standard` or `fast`.
 - `name` (String) Human-readable name for the agent.
 - `skills` (Attributes List) Skills available to the agent. (see [below for nested schema](#nestedatt--agents--skills))

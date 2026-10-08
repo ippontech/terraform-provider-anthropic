@@ -71,6 +71,84 @@ func TestAccAgentResource_basic(t *testing.T) {
 	})
 }
 
+func TestAccAgentResource_modelEffort(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			// Omitted: the API resolves a per-model default and it lands in state.
+			{
+				Config: testAccAgentResourceEffortConfig(""),
+				Check:  resource.TestCheckResourceAttrSet("anthropic_agent.test", "model_effort"),
+			},
+			// Explicit value.
+			{
+				Config: testAccAgentResourceEffortConfig(`model_effort = "high"`),
+				Check:  resource.TestCheckResourceAttr("anthropic_agent.test", "model_effort", "high"),
+			},
+			// Update.
+			{
+				Config: testAccAgentResourceEffortConfig(`model_effort = "low"`),
+				Check:  resource.TestCheckResourceAttr("anthropic_agent.test", "model_effort", "low"),
+			},
+			// Removing the attribute keeps the last value (Optional+Computed).
+			{
+				Config: testAccAgentResourceEffortConfig(""),
+				Check:  resource.TestCheckResourceAttr("anthropic_agent.test", "model_effort", "low"),
+			},
+			// Changing model without model_effort resolves the new default.
+			{
+				Config: testAccAgentResourceEffortConfigModel("claude-opus-4-5", ""),
+				Check:  resource.TestCheckResourceAttrSet("anthropic_agent.test", "model_effort"),
+			},
+			{
+				ResourceName:      "anthropic_agent.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAgentResource_modelInferenceGeo(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceEffortConfig(`model_inference_geo = "us"`),
+				Check:  resource.TestCheckResourceAttr("anthropic_agent.test", "model_inference_geo", "us"),
+			},
+			{
+				ResourceName:      "anthropic_agent.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			// Removing the attribute clears the pin (whole-object model update).
+			{
+				Config: testAccAgentResourceEffortConfig(""),
+				Check:  resource.TestCheckNoResourceAttr("anthropic_agent.test", "model_inference_geo"),
+			},
+		},
+	})
+}
+
+func testAccAgentResourceEffortConfig(extra string) string {
+	return testAccAgentResourceEffortConfigModel("claude-sonnet-4-6", extra)
+}
+
+func testAccAgentResourceEffortConfigModel(model, extra string) string {
+	return fmt.Sprintf(`
+resource "anthropic_agent" "test" {
+  model = %q
+  name  = "tf-acc-test-effort"
+  %s
+}
+`, model, extra)
+}
+
 func TestAccAgentResource_withSystemAndDescription(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },
