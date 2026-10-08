@@ -92,6 +92,7 @@ func validateMultiagentConfig(ctx context.Context, obj types.Object) diag.Diagno
 	isMissing := func(v attr.Value) bool { return v.IsNull() && !v.IsUnknown() }
 
 	selfs, advisors := 0, 0
+	seenIDs := map[string]bool{}
 	for i, e := range entries {
 		p := path.Root("multiagent").AtName("agents").AtListIndex(i)
 		if e.Type.IsNull() || e.Type.IsUnknown() {
@@ -99,6 +100,13 @@ func validateMultiagentConfig(ctx context.Context, obj types.Object) diag.Diagno
 		}
 		switch e.Type.ValueString() {
 		case multiagentEntryAgent:
+			if isSet(e.ID) {
+				if seenIDs[e.ID.ValueString()] {
+					diags.AddAttributeError(path.Root("multiagent").AtName("agents"), "Duplicate agent entry",
+						fmt.Sprintf("Roster entries must reference distinct agents; %q appears more than once.", e.ID.ValueString()))
+				}
+				seenIDs[e.ID.ValueString()] = true
+			}
 			if isMissing(e.ID) {
 				diags.AddAttributeError(p.AtName("id"), "Missing roster agent ID", `"id" is required when type is "agent".`)
 			}

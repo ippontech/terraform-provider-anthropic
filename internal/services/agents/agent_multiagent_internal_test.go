@@ -232,6 +232,15 @@ func TestValidateMultiagentConfig(t *testing.T) {
 		{"self with id", []attr.Value{multiagentEntryObj(t, "self", str("a"), nv, null)}, true},
 		{"self with version", []attr.Value{multiagentEntryObj(t, "self", null, types.Int64Value(1), null)}, true},
 		{"advisor with version", []attr.Value{multiagentEntryObj(t, "advisor", null, types.Int64Value(1), str("m"))}, true},
+		{"duplicate agent ids", []attr.Value{
+			multiagentEntryObj(t, "agent", str("a"), nv, null), multiagentEntryObj(t, "agent", str("a"), nv, null),
+		}, true},
+		{"distinct agent ids", []attr.Value{
+			multiagentEntryObj(t, "agent", str("a"), nv, null), multiagentEntryObj(t, "agent", str("b"), nv, null),
+		}, false},
+		{"unknown agent ids are not duplicates", []attr.Value{
+			multiagentEntryObj(t, "agent", unk, nv, null), multiagentEntryObj(t, "agent", unk, nv, null),
+		}, false},
 		{"two selfs", []attr.Value{
 			multiagentEntryObj(t, "self", null, nv, null), multiagentEntryObj(t, "self", null, nv, null),
 		}, true},
