@@ -78,6 +78,33 @@ func (d *WorkspaceDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 				Computed:            true,
 				MarkdownDescription: "Object type. Always `workspace`.",
 			},
+			"tags": schema.MapAttribute{
+				Computed:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "User-defined tags as string key-value pairs.",
+			},
+			"external_key_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.",
+			},
+			"compartment_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Identifier of the workspace's encryption compartment.",
+			},
+			"user_profile_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "ID of the user profile associated with the workspace, or null if none.",
+			},
+			"inference_data_retention": schema.SingleNestedAttribute{
+				Computed:            true,
+				MarkdownDescription: "Inference data retention setting reported by the API, or null if absent.",
+				Attributes: map[string]schema.Attribute{
+					"type": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "Retention mode, for example `disabled`.",
+					},
+				},
+			},
 		},
 	}
 }

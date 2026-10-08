@@ -7,20 +7,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -46,6 +51,19 @@ type WorkspaceResourceModel struct {
 	CreatedAt     types.String `tfsdk:"created_at"`
 	DisplayColor  types.String `tfsdk:"display_color"`
 	Type          types.String `tfsdk:"type"`
+
+	Tags                   types.Map    `tfsdk:"tags"`
+	ExternalKeyID          types.String `tfsdk:"external_key_id"`
+	CompartmentID          types.String `tfsdk:"compartment_id"`
+	UserProfileID          types.String `tfsdk:"user_profile_id"`
+	InferenceDataRetention types.Object `tfsdk:"inference_data_retention"`
+}
+
+// workspaceInferenceDataRetentionAttrTypes describes inference_data_retention.
+// Neither the pinned SDK nor the public reference declares this field; the only
+// shape observed on the live API (2026-10-08) is {"type":"disabled"}.
+var workspaceInferenceDataRetentionAttrTypes = map[string]attr.Type{
+	"type": types.StringType,
 }
 
 type workspaceDataResidencyModel struct {
@@ -70,6 +88,16 @@ type workspaceAPIResponse struct {
 	DisplayColor  string                    `json:"display_color"`
 	Name          string                    `json:"name"`
 	Type          string                    `json:"type"`
+
+	Tags                   map[string]string                   `json:"tags"`
+	ExternalKeyID          string                              `json:"external_key_id"`
+	CompartmentID          string                              `json:"compartment_id"`
+	UserProfileID          string                              `json:"user_profile_id"`
+	InferenceDataRetention *workspaceAPIInferenceDataRetention `json:"inference_data_retention"`
+}
+
+type workspaceAPIInferenceDataRetention struct {
+	Type string `json:"type"`
 }
 
 type workspaceAPIDataResidency struct {
@@ -82,6 +110,8 @@ type workspaceAPIDataResidency struct {
 type workspaceCreateRequest struct {
 	Name          string                        `json:"name"`
 	DataResidency *workspaceCreateDataResidency `json:"data_residency,omitempty"`
+	Tags          map[string]string             `json:"tags,omitempty"`
+	ExternalKeyID string                        `json:"external_key_id,omitempty"`
 }
 
 type workspaceCreateDataResidency struct {
@@ -94,6 +124,11 @@ type workspaceCreateDataResidency struct {
 type workspaceUpdateRequest struct {
 	Name          string                        `json:"name"`
 	DataResidency *workspaceUpdateDataResidency `json:"data_residency,omitempty"`
+	// Tags is the merge patch: planned keys upsert and keys removed since prior
+	// state are null (see buildWorkspaceTagsPatch).
+	Tags map[string]any `json:"tags,omitempty"`
+	// ExternalKeyID attaches a CMEK key to a workspace that has none yet.
+	ExternalKeyID string `json:"external_key_id,omitempty"`
 }
 
 type workspaceUpdateDataResidency struct {
@@ -148,7 +183,50 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				},
 			},
 
+			"tags": schema.MapAttribute{
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				MarkdownDescription: "User-defined tags as string key-value pairs. Keys must not begin with `anthropic` (case-insensitive). " +
+					"The API merges tags: keys removed from the configuration are deleted on update. Omit to leave the tags unmanaged; to remove all tags, set `tags = {}`.",
+				PlanModifiers: []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.Map{mapvalidator.KeysAre(noAnthropicPrefixValidator{})},
+			},
+			"external_key_id": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration used to encrypt this workspace's data. " +
+					"Requires CMEK to be enabled for the organization. **Write-once**: a key can be attached to a workspace that has none, " +
+					"but the API cannot detach or replace it afterwards, so changing an attached key forces a new workspace. " +
+					"When omitted, a key attached outside Terraform is kept in state without forcing a replacement.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplaceIf(externalKeyRequiresReplace,
+						"Replaces the workspace when an attached external key is changed or removed.",
+						"Replaces the workspace when an attached external key is changed or removed."),
+				},
+			},
+
 			// --- Computed ---
+			"compartment_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Identifier of the workspace's encryption compartment. Reference it in the KMS key policy when configuring CMEK on AWS.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"user_profile_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "ID of the user profile associated with the workspace, or null if none.",
+			},
+			"inference_data_retention": schema.SingleNestedAttribute{
+				Computed:            true,
+				MarkdownDescription: "Inference data retention setting reported by the API, or null if absent. Read-only.",
+				Attributes: map[string]schema.Attribute{
+					"type": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "Retention mode, for example `disabled`.",
+					},
+				},
+			},
 			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Unique workspace identifier assigned by the API.",
@@ -210,6 +288,18 @@ func (r *WorkspaceResource) Create(ctx context.Context, req resource.CreateReque
 	}
 
 	body := workspaceCreateRequest{Name: data.Name.ValueString()}
+
+	if !data.Tags.IsNull() && !data.Tags.IsUnknown() {
+		tags := map[string]string{}
+		resp.Diagnostics.Append(data.Tags.ElementsAs(ctx, &tags, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		body.Tags = tags
+	}
+	if !data.ExternalKeyID.IsNull() && !data.ExternalKeyID.IsUnknown() {
+		body.ExternalKeyID = data.ExternalKeyID.ValueString()
+	}
 
 	if !data.DataResidency.IsNull() && !data.DataResidency.IsUnknown() {
 		dr, diags := buildCreateDataResidency(ctx, data.DataResidency)
@@ -295,6 +385,14 @@ func (r *WorkspaceResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	body := workspaceUpdateRequest{Name: data.Name.ValueString()}
+
+	tagsPatch, diags := buildWorkspaceTagsPatch(ctx, data.Tags, state.Tags)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	body.Tags = tagsPatch
+	body.ExternalKeyID = buildWorkspaceExternalKeyUpdate(data.ExternalKeyID, state.ExternalKeyID)
 
 	if !data.DataResidency.IsNull() && !data.DataResidency.IsUnknown() {
 		dr, diags := buildUpdateDataResidency(ctx, data.DataResidency)
@@ -442,6 +540,17 @@ func mapWorkspaceToState(ctx context.Context, ws *workspaceAPIResponse, data *Wo
 	data.DisplayColor = types.StringValue(ws.DisplayColor)
 	data.Type = types.StringValue(ws.Type)
 	data.CreatedAt = types.StringValue(ws.CreatedAt)
+	data.ExternalKeyID = tfvalue.StringOrNull(ws.ExternalKeyID)
+	data.CompartmentID = tfvalue.StringOrNull(ws.CompartmentID)
+	data.UserProfileID = tfvalue.StringOrNull(ws.UserProfileID)
+
+	tags, d := workspaceTagsToMap(ws.Tags)
+	diags.Append(d...)
+	data.Tags = tags
+
+	idr, d := workspaceRetentionToObject(ws.InferenceDataRetention)
+	diags.Append(d...)
+	data.InferenceDataRetention = idr
 
 	if ws.ArchivedAt != nil && *ws.ArchivedAt != "" {
 		data.ArchivedAt = types.StringValue(*ws.ArchivedAt)
@@ -481,4 +590,100 @@ func mapWorkspaceToState(ctx context.Context, ws *workspaceAPIResponse, data *Wo
 	data.DataResidency = drObj
 
 	return diags
+}
+
+// workspaceTagsToMap maps the API tags to a Terraform map: a JSON null becomes a
+// null map, while an empty object becomes an empty (non-null) map.
+func workspaceTagsToMap(tags map[string]string) (types.Map, diag.Diagnostics) {
+	if tags == nil {
+		return types.MapNull(types.StringType), nil
+	}
+	elems := make(map[string]attr.Value, len(tags))
+	for k, v := range tags {
+		elems[k] = types.StringValue(v)
+	}
+	return types.MapValue(types.StringType, elems)
+}
+
+// workspaceRetentionToObject maps inference_data_retention; an absent value yields a null object.
+func workspaceRetentionToObject(r *workspaceAPIInferenceDataRetention) (types.Object, diag.Diagnostics) {
+	if r == nil {
+		return types.ObjectNull(workspaceInferenceDataRetentionAttrTypes), nil
+	}
+	return types.ObjectValue(workspaceInferenceDataRetentionAttrTypes, map[string]attr.Value{
+		"type": tfvalue.StringOrNull(r.Type),
+	})
+}
+
+// buildWorkspaceTagsPatch builds the tags payload of an update. Verified live
+// on 2026-10-08: the API merges tags, a per-key null deletes a key, an empty
+// object is a no-op and a whole-map null is rejected. Planned keys are therefore
+// upserted and every key present in prior state but absent from the plan is sent
+// as null. It returns nil (no "tags" key) when the plan is null/unknown or
+// there is nothing to send.
+func buildWorkspaceTagsPatch(ctx context.Context, plan, state types.Map) (map[string]any, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if plan.IsNull() || plan.IsUnknown() || plan.Equal(state) {
+		return nil, diags
+	}
+
+	planned := map[string]string{}
+	diags.Append(plan.ElementsAs(ctx, &planned, false)...)
+	prior := map[string]string{}
+	if !state.IsNull() && !state.IsUnknown() {
+		diags.Append(state.ElementsAs(ctx, &prior, false)...)
+	}
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	patch := make(map[string]any, len(planned)+len(prior))
+	for k, v := range planned {
+		patch[k] = v
+	}
+	for k := range prior {
+		if _, kept := planned[k]; !kept {
+			patch[k] = nil
+		}
+	}
+	if len(patch) == 0 {
+		return nil, diags
+	}
+	return patch, diags
+}
+
+// buildWorkspaceExternalKeyUpdate returns the external_key_id to send on update:
+// only when no key is attached yet (state null) and the plan sets one.
+func buildWorkspaceExternalKeyUpdate(plan, state types.String) string {
+	if state.IsNull() && !plan.IsNull() && !plan.IsUnknown() {
+		return plan.ValueString()
+	}
+	return ""
+}
+
+// externalKeyRequiresReplace fires only when an attached key would be changed:
+// the API allows attaching a first key in place but never detaching or replacing one.
+func externalKeyRequiresReplace(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+	resp.RequiresReplace = !req.StateValue.IsNull() && !req.PlanValue.IsUnknown() && !req.PlanValue.Equal(req.StateValue)
+}
+
+// noAnthropicPrefixValidator rejects tag keys starting with "anthropic" (case-insensitive).
+type noAnthropicPrefixValidator struct{}
+
+func (noAnthropicPrefixValidator) Description(context.Context) string {
+	return "tag keys must not begin with `anthropic`"
+}
+
+func (v noAnthropicPrefixValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (noAnthropicPrefixValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if strings.HasPrefix(strings.ToLower(req.ConfigValue.ValueString()), "anthropic") {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid tag key",
+			fmt.Sprintf("Tag key %q must not begin with \"anthropic\".", req.ConfigValue.ValueString()))
+	}
 }

@@ -22,3 +22,13 @@ output "display_color" {
   description = "Display color of the workspace in the Console."
   value       = data.anthropic_workspace.example.display_color
 }
+
+output "tags" {
+  description = "User-defined tags of the workspace."
+  value       = data.anthropic_workspace.example.tags
+}
+
+output "compartment_id" {
+  description = "Encryption compartment ID of the workspace."
+  value       = data.anthropic_workspace.example.compartment_id
+}

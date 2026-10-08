@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 func workspacesListFixture(id, name string, archivedAt *string) workspaceAPIResponse {
@@ -146,5 +148,47 @@ func TestMapWorkspaceToListObject_noArchivedAt(t *testing.T) {
 	}
 	if obj == nil {
 		t.Fatal("expected non-nil object")
+	}
+}
+
+func TestMapWorkspaceToListObject_tagsKeyAndRetention(t *testing.T) {
+	key, comp, prof := "ekey_01", "comp-1", "uprof_01"
+	ws := workspacesListFixture("wrkspc_01", "full", nil)
+	ws.Tags = map[string]string{"env": "prod"}
+	ws.ExternalKeyID = key
+	ws.CompartmentID = comp
+	ws.UserProfileID = prof
+	ws.InferenceDataRetention = &workspaceAPIInferenceDataRetention{Type: "disabled"}
+
+	obj, diags := mapWorkspaceToListObject(&ws)
+	if diags.HasError() {
+		t.Fatalf("unexpected diags: %v", diags)
+	}
+	attrs := obj.(types.Object).Attributes()
+	if !attrs["external_key_id"].Equal(types.StringValue("ekey_01")) ||
+		!attrs["compartment_id"].Equal(types.StringValue("comp-1")) ||
+		!attrs["user_profile_id"].Equal(types.StringValue("uprof_01")) {
+		t.Errorf("string attrs wrong: %v", attrs)
+	}
+	if got := attrs["inference_data_retention"].(types.Object).Attributes()["type"]; !got.Equal(types.StringValue("disabled")) {
+		t.Errorf("inference_data_retention.type = %v", got)
+	}
+	if got := attrs["tags"].(types.Map).Elements()["env"]; !got.Equal(types.StringValue("prod")) {
+		t.Errorf("tags.env = %v", got)
+	}
+}
+
+func TestMapWorkspaceToListObject_tagsKeyAndRetentionAbsent(t *testing.T) {
+	ws := workspacesListFixture("wrkspc_01", "bare", nil)
+
+	obj, diags := mapWorkspaceToListObject(&ws)
+	if diags.HasError() {
+		t.Fatalf("unexpected diags: %v", diags)
+	}
+	attrs := obj.(types.Object).Attributes()
+	for _, k := range []string{"external_key_id", "compartment_id", "user_profile_id", "inference_data_retention", "tags"} {
+		if !attrs[k].IsNull() {
+			t.Errorf("%s should be null when absent, got %v", k, attrs[k])
+		}
 	}
 }

@@ -35,4 +35,9 @@ run "workspace_plan_validates_schema" {
     condition     = anthropic_workspace.example.data_residency.allowed_inference_geos == tolist(["unrestricted"])
     error_message = "Expected allowed_inference_geos to be ['unrestricted']."
   }
+
+  assert {
+    condition     = anthropic_workspace.example.tags == tomap({ env = "example", team = "platform" })
+    error_message = "Expected tags to match the example."
+  }
 }
