@@ -1,3 +1,9 @@
+## [1.56.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.55.0...v1.56.0) (2026-10-08)
+
+### ✨ Features
+
+* **agent:** add multiagent coordinator roster ([#310](https://github.com/ippontech/terraform-provider-anthropic/issues/310)) ([2e82f47](https://github.com/ippontech/terraform-provider-anthropic/commit/2e82f47cd2528f213e60967058a2416cba13cb00)), closes [#306](https://github.com/ippontech/terraform-provider-anthropic/issues/306) [#167](https://github.com/ippontech/terraform-provider-anthropic/issues/167) [#309](https://github.com/ippontech/terraform-provider-anthropic/issues/309) [#167](https://github.com/ippontech/terraform-provider-anthropic/issues/167) [#309](https://github.com/ippontech/terraform-provider-anthropic/issues/309)
+
 ## [1.55.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.54.1...v1.55.0) (2026-10-08)
 
 ### ✨ Features
