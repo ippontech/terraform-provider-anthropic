@@ -37,6 +37,7 @@ internal/
     apikeys/       — anthropic_api_key resource (import/update/delete only; no create) + api_key/api_keys data sources
     deployments/   — deployment_runs data source (Beta managed-agents API; `client.Beta.DeploymentRuns`, `GET /v1/deployment_runs`); the anthropic_deployment resource is #140
     environments/  — anthropic_environment resource + environment/environments data sources
+    files/         — anthropic_file resource + file/files data sources (Files API, GA, `client.Files`; standard API key)
     memorystores/  — anthropic_memory_store + anthropic_memory resources + memory_store/memory_stores/memory/memories data sources (Beta managed-agents API; `client.Beta.MemoryStores`/`client.Beta.MemoryStores.Memories`; workspace-scoped, standard API key)
     messages/      — anthropic_message resource + count_tokens data source
     models/        — model/models data sources
