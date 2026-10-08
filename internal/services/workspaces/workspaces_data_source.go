@@ -17,6 +17,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 var _ datasource.DataSource = &WorkspacesDataSource{}
@@ -48,6 +49,12 @@ var workspaceListItemAttrTypes = map[string]attr.Type{
 	"created_at":     types.StringType,
 	"display_color":  types.StringType,
 	"type":           types.StringType,
+
+	"tags":                     types.MapType{ElemType: types.StringType},
+	"external_key_id":          types.StringType,
+	"compartment_id":           types.StringType,
+	"user_profile_id":          types.StringType,
+	"inference_data_retention": types.ObjectType{AttrTypes: workspaceInferenceDataRetentionAttrTypes},
 }
 
 // workspaceListAPIResponse is the paginated list response from GET /v1/organizations/workspaces.
@@ -117,6 +124,33 @@ func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 						"type": schema.StringAttribute{
 							Computed:            true,
 							MarkdownDescription: "Object type. Always `workspace`.",
+						},
+						"tags": schema.MapAttribute{
+							Computed:            true,
+							ElementType:         types.StringType,
+							MarkdownDescription: "User-defined tags as string key-value pairs.",
+						},
+						"external_key_id": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.",
+						},
+						"compartment_id": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "Identifier of the workspace's encryption compartment.",
+						},
+						"user_profile_id": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "ID of the user profile associated with the workspace, or null if none.",
+						},
+						"inference_data_retention": schema.SingleNestedAttribute{
+							Computed:            true,
+							MarkdownDescription: "Inference data retention setting reported by the API, or null if absent.",
+							Attributes: map[string]schema.Attribute{
+								"type": schema.StringAttribute{
+									Computed:            true,
+									MarkdownDescription: "Retention mode, for example `disabled`.",
+								},
+							},
 						},
 					},
 				},
@@ -246,6 +280,14 @@ func mapWorkspaceToListObject(ws *workspaceAPIResponse) (attr.Value, diag.Diagno
 		archivedAt = types.StringValue(*ws.ArchivedAt)
 	}
 
+	tags, d := workspaceTagsToMap(ws.Tags)
+	diags.Append(d...)
+	idr, d := workspaceRetentionToObject(ws.InferenceDataRetention)
+	diags.Append(d...)
+	if diags.HasError() {
+		return nil, diags
+	}
+
 	obj, d := types.ObjectValue(workspaceListItemAttrTypes, map[string]attr.Value{
 		"id":             types.StringValue(ws.ID),
 		"name":           types.StringValue(ws.Name),
@@ -254,6 +296,12 @@ func mapWorkspaceToListObject(ws *workspaceAPIResponse) (attr.Value, diag.Diagno
 		"created_at":     types.StringValue(ws.CreatedAt),
 		"display_color":  types.StringValue(ws.DisplayColor),
 		"type":           types.StringValue(ws.Type),
+
+		"tags":                     tags,
+		"external_key_id":          tfvalue.StringOrNull(derefString(ws.ExternalKeyID)),
+		"compartment_id":           tfvalue.StringOrNull(derefString(ws.CompartmentID)),
+		"user_profile_id":          tfvalue.StringOrNull(derefString(ws.UserProfileID)),
+		"inference_data_retention": idr,
 	})
 	diags.Append(d...)
 	return obj, diags

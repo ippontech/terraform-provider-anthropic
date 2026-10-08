@@ -20,6 +20,14 @@ Creates and manages an Anthropic Workspace via the Admin API.
 
 {{ codefile "hcl" "examples/resources/workspace/resource.tf" }}
 
+## Tags
+
+`tags` follows the API's patch semantics on update: keys in the configuration are upserted and keys removed since the previous apply are sent as `null` to delete them. Keys must not begin with `anthropic` (case-insensitive), which is rejected at plan time. Omitting `tags` leaves them unmanaged (the API's current tags are kept in state); set `tags = {}` to remove all of them.
+
+## Customer-managed encryption key
+
+`external_key_id` attaches a CMEK key configuration (`ekey_...`) when the workspace is created. The API treats it as **write-once**: a key cannot be detached or replaced afterwards, so changing the value forces a new workspace. Use the read-only `compartment_id` in your KMS key policy when configuring CMEK on AWS.
+
 {{ .SchemaMarkdown | trimspace }}
 
 ## Import

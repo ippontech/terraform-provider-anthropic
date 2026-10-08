@@ -25,6 +25,8 @@ func TestAccWorkspaceDataSource(t *testing.T) {
 					resource.TestCheckResourceAttr("data.anthropic_workspace.test", "id", acctest.TerraformTestsWorkspaceID),
 					resource.TestCheckResourceAttrSet("data.anthropic_workspace.test", "name"),
 					resource.TestCheckResourceAttrSet("data.anthropic_workspace.test", "created_at"),
+					resource.TestCheckResourceAttrSet("data.anthropic_workspace.test", "compartment_id"),
+					resource.TestCheckResourceAttrSet("data.anthropic_workspace.test", "inference_data_retention.type"),
 				),
 			},
 		},

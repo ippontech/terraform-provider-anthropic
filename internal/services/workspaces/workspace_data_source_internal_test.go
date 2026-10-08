@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 )
@@ -64,6 +65,32 @@ func TestWorkspaceDataSource_read(t *testing.T) {
 	}
 	if data.DataResidency.IsNull() {
 		t.Error("DataResidency should not be null")
+	}
+	if !data.CompartmentID.IsNull() || !data.ExternalKeyID.IsNull() || !data.InferenceDataRetention.IsNull() {
+		t.Error("absent new attributes should map to null")
+	}
+}
+
+func TestWorkspaceDataSource_mapsNewAttributes(t *testing.T) {
+	var ws workspaceAPIResponse
+	if err := json.Unmarshal([]byte(workspaceFullFixture), &ws); err != nil {
+		t.Fatal(err)
+	}
+	var data WorkspaceResourceModel
+	if diags := mapWorkspaceToState(context.Background(), &ws, &data); diags.HasError() {
+		t.Fatalf("diags: %v", diags)
+	}
+	if data.CompartmentID.ValueString() == "" || data.Tags.IsNull() || data.InferenceDataRetention.IsNull() {
+		t.Errorf("new attributes not mapped: %+v", data)
+	}
+	// The data source reuses the resource model, so it must fit the data source schema too.
+	var resp datasource.SchemaResponse
+	(&WorkspaceDataSource{}).Schema(context.Background(), datasource.SchemaRequest{}, &resp)
+	for _, k := range []string{"tags", "external_key_id", "compartment_id", "user_profile_id", "inference_data_retention"} {
+		a, ok := resp.Schema.Attributes[k]
+		if !ok || !a.IsComputed() {
+			t.Errorf("data source attribute %q missing or not computed", k)
+		}
 	}
 }
 

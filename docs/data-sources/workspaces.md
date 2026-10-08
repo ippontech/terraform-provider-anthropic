@@ -42,12 +42,17 @@ output "workspaces_count" {
 Read-Only:
 
 - `archived_at` (String) RFC 3339 timestamp of when the workspace was archived, or null if active.
+- `compartment_id` (String) Identifier of the workspace's encryption compartment.
 - `created_at` (String) RFC 3339 timestamp of when the workspace was created.
 - `data_residency` (Attributes) Data-residency configuration for the workspace. (see [below for nested schema](#nestedatt--workspaces--data_residency))
 - `display_color` (String) Hex color code representing the workspace in the Anthropic Console.
+- `external_key_id` (String) ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.
 - `id` (String) Unique workspace identifier.
+- `inference_data_retention` (Attributes) Inference data retention setting reported by the API, or null if absent. (see [below for nested schema](#nestedatt--workspaces--inference_data_retention))
 - `name` (String) Human-readable name for the workspace.
+- `tags` (Map of String) User-defined tags as string key-value pairs.
 - `type` (String) Object type. Always `workspace`.
+- `user_profile_id` (String) ID of the user profile associated with the workspace, or null if none.
 
 <a id="nestedatt--workspaces--data_residency"></a>
 ### Nested Schema for `workspaces.data_residency`
@@ -57,3 +62,11 @@ Read-Only:
 - `allowed_inference_geos` (List of String) Permitted inference geo values.
 - `default_inference_geo` (String) Default inference geo applied when requests omit the parameter.
 - `workspace_geo` (String) Geographic region for workspace data storage.
+
+
+<a id="nestedatt--workspaces--inference_data_retention"></a>
+### Nested Schema for `workspaces.inference_data_retention`
+
+Read-Only:
+
+- `type` (String) Retention mode, for example `disabled`.
