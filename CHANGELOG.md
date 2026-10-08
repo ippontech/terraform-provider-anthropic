@@ -1,3 +1,15 @@
+## [1.57.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.56.1...v1.57.0) (2026-10-08)
+
+### ✨ Features
+
+* **count_tokens:** add thinking, output_config and cache_control parameters ([#313](https://github.com/ippontech/terraform-provider-anthropic/issues/313)) ([730f650](https://github.com/ippontech/terraform-provider-anthropic/commit/730f65063d7399a34ed6c9bc688b2dabc9f073a6)), closes [#93](https://github.com/ippontech/terraform-provider-anthropic/issues/93)
+
+## [1.56.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.56.0...v1.56.1) (2026-10-08)
+
+### 📚 Documentation
+
+* restore the separator in the CLAUDE.md anthropic_agent entry ([#311](https://github.com/ippontech/terraform-provider-anthropic/issues/311)) ([3a893c6](https://github.com/ippontech/terraform-provider-anthropic/commit/3a893c6b125c26ad44e6b09546ff36da972be1ef)), closes [#310](https://github.com/ippontech/terraform-provider-anthropic/issues/310) [#309](https://github.com/ippontech/terraform-provider-anthropic/issues/309)
+
 ## [1.56.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.55.0...v1.56.0) (2026-10-08)
 
 ### ✨ Features
