@@ -1,0 +1,1 @@
+This is a small example file uploaded via the anthropic_file resource.
