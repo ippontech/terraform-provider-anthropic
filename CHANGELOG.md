@@ -1,3 +1,9 @@
+## [1.55.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.54.1...v1.55.0) (2026-10-08)
+
+### ✨ Features
+
+* **agent:** add model_effort and model_inference_geo ([#309](https://github.com/ippontech/terraform-provider-anthropic/issues/309)) ([07e76c8](https://github.com/ippontech/terraform-provider-anthropic/commit/07e76c8d720def03f4837e8ab73d5cfd9b0ea1c9)), closes [#274](https://github.com/ippontech/terraform-provider-anthropic/issues/274) [#306](https://github.com/ippontech/terraform-provider-anthropic/issues/306)
+
 ## [1.54.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.54.0...v1.54.1) (2026-10-01)
 
 ### 🐛 Bug Fixes
