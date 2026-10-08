@@ -11,7 +11,7 @@ You implement or modify a single GitHub Actions workflow in `.github/workflows/`
 
 ## Setup
 
-`EnterWorktree <branch>`, then `set -a && source .env && set +a || true`.
+`EnterWorktree <branch>`. Environment variables come from the project's `.env` through mise (`[env] _.file` in `mise.toml`); never `source` or read the file yourself. A worktree has no `.env`, so credential-dependent commands are expected to be unavailable there.
 
 Read the existing workflows (`ls .github/workflows/`) and the most similar one before writing. Read `GNUmakefile` for available targets and `make` them in CI steps rather than reimplementing logic inline.
 

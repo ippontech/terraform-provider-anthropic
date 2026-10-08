@@ -60,11 +60,7 @@ At least one key must be set. `ANTHROPIC_API_KEY` is needed for most resources a
 
 > **Test isolation.** Acceptance and Terraform native tests create real resources. Use an `ANTHROPIC_API_KEY` scoped to a **dedicated, non-production workspace** so test resources never land in a production workspace. This project uses a workspace named `terraform-tests`: standard-API resources (vaults, agents, environments, skills, ...) are created there via the key's scope, and the Admin API read-only data source tests target the same workspace by its ID (exposed as `acctest.TerraformTestsWorkspaceID`).
 
-A `.env` file at the project root can hold machine-specific values. **Always source it before running any command:**
-
-```bash
-set -a && source .env && set +a
-```
+A `.env` file at the project root (gitignored) can hold these keys and other machine-specific values. `mise.toml` declares it under `[env] _.file = ".env"`, so [mise](https://mise.jdx.dev/environments/) exports its variables automatically when you enter the directory; nothing to source by hand.
 
 ### Run unit tests
 

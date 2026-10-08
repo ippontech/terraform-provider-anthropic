@@ -15,6 +15,6 @@ unset GOROOT
 ```
 Find `<version>` with `ls ~/.local/share/mise/installs/go/` — pick the concrete version (not `latest`/the bare major.minor symlink). It will not necessarily match the `go` directive in `go.mod` (newer is fine with `GOTOOLCHAIN=local`).
 
-Also do NOT `source .env` directly in a worktree-isolated Bash session — the harness blocks piping an unverified file through `source`. Read `.env`'s contents first (`cat .env`) and `export` the variables literally instead.
+Never `source`, `cat` or otherwise read `.env`: it holds credentials, and since 2026-10-09 mise loads it automatically (`[env] _.file` in `mise.toml`). A worktree has no `.env`, so commands that need credentials are simply unavailable there.
 
 Separately, `pre-commit run -a`'s `poutine` hook can fail with `mise ERROR ... not trusted` on a freshly checked-out worktree with its own `mise.toml` — run `mise trust` once in the worktree root to fix.

@@ -142,11 +142,7 @@ Guides live under `templates/guides/<name>.md.tmpl` (rendered to `docs/guides/`,
 
 ## Environment
 
-A `.env` file at the project root sets machine-specific variables (e.g., `OTEL_TRACES_EXPORTER=`). **Always source it before running any command** to avoid env-related failures:
-
-```bash
-set -a && source .env && set +a
-```
+A `.env` file at the project root (gitignored) sets machine-specific variables and local credentials. `mise.toml` declares it under `[env] _.file = ".env"`, so mise exports its variables automatically on entering the directory, in the Claude Code shell included (the mise hook is active there). Never `source .env` by hand, and never read or print the file: its contents are secrets. A missing `.env` (CI, a fresh worktree) is tolerated silently by mise. Claude Code's global settings also carry a `Read` deny rule on `.env` files, so the IDE never shares a selection made in one.
 
 After upgrading Go via mise, run `go clean -cache` before `make` to clear stale build artifacts. Without this, golangci-lint's typecheck step fails with a "version does not match go tool version" error because cached objects carry the old Go version tag.
 
