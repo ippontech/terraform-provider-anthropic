@@ -1,0 +1,20 @@
+---
+page_title: "anthropic_file Data Source - anthropic"
+subcategory: "Files"
+description: |-
+  Fetches the metadata of a single file by ID (Files API, generally available).
+---
+
+# anthropic_file (Data Source)
+
+Fetches the metadata of a single file by ID (Files API, generally available). The file's content is not returned. Reading an ID that does not exist (or whose file was deleted or has expired) fails with a `File Not Found` error.
+
+> **API**: `GET /v1/files/{file_id}` (Files API, generally available, no beta header).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/file/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

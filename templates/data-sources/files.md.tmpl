@@ -1,0 +1,22 @@
+---
+page_title: "anthropic_files Data Source - anthropic"
+subcategory: "Files"
+description: |-
+  Lists files (Files API, generally available).
+---
+
+# anthropic_files (Data Source)
+
+Lists files (Files API, generally available). All pages are fetched automatically with cursor pagination. File content is not returned, only metadata.
+
+> **API**: `GET /v1/files` (Files API, generally available, no beta header).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Cost**: Free.
+
+Set `ids` (1 to 100 unique file IDs) to fetch only those files. The API then returns a single page, and IDs that do not resolve to a visible file are silently omitted.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/files/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
