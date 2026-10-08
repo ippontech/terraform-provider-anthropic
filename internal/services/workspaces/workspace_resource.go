@@ -90,9 +90,9 @@ type workspaceAPIResponse struct {
 	Type          string                    `json:"type"`
 
 	Tags                   map[string]string                   `json:"tags"`
-	ExternalKeyID          *string                             `json:"external_key_id"`
-	CompartmentID          *string                             `json:"compartment_id"`
-	UserProfileID          *string                             `json:"user_profile_id"`
+	ExternalKeyID          string                              `json:"external_key_id"`
+	CompartmentID          string                              `json:"compartment_id"`
+	UserProfileID          string                              `json:"user_profile_id"`
 	InferenceDataRetention *workspaceAPIInferenceDataRetention `json:"inference_data_retention"`
 }
 
@@ -540,9 +540,9 @@ func mapWorkspaceToState(ctx context.Context, ws *workspaceAPIResponse, data *Wo
 	data.DisplayColor = types.StringValue(ws.DisplayColor)
 	data.Type = types.StringValue(ws.Type)
 	data.CreatedAt = types.StringValue(ws.CreatedAt)
-	data.ExternalKeyID = tfvalue.StringOrNull(derefString(ws.ExternalKeyID))
-	data.CompartmentID = tfvalue.StringOrNull(derefString(ws.CompartmentID))
-	data.UserProfileID = tfvalue.StringOrNull(derefString(ws.UserProfileID))
+	data.ExternalKeyID = tfvalue.StringOrNull(ws.ExternalKeyID)
+	data.CompartmentID = tfvalue.StringOrNull(ws.CompartmentID)
+	data.UserProfileID = tfvalue.StringOrNull(ws.UserProfileID)
 
 	tags, d := workspaceTagsToMap(ws.Tags)
 	diags.Append(d...)
@@ -590,13 +590,6 @@ func mapWorkspaceToState(ctx context.Context, ws *workspaceAPIResponse, data *Wo
 	data.DataResidency = drObj
 
 	return diags
-}
-
-func derefString(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
 
 // workspaceTagsToMap maps the API tags to a Terraform map: a JSON null becomes a

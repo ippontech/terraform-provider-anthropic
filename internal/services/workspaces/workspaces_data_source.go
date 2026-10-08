@@ -298,9 +298,9 @@ func mapWorkspaceToListObject(ws *workspaceAPIResponse) (attr.Value, diag.Diagno
 		"type":           types.StringValue(ws.Type),
 
 		"tags":                     tags,
-		"external_key_id":          tfvalue.StringOrNull(derefString(ws.ExternalKeyID)),
-		"compartment_id":           tfvalue.StringOrNull(derefString(ws.CompartmentID)),
-		"user_profile_id":          tfvalue.StringOrNull(derefString(ws.UserProfileID)),
+		"external_key_id":          tfvalue.StringOrNull(ws.ExternalKeyID),
+		"compartment_id":           tfvalue.StringOrNull(ws.CompartmentID),
+		"user_profile_id":          tfvalue.StringOrNull(ws.UserProfileID),
 		"inference_data_retention": idr,
 	})
 	diags.Append(d...)
