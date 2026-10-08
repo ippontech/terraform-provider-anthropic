@@ -1,3 +1,9 @@
+## [1.59.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.58.0...v1.59.0) (2026-10-08)
+
+### ✨ Features
+
+* **workspace:** expose tags, external_key_id, compartment_id, inference_data_retention and user_profile_id ([#315](https://github.com/ippontech/terraform-provider-anthropic/issues/315)) ([4a3b07b](https://github.com/ippontech/terraform-provider-anthropic/commit/4a3b07b1e211197c24c295c00adb0e3a03e2fd07)), closes [#139](https://github.com/ippontech/terraform-provider-anthropic/issues/139)
+
 ## [1.58.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.57.0...v1.58.0) (2026-10-08)
 
 ### ✨ Features
