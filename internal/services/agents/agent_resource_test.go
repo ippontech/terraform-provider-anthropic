@@ -97,6 +97,11 @@ func TestAccAgentResource_modelEffort(t *testing.T) {
 				Config: testAccAgentResourceEffortConfig(""),
 				Check:  resource.TestCheckResourceAttr("anthropic_agent.test", "model_effort", "low"),
 			},
+			// Changing model without model_effort resolves the new default.
+			{
+				Config: testAccAgentResourceEffortConfigModel("claude-opus-4-5", ""),
+				Check:  resource.TestCheckResourceAttrSet("anthropic_agent.test", "model_effort"),
+			},
 			{
 				ResourceName:      "anthropic_agent.test",
 				ImportState:       true,
@@ -131,13 +136,17 @@ func TestAccAgentResource_modelInferenceGeo(t *testing.T) {
 }
 
 func testAccAgentResourceEffortConfig(extra string) string {
+	return testAccAgentResourceEffortConfigModel("claude-sonnet-4-6", extra)
+}
+
+func testAccAgentResourceEffortConfigModel(model, extra string) string {
 	return fmt.Sprintf(`
 resource "anthropic_agent" "test" {
-  model = "claude-sonnet-4-6"
+  model = %q
   name  = "tf-acc-test-effort"
   %s
 }
-`, extra)
+`, model, extra)
 }
 
 func TestAccAgentResource_withSystemAndDescription(t *testing.T) {

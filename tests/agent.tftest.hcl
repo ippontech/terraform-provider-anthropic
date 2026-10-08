@@ -36,19 +36,13 @@ run "agent_data_source_returns_agent" {
   }
 
   assert {
-    condition     = output.agent.id == anthropic_agent.example.id
-    error_message = "Expected the data source id to match the resource id."
-  }
-}
-
-run "agent_data_source_exposes_model_effort" {
-  module {
-    source = "../examples/data-sources/agent"
+    condition     = output.agent.model_effort != null
+    error_message = "Expected the API-resolved default model_effort to be mirrored by the data source."
   }
 
   assert {
-    condition     = output.agent.model_effort != ""
-    error_message = "Expected the API-resolved default model_effort to be mirrored by the data source."
+    condition     = output.agent.id == anthropic_agent.example.id
+    error_message = "Expected the data source id to match the resource id."
   }
 }
 

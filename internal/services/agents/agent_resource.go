@@ -182,9 +182,10 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "How hard Claude works on each turn: `low`, `medium`, `high`, `xhigh` or `max`. " +
 					"`xhigh` and `max` spend noticeably more tokens, so they are cost-relevant. " +
 					"When omitted on create, the API resolves a per-model default and it is stored here. " +
-					"Removing the attribute from the configuration later does not reset it to that default: the last value is kept.",
+					"Effort follows the model: changing `model` without setting `model_effort` resolves the new model's default (known after apply). " +
+					"With an unchanged `model`, removing the attribute from the configuration keeps the last value rather than resetting it to the default.",
 				Validators:    []validator.String{stringvalidator.OneOf("low", "medium", "high", "xhigh", "max")},
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				PlanModifiers: []planmodifier.String{modelEffortFollowsModel()},
 			},
 			"model_inference_geo": schema.StringAttribute{
 				Optional: true,
@@ -414,7 +415,7 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	params := anthropic.BetaAgentNewParams{
-		Model: buildModelConfigParams(data, nil),
+		Model: buildModelConfigParams(data),
 		Name:  data.Name.ValueString(),
 	}
 	if !data.Description.IsNull() {
@@ -525,7 +526,7 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	params := anthropic.BetaAgentUpdateParams{
-		Model: buildModelConfigParams(data, &state),
+		Model: buildModelConfigParams(data),
 		Name:  param.NewOpt(data.Name.ValueString()),
 	}
 
@@ -644,15 +645,14 @@ func (r *AgentResource) ImportState(ctx context.Context, req resource.ImportStat
 // Helper functions
 // ============================================================================
 
-// buildSkillsParams converts Terraform skills list to SDK params.
-// buildModelConfigParams builds the model object sent on create (state == nil)
-// and update. On update the API replaces `model` as a whole: omitting
-// inference_geo clears it, and omitting effort keeps the stored value only when
-// the model id is unchanged. The full object is therefore always sent. A
-// null/unknown planned effort falls back to the prior state value; a null
-// planned inference_geo is deliberately omitted so that removing it from the
-// configuration clears the pin.
-func buildModelConfigParams(plan AgentResourceModel, state *AgentResourceModel) anthropic.BetaManagedAgentsModelConfigParams {
+// buildModelConfigParams builds the model object sent on create and update. On
+// update the API replaces `model` as a whole: omitting inference_geo clears it,
+// and omitting effort keeps the stored value only when the model id is unchanged
+// (otherwise it resolves the new model's default). Effort is therefore sent only
+// when the plan knows it (the model_effort plan modifier makes it unknown when
+// `model` changes); a null planned inference_geo is deliberately omitted so that
+// removing it from the configuration clears the pin.
+func buildModelConfigParams(plan AgentResourceModel) anthropic.BetaManagedAgentsModelConfigParams {
 	model := anthropic.BetaManagedAgentsModelConfigParams{
 		ID: anthropic.BetaManagedAgentsModel(plan.Model.ValueString()),
 	}
@@ -660,13 +660,9 @@ func buildModelConfigParams(plan AgentResourceModel, state *AgentResourceModel) 
 		model.Speed = anthropic.BetaManagedAgentsModelConfigParamsSpeed(plan.ModelSpeed.ValueString())
 	}
 
-	effort := plan.ModelEffort
-	if (effort.IsNull() || effort.IsUnknown()) && state != nil {
-		effort = state.ModelEffort
-	}
-	if !effort.IsNull() && !effort.IsUnknown() {
+	if !plan.ModelEffort.IsNull() && !plan.ModelEffort.IsUnknown() {
 		model.Effort = anthropic.BetaManagedAgentsModelConfigParamsEffortUnion{
-			OfBetaManagedAgentsModelConfigsEffortBetaManagedAgentsEffortLevel: param.NewOpt(effort.ValueString()),
+			OfBetaManagedAgentsModelConfigsEffortBetaManagedAgentsEffortLevel: param.NewOpt(plan.ModelEffort.ValueString()),
 		}
 	}
 

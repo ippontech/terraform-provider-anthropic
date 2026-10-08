@@ -268,10 +268,9 @@ func TestBuildModelConfigParams(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		plan  AgentResourceModel
-		state *AgentResourceModel
-		want  map[string]any
+		name string
+		plan AgentResourceModel
+		want map[string]any
 	}{
 		{
 			name: "create with effort and geo",
@@ -284,53 +283,25 @@ func TestBuildModelConfigParams(t *testing.T) {
 			want: map[string]any{"id": "claude-sonnet-4-6"},
 		},
 		{
-			name:  "update sends planned effort",
-			plan:  base(types.StringValue("low"), types.StringNull()),
-			state: &AgentResourceModel{ModelEffort: types.StringValue("high")},
-			want:  map[string]any{"id": "claude-sonnet-4-6", "effort": "low"},
+			name: "update sends planned effort",
+			plan: base(types.StringValue("low"), types.StringNull()),
+			want: map[string]any{"id": "claude-sonnet-4-6", "effort": "low"},
 		},
 		{
-			name:  "update resends state effort when plan is unknown",
-			plan:  base(types.StringUnknown(), types.StringNull()),
-			state: &AgentResourceModel{ModelEffort: types.StringValue("xhigh")},
-			want:  map[string]any{"id": "claude-sonnet-4-6", "effort": "xhigh"},
+			name: "update with null geo omits it so the pin is cleared",
+			plan: base(types.StringValue("high"), types.StringNull()),
+			want: map[string]any{"id": "claude-sonnet-4-6", "effort": "high"},
 		},
 		{
-			name:  "update resends state effort when plan is null",
-			plan:  base(types.StringNull(), types.StringNull()),
-			state: &AgentResourceModel{ModelEffort: types.StringValue("max")},
-			want:  map[string]any{"id": "claude-sonnet-4-6", "effort": "max"},
-		},
-		{
-			// Effort is sticky across model changes by design: the provider resends
-			// the state value even though the API would only keep it for an unchanged id.
-			name: "update with a new model id resends state effort when plan effort is null",
-			plan: AgentResourceModel{
-				Model:             types.StringValue("claude-opus-4-6"),
-				ModelSpeed:        types.StringNull(),
-				ModelEffort:       types.StringNull(),
-				ModelInferenceGeo: types.StringNull(),
-			},
-			state: &AgentResourceModel{Model: types.StringValue("claude-sonnet-4-6"), ModelEffort: types.StringValue("high")},
-			want:  map[string]any{"id": "claude-opus-4-6", "effort": "high"},
-		},
-		{
-			name:  "update with null geo omits it so the pin is cleared",
-			plan:  base(types.StringValue("high"), types.StringNull()),
-			state: &AgentResourceModel{ModelEffort: types.StringValue("high"), ModelInferenceGeo: types.StringValue("us")},
-			want:  map[string]any{"id": "claude-sonnet-4-6", "effort": "high"},
-		},
-		{
-			name:  "update keeps unchanged geo",
-			plan:  base(types.StringValue("high"), types.StringValue("us")),
-			state: &AgentResourceModel{ModelEffort: types.StringValue("high"), ModelInferenceGeo: types.StringValue("us")},
-			want:  map[string]any{"id": "claude-sonnet-4-6", "effort": "high", "inference_geo": "us"},
+			name: "update keeps unchanged geo",
+			plan: base(types.StringValue("high"), types.StringValue("us")),
+			want: map[string]any{"id": "claude-sonnet-4-6", "effort": "high", "inference_geo": "us"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := modelParamsJSON(t, buildModelConfigParams(tt.plan, tt.state))
+			got := modelParamsJSON(t, buildModelConfigParams(tt.plan))
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
