@@ -1,7 +1,9 @@
-# Minimal agent
+# Minimal agent. model_effort is optional: when omitted, the API resolves a
+# per-model default and stores it in state.
 resource "anthropic_agent" "simple" {
-  model = "claude-sonnet-4-6"
-  name  = "Simple Agent"
+  model        = "claude-sonnet-4-6"
+  name         = "Simple Agent"
+  model_effort = "high"
 }
 
 # Agent with system prompt and description
@@ -92,6 +94,11 @@ resource "anthropic_agent" "custom_tools" {
 output "simple_agent_id" {
   description = "ID of the minimal agent."
   value       = anthropic_agent.simple.id
+}
+
+output "simple_agent_model_effort" {
+  description = "Effort level of the minimal agent."
+  value       = anthropic_agent.simple.model_effort
 }
 
 output "developer_agent_version" {

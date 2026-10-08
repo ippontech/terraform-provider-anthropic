@@ -40,3 +40,25 @@ run "agent_data_source_returns_agent" {
     error_message = "Expected the data source id to match the resource id."
   }
 }
+
+run "agent_data_source_exposes_model_effort" {
+  module {
+    source = "../examples/data-sources/agent"
+  }
+
+  assert {
+    condition     = output.agent.model_effort != ""
+    error_message = "Expected the API-resolved default model_effort to be mirrored by the data source."
+  }
+}
+
+run "agent_resource_example_model_effort" {
+  module {
+    source = "../examples/resources/agent"
+  }
+
+  assert {
+    condition     = output.simple_agent_model_effort == "high"
+    error_message = "Expected model_effort to be high."
+  }
+}

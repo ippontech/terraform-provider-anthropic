@@ -52,7 +52,7 @@ internal/
 
 **Resources:**
 - `anthropic_message` (`internal/services/messages/message_resource.go`) — calls the Messages API; write-only, immutable (no read/update/delete)
-- `anthropic_agent` (`internal/services/agents/agent_resource.go`) — manages Managed Agents (create/read/update/delete)
+- `anthropic_agent` (`internal/services/agents/agent_resource.go`) — manages Managed Agents (create/read/update/delete); `model_effort` (Optional+Computed, API fills a per-model default) and `model_inference_geo` (Optional, free-form) sit next to `model_speed`: the API replaces `model` as a whole on update and would keep an omitted `effort` only if `id` is unchanged, but the provider deliberately overrides that: `buildModelConfigParams` always sends the full object and resends the state effort when the plan has none, so effort is sticky even across model ID changes; a null `model_inference_geo` is omitted, which clears the pin
 - `anthropic_environment` (`internal/services/environments/environment_resource.go`) — manages environments; supports `archive_on_destroy` (archives instead of deleting on destroy when true)
 - `anthropic_skill` (`internal/services/skills/skill_resource.go`) — manages skills
 - `anthropic_skill_version` (`internal/services/skills/skill_version_resource.go`) — manages skill versions
