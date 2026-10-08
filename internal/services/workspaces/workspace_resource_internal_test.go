@@ -6,10 +6,13 @@ package workspaces
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
@@ -145,53 +148,79 @@ func TestWorkspaceCreateRequest_tagsAndExternalKey(t *testing.T) {
 	}
 }
 
-func TestBuildWorkspaceTagsPatch(t *testing.T) {
+func TestBuildWorkspaceTagsUpdate(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		name        string
 		plan, state map[string]string
-		want        map[string]any
+		want        string
 	}{
-		{"unchanged", map[string]string{"a": "1"}, map[string]string{"a": "1"}, nil},
-		{"plan null", nil, map[string]string{"a": "1"}, nil},
-		{"added", map[string]string{"a": "1", "b": "2"}, map[string]string{"a": "1"}, map[string]any{"a": "1", "b": "2"}},
-		{"changed", map[string]string{"a": "2"}, map[string]string{"a": "1"}, map[string]any{"a": "2"}},
-		{"removed", map[string]string{"a": "1"}, map[string]string{"a": "1", "b": "2"}, map[string]any{"a": "1", "b": nil}},
-		{"all removed", map[string]string{}, map[string]string{"a": "1"}, map[string]any{"a": nil}},
-		{"empty over null state", map[string]string{}, nil, nil},
-		{"from null state", map[string]string{"a": "1"}, nil, map[string]any{"a": "1"}},
+		{"unchanged", map[string]string{"a": "1"}, map[string]string{"a": "1"}, "null"},
+		{"plan null", nil, map[string]string{"a": "1"}, "null"},
+		{"added", map[string]string{"a": "1", "b": "2"}, map[string]string{"a": "1"}, `{"a":"1","b":"2"}`},
+		{"changed", map[string]string{"a": "2"}, map[string]string{"a": "1"}, `{"a":"2"}`},
+		{"removed key: full map, no null", map[string]string{"a": "1"}, map[string]string{"a": "1", "b": "2"}, `{"a":"1"}`},
+		{"all removed: empty map", map[string]string{}, map[string]string{"a": "1"}, `{}`},
+		{"from null state", map[string]string{"a": "1"}, nil, `{"a":"1"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, diags := buildWorkspaceTagsPatch(ctx, tagsMap(t, tc.plan), tagsMap(t, tc.state))
+			got, diags := buildWorkspaceTagsUpdate(ctx, tagsMap(t, tc.plan), tagsMap(t, tc.state))
 			if diags.HasError() {
 				t.Fatal(diags)
 			}
 			gj, _ := json.Marshal(got)
-			wj, _ := json.Marshal(tc.want)
-			if string(gj) != string(wj) {
-				t.Errorf("patch = %s, want %s", gj, wj)
+			if string(gj) != tc.want {
+				t.Errorf("tags = %s, want %s", gj, tc.want)
 			}
 		})
 	}
 }
 
-func TestWorkspaceUpdateRequest_tagsPatchBody(t *testing.T) {
-	patch, _ := buildWorkspaceTagsPatch(context.Background(),
-		tagsMap(t, map[string]string{"a": "1"}), tagsMap(t, map[string]string{"a": "1", "b": "2"}))
-	b, _ := json.Marshal(workspaceUpdateRequest{Name: "ws", Tags: patch})
-	var got map[string]any
-	_ = json.Unmarshal(b, &got)
-	tags, _ := got["tags"].(map[string]any)
-	if v, ok := tags["b"]; !ok || v != nil {
-		t.Errorf("removed key must be sent as null, got %v", got["tags"])
+func TestWorkspaceUpdateRequest_body(t *testing.T) {
+	empty := map[string]string{}
+	b, _ := json.Marshal(workspaceUpdateRequest{Name: "ws", Tags: &empty})
+	if !strings.Contains(string(b), `"tags":{}`) {
+		t.Errorf("empty tags must serialise as {}, got %s", b)
 	}
-
 	b, _ = json.Marshal(workspaceUpdateRequest{Name: "ws"})
-	got = nil
-	_ = json.Unmarshal(b, &got)
-	if _, ok := got["tags"]; ok {
-		t.Error("tags key must be absent without a patch")
+	if strings.Contains(string(b), "tags") || strings.Contains(string(b), "external_key_id") {
+		t.Errorf("tags and external_key_id must be omitted when unset, got %s", b)
+	}
+	b, _ = json.Marshal(workspaceUpdateRequest{Name: "ws", ExternalKeyID: "ekey_01"})
+	if !strings.Contains(string(b), `"external_key_id":"ekey_01"`) {
+		t.Errorf("external_key_id missing: %s", b)
+	}
+}
+
+func TestExternalKeyUpdateAndReplace(t *testing.T) {
+	str := types.StringValue
+	null := types.StringNull()
+	cases := []struct {
+		name        string
+		state, plan types.String
+		wantSend    string
+		wantReplace bool
+	}{
+		{"null to set: attach in place", null, str("ekey_1"), "ekey_1", false},
+		{"set to other: replace", str("ekey_1"), str("ekey_2"), "", true},
+		{"set to same: nothing", str("ekey_1"), str("ekey_1"), "", false},
+		{"set, omitted (state kept): nothing", str("ekey_1"), str("ekey_1"), "", false},
+		{"set to null: replace", str("ekey_1"), null, "", true},
+		{"null to null: nothing", null, null, "", false},
+		{"null to unknown: nothing", null, types.StringUnknown(), "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildWorkspaceExternalKeyUpdate(tc.plan, tc.state); got != tc.wantSend {
+				t.Errorf("send = %q, want %q", got, tc.wantSend)
+			}
+			resp := &stringplanmodifier.RequiresReplaceIfFuncResponse{}
+			externalKeyRequiresReplace(context.Background(), planmodifier.StringRequest{StateValue: tc.state, PlanValue: tc.plan}, resp)
+			if resp.RequiresReplace != tc.wantReplace {
+				t.Errorf("replace = %v, want %v", resp.RequiresReplace, tc.wantReplace)
+			}
+		})
 	}
 }
 

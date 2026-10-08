@@ -124,9 +124,11 @@ type workspaceCreateDataResidency struct {
 type workspaceUpdateRequest struct {
 	Name          string                        `json:"name"`
 	DataResidency *workspaceUpdateDataResidency `json:"data_residency,omitempty"`
-	// Tags carries the tag patch: planned keys upsert, keys removed since prior
-	// state are sent as null (see buildWorkspaceTagsPatch).
-	Tags map[string]any `json:"tags,omitempty"`
+	// Tags is the full planned map (a pointer, so an empty map still serialises
+	// as {}); nil omits the key (see buildWorkspaceTagsUpdate).
+	Tags *map[string]string `json:"tags,omitempty"`
+	// ExternalKeyID attaches a CMEK key to a workspace that has none yet.
+	ExternalKeyID string `json:"external_key_id,omitempty"`
 }
 
 type workspaceUpdateDataResidency struct {
@@ -194,11 +196,14 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Optional: true,
 				Computed: true,
 				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration used to encrypt this workspace's data. " +
-					"Requires CMEK to be enabled for the organization. **Write-once**: the API cannot detach or replace a key once attached, " +
-					"so changing this value forces a new workspace. When omitted, a key attached outside Terraform is kept in state without forcing a replacement.",
+					"Requires CMEK to be enabled for the organization. **Write-once**: a key can be attached to a workspace that has none, " +
+					"but the API cannot detach or replace it afterwards, so changing an attached key forces a new workspace. " +
+					"When omitted, a key attached outside Terraform is kept in state without forcing a replacement.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.RequiresReplaceIf(externalKeyRequiresReplace,
+						"Replaces the workspace when an attached external key is changed or removed.",
+						"Replaces the workspace when an attached external key is changed or removed."),
 				},
 			},
 
@@ -381,12 +386,13 @@ func (r *WorkspaceResource) Update(ctx context.Context, req resource.UpdateReque
 
 	body := workspaceUpdateRequest{Name: data.Name.ValueString()}
 
-	tagsPatch, diags := buildWorkspaceTagsPatch(ctx, data.Tags, state.Tags)
+	tagsUpdate, diags := buildWorkspaceTagsUpdate(ctx, data.Tags, state.Tags)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	body.Tags = tagsPatch
+	body.Tags = tagsUpdate
+	body.ExternalKeyID = buildWorkspaceExternalKeyUpdate(data.ExternalKeyID, state.ExternalKeyID)
 
 	if !data.DataResidency.IsNull() && !data.DataResidency.IsUnknown() {
 		dr, diags := buildUpdateDataResidency(ctx, data.DataResidency)
@@ -616,40 +622,37 @@ func workspaceRetentionToObject(r *workspaceAPIInferenceDataRetention) (types.Ob
 	})
 }
 
-// buildWorkspaceTagsPatch builds the tags payload of an update. The API takes
-// tags as a patch: keys planned are upserted and keys removed since the prior
-// state are sent as null. It returns nil (no "tags" key at all) when the plan is
-// null/unknown or equal to the state. Partial-update semantics are not spelled
-// out in the public reference, so the full planned map is sent on any change.
-func buildWorkspaceTagsPatch(ctx context.Context, plan, state types.Map) (map[string]any, diag.Diagnostics) {
+// buildWorkspaceTagsUpdate builds the tags payload of an update. The Update
+// Workspace reference declares tags as a map of strings (or null) and does not
+// document per-key deletion, so the full planned map is sent and a removed key
+// relies on whole-map replacement (unverified live, #58). It returns nil (no
+// "tags" key) when the plan is null/unknown or equal to the state.
+func buildWorkspaceTagsUpdate(ctx context.Context, plan, state types.Map) (*map[string]string, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if plan.IsNull() || plan.IsUnknown() || plan.Equal(state) {
 		return nil, diags
 	}
-
 	planned := map[string]string{}
 	diags.Append(plan.ElementsAs(ctx, &planned, false)...)
-	prior := map[string]string{}
-	if !state.IsNull() && !state.IsUnknown() {
-		diags.Append(state.ElementsAs(ctx, &prior, false)...)
-	}
 	if diags.HasError() {
 		return nil, diags
 	}
+	return &planned, diags
+}
 
-	patch := make(map[string]any, len(planned)+len(prior))
-	for k, v := range planned {
-		patch[k] = v
+// buildWorkspaceExternalKeyUpdate returns the external_key_id to send on update:
+// only when no key is attached yet (state null) and the plan sets one.
+func buildWorkspaceExternalKeyUpdate(plan, state types.String) string {
+	if state.IsNull() && !plan.IsNull() && !plan.IsUnknown() {
+		return plan.ValueString()
 	}
-	for k := range prior {
-		if _, kept := planned[k]; !kept {
-			patch[k] = nil
-		}
-	}
-	if len(patch) == 0 {
-		return nil, diags
-	}
-	return patch, diags
+	return ""
+}
+
+// externalKeyRequiresReplace fires only when an attached key would be changed:
+// the API allows attaching a first key in place but never detaching or replacing one.
+func externalKeyRequiresReplace(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+	resp.RequiresReplace = !req.StateValue.IsNull() && !req.PlanValue.IsUnknown() && !req.PlanValue.Equal(req.StateValue)
 }
 
 // noAnthropicPrefixValidator rejects tag keys starting with "anthropic" (case-insensitive).
