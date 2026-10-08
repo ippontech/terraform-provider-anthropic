@@ -214,11 +214,7 @@ ANTHROPIC_ADMIN_API_KEY=<admin-key> make terraform-test
 ANTHROPIC_API_KEY=<key> ANTHROPIC_ADMIN_API_KEY=<admin-key> make terraform-test
 ```
 
-Alternatively, store keys in the `.env` file at the project root (gitignored) and source it before running:
-
-```shell
-set -a && source .env && set +a && make terraform-test
-```
+Alternatively, store keys in the `.env` file at the project root (gitignored): mise loads it automatically (`[env] _.file = ".env"` in `mise.toml`), so a plain `make terraform-test` picks them up.
 
 `terraform test` automatically discovers `.tftest.hcl` files in the current directory and `tests/` subdirectory.
 

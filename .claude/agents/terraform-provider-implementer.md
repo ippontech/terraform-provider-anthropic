@@ -11,7 +11,7 @@ You implement a single Terraform resource or data source in `terraform-provider-
 
 ## Setup
 
-`EnterWorktree <branch>`, then `set -a && source .env && set +a || true`.
+`EnterWorktree <branch>`. Environment variables come from the project's `.env` through mise (`[env] _.file` in `mise.toml`); never `source` or read the file yourself. A worktree has no `.env`, so credential-dependent commands are expected to be unavailable there.
 
 Read `agent_resource.go` (resource reference) or `model_data_source.go` (data source reference) before writing anything. Project conventions are in `CLAUDE.md`.
 
