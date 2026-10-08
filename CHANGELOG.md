@@ -1,3 +1,9 @@
+## [1.56.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.56.0...v1.56.1) (2026-10-08)
+
+### 📚 Documentation
+
+* restore the separator in the CLAUDE.md anthropic_agent entry ([#311](https://github.com/ippontech/terraform-provider-anthropic/issues/311)) ([3a893c6](https://github.com/ippontech/terraform-provider-anthropic/commit/3a893c6b125c26ad44e6b09546ff36da972be1ef)), closes [#310](https://github.com/ippontech/terraform-provider-anthropic/issues/310) [#309](https://github.com/ippontech/terraform-provider-anthropic/issues/309)
+
 ## [1.56.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.55.0...v1.56.0) (2026-10-08)
 
 ### ✨ Features
