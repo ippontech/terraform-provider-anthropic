@@ -28,7 +28,7 @@ repos:
         pass_filenames: false
         always_run: true
   - repo: https://github.com/semgrep/semgrep
-    rev: v1.179.0
+    rev: v1.180.0
     hooks:
       - id: semgrep
         args:
@@ -36,7 +36,7 @@ repos:
           - --error
         files: ^\.github/
   - repo: https://github.com/bridgecrewio/checkov
-    rev: 3.3.25
+    rev: 3.3.26
     hooks:
       - id: checkov
         pass_filenames: false
