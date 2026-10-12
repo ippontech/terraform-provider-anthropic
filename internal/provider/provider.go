@@ -104,8 +104,10 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 
 	// Both would fill pd.OAuthClient. Picking one silently would hide a
 	// leftover ANTHROPIC_AUTH_TOKEN behind a federation block that appears to
-	// be in use, or the reverse.
-	if federation != nil && authToken != "" {
+	// be in use, or the reverse. An auth_token unknown at plan time counts as
+	// set: resolveCredential reads it as unset, which would defer the conflict
+	// to apply.
+	if federation != nil && (authToken != "" || data.AuthToken.IsUnknown()) {
 		resp.Diagnostics.AddAttributeError(path.Root("federation"), "Conflicting OAuth Credentials",
 			"federation and auth_token (or ANTHROPIC_AUTH_TOKEN) both supply the org:admin bearer token. Configure one.")
 		return

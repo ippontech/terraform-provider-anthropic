@@ -82,7 +82,7 @@ For the end-to-end setup (the one Console-only bootstrap rule, a complete GitHub
 
 ### Workload Identity Federation (`federation`)
 
-Instead of `auth_token`, the provider can obtain the `org:admin` bearer token itself, by exchanging an identity token from your platform through a federation rule whose OAuth scope is `org:admin`. It exchanges again shortly before the access token expires, fetching a fresh identity token each time, so long applies keep working and single-use identity tokens (GitHub Actions, Kubernetes) are never replayed.
+Instead of `auth_token`, the provider can obtain the `org:admin` bearer token itself, by exchanging an identity token from your platform through a federation rule whose OAuth scope is `org:admin`. It exchanges again shortly before the access token expires, fetching a fresh identity token each time, so long applies keep working and an identity token is never presented twice: the exchange accepts an assertion carrying a `jti` claim, as GitHub Actions tokens do, [only once per issuer](https://platform.claude.com/docs/en/manage-claude/wif-reference#jwt-verification).
 
 ```hcl
 provider "anthropic" {
@@ -103,7 +103,11 @@ provider "anthropic" {
 - `identity_token_command` runs a program on every exchange and reads the token from its stdout. Use it for tokens fetched from a CLI or an endpoint. The program is run directly, not through a shell, so a pipe or `$VARIABLE` expansion needs the shell as the program: `["sh", "-c", "..."]`.
 - `identity_token` is a literal and cannot be refreshed.
 
-Every attribute but `workspace_id` falls back to the environment variable the Anthropic SDKs read (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. `workspace_id` is configuration only: it scopes the token at exchange time, while `ANTHROPIC_WORKSPACE_ID` names the workspace a request is sent to, and one variable feeding both would be a trap. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token` and `ANTHROPIC_AUTH_TOKEN`.
+The command is stopped after 30 seconds. Its stderr is not shown in the error, since a failing CLI may echo the token there (`curl -v`, `az --debug`, `set -x`); it is logged at `TF_LOG=DEBUG`.
+
+Give the rule a `token_lifetime_seconds` well above 120 (the default, 3600, is fine). The SDK refreshes within the last 120 seconds of an access token's life, so with a shorter lifetime every request refreshes, and runs the identity source, which can hit the identity provider's rate limit on a large plan.
+
+Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token` and `ANTHROPIC_AUTH_TOKEN`.
 
 Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 

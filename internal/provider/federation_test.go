@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -221,13 +222,10 @@ func TestConfigureFederationFromEnvironment(t *testing.T) {
 	if len(exchanges) != 1 {
 		t.Fatalf("exchanges = %d, want 1", len(exchanges))
 	}
-	if ex := exchanges[0]; ex["assertion"] != "jwt-from-file" || ex["federation_rule_id"] != "fdrl_env" {
+	// ANTHROPIC_WORKSPACE_ID scopes the exchange, as it does in the SDKs' own
+	// federation, whose 401 hint tells the operator to set it.
+	if ex := exchanges[0]; ex["assertion"] != "jwt-from-file" || ex["federation_rule_id"] != "fdrl_env" || ex["workspace_id"] != "wrkspc_env" {
 		t.Errorf("exchange body = %v", ex)
-	}
-	// ANTHROPIC_WORKSPACE_ID names the workspace a request is sent to; it must
-	// not silently become the exchange-time scope of the federated token.
-	if ws := exchanges[0]["workspace_id"]; ws != "" {
-		t.Errorf("exchange workspace_id = %q, want none from the environment", ws)
 	}
 }
 
@@ -327,14 +325,98 @@ func TestIdentityTokenSourceRequiresOne(t *testing.T) {
 	}
 }
 
-// TestCommandIdentityTokenReportsStderr: a failing token command (an expired
-// `az login`, say) should explain itself in the provider's error.
-func TestCommandIdentityTokenReportsStderr(t *testing.T) {
-	fn := commandIdentityToken([]string{"sh", "-c", "echo 'please run az login' >&2; exit 1"})
+// TestCommandIdentityTokenKeepsStderrOutOfTheError: the error lands in CI
+// logs, and a failing CLI under `set -x` or `curl -v` echoes the token to
+// stderr. The error points to the debug log instead.
+func TestCommandIdentityTokenKeepsStderrOutOfTheError(t *testing.T) {
+	fn := commandIdentityToken([]string{"sh", "-c", "echo 'Authorization: Bearer eyJsecret' >&2; exit 1"})
 
 	_, err := fn(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "please run az login") {
-		t.Errorf("err = %v, want stderr in the message", err)
+	if err == nil || strings.Contains(err.Error(), "eyJsecret") || !strings.Contains(err.Error(), "TF_LOG=DEBUG") {
+		t.Errorf("err = %v, want a failure that omits stderr and names the debug log", err)
+	}
+}
+
+// TestCommandIdentityTokenTimesOutWithChildren covers the documented `sh -c`
+// shape: the timeout kills sh, but its children keep stdout open, and only
+// the WaitDelay stops Run from waiting on them.
+func TestCommandIdentityTokenTimesOutWithChildren(t *testing.T) {
+	defer func(d time.Duration) { identityTokenCommandTimeout = d }(identityTokenCommandTimeout)
+	identityTokenCommandTimeout = 100 * time.Millisecond
+
+	start := time.Now()
+	_, err := commandIdentityToken([]string{"sh", "-c", "sleep 60 | cat"})(context.Background())
+	if elapsed := time.Since(start); elapsed > identityTokenCommandWaitDelay+5*time.Second {
+		t.Errorf("returned after %s, want the timeout plus WaitDelay", elapsed)
+	}
+	if err == nil || !strings.Contains(err.Error(), "did not finish within") {
+		t.Errorf("err = %v, want a timeout error", err)
+	}
+}
+
+// TestConfigureFederationRejectsUnknownAttributes: an attribute unknown at
+// plan time is named as such, rather than read as unset, which would fall
+// back to the environment or report the value as missing.
+func TestConfigureFederationRejectsUnknownAttributes(t *testing.T) {
+	unknown := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	tests := map[string]map[string]tftypes.Value{
+		"organization_id": {
+			"organization_id":    unknown,
+			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_rule"),
+			"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
+		},
+		"identity_token_command": {
+			"organization_id":        tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+			"federation_rule_id":     tftypes.NewValue(tftypes.String, "fdrl_rule"),
+			"identity_token_command": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{unknown}),
+		},
+	}
+	for name, attrs := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearCredentialEnv(t)
+			t.Setenv("ANTHROPIC_IDENTITY_TOKEN", "jwt-from-env")
+
+			resp := configureProvider(t, map[string]tftypes.Value{"federation": federationValue(t, attrs)})
+			if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != "Unknown Federation Configuration" ||
+				!strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "federation."+name) {
+				t.Errorf("diagnostics = %v, want federation.%s reported as unknown", resp.Diagnostics, name)
+			}
+		})
+	}
+}
+
+func TestConfigureFederationConflictsWithUnknownAuthToken(t *testing.T) {
+	clearCredentialEnv(t)
+
+	resp := configureProvider(t, map[string]tftypes.Value{
+		"auth_token": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"federation": federationValue(t, map[string]tftypes.Value{
+			"organization_id":    tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_rule"),
+			"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
+		}),
+	})
+	if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != "Conflicting OAuth Credentials" {
+		t.Fatalf("diagnostics = %v, want Conflicting OAuth Credentials at plan time", resp.Diagnostics)
+	}
+}
+
+// TestIdentityTokenSourceConfigWinsOverEnvironment: CI exports the SDK's
+// identity variables for other tools, and a source written in the block is
+// not in conflict with them.
+func TestIdentityTokenSourceConfigWinsOverEnvironment(t *testing.T) {
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", "/does/not/exist")
+
+	fn, err := identityTokenSource(context.Background(), federationModel{
+		IdentityToken:        types.StringValue("jwt-from-config"),
+		IdentityTokenCommand: types.ListNull(types.StringType),
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if got, _ := fn(context.Background()); got != "jwt-from-config" {
+		t.Errorf("token = %q, want the configured literal", got)
 	}
 }
 

@@ -52,7 +52,8 @@ provider "anthropic" {
     organization_id    = "00000000-0000-0000-0000-000000000000"
     federation_rule_id = "fdrl_..."
     service_account_id = "svac_..."
-    # GitHub's OIDC tokens are single-use, so one is requested per exchange.
+    # The exchange accepts a token with a jti claim, as GitHub's are, only
+    # once, so one is requested per exchange.
     # The command is run without a shell; this one needs a pipe and the
     # runner's variables, so it names sh as the program.
     identity_token_command = [
@@ -379,7 +380,7 @@ After importing, run `terraform plan` and reconcile until it is empty. The Conso
 - **Names are unique per organization** for each object type, must match `^[a-z0-9-]+$` and be 1 to 255 characters. A duplicate returns `409`. **`issuer_url` is unique too**: the API rejects a second issuer for a URL the organization already trusts, so one issuer per identity provider, shared by all the rules that trust it (including the Console-created bootstrap rule, see section 2). A service account's `name` is immutable and forces replacement; an issuer's and a rule's can be renamed in place.
 - **Scopes an OAuth caller may grant.** `workspace:developer` and `workspace:inference` only. `org:admin` and `workspace:manage_tunnels` rules are Console-only, and an issuer backing one of them cannot be updated by the provider either. A rule granting `org:admin` must also target a service account whose `organization_role` is `admin`.
 - **Never use a wildcard subject for a privileged rule.** See the warning in section 2; for workspace-scoped rules, prefer an exact `subject_prefix` plus `claims` matches (`repository_owner`, `ref`) over a trailing `*`; if the trailing `*` is unavoidable, pin `ref` in `claims` so pull-request runs from forks never match.
-- **Token lifetimes.** `max_jwt_lifetime_seconds` on the issuer bounds the identity token you accept; `token_lifetime_seconds` on the rule bounds the access token you mint, itself capped at twice the identity token's remaining validity. Keep both short for CI.
+- **Token lifetimes.** `max_jwt_lifetime_seconds` on the issuer bounds the identity token you accept; `token_lifetime_seconds` on the rule bounds the access token you mint, itself capped at twice the identity token's remaining validity. Keep both short for CI, but keep `token_lifetime_seconds` well above 120: the SDK refreshes within the last 120 seconds of a token's life, so a shorter one refreshes, and fetches an identity token, on nearly every request.
 - **The `org:admin` token used by Terraform expires**, so a plan or apply that runs for a long time may need a fresh export in between. Mint it as late as possible and avoid combining WIF changes with slow resources in the same run.
 
 ## See also
