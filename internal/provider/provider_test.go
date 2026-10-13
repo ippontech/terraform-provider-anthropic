@@ -219,6 +219,81 @@ func TestConfigureClientsCarryExactlyOneCredential(t *testing.T) {
 	})
 }
 
+// TestConfigureWorkspaceIDHeader: workspace_id scopes the standard client
+// alone. An identity-linked key that is not bound to one workspace is
+// rejected without the header, while the OAuth client must not carry it: a
+// federated bearer selects its workspace at exchange time.
+func TestConfigureWorkspaceIDHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		config map[string]tftypes.Value
+		env    string
+		want   string
+	}{
+		{
+			name:   "config",
+			config: map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, "wrkspc_config")},
+			want:   "wrkspc_config",
+		},
+		{
+			name: "environment fallback",
+			env:  "wrkspc_env",
+			want: "wrkspc_env",
+		},
+		{
+			name:   "config wins over environment",
+			config: map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, "wrkspc_config")},
+			env:    "wrkspc_env",
+			want:   "wrkspc_config",
+		},
+		{
+			name:   "unknown counts as unset",
+			config: map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)},
+			env:    "wrkspc_env",
+			want:   "wrkspc_env",
+		},
+		{
+			name: "neither",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got http.Header
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Clone()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			clearCredentialEnv(t)
+			t.Setenv("ANTHROPIC_BASE_URL", srv.URL)
+			t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api03-env")
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-oat01-env")
+			if tt.env != "" {
+				t.Setenv("ANTHROPIC_WORKSPACE_ID", tt.env)
+			}
+
+			pd := providerDataFrom(t, configureProvider(t, tt.config))
+
+			if err := pd.Client.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if v := got.Get("anthropic-workspace-id"); v != tt.want {
+				t.Errorf("standard client anthropic-workspace-id = %q, want %q", v, tt.want)
+			}
+
+			if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if v := got.Get("anthropic-workspace-id"); v != "" {
+				t.Errorf("oauth client sent anthropic-workspace-id = %q, want none", v)
+			}
+		})
+	}
+}
+
 // TestConfigureStandardClientDropsInheritedBearer covers the mirror case of
 // TestConfigureClientsCarryExactlyOneCredential. The SDK's chain stops at the
 // first credential it finds, so ANTHROPIC_API_KEY masks the bearer token; only

@@ -192,6 +192,8 @@ The provider has three optional credentials, and a fourth way to obtain the thir
 
 Each is resolved by `resolveCredential` (`internal/provider/provider.go`): the provider argument wins when set, the env var otherwise, and an Unknown value (an unresolved reference at plan time) counts as unset.
 
+A fifth argument, `workspace_id` (`ANTHROPIC_WORKSPACE_ID`, resolved the same way), is not a credential: it becomes the `anthropic-workspace-id` default header on `pd.Client` **only**, since an identity-linked key not bound to one workspace is rejected with a 400 without it (doc "Select a workspace", re-read 2026-10-13). The admin client is organization-wide and a federated bearer picks its workspace at exchange time, so neither gets the header (`TestConfigureWorkspaceIDHeader`). It deliberately shares its variable with `federation.workspace_id`, as the SDKs do: one variable, one workspace.
+
 Two details are load-bearing:
 
 - **`pd.OAuthClient` is a `*providerdata.OAuthClient` wrapper, not a bare `*anthropic.Client`.** The SDK carries no notion of which credential a client holds, so two bare clients are mutually assignable and mixing them up compiles silently, surfacing only as a 401 at apply time. The wrapper keeps the compiler in the loop; [#187](https://github.com/ippontech/terraform-provider-anthropic/issues/187) extends the same treatment to the other clients when `internal/admin` is retired. Because the wrapper adds a level of indirection the other guards do not have, `requireOAuthClient` checks `client.Client != nil` as well as `client != nil` — a non-nil wrapper around a nil SDK client would otherwise pass the guard and nil-deref on the first API call.
