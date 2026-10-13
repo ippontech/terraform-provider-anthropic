@@ -102,15 +102,25 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	// Both would fill pd.OAuthClient. Picking one silently would hide a
-	// leftover ANTHROPIC_AUTH_TOKEN behind a federation block that appears to
-	// be in use, or the reverse. An auth_token unknown at plan time counts as
-	// set: resolveCredential reads it as unset, which would defer the conflict
-	// to apply.
-	if federation != nil && (authToken != "" || data.AuthToken.IsUnknown()) {
-		resp.Diagnostics.AddAttributeError(path.Root("federation"), "Conflicting OAuth Credentials",
-			"federation and auth_token (or ANTHROPIC_AUTH_TOKEN) both supply the org:admin bearer token. Configure one.")
-		return
+	// Both would fill pd.OAuthClient, so configuring both is an error. The
+	// check reads the configuration, not the resolved string: an auth_token
+	// unknown at plan time is still set, and an exported ANTHROPIC_AUTH_TOKEN
+	// gives way to the federation block, as the environment does to every
+	// other provider argument.
+	if federation != nil {
+		if !data.AuthToken.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root("federation"), "Conflicting OAuth Credentials",
+				"federation and auth_token both supply the org:admin bearer token. Configure one.")
+			return
+		}
+		// The SDKs give ANTHROPIC_AUTH_TOKEN precedence over their own
+		// federation, so an operator used to them would expect the reverse.
+		if authToken != "" {
+			resp.Diagnostics.AddAttributeWarning(path.Root("federation"), "ANTHROPIC_AUTH_TOKEN Ignored",
+				"ANTHROPIC_AUTH_TOKEN is set, but the federation block supplies the org:admin bearer token, so the variable is not used. "+
+					"Unset it to silence this warning.")
+			authToken = ""
+		}
 	}
 
 	if apiKey == "" && adminApiKey == "" && authToken == "" && federation == nil {

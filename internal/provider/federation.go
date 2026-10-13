@@ -54,7 +54,8 @@ func federationSchema() schema.SingleNestedAttribute {
 			"The provider exchanges an identity token from your platform (a CI OIDC token, a Kubernetes projected " +
 			"service account token, an Entra token...) for an Anthropic access token, and exchanges again before it " +
 			"expires, fetching a fresh identity token each time. Every attribute falls back to the environment " +
-			"variable the Anthropic SDKs read. Conflicts with `auth_token`. Give the federation rule a " +
+			"variable the Anthropic SDKs read. Conflicts with `auth_token`; an exported ANTHROPIC_AUTH_TOKEN is " +
+			"ignored, with a warning. Give the federation rule a " +
 			"`token_lifetime_seconds` well above 120: the SDK refreshes within the last 120 seconds of a token's life, " +
 			"so a shorter lifetime refreshes, and fetches an identity token, on nearly every request.",
 		Attributes: map[string]schema.Attribute{

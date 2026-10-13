@@ -115,8 +115,8 @@ func countingTokenScript(t *testing.T) string {
 // TestConfigureFederationExchangesAndRefreshes covers the point of the
 // block: the OAuth client mints its own bearer token, and when that token is
 // close to expiry it exchanges again with a freshly fetched identity token
-// rather than replaying the first one (single-use assertions such as GitHub
-// Actions and Kubernetes tokens would be rejected as a replay).
+// rather than replaying the first one (the exchange rejects a repeated jti,
+// which GitHub Actions tokens carry).
 func TestConfigureFederationExchangesAndRefreshes(t *testing.T) {
 	// Under the SDK's 30s mandatory threshold, so every request refreshes.
 	fs := newFederationServer(t, 10)
@@ -268,6 +268,29 @@ func TestConfigureFederationEnvironmentAloneDoesNothing(t *testing.T) {
 
 func TestConfigureFederationConflictsWithAuthToken(t *testing.T) {
 	clearCredentialEnv(t)
+
+	resp := configureProvider(t, map[string]tftypes.Value{
+		"auth_token": tftypes.NewValue(tftypes.String, "sk-ant-oat01-configured"),
+		"federation": federationValue(t, map[string]tftypes.Value{
+			"organization_id":    tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_rule"),
+			"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
+		}),
+	})
+	if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != "Conflicting OAuth Credentials" {
+		t.Fatalf("diagnostics = %v, want Conflicting OAuth Credentials", resp.Diagnostics)
+	}
+}
+
+// TestConfigureFederationIgnoresAuthTokenEnvironment: an exported
+// ANTHROPIC_AUTH_TOKEN gives way to the block, as the environment does to
+// every provider argument. The SDKs rank it the other way round, hence the
+// warning.
+func TestConfigureFederationIgnoresAuthTokenEnvironment(t *testing.T) {
+	fs := newFederationServer(t, 3600)
+
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_BASE_URL", fs.URL)
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-oat01-leftover")
 
 	resp := configureProvider(t, map[string]tftypes.Value{
@@ -277,8 +300,16 @@ func TestConfigureFederationConflictsWithAuthToken(t *testing.T) {
 			"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
 		}),
 	})
-	if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != "Conflicting OAuth Credentials" {
-		t.Fatalf("diagnostics = %v, want Conflicting OAuth Credentials", resp.Diagnostics)
+	if w := resp.Diagnostics.Warnings(); len(w) != 1 || w[0].Summary() != "ANTHROPIC_AUTH_TOKEN Ignored" {
+		t.Errorf("warnings = %v, want ANTHROPIC_AUTH_TOKEN Ignored", w)
+	}
+
+	pd := providerDataFrom(t, resp)
+	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if _, authorized := fs.snapshot(); len(authorized) != 1 || authorized[0] != "Bearer sk-ant-oat01-minted-1" {
+		t.Errorf("authorization headers = %v, want the federated token", authorized)
 	}
 }
 
