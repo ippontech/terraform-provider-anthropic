@@ -104,6 +104,14 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	apiKey := resolveCredential(data.ApiKey, "ANTHROPIC_API_KEY")
 	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
 	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
+	// Unknown is an error, not unset, as for the federation block: reading
+	// it as unset would send no header, or the environment's, and the
+	// workspace is routinely a reference to a resource of the same module.
+	if data.WorkspaceID.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(path.Root("workspace_id"), "Unknown Workspace Configuration",
+			"workspace_id depends on a value that is not known until apply. Provider configuration must be known at plan time.")
+		return
+	}
 	workspaceID := resolveCredential(data.WorkspaceID, "ANTHROPIC_WORKSPACE_ID")
 
 	federation, diags := resolveFederation(ctx, data.Federation)
