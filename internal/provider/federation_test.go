@@ -390,27 +390,35 @@ func TestCommandIdentityTokenTimesOutWithChildren(t *testing.T) {
 // back to the environment or report the value as missing.
 func TestConfigureFederationRejectsUnknownAttributes(t *testing.T) {
 	unknown := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
-	tests := map[string]map[string]tftypes.Value{
-		"organization_id": {
-			"organization_id":    unknown,
-			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_rule"),
-			"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
-		},
-		"identity_token_command": {
-			"organization_id":        tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
-			"federation_rule_id":     tftypes.NewValue(tftypes.String, "fdrl_rule"),
-			"identity_token_command": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{unknown}),
-		},
+	listType := tftypes.List{ElementType: tftypes.String}
+	known := map[string]tftypes.Value{
+		"organization_id":    tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+		"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_rule"),
 	}
-	for name, attrs := range tests {
-		t.Run(name, func(t *testing.T) {
+	tests := []struct {
+		label     string
+		attribute string
+		value     tftypes.Value
+	}{
+		{"organization_id", "organization_id", unknown},
+		{"command list", "identity_token_command", tftypes.NewValue(listType, tftypes.UnknownValue)},
+		{"command element", "identity_token_command", tftypes.NewValue(listType, []tftypes.Value{unknown})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
 			clearCredentialEnv(t)
 			t.Setenv("ANTHROPIC_IDENTITY_TOKEN", "jwt-from-env")
 
+			attrs := map[string]tftypes.Value{tt.attribute: tt.value}
+			for k, v := range known {
+				if _, set := attrs[k]; !set {
+					attrs[k] = v
+				}
+			}
 			resp := configureProvider(t, map[string]tftypes.Value{"federation": federationValue(t, attrs)})
 			if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != "Unknown Federation Configuration" ||
-				!strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "federation."+name) {
-				t.Errorf("diagnostics = %v, want federation.%s reported as unknown", resp.Diagnostics, name)
+				!strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "federation."+tt.attribute) {
+				t.Errorf("diagnostics = %v, want federation.%s reported as unknown", resp.Diagnostics, tt.attribute)
 			}
 		})
 	}

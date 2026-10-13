@@ -132,18 +132,23 @@ func resolveFederation(ctx context.Context, obj types.Object) (*federationSettin
 		return nil, diags
 	}
 
-	for name, v := range map[string]attr.Value{
-		"organization_id":        m.OrganizationID,
-		"federation_rule_id":     m.FederationRuleID,
-		"service_account_id":     m.ServiceAccountID,
-		"workspace_id":           m.WorkspaceID,
-		"identity_token":         m.IdentityToken,
-		"identity_token_file":    m.IdentityTokenFile,
-		"identity_token_command": m.IdentityTokenCommand,
+	// A slice, not a map, so several unknown attributes are reported in the
+	// same order on every plan.
+	for _, a := range []struct {
+		name  string
+		value attr.Value
+	}{
+		{"organization_id", m.OrganizationID},
+		{"federation_rule_id", m.FederationRuleID},
+		{"service_account_id", m.ServiceAccountID},
+		{"workspace_id", m.WorkspaceID},
+		{"identity_token", m.IdentityToken},
+		{"identity_token_file", m.IdentityTokenFile},
+		{"identity_token_command", m.IdentityTokenCommand},
 	} {
-		if containsUnknown(v) {
-			diags.AddAttributeError(path.Root("federation").AtName(name), "Unknown Federation Configuration",
-				fmt.Sprintf("federation.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", name))
+		if containsUnknown(a.value) {
+			diags.AddAttributeError(path.Root("federation").AtName(a.name), "Unknown Federation Configuration",
+				fmt.Sprintf("federation.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
 		}
 	}
 	if diags.HasError() {

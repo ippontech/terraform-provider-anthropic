@@ -55,10 +55,11 @@ provider "anthropic" {
     # The exchange accepts a token with a jti claim, as GitHub's are, only
     # once, so one is requested per exchange.
     # The command is run without a shell; this one needs a pipe and the
-    # runner's variables, so it names sh as the program.
+    # runner's variables, so it names sh as the program. --max-time keeps a
+    # stalled request from outliving the provider's 30-second stop.
     identity_token_command = [
       "sh", "-c",
-      "curl -sSf -H \"Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com\" | jq -r .value",
+      "curl -sSf --max-time 20 -H \"Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com\" | jq -r .value",
     ]
   }
 }
