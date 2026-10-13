@@ -86,7 +86,9 @@ func federationSchema() schema.SingleNestedAttribute {
 			"identity_token_file": schema.StringAttribute{
 				Optional: true,
 				Description: "Path to a file holding the identity token, re-read on every exchange so a rotating file " +
-					"(such as a Kubernetes projected token) stays current. Can also be set via the ANTHROPIC_IDENTITY_TOKEN_FILE environment variable.",
+					"(such as a Kubernetes projected token) stays current. The file must have been rotated by the next exchange " +
+					"if its token carries a `jti`, which the exchange accepts only once. " +
+					"Can also be set via the ANTHROPIC_IDENTITY_TOKEN_FILE environment variable.",
 			},
 			"identity_token_command": schema.ListAttribute{
 				Optional:    true,

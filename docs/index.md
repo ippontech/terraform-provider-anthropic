@@ -99,7 +99,7 @@ provider "anthropic" {
 }
 ```
 
-- `identity_token_file` is re-read on every exchange, for tokens a platform rotates on disk.
+- `identity_token_file` is re-read on every exchange, for tokens a platform rotates on disk. The platform must have rotated the file by the next exchange: if it still holds a token with a `jti` the exchange has already accepted, that exchange fails with `jti_reused`.
 - `identity_token_command` runs a program on every exchange and reads the token from its stdout. Use it for tokens fetched from a CLI or an endpoint. The program is run directly, not through a shell, so a pipe or `$VARIABLE` expansion needs the shell as the program: `["sh", "-c", "..."]`.
 - `identity_token` is a literal and cannot be refreshed.
 
@@ -155,7 +155,7 @@ Optional:
 - `federation_rule_id` (String) Federation rule (`fdrl_...`) to exchange against. Can also be set via the ANTHROPIC_FEDERATION_RULE_ID environment variable.
 - `identity_token` (String, Sensitive) A literal identity token (JWT). It cannot be refreshed, so applies that outlive it fail; prefer `identity_token_file` or `identity_token_command`. Can also be set via the ANTHROPIC_IDENTITY_TOKEN environment variable.
 - `identity_token_command` (List of String) Command (program and arguments) that prints an identity token on stdout. The program is run directly, not through a shell: for a pipe or `$VARIABLE` expansion, make the shell the program (`["sh", "-c", "..."]`). It runs on every exchange, so short-lived tokens, and tokens with a `jti` claim that the exchange accepts only once, are fetched fresh each time. It is stopped after 30 seconds. Its stderr is not shown in diagnostics, since a failing CLI may echo the token there; it is logged at TF_LOG=DEBUG.
-- `identity_token_file` (String) Path to a file holding the identity token, re-read on every exchange so a rotating file (such as a Kubernetes projected token) stays current. Can also be set via the ANTHROPIC_IDENTITY_TOKEN_FILE environment variable.
+- `identity_token_file` (String) Path to a file holding the identity token, re-read on every exchange so a rotating file (such as a Kubernetes projected token) stays current. The file must have been rotated by the next exchange if its token carries a `jti`, which the exchange accepts only once. Can also be set via the ANTHROPIC_IDENTITY_TOKEN_FILE environment variable.
 - `organization_id` (String) UUID of the Anthropic organization. Can also be set via the ANTHROPIC_ORGANIZATION_ID environment variable.
 - `service_account_id` (String) Service account (`svac_...`) the rule targets; the exchange fails if the rule targets another. Can also be set via the ANTHROPIC_SERVICE_ACCOUNT_ID environment variable.
 - `workspace_id` (String) Workspace (`wrkspc_...`) to scope the token to at exchange time. Required only when the rule is enabled for more than one workspace. Can also be set via the ANTHROPIC_WORKSPACE_ID environment variable, which the SDKs' own federation reads the same way.
