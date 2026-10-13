@@ -49,7 +49,7 @@ provider "anthropic" {
 }
 ```
 
-The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time (see `federation.workspace_id`, which reads the same `ANTHROPIC_WORKSPACE_ID` variable: one variable, one workspace, for both). An SDK profile's `workspace_id` is never read.
+The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time (see `federation.workspace_id`, which reads the same `ANTHROPIC_WORKSPACE_ID` variable: one variable, one workspace, for both; the two attributes may still name different workspaces explicitly, each client follows its own). An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
 
 ### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
 

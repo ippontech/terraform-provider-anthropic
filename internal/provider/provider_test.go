@@ -247,12 +247,6 @@ func TestConfigureWorkspaceIDHeader(t *testing.T) {
 			want:   "wrkspc_config",
 		},
 		{
-			name:   "unknown counts as unset",
-			config: map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)},
-			env:    "wrkspc_env",
-			want:   "wrkspc_env",
-		},
-		{
 			name: "neither",
 			want: "",
 		},
@@ -291,6 +285,25 @@ func TestConfigureWorkspaceIDHeader(t *testing.T) {
 				t.Errorf("oauth client sent anthropic-workspace-id = %q, want none", v)
 			}
 		})
+	}
+}
+
+// TestConfigureRejectsUnknownWorkspaceID: same rule as the federation block.
+// Read as unset, an unknown workspace_id would send no header, or the
+// environment's, and route the plan's reads to the wrong workspace.
+func TestConfigureRejectsUnknownWorkspaceID(t *testing.T) {
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api03-env")
+	t.Setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_env")
+
+	resp := configureProvider(t, map[string]tftypes.Value{
+		"workspace_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("Configure succeeded, want an error for an unknown workspace_id")
+	}
+	if got := resp.Diagnostics.Errors()[0].Summary(); got != "Unknown Workspace Configuration" {
+		t.Errorf("summary = %q, want Unknown Workspace Configuration", got)
 	}
 }
 
