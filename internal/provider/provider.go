@@ -51,6 +51,7 @@ type AnthropicProviderModel struct {
 	AdminApiKey types.String `tfsdk:"admin_api_key"`
 	AuthToken   types.String `tfsdk:"auth_token"`
 	Federation  types.Object `tfsdk:"federation"`
+	WorkspaceID types.String `tfsdk:"workspace_id"`
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -79,6 +80,14 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
 			"federation": federationSchema(),
+			"workspace_id": schema.StringAttribute{
+				Optional: true,
+				Description: "Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header " +
+					"on every request of the standard client. Required with a personal or service account key that is " +
+					"not scoped to a single workspace; unnecessary with a single-workspace key. Not sent on the Admin API " +
+					"or the org:admin OAuth client, which select their workspace otherwise. Can also be set via the " +
+					"ANTHROPIC_WORKSPACE_ID environment variable, shared with `federation.workspace_id`.",
+			},
 		},
 	}
 }
@@ -95,6 +104,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	apiKey := resolveCredential(data.ApiKey, "ANTHROPIC_API_KEY")
 	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
 	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
+	workspaceID := resolveCredential(data.WorkspaceID, "ANTHROPIC_WORKSPACE_ID")
 
 	federation, diags := resolveFederation(ctx, data.Federation)
 	resp.Diagnostics.Append(diags...)
@@ -137,7 +147,14 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	// the environment contributed on its own — see newSDKClient.
 	pd := &providerdata.ProviderData{}
 	if apiKey != "" {
-		pd.Client = newSDKClient(option.WithAPIKey(apiKey))
+		// Only the standard client is workspace-scoped by header: the Admin
+		// API is organization-wide, and a federated bearer selects its
+		// workspace at exchange time.
+		opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+		if workspaceID != "" {
+			opts = append(opts, option.WithHeader("anthropic-workspace-id", workspaceID))
+		}
+		pd.Client = newSDKClient(opts...)
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
@@ -168,8 +185,9 @@ func resolveCredential(configValue types.String, envVar string) string {
 	return os.Getenv(envVar)
 }
 
-// newSDKClient builds an SDK client that carries exactly the credential passed
-// in, and nothing the environment contributed on its own.
+// newSDKClient builds an SDK client that carries exactly the options passed
+// in (the credential, and for the standard client the workspace header), and
+// nothing the environment contributed on its own.
 //
 // option.WithoutEnvironmentDefaults suppresses anthropic.DefaultClientOptions
 // entirely, which matters for more than the credential headers. That chain has
@@ -189,8 +207,8 @@ func resolveCredential(configValue types.String, envVar string) string {
 // still worth honouring is ANTHROPIC_BASE_URL, which the marker option also
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
-func newSDKClient(credential option.RequestOption) *anthropic.Client {
-	opts := []option.RequestOption{option.WithoutEnvironmentDefaults(), credential}
+func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
+	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
