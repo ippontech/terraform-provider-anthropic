@@ -26,9 +26,10 @@ import (
 
 // identityTokenCommandTimeout bounds one run of identity_token_command. The
 // command runs on every token exchange, so a hung command would otherwise
-// stall the request that triggered the exchange indefinitely. A variable so
-// tests can shorten it.
-var identityTokenCommandTimeout = 30 * time.Second
+// stall the request that triggered the exchange indefinitely. Passed to
+// commandIdentityToken as an argument, not read as a package variable, so a
+// test can shorten it without racing the other tests of the package.
+const identityTokenCommandTimeout = 30 * time.Second
 
 // identityTokenCommandWaitDelay bounds the wait for the command's output
 // pipes after it is killed. The kill reaches only the program itself: the
@@ -219,7 +220,7 @@ func identityTokenSource(ctx context.Context, m federationModel) (option.Identit
 
 	switch {
 	case argv != nil:
-		return commandIdentityToken(argv), nil
+		return commandIdentityToken(argv, identityTokenCommandTimeout), nil
 	case file != "":
 		return option.IdentityTokenFile(file), nil
 	case literal != "":
@@ -245,14 +246,14 @@ func staticIdentityToken(token string) option.IdentityTokenFunc {
 	return func(context.Context) (string, error) { return token, nil }
 }
 
-// commandIdentityToken runs argv for each exchange. Neither of its outputs
-// reaches the error, which Terraform prints and CI logs keep: on a failure,
-// stdout may hold a token, and stderr may echo one (`curl -v`, `az --debug`,
-// a script under `set -x`). stderr goes to the debug log instead, which the
-// operator turns on deliberately.
-func commandIdentityToken(argv []string) option.IdentityTokenFunc {
+// commandIdentityToken runs argv for each exchange, stopping it after
+// timeout. Neither of its outputs reaches the error, which Terraform prints
+// and CI logs keep: on a failure, stdout may hold a token, and stderr may
+// echo one (`curl -v`, `az --debug`, a script under `set -x`). stderr goes to
+// the debug log instead, which the operator turns on deliberately.
+func commandIdentityToken(argv []string, timeout time.Duration) option.IdentityTokenFunc {
 	return func(ctx context.Context) (string, error) {
-		runCtx, cancel := context.WithTimeout(ctx, identityTokenCommandTimeout)
+		runCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
 		var stdout, stderr bytes.Buffer
@@ -260,14 +261,26 @@ func commandIdentityToken(argv []string) option.IdentityTokenFunc {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		cmd.WaitDelay = identityTokenCommandWaitDelay
-		if err := cmd.Run(); err != nil {
+		err := cmd.Run()
+		// The program exited normally but a child it left behind (a daemon
+		// started with `&`) still holds stdout open: the token it printed is
+		// whole, so keep it.
+		if errors.Is(err, exec.ErrWaitDelay) && strings.TrimSpace(stdout.String()) != "" {
+			err = nil
+		}
+		if err != nil {
 			tflog.Debug(ctx, "identity_token_command failed", map[string]any{
 				"program": argv[0],
 				"stderr":  strings.TrimSpace(stderr.String()),
 			})
-			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			switch {
+			case errors.Is(runCtx.Err(), context.DeadlineExceeded):
 				return "", fmt.Errorf("identity_token_command %q did not finish within %s (its stderr is logged at TF_LOG=DEBUG)",
-					argv[0], identityTokenCommandTimeout)
+					argv[0], timeout)
+			case ctx.Err() != nil:
+				// Cancelled by the caller, not failed: the command's stderr
+				// holds nothing to look up.
+				return "", ctx.Err()
 			}
 			return "", fmt.Errorf("identity_token_command %q: %w (its stderr is logged at TF_LOG=DEBUG)", argv[0], err)
 		}

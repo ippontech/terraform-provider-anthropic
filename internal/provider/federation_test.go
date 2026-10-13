@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -360,7 +361,7 @@ func TestIdentityTokenSourceRequiresOne(t *testing.T) {
 // logs, and a failing CLI under `set -x` or `curl -v` echoes the token to
 // stderr. The error points to the debug log instead.
 func TestCommandIdentityTokenKeepsStderrOutOfTheError(t *testing.T) {
-	fn := commandIdentityToken([]string{"sh", "-c", "echo 'Authorization: Bearer eyJsecret' >&2; exit 1"})
+	fn := commandIdentityToken([]string{"sh", "-c", "echo 'Authorization: Bearer eyJsecret' >&2; exit 1"}, identityTokenCommandTimeout)
 
 	_, err := fn(context.Background())
 	if err == nil || strings.Contains(err.Error(), "eyJsecret") || !strings.Contains(err.Error(), "TF_LOG=DEBUG") {
@@ -372,11 +373,8 @@ func TestCommandIdentityTokenKeepsStderrOutOfTheError(t *testing.T) {
 // shape: the timeout kills sh, but its children keep stdout open, and only
 // the WaitDelay stops Run from waiting on them.
 func TestCommandIdentityTokenTimesOutWithChildren(t *testing.T) {
-	defer func(d time.Duration) { identityTokenCommandTimeout = d }(identityTokenCommandTimeout)
-	identityTokenCommandTimeout = 100 * time.Millisecond
-
 	start := time.Now()
-	_, err := commandIdentityToken([]string{"sh", "-c", "sleep 60 | cat"})(context.Background())
+	_, err := commandIdentityToken([]string{"sh", "-c", "sleep 60 | cat"}, 100*time.Millisecond)(context.Background())
 	if elapsed := time.Since(start); elapsed > identityTokenCommandWaitDelay+5*time.Second {
 		t.Errorf("returned after %s, want the timeout plus WaitDelay", elapsed)
 	}
@@ -460,9 +458,40 @@ func TestIdentityTokenSourceConfigWinsOverEnvironment(t *testing.T) {
 }
 
 func TestCommandIdentityTokenRejectsEmptyOutput(t *testing.T) {
-	fn := commandIdentityToken([]string{"sh", "-c", "true"})
+	fn := commandIdentityToken([]string{"sh", "-c", "true"}, identityTokenCommandTimeout)
 
 	if _, err := fn(context.Background()); err == nil || !strings.Contains(err.Error(), "printed no token") {
 		t.Errorf("err = %v, want an empty-output error", err)
+	}
+}
+
+// TestCommandIdentityTokenKeepsTokenDespiteLingeringChild: the program printed
+// the token and exited, but a child it started keeps stdout open past the
+// WaitDelay. The token is whole, so ErrWaitDelay does not discard it.
+func TestCommandIdentityTokenKeepsTokenDespiteLingeringChild(t *testing.T) {
+	fn := commandIdentityToken([]string{"sh", "-c", "sleep 60 & echo jwt-from-command"}, identityTokenCommandTimeout)
+
+	got, err := fn(context.Background())
+	if err != nil {
+		t.Fatalf("err = %v, want the token despite the lingering child", err)
+	}
+	if got != "jwt-from-command" {
+		t.Errorf("token = %q, want the command's output", got)
+	}
+}
+
+// TestCommandIdentityTokenReportsCancellation: a caller cancelling the
+// exchange (Ctrl-C) is not a failure of the command, so the error is the
+// context's, not a "signal: killed" that points the operator at stderr.
+func TestCommandIdentityTokenReportsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := commandIdentityToken([]string{"sh", "-c", "sleep 60"}, identityTokenCommandTimeout)(ctx)
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "TF_LOG") {
+		t.Errorf("err = %v, want context.Canceled without a pointer to stderr", err)
 	}
 }
