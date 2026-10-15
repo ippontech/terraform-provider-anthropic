@@ -99,7 +99,7 @@ Optional:
 - `audience` (String) Exact match against the `aud` claim (any element if array). When omitted, the JWT's `aud` must still equal Anthropic's expected audience for the issuer; setting this field overrides that default.
 - `claims` (Map of String) Exact-match `{claim: value}` pairs against top-level claims. Only string-valued claims can be matched; use `condition` for non-string claims.
 - `condition` (String) CEL expression over claims for logic the structural fields can't express. Must evaluate to a boolean and may reference only the `claims` variable; a constant-true expression (such as `true`) is rejected with 400.
-- `subject_prefix` (String) Match the verified JWT `sub` claim. Exact match unless the value ends with `*`, in which case it is a prefix match. Example: `repo:my-org/my-repo:ref:refs/heads/main`.
+- `subject_prefix` (String) Match the verified JWT `sub` claim. Exact match unless the value ends with `*`, in which case it is a prefix match. A trailing `*` must directly follow `:` or `/`, and an empty value or a bare `*` is rejected. Example: `repo:my-org/my-repo:ref:refs/heads/main`.
 
 
 <a id="nestedatt--target"></a>

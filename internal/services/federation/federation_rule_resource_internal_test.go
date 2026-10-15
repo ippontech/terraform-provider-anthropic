@@ -272,6 +272,41 @@ func TestBuildMatchParam_OnlySubjectPrefix(t *testing.T) {
 	}
 }
 
+func TestSubjectPrefixRegex(t *testing.T) {
+	cases := map[string]bool{
+		"repo:my-org/my-repo:ref:refs/heads/main": true,
+		"repo:my-org/my-repo:*":                   true,
+		"repo:my-org/*":                           true,
+		"a":                                       true,
+		"":                                        false,
+		"*":                                       false,
+		"**":                                      false,
+		"/*":                                      false,
+		"repo:my-org/app*":                        false,
+		"repo:my-org*":                            false,
+		"repo:my-org/**":                          false,
+	}
+	for value, want := range cases {
+		if got := subjectPrefixRegex.MatchString(value); got != want {
+			t.Errorf("subjectPrefixRegex.MatchString(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestBuildMatchParam_RejectsBroadSubjectPrefix(t *testing.T) {
+	ctx := context.Background()
+	matchObj := newObjectFromModel(t, ctx, federationRuleMatchAttrTypes, federationRuleMatchModel{
+		SubjectPrefix: types.StringValue("repo:my-org/app*"),
+		Audience:      types.StringNull(),
+		Claims:        types.MapNull(types.StringType),
+		Condition:     types.StringNull(),
+	})
+
+	if _, d := buildMatchParam(ctx, matchObj); !d.HasError() {
+		t.Fatal("buildMatchParam accepted subject_prefix \"repo:my-org/app*\", want an error")
+	}
+}
+
 func TestBuildTargetParam(t *testing.T) {
 	ctx := context.Background()
 	targetObj := newObjectFromModel(t, ctx, federationRuleTargetAttrTypes, federationRuleTargetModel{

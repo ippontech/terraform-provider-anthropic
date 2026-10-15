@@ -65,7 +65,7 @@ output "release_manager_role" {
 ### Optional
 
 - `description` (String) Optional free-text description.
-- `organization_role` (String) Org-level role: `developer` or `admin`. Defaults to `developer`. A federation rule may only be created or retargeted to grant `org:admin` scope when this is `admin`. Setting this to `admin` (even when unchanged) requires an interactive credential (a user OAuth token or a Console session) — a workload cannot create or promote `admin`-role service accounts.
+- `organization_role` (String) Org-level role: `developer` or `admin`. Defaults to `developer`, so a promotion to `admin` made outside Terraform shows up as drift. A federation rule may only be created or retargeted to grant `org:admin` scope when this is `admin`. Setting this to `admin` (even when unchanged) requires an interactive credential (a user OAuth token or a Console session) — a workload cannot create or promote `admin`-role service accounts.
 
 ### Read-Only
 

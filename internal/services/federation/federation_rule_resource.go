@@ -116,6 +116,13 @@ var federationRuleTargetAttrTypes = map[string]attr.Type{
 // lowercase letters, digits, and hyphens only.
 var federationRuleNameRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// subjectPrefixRegex rejects an empty value, a bare `*`, and a trailing `*`
+// that does not directly follow `:` or `/` (so `repo:org/app*` cannot also
+// match `repo:org/app-evil`).
+var subjectPrefixRegex = regexp.MustCompile(`^(?:.*[^*]|.+[:/]\*)$`)
+
+const subjectPrefixRegexMessage = "must be non-empty, and a trailing `*` wildcard must directly follow `:` or `/`"
+
 // --- Schema ---
 
 func (r *FederationRuleResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -154,7 +161,10 @@ func (r *FederationRuleResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Attributes: map[string]schema.Attribute{
 					"subject_prefix": schema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "Match the verified JWT `sub` claim. Exact match unless the value ends with `*`, in which case it is a prefix match. Example: `repo:my-org/my-repo:ref:refs/heads/main`.",
+						MarkdownDescription: "Match the verified JWT `sub` claim. Exact match unless the value ends with `*`, in which case it is a prefix match. A trailing `*` must directly follow `:` or `/`, and an empty value or a bare `*` is rejected. Example: `repo:my-org/my-repo:ref:refs/heads/main`.",
+						Validators: []validator.String{
+							stringvalidator.RegexMatches(subjectPrefixRegex, subjectPrefixRegexMessage),
+						},
 					},
 					"audience": schema.StringAttribute{
 						Optional:            true,
@@ -731,6 +741,12 @@ func buildMatchParam(ctx context.Context, matchObj types.Object) (anthropic.Beta
 	params := anthropic.BetaFederationRuleMatchParam{}
 
 	if !m.SubjectPrefix.IsNull() && !m.SubjectPrefix.IsUnknown() {
+		// Re-checked here because plan-time validation skips values that are
+		// unknown until apply.
+		if !subjectPrefixRegex.MatchString(m.SubjectPrefix.ValueString()) {
+			diags.AddAttributeError(path.Root("match").AtName("subject_prefix"), "Invalid match.subject_prefix", "subject_prefix "+subjectPrefixRegexMessage+".")
+			return anthropic.BetaFederationRuleMatchParam{}, diags
+		}
 		params.SubjectPrefix = param.NewOpt(m.SubjectPrefix.ValueString())
 	}
 	if !m.Audience.IsNull() && !m.Audience.IsUnknown() {

@@ -15,9 +15,30 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
+
+func TestServiceAccountSchema_OrganizationRoleDefaultsDeveloper(t *testing.T) {
+	var schemaResp resource.SchemaResponse
+	(&ServiceAccountResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["organization_role"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("organization_role is not a StringAttribute: %T", schemaResp.Schema.Attributes["organization_role"])
+	}
+	if attr.Default == nil {
+		t.Fatal("organization_role must default to developer so an out-of-band promotion to admin shows as drift")
+	}
+	resp := defaults.StringResponse{}
+	attr.Default.DefaultString(context.Background(), defaults.StringRequest{}, &resp)
+	if got := resp.PlanValue.ValueString(); got != "developer" {
+		t.Errorf("organization_role default = %q, want developer", got)
+	}
+}
 
 func TestMapServiceAccountToState_basicFields(t *testing.T) {
 	createdAt := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)

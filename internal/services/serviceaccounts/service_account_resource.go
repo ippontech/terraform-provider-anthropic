@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -108,12 +109,13 @@ func (r *ServiceAccountResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"organization_role": schema.StringAttribute{
 				Optional: true,
 				Computed: true,
-				MarkdownDescription: "Org-level role: `developer` or `admin`. Defaults to `developer`. A federation rule may only be " +
+				MarkdownDescription: "Org-level role: `developer` or `admin`. Defaults to `developer`, so a promotion to `admin` made " +
+					"outside Terraform shows up as drift. A federation rule may only be " +
 					"created or retargeted to grant `org:admin` scope when this is `admin`. Setting this to `admin` (even when unchanged) " +
 					"requires an interactive credential (a user OAuth token or a Console session) — a workload cannot create or promote " +
 					"`admin`-role service accounts.",
-				Validators:    []validator.String{stringvalidator.OneOf("developer", "admin")},
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators: []validator.String{stringvalidator.OneOf("developer", "admin")},
+				Default:    stringdefault.StaticString("developer"),
 			},
 
 			// --- Computed ---
