@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -22,6 +23,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/claudecode"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/federation"
@@ -39,6 +41,7 @@ import (
 
 // Ensure AnthropicProvider satisfies various provider interfaces.
 var _ provider.Provider = &AnthropicProvider{}
+var _ provider.ProviderWithActions = &AnthropicProvider{}
 
 // AnthropicProvider defines the provider implementation.
 type AnthropicProvider struct {
@@ -267,6 +270,13 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		vaults.NewVaultCredentialResource,
 		workspaces.NewWorkspaceResource,
 		workspaces.NewWorkspaceMemberResource,
+	}
+}
+
+// Actions lists the provider's actions (Terraform 1.14+).
+func (p *AnthropicProvider) Actions(ctx context.Context) []func() action.Action {
+	return []func() action.Action{
+		claudecode.NewRoutineFireAction,
 	}
 }
 
