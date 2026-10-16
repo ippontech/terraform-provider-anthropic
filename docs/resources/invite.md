@@ -14,7 +14,7 @@ Creates and manages an invitation for a user to join the organization via the Ad
 > **Beta header**: None.
 > **Cost**: Free.
 
-> **Note on updates:** There is no update operation on this endpoint: changing `email` or `role` replaces the invite (a new invitation email is sent). Deleting this resource cancels a pending invite. Once accepted, expired or deleted out of band, the invite is removed from Terraform state and recreated on the next apply.
+> **Note on updates:** There is no update operation on this endpoint: changing `email` or `role` replaces the invite (a new invitation email is sent). The resource remains managed after acceptance or expiration while the API still returns the invite. Deleting this resource cancels the invite when the API permits it.
 
 ## Example Usage
 
@@ -60,7 +60,7 @@ output "invite_status" {
 
 ## Import
 
-Import an existing pending invite using its ID:
+Import an existing invite using its ID:
 
 ```shell
 terraform import anthropic_invite.example <invite_id>

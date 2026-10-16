@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
@@ -76,8 +78,8 @@ func TestInviteCreate_mapsResponseToState(t *testing.T) {
 	}
 }
 
-func TestInviteRead_terminalStatusRemovesFromState(t *testing.T) {
-	for _, status := range []string{"accepted", "expired", "deleted"} {
+func TestInviteRead_preservesStateForEveryReturnedStatus(t *testing.T) {
+	for _, status := range []string{"pending", "accepted", "expired", "deleted"} {
 		t.Run(status, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -85,44 +87,31 @@ func TestInviteRead_terminalStatusRemovesFromState(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			client := admintest.NewClient(t, srv)
-			body, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/invites/invite_01ABC", nil)
-			if err != nil {
-				t.Fatalf("read: %v", err)
+			r := &InviteResource{adminClient: admintest.NewClient(t, srv)}
+			schema := schematest.ResourceSchema(t, r)
+			objType := schematest.ResourceObjectType(t, r)
+			vals := schematest.NullValues(t, r)
+			vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "invite_01ABC")
+			state := tfsdk.State{Raw: tftypes.NewValue(objType, vals), Schema: schema}
+
+			var resp resource.ReadResponse
+			resp.State = tfsdk.State{Schema: schema}
+			r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read returned errors: %v", resp.Diagnostics)
+			}
+			if resp.State.Raw.IsNull() {
+				t.Fatal("expected invite to remain in state")
 			}
 
-			var inv inviteAPIResponse
-			if err := json.Unmarshal(body, &inv); err != nil {
-				t.Fatalf("unmarshal: %v", err)
+			var got InviteResourceModel
+			if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+				t.Fatalf("failed to read state: %v", diags)
 			}
-
-			if inv.Status == "pending" {
-				t.Fatalf("status %q should not be treated as pending", inv.Status)
+			if got.Status.ValueString() != status {
+				t.Errorf("Status = %q, want %q", got.Status.ValueString(), status)
 			}
 		})
-	}
-}
-
-func TestInviteRead_pendingStatusKept(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, inviteFixture("pending"))
-	}))
-	defer srv.Close()
-
-	client := admintest.NewClient(t, srv)
-	body, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/invites/invite_01ABC", nil)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-
-	var inv inviteAPIResponse
-	if err := json.Unmarshal(body, &inv); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if inv.Status != "pending" {
-		t.Errorf("Status = %q, want pending", inv.Status)
 	}
 }
 
