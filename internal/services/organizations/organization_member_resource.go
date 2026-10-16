@@ -57,14 +57,14 @@ func (r *OrganizationMemberResource) Metadata(_ context.Context, req resource.Me
 func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages an existing organization member (User) via the Admin API. " +
-			"Organization membership is created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept — " +
-			"use `terraform import` to bring an existing member under Terraform management. " +
+			"Creating this resource looks up the configured user ID and adopts that existing member; it does not create organization membership. " +
+			"Membership must first be created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept. " +
 			"This resource supports changing a member's organization role and removing them from the organization. " +
 			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "The ID of the user. Also used as the import ID.",
+				MarkdownDescription: "The ID of the existing organization member to manage. Also used as the import ID.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"email": schema.StringAttribute{
@@ -127,13 +127,48 @@ func (r *OrganizationMemberResource) Configure(_ context.Context, req resource.C
 
 // --- Create ---
 
-func (r *OrganizationMemberResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
-	resp.Diagnostics.AddError(
-		"Organization Member Creation Not Supported",
-		"Organization membership is created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept the invite. "+
-			"Use `terraform import` to manage an existing member:\n\n"+
-			"  terraform import anthropic_organization_member.<name> <user_id>",
-	)
+func (r *OrganizationMemberResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan OrganizationMemberResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	userID := plan.ID.ValueString()
+	respBytes, err := r.client.DoRequest(ctx, "GET", "/v1/organizations/users/"+userID, nil)
+	if err != nil {
+		if admin.IsNotFound(err) {
+			resp.Diagnostics.AddError(
+				"Organization Member Not Found",
+				fmt.Sprintf("User %q is not a member of this organization. Create membership by sending and accepting an invite before managing the user with this resource.", userID),
+			)
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to find organization member: %s", err))
+		return
+	}
+
+	var member organizationMemberAPIResponse
+	if err := json.Unmarshal(respBytes, &member); err != nil {
+		resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse organization member response: %s", err))
+		return
+	}
+
+	if member.Role != plan.Role.ValueString() {
+		respBytes, err = r.client.DoRequest(ctx, "POST", "/v1/organizations/users/"+userID, organizationMemberUpdateRequest{
+			Role: plan.Role.ValueString(),
+		})
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update organization member role: %s", err))
+			return
+		}
+		if err := json.Unmarshal(respBytes, &member); err != nil {
+			resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse updated organization member response: %s", err))
+			return
+		}
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, mapOrganizationMemberToResourceState(member))...)
 }
 
 // --- Read ---

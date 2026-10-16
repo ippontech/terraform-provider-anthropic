@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -33,17 +34,133 @@ const organizationMemberResourceFixture = `{
 	"type": "user"
 }`
 
-// --- Create always errors ---
+// --- Create ---
 
-func TestOrganizationMemberResource_CreateErrors(t *testing.T) {
+func TestOrganizationMemberResource_CreateAdoptsExistingMember(t *testing.T) {
 	t.Parallel()
 
-	r := &OrganizationMemberResource{}
+	var gotMethods []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotMethods = append(gotMethods, req.Method)
+		if req.URL.Path != "/v1/organizations/users/user_01WCz1FkmYMm4gnmykNKUu3Q" {
+			t.Errorf("unexpected path: %s", req.URL.Path)
+		}
+		if req.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", req.Method)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, organizationMemberResourceFixture)
+	}))
+	defer srv.Close()
+
+	r := &OrganizationMemberResource{client: admintest.NewClient(t, srv)}
+	schema := schematest.ResourceSchema(t, r)
+	objType := schematest.ResourceObjectType(t, r)
+	vals := schematest.NullValues(t, r)
+	vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "user_01WCz1FkmYMm4gnmykNKUu3Q")
+	vals["role"] = tftypes.NewValue(objType.AttributeTypes["role"], "developer")
+	plan := tfsdk.Plan{Raw: tftypes.NewValue(objType, vals), Schema: schema}
+
 	var resp resource.CreateResponse
-	r.Create(context.Background(), resource.CreateRequest{}, &resp)
+	resp.State = tfsdk.State{Schema: schema}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
 
 	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected Create to return an error diagnostic")
+		var data OrganizationMemberResourceModel
+		if diags := resp.State.Get(context.Background(), &data); diags.HasError() {
+			t.Fatalf("failed to read created state: %v", diags)
+		}
+		if data.ID.ValueString() != "user_01WCz1FkmYMm4gnmykNKUu3Q" || data.Role.ValueString() != "developer" {
+			t.Errorf("unexpected adopted member state: id=%q role=%q", data.ID.ValueString(), data.Role.ValueString())
+		}
+	} else {
+		t.Fatalf("Create returned errors: %v", resp.Diagnostics)
+	}
+	if len(gotMethods) != 1 || gotMethods[0] != http.MethodGet {
+		t.Errorf("methods = %v, want only GET", gotMethods)
+	}
+}
+
+func TestOrganizationMemberResource_CreateUpdatesRoleWhenAdopting(t *testing.T) {
+	t.Parallel()
+
+	var gotMethods []string
+	var gotRole string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotMethods = append(gotMethods, req.Method)
+		if req.URL.Path != "/v1/organizations/users/user_01WCz1FkmYMm4gnmykNKUu3Q" {
+			t.Errorf("unexpected path: %s", req.URL.Path)
+		}
+		w.Header().Set("content-type", "application/json")
+		if req.Method == http.MethodGet {
+			_, _ = io.WriteString(w, organizationMemberResourceFixture)
+			return
+		}
+		var body organizationMemberUpdateRequest
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Errorf("failed to decode update request: %v", err)
+		}
+		gotRole = body.Role
+		_, _ = io.WriteString(w, strings.Replace(organizationMemberResourceFixture, `"role": "developer"`, `"role": "user"`, 1))
+	}))
+	defer srv.Close()
+
+	r := &OrganizationMemberResource{client: admintest.NewClient(t, srv)}
+	schema := schematest.ResourceSchema(t, r)
+	objType := schematest.ResourceObjectType(t, r)
+	vals := schematest.NullValues(t, r)
+	vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "user_01WCz1FkmYMm4gnmykNKUu3Q")
+	vals["role"] = tftypes.NewValue(objType.AttributeTypes["role"], "user")
+	plan := tfsdk.Plan{Raw: tftypes.NewValue(objType, vals), Schema: schema}
+
+	var resp resource.CreateResponse
+	resp.State = tfsdk.State{Schema: schema}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create returned errors: %v", resp.Diagnostics)
+	}
+	if len(gotMethods) != 2 || gotMethods[0] != http.MethodGet || gotMethods[1] != http.MethodPost {
+		t.Errorf("methods = %v, want GET then POST", gotMethods)
+	}
+	if gotRole != "user" {
+		t.Errorf("updated role = %q, want user", gotRole)
+	}
+	var data OrganizationMemberResourceModel
+	if diags := resp.State.Get(context.Background(), &data); diags.HasError() {
+		t.Fatalf("failed to read created state: %v", diags)
+	}
+	if data.Role.ValueString() != "user" {
+		t.Errorf("state role = %q, want user", data.Role.ValueString())
+	}
+}
+
+func TestOrganizationMemberResource_CreateRequiresExistingMember(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", req.Method)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"type":"not_found_error","message":"user not found"}}`)
+	}))
+	defer srv.Close()
+
+	r := &OrganizationMemberResource{client: admintest.NewClient(t, srv)}
+	schema := schematest.ResourceSchema(t, r)
+	objType := schematest.ResourceObjectType(t, r)
+	vals := schematest.NullValues(t, r)
+	vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "user_missing")
+	vals["role"] = tftypes.NewValue(objType.AttributeTypes["role"], "developer")
+	plan := tfsdk.Plan{Raw: tftypes.NewValue(objType, vals), Schema: schema}
+
+	var resp resource.CreateResponse
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected Create to report that the member does not exist")
+	}
+	if got := resp.Diagnostics[0].Summary(); got != "Organization Member Not Found" {
+		t.Errorf("diagnostic summary = %q, want Organization Member Not Found", got)
 	}
 }
 
