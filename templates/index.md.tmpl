@@ -33,6 +33,24 @@ provider "anthropic" {
 }
 ```
 
+### Workspace (`workspace_id` / `ANTHROPIC_WORKSPACE_ID`)
+
+API keys are [personal or service account keys](https://platform.claude.com/docs/en/manage-claude/authentication#key-types), bound to an identity rather than to a workspace. A key created for a single workspace needs nothing more. A key that is not must say which workspace each request acts in, or the API answers `400 anthropic-workspace-id is required when authenticating with an identity-linked API key`. Set `workspace_id` and the provider sends that header on every request of the standard client, so one key serves one provider alias per workspace:
+
+```hcl
+provider "anthropic" {
+  alias        = "prod"
+  workspace_id = "wrkspc_01..."
+}
+
+provider "anthropic" {
+  alias        = "staging"
+  workspace_id = "wrkspc_02..."
+}
+```
+
+The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time (see `federation.workspace_id`, which reads the same `ANTHROPIC_WORKSPACE_ID` variable: one variable, one workspace, for both; the two attributes may still name different workspaces explicitly, each client follows its own). An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
+
 ### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
 
 Required for organization-management resources: `anthropic_workspace`, workspace members, and workspace rate limits. This is a separate credential scoped to your whole organization rather than a single workspace.
