@@ -1,7 +1,6 @@
-# Organization membership is created by inviting a user and having them
-# accept the invite — it cannot be created via Terraform. Import an existing
-# member first:
-#   terraform import anthropic_organization_member.example <user_id>
+# The user must already be a member of the organization. Terraform adopts the
+# existing member by ID only when their current role matches this config.
+# Destroy fails unless remove_on_destroy is enabled and applied first.
 resource "anthropic_organization_member" "example" {
   id   = "user_01ABCDEFGHIJKLMNOPQRSTUVWX"
   role = "developer"

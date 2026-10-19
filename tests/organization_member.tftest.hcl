@@ -25,4 +25,9 @@ run "organization_member_plan_validates_schema" {
     condition     = anthropic_organization_member.example.role == "developer"
     error_message = "Expected role to be 'developer'."
   }
+
+  assert {
+    condition     = anthropic_organization_member.example.remove_on_destroy == false
+    error_message = "Expected remove_on_destroy to default to false."
+  }
 }

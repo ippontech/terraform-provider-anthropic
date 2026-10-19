@@ -12,6 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -36,12 +38,13 @@ type OrganizationMemberResource struct {
 
 // OrganizationMemberResourceModel maps the resource schema to Go types.
 type OrganizationMemberResourceModel struct {
-	ID      types.String `tfsdk:"id"`
-	Email   types.String `tfsdk:"email"`
-	Name    types.String `tfsdk:"name"`
-	Role    types.String `tfsdk:"role"`
-	AddedAt types.String `tfsdk:"added_at"`
-	Type    types.String `tfsdk:"type"`
+	ID              types.String `tfsdk:"id"`
+	Email           types.String `tfsdk:"email"`
+	Name            types.String `tfsdk:"name"`
+	Role            types.String `tfsdk:"role"`
+	AddedAt         types.String `tfsdk:"added_at"`
+	Type            types.String `tfsdk:"type"`
+	RemoveOnDestroy types.Bool   `tfsdk:"remove_on_destroy"`
 }
 
 type organizationMemberUpdateRequest struct {
@@ -57,14 +60,23 @@ func (r *OrganizationMemberResource) Metadata(_ context.Context, req resource.Me
 func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages an existing organization member (User) via the Admin API. " +
-			"Organization membership is created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept — " +
-			"use `terraform import` to bring an existing member under Terraform management. " +
+			"Creating this resource looks up the configured user ID and adopts that existing member; it does not create organization membership. " +
+			"Adoption requires the configured role to match the member's current role; otherwise, import the member first to review the role change as an update. " +
+			"Membership must first be created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept. " +
 			"This resource supports changing a member's organization role and removing them from the organization. " +
+			"Destroy is blocked unless `remove_on_destroy = true` has been applied. **Warning:** When enabled, removing this resource from configuration and applying, or running `terraform destroy`, irreversibly removes the user's organization membership. There is no archive or deactivate alternative. " +
 			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
 		Attributes: map[string]schema.Attribute{
+			"remove_on_destroy": schema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				MarkdownDescription: "If `true`, destroying this resource irreversibly removes the user's organization membership. If `false`, destroy fails and the resource remains in Terraform state. There is no archive or deactivate alternative. Default: `false`. Set this to `true` and apply before destroying the resource.",
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
 			"id": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "The ID of the user. Also used as the import ID.",
+				MarkdownDescription: "The ID of the existing organization member to manage. Also used as the import ID.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"email": schema.StringAttribute{
@@ -127,13 +139,36 @@ func (r *OrganizationMemberResource) Configure(_ context.Context, req resource.C
 
 // --- Create ---
 
-func (r *OrganizationMemberResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
-	resp.Diagnostics.AddError(
-		"Organization Member Creation Not Supported",
-		"Organization membership is created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept the invite. "+
-			"Use `terraform import` to manage an existing member:\n\n"+
-			"  terraform import anthropic_organization_member.<name> <user_id>",
-	)
+func (r *OrganizationMemberResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan OrganizationMemberResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	userID := plan.ID.ValueString()
+	member, err := r.getMember(ctx, userID)
+	if err != nil {
+		if admin.IsNotFound(err) {
+			resp.Diagnostics.AddError(
+				"Organization Member Not Found",
+				fmt.Sprintf("User %q is not a member of this organization. Create membership by sending and accepting an invite before managing the user with this resource.", userID),
+			)
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read organization member: %s", err))
+		return
+	}
+
+	if member.Role != plan.Role.ValueString() {
+		resp.Diagnostics.AddError(
+			"Organization Member Role Mismatch",
+			fmt.Sprintf("Organization member %q has role %q, but the configured role is %q. Adoption cannot change an existing member's role. Import the member with terraform import <resource_address> %s, then run terraform plan to review the role change as an update before applying.", userID, member.Role, plan.Role.ValueString(), userID),
+		)
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, mapOrganizationMemberToResourceState(member, plan.RemoveOnDestroy))...)
 }
 
 // --- Read ---
@@ -145,7 +180,7 @@ func (r *OrganizationMemberResource) Read(ctx context.Context, req resource.Read
 		return
 	}
 
-	respBytes, err := r.client.DoRequest(ctx, "GET", "/v1/organizations/users/"+data.ID.ValueString(), nil)
+	member, err := r.getMember(ctx, data.ID.ValueString())
 	if err != nil {
 		if admin.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
@@ -155,13 +190,7 @@ func (r *OrganizationMemberResource) Read(ctx context.Context, req resource.Read
 		return
 	}
 
-	var member organizationMemberAPIResponse
-	if err := json.Unmarshal(respBytes, &member); err != nil {
-		resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse organization member response: %s", err))
-		return
-	}
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, mapOrganizationMemberToResourceState(member))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, mapOrganizationMemberToResourceState(member, data.RemoveOnDestroy))...)
 }
 
 // --- Update ---
@@ -187,18 +216,26 @@ func (r *OrganizationMemberResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, mapOrganizationMemberToResourceState(member))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, mapOrganizationMemberToResourceState(member, plan.RemoveOnDestroy))...)
 }
 
 // --- Delete ---
 
-// Delete removes the member from the organization. This is irreversible —
-// unlike other Admin API resources, no archive/deactivate alternative exists
-// for organization membership.
+// Delete removes the member from the organization (only when explicitly enabled).
+// This is irreversible — unlike other Admin API resources, no archive/deactivate
+// alternative exists for organization membership.
 func (r *OrganizationMemberResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data OrganizationMemberResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.RemoveOnDestroy.ValueBool() {
+		resp.Diagnostics.AddError(
+			"Organization Member Removal Disabled",
+			"Destroy is blocked because remove_on_destroy is not true. The member has not been removed. Set remove_on_destroy = true on this resource and run terraform apply before destroying it. Removing organization membership is irreversible; there is no archive or deactivate alternative.",
+		)
 		return
 	}
 
@@ -219,15 +256,31 @@ func (r *OrganizationMemberResource) ImportState(ctx context.Context, req resour
 // Helper functions
 // ============================================================================
 
+func (r *OrganizationMemberResource) getMember(ctx context.Context, id string) (organizationMemberAPIResponse, error) {
+	var member organizationMemberAPIResponse
+	body, err := r.client.DoRequest(ctx, "GET", "/v1/organizations/users/"+id, nil)
+	if err != nil {
+		return member, err
+	}
+	if err := json.Unmarshal(body, &member); err != nil {
+		return member, fmt.Errorf("unable to parse organization member response: %w", err)
+	}
+	return member, nil
+}
+
 // mapOrganizationMemberToResourceState maps an API User response to the
 // resource's Terraform state model.
-func mapOrganizationMemberToResourceState(member organizationMemberAPIResponse) OrganizationMemberResourceModel {
+func mapOrganizationMemberToResourceState(member organizationMemberAPIResponse, removeOnDestroy types.Bool) OrganizationMemberResourceModel {
+	if removeOnDestroy.IsNull() || removeOnDestroy.IsUnknown() {
+		removeOnDestroy = types.BoolValue(false)
+	}
 	return OrganizationMemberResourceModel{
-		ID:      types.StringValue(member.ID),
-		Email:   types.StringValue(member.Email),
-		Name:    types.StringValue(member.Name),
-		Role:    types.StringValue(member.Role),
-		AddedAt: types.StringValue(member.AddedAt),
-		Type:    types.StringValue(member.Type),
+		ID:              types.StringValue(member.ID),
+		Email:           types.StringValue(member.Email),
+		Name:            types.StringValue(member.Name),
+		Role:            types.StringValue(member.Role),
+		AddedAt:         types.StringValue(member.AddedAt),
+		Type:            types.StringValue(member.Type),
+		RemoveOnDestroy: removeOnDestroy,
 	}
 }
