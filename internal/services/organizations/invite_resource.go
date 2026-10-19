@@ -76,7 +76,7 @@ func (r *InviteResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		MarkdownDescription: "Creates and manages an invitation for a user to join the organization via the Admin API. " +
 			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider. " +
 			"There is no update operation: changing `email` or `role` replaces the invite. " +
-			"Deleting this resource cancels a pending invite.",
+			"The resource remains managed after the invite is accepted or expires; deleting this resource cancels the invite when possible.",
 		Attributes: map[string]schema.Attribute{
 			// --- Writable ---
 			"email": schema.StringAttribute{
@@ -207,11 +207,7 @@ func (r *InviteResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	// An invite that has been accepted, has expired, or was deleted is no longer a
-	// pending invitation Terraform can manage: drop it from state so the next apply
-	// re-creates it, mirroring the drift-detection pattern used elsewhere in this repo
-	// (e.g. service_account_workspace skipping implicit entries).
-	if inv.Status != "pending" {
+	if inv.Status == "deleted" {
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -234,6 +230,10 @@ func (r *InviteResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	var data InviteResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.Status.IsNull() && !data.Status.IsUnknown() && data.Status.ValueString() != "pending" {
 		return
 	}
 

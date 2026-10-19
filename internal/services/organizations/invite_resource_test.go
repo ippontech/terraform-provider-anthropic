@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
@@ -76,76 +78,110 @@ func TestInviteCreate_mapsResponseToState(t *testing.T) {
 	}
 }
 
-func TestInviteRead_terminalStatusRemovesFromState(t *testing.T) {
-	for _, status := range []string{"accepted", "expired", "deleted"} {
-		t.Run(status, func(t *testing.T) {
+func TestInviteRead_handlesReturnedStatus(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		status       string
+		responseCode int
+		wantGone     bool
+	}{
+		{name: "pending", status: "pending", responseCode: http.StatusOK},
+		{name: "accepted", status: "accepted", responseCode: http.StatusOK},
+		{name: "expired", status: "expired", responseCode: http.StatusOK},
+		{name: "deleted", status: "deleted", responseCode: http.StatusOK, wantGone: true},
+		{name: "not found", responseCode: http.StatusNotFound, wantGone: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = io.WriteString(w, inviteFixture(status))
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/invites/invite_01ABC" || r.URL.RawQuery != "beta=true" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+				}
+				w.WriteHeader(test.responseCode)
+				if test.responseCode == http.StatusOK {
+					_, _ = io.WriteString(w, inviteFixture(test.status))
+				}
 			}))
 			defer srv.Close()
 
-			client := admintest.NewClient(t, srv)
-			body, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/invites/invite_01ABC", nil)
-			if err != nil {
-				t.Fatalf("read: %v", err)
+			r := &InviteResource{adminClient: admintest.NewClient(t, srv)}
+			schema := schematest.ResourceSchema(t, r)
+			objType := schematest.ResourceObjectType(t, r)
+			vals := schematest.NullValues(t, r)
+			vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "invite_01ABC")
+			state := tfsdk.State{Raw: tftypes.NewValue(objType, vals), Schema: schema}
+
+			resp := resource.ReadResponse{State: state}
+			r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read returned errors: %v", resp.Diagnostics)
+			}
+			if test.wantGone {
+				if !resp.State.Raw.IsNull() {
+					t.Fatal("expected invite to be removed from state")
+				}
+				return
+			}
+			if resp.State.Raw.IsNull() {
+				t.Fatal("expected invite to remain in state")
 			}
 
-			var inv inviteAPIResponse
-			if err := json.Unmarshal(body, &inv); err != nil {
-				t.Fatalf("unmarshal: %v", err)
+			var got InviteResourceModel
+			if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+				t.Fatalf("failed to read state: %v", diags)
 			}
-
-			if inv.Status == "pending" {
-				t.Fatalf("status %q should not be treated as pending", inv.Status)
+			if got.Status.ValueString() != test.status {
+				t.Errorf("Status = %q, want %q", got.Status.ValueString(), test.status)
 			}
 		})
 	}
 }
 
-func TestInviteRead_pendingStatusKept(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, inviteFixture("pending"))
-	}))
-	defer srv.Close()
+func TestInviteDelete(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		status       any
+		responseCode int
+		wantRequests int
+		wantError    bool
+	}{
+		{name: "pending", status: "pending", responseCode: http.StatusNoContent, wantRequests: 1},
+		{name: "already gone", status: "pending", responseCode: http.StatusNotFound, wantRequests: 1},
+		{name: "bad request", status: "pending", responseCode: http.StatusBadRequest, wantRequests: 1, wantError: true},
+		{name: "conflict", status: "pending", responseCode: http.StatusConflict, wantRequests: 1, wantError: true},
+		{name: "accepted", status: "accepted", responseCode: http.StatusBadRequest},
+		{name: "expired", status: "expired", responseCode: http.StatusConflict},
+		{name: "deleted", status: "deleted", responseCode: http.StatusNotFound},
+		{name: "null status", status: nil, responseCode: http.StatusNoContent, wantRequests: 1},
+		{name: "unknown status", status: tftypes.UnknownValue, responseCode: http.StatusNoContent, wantRequests: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				requests++
+				if req.Method != http.MethodDelete || req.URL.Path != "/v1/organizations/invites/invite_01ABC" || req.URL.RawQuery != "beta=true" {
+					t.Errorf("unexpected request: %s %s", req.Method, req.URL)
+				}
+				w.WriteHeader(test.responseCode)
+			}))
+			defer srv.Close()
 
-	client := admintest.NewClient(t, srv)
-	body, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/invites/invite_01ABC", nil)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+			invite := &InviteResource{adminClient: admintest.NewClient(t, srv)}
+			state := schematest.NullState(t, invite)
+			objType := schematest.ResourceObjectType(t, invite)
+			vals := schematest.NullValues(t, invite)
+			vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "invite_01ABC")
+			vals["status"] = tftypes.NewValue(objType.AttributeTypes["status"], test.status)
+			state.Raw = tftypes.NewValue(objType, vals)
 
-	var inv inviteAPIResponse
-	if err := json.Unmarshal(body, &inv); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if inv.Status != "pending" {
-		t.Errorf("Status = %q, want pending", inv.Status)
-	}
-}
-
-func TestInviteDelete_callsExpectedEndpoint(t *testing.T) {
-	var gotMethod, gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	client := admintest.NewClient(t, srv)
-	_, err := client.DoRequest(context.Background(), "DELETE", "/v1/organizations/invites/invite_01ABC", nil)
-	if err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-
-	if gotMethod != "DELETE" {
-		t.Errorf("method = %q, want DELETE", gotMethod)
-	}
-	if gotPath != "/v1/organizations/invites/invite_01ABC" {
-		t.Errorf("path = %q, want /v1/organizations/invites/invite_01ABC", gotPath)
+			resp := resource.DeleteResponse{State: state}
+			invite.Delete(context.Background(), resource.DeleteRequest{State: state}, &resp)
+			if resp.Diagnostics.HasError() != test.wantError {
+				t.Fatalf("Delete diagnostics = %v, wantError = %v", resp.Diagnostics, test.wantError)
+			}
+			if requests != test.wantRequests {
+				t.Errorf("requests = %d, want %d", requests, test.wantRequests)
+			}
+		})
 	}
 }
 
