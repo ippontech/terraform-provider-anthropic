@@ -263,3 +263,53 @@ func TestCompleteFederationRuleIssuerName_KeepsCreateResponseOnError(t *testing.
 		t.Errorf("expected the create response to be returned on read-back failure")
 	}
 }
+
+// TestFederationRuleAfterUpdate_MapsReadBack is the update-path counterpart of
+// #243: the update response carries no target.service_account_name, the GET
+// that confirms the write does, and that GET is what Update maps.
+func TestFederationRuleAfterUpdate_MapsReadBack(t *testing.T) {
+	writtenAt := time.Date(2026, 10, 21, 13, 0, 0, 0, time.UTC)
+
+	gets := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/federation_rules/fdrl_01ABC" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		gets++
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := fmt.Fprintf(w, `{"id":"fdrl_01ABC","type":"federation_rule","name":"r","target":{"type":"service_account","service_account_id":"svac_01SVC","service_account_name":"ci-deploy"},"updated_at":%q}`, writtenAt.Format(time.RFC3339Nano)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	written := &anthropic.BetaFederationRule{
+		ID:        "fdrl_01ABC",
+		Target:    anthropic.BetaServiceAccountTarget{ServiceAccountID: "svac_01SVC"},
+		UpdatedAt: writtenAt,
+	}
+
+	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv), written, 2*time.Second, time.Millisecond)
+
+	if gets != 1 {
+		t.Errorf("gets = %d, want 1", gets)
+	}
+	if got.Target.ServiceAccountName != "ci-deploy" {
+		t.Errorf("Target.ServiceAccountName = %q, want %q", got.Target.ServiceAccountName, "ci-deploy")
+	}
+}
+
+// TestFederationRuleAfterUpdate_KeepsWriteResponseWhenWaitGivesUp: the wait
+// is best-effort, so a read that never succeeds leaves the write response.
+func TestFederationRuleAfterUpdate_KeepsWriteResponseWhenWaitGivesUp(t *testing.T) {
+	srv, _ := newFailingRuleServer(t, http.StatusNotFound)
+
+	written := &anthropic.BetaFederationRule{ID: "fdrl_01ABC", UpdatedAt: time.Now()}
+	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv, option.WithMaxRetries(0)), written, 2*time.Second, time.Millisecond)
+
+	if got != written {
+		t.Errorf("expected the write response to be returned when the wait gives up")
+	}
+}

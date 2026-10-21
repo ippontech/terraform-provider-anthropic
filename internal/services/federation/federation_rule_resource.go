@@ -554,7 +554,10 @@ func isTerminalFederationRuleReadError(err error) bool {
 // into a hard error; the worst case of giving up is the phantom diff we were
 // trying to avoid. The timestamp comparison is non-strict: an updated_at equal
 // to the write's counts as visible, or the loop would always time out.
-func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.OAuthClient, id string, writtenAt time.Time, timeout, interval time.Duration) {
+//
+// It returns the first read that reflects the write, or nil when it gave up
+// (see federationRuleAfterUpdate for why Update maps that read).
+func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.OAuthClient, id string, writtenAt time.Time, timeout, interval time.Duration) *anthropic.BetaFederationRule {
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -562,14 +565,14 @@ func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.
 		switch {
 		case err == nil:
 			if !rule.UpdatedAt.Before(writtenAt) {
-				return
+				return rule
 			}
 		case isTerminalFederationRuleReadError(err):
 			tflog.Warn(ctx, "federation rule became unreadable while waiting for the update to be visible; giving up on the consistency wait", map[string]any{
 				"federation_rule_id": id,
 				"error":              err.Error(),
 			})
-			return
+			return nil
 		}
 
 		if time.Now().After(deadline) {
@@ -577,15 +580,31 @@ func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.
 				"federation_rule_id": id,
 				"timeout":            timeout.String(),
 			})
-			return
+			return nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-time.After(interval):
 		}
 	}
+}
+
+// federationRuleAfterUpdate returns the rule Update maps into state: the
+// first read that reflects the write, or the write response when the wait
+// gave up. The update response (POST /v1/organizations/federation_rules/{id})
+// leaves target.service_account_name empty, while GET returns it; mapped as
+// is, the planned name (carried by UseStateForUnknown) becomes null and
+// Terraform reports an inconsistent result after apply. Same family as the
+// create response's issuer_name (#243), which completeFederationRuleIssuerName
+// handles.
+func federationRuleAfterUpdate(ctx context.Context, client *providerdata.OAuthClient, written *anthropic.BetaFederationRule, timeout, interval time.Duration) *anthropic.BetaFederationRule {
+	if fresh := awaitFederationRuleUpdateVisible(ctx, client, written.ID, written.UpdatedAt, timeout, interval); fresh != nil {
+		return fresh
+	}
+
+	return written
 }
 
 func (r *FederationRuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -677,12 +696,12 @@ func (r *FederationRuleResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
+	rule = federationRuleAfterUpdate(ctx, r.client, rule, federationRuleConsistencyTimeout, federationRuleConsistencyInterval)
+
 	resp.Diagnostics.Append(mapFederationRuleToState(ctx, rule, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	awaitFederationRuleUpdateVisible(ctx, r.client, state.ID.ValueString(), rule.UpdatedAt, federationRuleConsistencyTimeout, federationRuleConsistencyInterval)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
