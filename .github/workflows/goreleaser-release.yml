@@ -11,6 +11,10 @@ jobs:
   goreleaser-release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The GPG key and its passphrase are secrets of this environment only, whose deployment
+    # policy admits `v*` tags alone (RELEASE.md, "Protect the release credentials"); a workflow
+    # pushed on any other ref cannot read them.
+    environment: release
     permissions:
       contents: write
     steps:
@@ -29,6 +33,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # GoReleaser needs the full git history to build the changelog and detect the previous tag
+          persist-credentials: false  # GoReleaser publishes through GITHUB_TOKEN, not git
+
+      # Defence in depth only: a tag-triggered run reads this file from the tagged commit, so the
+      # tag ruleset and the environment above are what actually stop an arbitrary tag.
+      - name: Check the tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD || {
+            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main; refusing to sign a release from it."
+            exit 1
+          }
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

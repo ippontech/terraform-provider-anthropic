@@ -16,6 +16,9 @@ jobs:
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The App ID and private key are secrets of this environment only, whose deployment policy
+    # admits `main` alone (RELEASE.md, "Protect the release credentials").
+    environment: semantic-release
     # Every write (release commit, tag, GitHub release, issue and PR comments) goes through the
     # App token below, so the job token only needs to read the repository.
     permissions:
