@@ -26,7 +26,7 @@ You run in an isolated git worktree, on a branch of its own. Commit on that bran
 2. `origin/<base>`, when the spec names a base branch (a change stacked on an unmerged branch);
 3. `origin/main`.
 
-Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out). When that fast-forward is refused, the main agent does not force it: it stops and asks the person, because the spec's branch or its base has moved (for example, the base was merged).
+Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out).
 
 Do the reads of *Reference*, `.claude/skills/terraform-provider/SKILL.md` included, after this reset and in your worktree, so that they match your start point.
 
@@ -42,8 +42,8 @@ A worktree has no `.env`, so live credentials are unavailable: do not read, prin
 
 Done means all of the following:
 1. `make` passes (format, lint, unit tests, install, docs generation);
-2. `pre-commit run -a` passes with your files staged by path, since it skips untracked files (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
-3. `make terraform-test` passes, or you report it as skipped because the credentials it needs are absent;
+2. `pre-commit run -a` passes (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
+3. `make terraform-test` passes; run it only when `ANTHROPIC_API_KEY` is set in your environment (it applies the examples against the live API), otherwise report it as skipped without running it;
 4. the regenerated page under `docs/` has a non-empty `subcategory`;
 5. one local commit on your worktree's branch (see *Setup*), staging your files by path (never `git add -A`), with a conventional commit message such as `feat: add anthropic_<name> resource`.
 
