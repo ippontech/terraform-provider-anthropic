@@ -69,7 +69,7 @@ Read-Only:
 
 - `configs` (Attributes List) Per-tool configuration overrides. (see [below for nested schema](#nestedatt--agent_toolset--configs))
 - `default_enabled` (Boolean) Whether tools are enabled by default.
-- `default_permission_policy` (String) Default permission policy.
+- `default_permission_policy` (String) Default permission policy: `always_allow`, `always_ask` or `auto`.
 
 <a id="nestedatt--agent_toolset--configs"></a>
 ### Nested Schema for `agent_toolset.configs`
@@ -81,7 +81,7 @@ Read-Only:
 - `enabled` (Boolean) Whether this tool is enabled.
 - `max_content_tokens` (Number) Maximum number of tokens of fetched text content included in the context per call (`web_fetch`), null when unset.
 - `name` (String) Built-in tool name.
-- `permission_policy` (String) Permission policy: `always_allow` or `always_ask`.
+- `permission_policy` (String) Permission policy: `always_allow`, `always_ask` or `auto`.
 - `user_location` (Attributes) Approximate user location used to localize search results (`web_search`), null when unset. (see [below for nested schema](#nestedatt--agent_toolset--configs--user_location))
 
 <a id="nestedatt--agent_toolset--configs--user_location"></a>
@@ -123,7 +123,7 @@ Read-Only:
 
 - `configs` (Attributes List) Per-MCP-tool configuration overrides. (see [below for nested schema](#nestedatt--mcp_toolsets--configs))
 - `default_enabled` (Boolean) Whether MCP tools are enabled by default.
-- `default_permission_policy` (String) Default permission policy.
+- `default_permission_policy` (String) Default permission policy: `always_allow`, `always_ask` or `auto`.
 - `mcp_server_name` (String) Name of the MCP server.
 
 <a id="nestedatt--mcp_toolsets--configs"></a>
@@ -133,7 +133,7 @@ Read-Only:
 
 - `enabled` (Boolean) Whether this tool is enabled.
 - `name` (String) Name of the MCP tool.
-- `permission_policy` (String) Permission policy override.
+- `permission_policy` (String) Permission policy: `always_allow`, `always_ask` or `auto`.
 
 
 

@@ -54,7 +54,10 @@ resource "anthropic_agent" "developer" {
   }
 }
 
-# Agent with MCP server and skills
+# Agent with MCP server and skills. With the `auto` permission policy the
+# server evaluates each call and runs it, denies it or waits for approval; a
+# call it judges safe runs before anyone sees it, so tools whose calls a
+# person must review keep `always_ask`.
 resource "anthropic_agent" "mcp_agent" {
   model       = "claude-sonnet-4-6"
   name        = "MCP Agent"
@@ -71,7 +74,13 @@ resource "anthropic_agent" "mcp_agent" {
     {
       mcp_server_name           = "my_server"
       default_enabled           = true
-      default_permission_policy = "always_allow"
+      default_permission_policy = "auto"
+      configs = [
+        {
+          name              = "delete_record"
+          permission_policy = "always_ask"
+        }
+      ]
     }
   ]
 

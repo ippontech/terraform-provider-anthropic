@@ -263,6 +263,46 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens"),
 				),
 			},
+			// The auto policy as the default and as an override: the post-apply
+			// plan must be empty, and the override left unset maps to null.
+			{
+				Config: testAccAgentResourceWithAutoPolicyConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.default_permission_policy", "auto"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.permission_policy", "always_ask"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.permission_policy"),
+				),
+			},
+		},
+	})
+}
+
+// The auto policy on an MCP toolset default and on an MCP tool override. The
+// MCP server is never reached: agents are only validated against it when a
+// session starts.
+func TestAccAgentResource_mcpToolsetAutoPolicy(t *testing.T) {
+	const name = "anthropic_agent.test_mcp"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceMCPAutoPolicyConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.default_permission_policy", "auto"),
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.configs.0.permission_policy", "always_ask"),
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.configs.1.permission_policy", "auto"),
+				),
+			},
+			{
+				ResourceName:      name,
+				ImportState:       true,
+				ImportStateVerify: true,
+				// Import has no configuration to tell an echoed default from an
+				// explicit override, so per-tool fields come back verbatim.
+				ImportStateVerifyIgnore: []string{"mcp_toolsets.0.configs"},
+			},
 		},
 	})
 }
@@ -504,6 +544,61 @@ resource "anthropic_agent" "test_toolset" {
       }
     ]
   }
+}
+`
+
+const testAccAgentResourceWithAutoPolicyConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "auto"
+    configs = [
+      {
+        name              = "bash"
+        permission_policy = "always_ask"
+      },
+      {
+        name               = "web_fetch"
+        max_content_tokens = 10000
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceMCPAutoPolicyConfig = `
+resource "anthropic_agent" "test_mcp" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-mcp-auto"
+
+  mcp_servers = [
+    {
+      name = "example"
+      url  = "https://mcp.example.com/mcp"
+    }
+  ]
+
+  mcp_toolsets = [
+    {
+      mcp_server_name           = "example"
+      default_enabled           = true
+      default_permission_policy = "auto"
+      configs = [
+        {
+          name              = "delete_record"
+          permission_policy = "always_ask"
+        },
+        {
+          name              = "search"
+          enabled           = true
+          permission_policy = "auto"
+        }
+      ]
+    }
+  ]
 }
 `
 

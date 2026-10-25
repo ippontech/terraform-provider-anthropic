@@ -173,7 +173,20 @@ var agentCustomToolAttrTypes = map[string]attr.Type{
 
 // --- Permission policy validators (reused across tool schemas) ---
 
-var permissionPolicyValidator = stringvalidator.OneOf("always_allow", "always_ask")
+// Permission policy values
+// (https://platform.claude.com/docs/en/managed-agents/permission-policies).
+const (
+	policyAlwaysAllow = "always_allow"
+	policyAlwaysAsk   = "always_ask"
+	policyAuto        = "auto"
+)
+
+var permissionPolicyValidator = stringvalidator.OneOf(policyAlwaysAllow, policyAlwaysAsk, policyAuto)
+
+// permissionPolicyValuesDescription describes the values of a toolset's
+// default permission policy; per-tool overrides list the values only.
+const permissionPolicyValuesDescription = "`always_allow` (runs without confirmation), `always_ask` (waits for approval) or `auto` " +
+	"(the server evaluates each call and runs it, denies it or waits for approval; not a human checkpoint, since a call it judges safe runs before anyone sees it)"
 
 // Documented API defaults of a toolset's `default_config`. They are the schema
 // defaults of `default_enabled` and `default_permission_policy`, so a value the
@@ -341,7 +354,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						Optional: true,
 						Computed: true,
 						Default:  stringdefault.StaticString(agentToolsetDefaultPermissionPolicy),
-						MarkdownDescription: "Default permission policy: `always_allow` or `always_ask`. " +
+						MarkdownDescription: "Default permission policy: " + permissionPolicyValuesDescription + ". " +
 							"Defaults to `always_allow`, the API's documented default for the built-in toolset. " +
 							"When unset, the plan holds the default, so a policy changed outside Terraform is reverted on the next apply.",
 						Validators: []validator.String{permissionPolicyValidator},
@@ -367,7 +380,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 								},
 								"permission_policy": schema.StringAttribute{
 									Optional:            true,
-									MarkdownDescription: "Permission policy override: `always_allow` or `always_ask`.",
+									MarkdownDescription: "Permission policy override: `always_allow`, `always_ask` or `auto`.",
 									Validators:          []validator.String{permissionPolicyValidator},
 								},
 								"allowed_domains": schema.SetAttribute{
@@ -456,7 +469,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							Optional: true,
 							Computed: true,
 							Default:  stringdefault.StaticString(mcpToolsetDefaultPermissionPolicy),
-							MarkdownDescription: "Default permission policy: `always_allow` or `always_ask`. " +
+							MarkdownDescription: "Default permission policy: " + permissionPolicyValuesDescription + ". " +
 								"Defaults to `always_ask`, the API's documented default for MCP toolsets, so that a tool added to the server later needs approval. " +
 								"When unset, the plan holds the default, so a policy changed outside Terraform (to `always_allow`, say) is reverted on the next apply.",
 							Validators: []validator.String{permissionPolicyValidator},
@@ -477,7 +490,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 									},
 									"permission_policy": schema.StringAttribute{
 										Optional:            true,
-										MarkdownDescription: "Permission policy override: `always_allow` or `always_ask`.",
+										MarkdownDescription: "Permission policy override: `always_allow`, `always_ask` or `auto`.",
 										Validators:          []validator.String{permissionPolicyValidator},
 									},
 								},
@@ -1577,10 +1590,9 @@ func mapMCPToolsetsToState(ctx context.Context, apiToolsets []anthropic.BetaMana
 
 // --- Permission policy builder helpers ---
 
-// alwaysAllowPolicyParam and alwaysAskPolicyParam build the two permission policy
-// variants. Since SDK v1.66.0 every built-in tool carries its own
-// `PermissionPolicyUnion` type, but all of them are unions over these same two
-// params, so the branches below only differ in which union struct they fill in.
+// alwaysAllowPolicyParam, alwaysAskPolicyParam and autoPolicyParam build the
+// three permission policy variants
+// (https://platform.claude.com/docs/en/managed-agents/permission-policies).
 func alwaysAllowPolicyParam() *anthropic.BetaManagedAgentsAlwaysAllowPolicyParam {
 	return &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
 		Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
@@ -1591,6 +1603,31 @@ func alwaysAskPolicyParam() *anthropic.BetaManagedAgentsAlwaysAskPolicyParam {
 	return &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
 		Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
 	}
+}
+
+func autoPolicyParam() *anthropic.BetaManagedAgentsAutoPolicyParam {
+	p := anthropic.NewBetaManagedAgentsAutoPolicyParam()
+	return &p
+}
+
+// permissionPolicyParams returns the variants of a permission policy union to
+// fill for policyType: one non-nil pointer for a known policy, none for ""
+// (the union is then omitted and the toolset default applies). Since SDK
+// v1.66.0 every built-in tool, the MCP tool configs and both toolset defaults
+// carry their own `PermissionPolicyUnion` type, but all of them are unions over
+// these same three params, so callers assign the result to their union's
+// OfAlwaysAllow, OfAlwaysAsk and OfAuto fields. permissionPolicyValidator
+// rejects any other value at plan time.
+func permissionPolicyParams(policyType string) (*anthropic.BetaManagedAgentsAlwaysAllowPolicyParam, *anthropic.BetaManagedAgentsAlwaysAskPolicyParam, *anthropic.BetaManagedAgentsAutoPolicyParam) {
+	switch policyType {
+	case policyAlwaysAllow:
+		return alwaysAllowPolicyParam(), nil, nil
+	case policyAlwaysAsk:
+		return nil, alwaysAskPolicyParam(), nil
+	case policyAuto:
+		return nil, nil, autoPolicyParam()
+	}
+	return nil, nil, nil
 }
 
 // buildAgentToolConfigParams maps a `configs` entry to the SDK's discriminated
@@ -1613,57 +1650,27 @@ func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType
 	switch name {
 	case "bash":
 		cfg := &anthropic.BetaManagedAgentsBashToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfBash = cfg
 	case "edit":
 		cfg := &anthropic.BetaManagedAgentsEditToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfEdit = cfg
 	case "read":
 		cfg := &anthropic.BetaManagedAgentsReadToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfRead = cfg
 	case "write":
 		cfg := &anthropic.BetaManagedAgentsWriteToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfWrite = cfg
 	case "glob":
 		cfg := &anthropic.BetaManagedAgentsGlobToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfGlob = cfg
 	case "grep":
 		cfg := &anthropic.BetaManagedAgentsGrepToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfGrep = cfg
 	case toolNameWebFetch:
 		cfg := &anthropic.BetaManagedAgentsWebFetchToolConfigParams{
@@ -1672,12 +1679,7 @@ func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType
 			BlockedDomains:   web.blockedDomains,
 			MaxContentTokens: web.maxContentTokens,
 		}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfWebFetch = cfg
 	case toolNameWebSearch:
 		cfg := &anthropic.BetaManagedAgentsWebSearchToolConfigParams{
@@ -1688,12 +1690,7 @@ func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType
 		if web.userLocation != nil {
 			cfg.UserLocation = *web.userLocation
 		}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
+		cfg.PermissionPolicy.OfAlwaysAllow, cfg.PermissionPolicy.OfAlwaysAsk, cfg.PermissionPolicy.OfAuto = permissionPolicyParams(policyType)
 		u.OfWebSearch = cfg
 	default:
 		diags.AddError(
@@ -1706,55 +1703,19 @@ func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType
 }
 
 func buildAgentToolsetDefaultPermissionPolicy(policyType string) anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion {
-	switch policyType {
-	case "always_allow":
-		return anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
-			},
-		}
-	case "always_ask":
-		return anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAsk: &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
-			},
-		}
-	}
-	return anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion{}
+	var u anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion
+	u.OfAlwaysAllow, u.OfAlwaysAsk, u.OfAuto = permissionPolicyParams(policyType)
+	return u
 }
 
 func buildMCPToolConfigPermissionPolicy(policyType string) anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion {
-	switch policyType {
-	case "always_allow":
-		return anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion{
-			OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
-			},
-		}
-	case "always_ask":
-		return anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion{
-			OfAlwaysAsk: &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
-			},
-		}
-	}
-	return anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion{}
+	var u anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion
+	u.OfAlwaysAllow, u.OfAlwaysAsk, u.OfAuto = permissionPolicyParams(policyType)
+	return u
 }
 
 func buildMCPToolsetDefaultPermissionPolicy(policyType string) anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion {
-	switch policyType {
-	case "always_allow":
-		return anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
-			},
-		}
-	case "always_ask":
-		return anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAsk: &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
-			},
-		}
-	}
-	return anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion{}
+	var u anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion
+	u.OfAlwaysAllow, u.OfAlwaysAsk, u.OfAuto = permissionPolicyParams(policyType)
+	return u
 }
