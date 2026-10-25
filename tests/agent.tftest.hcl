@@ -77,6 +77,16 @@ run "agent_resource_example" {
   }
 
   assert {
+    condition     = anthropic_agent.developer.agent_toolset.configs[2].url_sources.client_tool_results.type == "none"
+    error_message = "Expected web_fetch to keep its url_sources."
+  }
+
+  assert {
+    condition     = contains(anthropic_agent.developer.agent_toolset.configs[2].url_sources.server_tool_results.tools, "web_search")
+    error_message = "Expected web_fetch to keep its server_tool_results filter."
+  }
+
+  assert {
     condition     = anthropic_agent.mcp_agent.mcp_toolsets[0].default_permission_policy == "auto"
     error_message = "Expected the MCP toolset to keep the auto permission policy."
   }

@@ -32,7 +32,9 @@ Those defaults are also the provider's: a toolset that leaves `default_permissio
 
 ## Web tool restrictions
 
-The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
+The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `url_sources`, and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
+
+`web_fetch` only fetches a URL that appeared earlier in the session: in a user message, in a custom tool's result, or in a `web_search` or `web_fetch` result. `url_sources` narrows each of these sources, so a URL that a tool result plants (prompt injection) is not fetched: `user_input` takes `all` or `none`, and `client_tool_results` and `server_tool_results` take a `type` of `all`, `none`, `only` or `except`, the last two with a `tools` list (names of `custom_tools` entries for `client_tool_results`, `web_search` or `web_fetch` for `server_tool_results`). Under `except` a custom tool added later counts as a source, under `only` it does not. A fetch of a URL that only an excluded source showed fails with `url_not_in_prior_context`. See [URL sources](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool#url-sources).
 
 These lists are not the only restrictions applied to the two tools:
 

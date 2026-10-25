@@ -93,7 +93,36 @@ Read-Only:
 - `max_content_tokens` (Number) Maximum number of tokens of fetched text content included in the context per call (`web_fetch`), null when unset.
 - `name` (String) Built-in tool name.
 - `permission_policy` (String) Permission policy: `always_allow`, `always_ask` or `auto`.
+- `url_sources` (Attributes) Which sources may contribute the URLs `web_fetch` fetches, null when every source may. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources))
 - `user_location` (Attributes) Approximate user location used to localize search results (`web_search`), null when unset. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--user_location))
+
+<a id="nestedatt--agents--agent_toolset--configs--url_sources"></a>
+### Nested Schema for `agents.agent_toolset.configs.url_sources`
+
+Read-Only:
+
+- `client_tool_results` (Attributes) Which custom tools' results contribute URLs that may be fetched, null when every one does. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources--client_tool_results))
+- `server_tool_results` (Attributes) Which `web_search` and `web_fetch` results contribute URLs that may be fetched, null when every one does. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources--server_tool_results))
+- `user_input` (String) Whether URLs in user messages may be fetched: `all` or `none`, null when unset.
+
+<a id="nestedatt--agents--agent_toolset--configs--url_sources--client_tool_results"></a>
+### Nested Schema for `agents.agent_toolset.configs.url_sources.client_tool_results`
+
+Read-Only:
+
+- `tools` (Set of String) Tool names of an `only` or `except` filter.
+- `type` (String) `all`, `none`, `only` or `except`.
+
+
+<a id="nestedatt--agents--agent_toolset--configs--url_sources--server_tool_results"></a>
+### Nested Schema for `agents.agent_toolset.configs.url_sources.server_tool_results`
+
+Read-Only:
+
+- `tools` (Set of String) Tool names of an `only` or `except` filter.
+- `type` (String) `all`, `none`, `only` or `except`.
+
+
 
 <a id="nestedatt--agents--agent_toolset--configs--user_location"></a>
 ### Nested Schema for `agents.agent_toolset.configs.user_location`

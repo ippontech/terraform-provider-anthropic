@@ -33,8 +33,28 @@ func toolCfg(name string) agentToolConfigModel {
 		BlockedDomains:   types.SetNull(types.StringType),
 		MaxContentTokens: types.Int64Null(),
 		UserLocation:     types.ObjectNull(agentUserLocationAttrTypes),
+		URLSources:       types.ObjectNull(agentURLSourcesAttrTypes),
 	}
 }
+
+// urlFilter returns a url_sources tool filter; no tools leaves `tools` null.
+func urlFilter(typ string, tools ...string) types.Object {
+	toolSet := types.SetNull(types.StringType)
+	if len(tools) > 0 {
+		toolSet = strSet(tools...)
+	}
+	return types.ObjectValueMust(agentURLSourceFilterAttrTypes, map[string]attr.Value{
+		"type": types.StringValue(typ), "tools": toolSet,
+	})
+}
+
+func urlSources(userInput types.String, client, server types.Object) types.Object {
+	return types.ObjectValueMust(agentURLSourcesAttrTypes, map[string]attr.Value{
+		"user_input": userInput, "client_tool_results": client, "server_tool_results": server,
+	})
+}
+
+var noURLFilter = types.ObjectNull(agentURLSourceFilterAttrTypes)
 
 func strSet(values ...string) types.Set {
 	elems := make([]attr.Value, len(values))
@@ -126,6 +146,63 @@ func TestBuildToolsParams_webOptions(t *testing.T) {
 	}
 }
 
+// url_sources reaches the web_fetch branch with every key in its object form:
+// a shorthand key as {"type": ...} and a filter's tools as tool_reference
+// objects. An unset key is omitted.
+func TestBuildAgentToolConfigParams_urlSources(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		sources types.Object
+		want    string
+	}{
+		{
+			name:    "every key",
+			sources: urlSources(types.StringValue("none"), urlFilter("except", "run_code"), urlFilter("only", "web_search")),
+			want: `{"user_input":{"type":"none"},` +
+				`"client_tool_results":{"type":"except","tools":[{"name":"run_code","type":"tool_reference"}]},` +
+				`"server_tool_results":{"type":"only","tools":[{"name":"web_search","type":"tool_reference"}]}}`,
+		},
+		{
+			name:    "one key",
+			sources: urlSources(types.StringNull(), urlFilter("none"), noURLFilter),
+			want:    `{"client_tool_results":{"type":"none"}}`,
+		},
+		{
+			name:    "explicit all",
+			sources: urlSources(types.StringValue("all"), noURLFilter, urlFilter("all")),
+			want:    `{"user_input":{"type":"all"},"server_tool_results":{"type":"all"}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := toolCfg("web_fetch")
+			c.URLSources = tc.sources
+			web, diags := webToolOptionsFromModel(context.Background(), c)
+			if diags.HasError() {
+				t.Fatalf("diags: %+v", diags)
+			}
+			u, diags := buildAgentToolConfigParams("web_fetch", param.Opt[bool]{}, "", web)
+			if diags.HasError() {
+				t.Fatalf("diags: %+v", diags)
+			}
+			raw, err := json.Marshal(u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				URLSources json.RawMessage `json:"url_sources"`
+			}
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			assertJSONEqual(t, string(got.URLSources), tc.want)
+		})
+	}
+}
+
 // A user_location whose fields are all null is still sent as an object: the
 // SDK would otherwise elide the zero value (omitzero) and drop it silently.
 func TestBuildAgentToolConfigParams_userLocationKeepsType(t *testing.T) {
@@ -164,6 +241,7 @@ func TestBuildAgentToolConfigParams_rejectsOptionOnOtherTool(t *testing.T) {
 		{"grep", webToolOptions{blockedDomains: []string{"example.com"}}, "blocked_domains"},
 		{"web_search", webToolOptions{maxContentTokens: param.NewOpt[int64](10)}, "max_content_tokens"},
 		{"web_fetch", webToolOptions{userLocation: &anthropic.BetaManagedAgentsUserLocationParam{Country: param.NewOpt("US")}}, "user_location"},
+		{"web_search", webToolOptions{urlSources: &anthropic.BetaManagedAgentsWebFetchURLSourcesParams{}}, "url_sources"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.tool+"/"+tc.option, func(t *testing.T) {
@@ -234,6 +312,37 @@ func TestValidateAgentToolConfigs(t *testing.T) {
 		}), "agent_toolset.configs[0].user_location"},
 		{"user_location with an unknown field", with("web_search", func(c *agentToolConfigModel) {
 			c.UserLocation = userLocation(types.StringUnknown(), types.StringNull(), types.StringNull(), types.StringNull())
+		}), ""},
+		{"fetch with url_sources", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringValue("none"), urlFilter("except", "run_code"), urlFilter("none"))
+		}), ""},
+		{"url_sources on web_search", with("web_search", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringValue("none"), noURLFilter, noURLFilter)
+		}), "agent_toolset.configs[0].url_sources"},
+		{"empty url_sources", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringNull(), noURLFilter, noURLFilter)
+		}), "agent_toolset.configs[0].url_sources"},
+		{"every url source none", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringValue("none"), urlFilter("none"), urlFilter("none"))
+		}), "agent_toolset.configs[0].url_sources"},
+		{"every url source none but one unknown", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringUnknown(), urlFilter("none"), urlFilter("none"))
+		}), ""},
+		{"only without tools", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringNull(), urlFilter("only"), noURLFilter)
+		}), "agent_toolset.configs[0].url_sources.client_tool_results.tools"},
+		{"tools with all", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringNull(), noURLFilter, urlFilter("all", "web_search"))
+		}), "agent_toolset.configs[0].url_sources.server_tool_results.tools"},
+		{"unknown filter type with tools", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringNull(), types.ObjectValueMust(agentURLSourceFilterAttrTypes, map[string]attr.Value{
+				"type": types.StringUnknown(), "tools": strSet("run_code"),
+			}), noURLFilter)
+		}), ""},
+		{"only with unknown tools", with("web_fetch", func(c *agentToolConfigModel) {
+			c.URLSources = urlSources(types.StringNull(), types.ObjectValueMust(agentURLSourceFilterAttrTypes, map[string]attr.Value{
+				"type": types.StringValue("only"), "tools": types.SetUnknown(types.StringType),
+			}), noURLFilter)
 		}), ""},
 	}
 	for _, tc := range tests {
@@ -380,6 +489,79 @@ func TestMapAgentToolsetToState_webOptions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// url_sources is read verbatim: the object form the API answers in maps back
+// to the configured value (tools are a set), a null or absent key stays null,
+// the string shorthand is read too, and a value set out of band surfaces.
+func TestMapAgentToolsetToState_urlSources(t *testing.T) {
+	t.Parallel()
+
+	configured := urlSources(types.StringValue("none"), urlFilter("except", "run_code", "shell"), noURLFilter)
+	fetch := toolCfg("web_fetch")
+	fetch.URLSources = configured
+	current := agentToolsetObj(t, toolCfgObj(t, fetch))
+
+	tests := []struct {
+		name    string
+		sources string
+		want    types.Object
+	}{
+		{
+			name: "echo",
+			sources: `{"user_input":{"type":"none"},"client_tool_results":{"type":"except","tools":[` +
+				`{"type":"tool_reference","name":"shell"},{"type":"tool_reference","name":"run_code"}]},"server_tool_results":null}`,
+			want: configured,
+		},
+		{
+			name: "shorthand keys",
+			sources: `{"user_input":"none","client_tool_results":{"type":"except","tools":[` +
+				`{"type":"tool_reference","name":"run_code"},{"type":"tool_reference","name":"shell"}]},"server_tool_results":"all"}`,
+			want: urlSources(types.StringValue("none"), urlFilter("except", "run_code", "shell"), urlFilter("all")),
+		},
+		{
+			name:    "out-of-band filter",
+			sources: `{"user_input":{"type":"none"},"client_tool_results":{"type":"all"}}`,
+			want:    urlSources(types.StringValue("none"), urlFilter("all"), noURLFilter),
+		},
+		{
+			name:    "removed out of band",
+			sources: `null`,
+			want:    types.ObjectNull(agentURLSourcesAttrTypes),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+				"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},
+				"configs":[{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_allow"},
+					"url_sources":`+tc.sources+`}]}]`)
+			data := AgentResourceModel{AgentToolset: current}
+			if diags := mapAgentResponseToState(context.Background(), agent, &data, readMapping); diags.HasError() {
+				t.Fatalf("diags: %+v", diags)
+			}
+			got := agentToolConfigsFromToolset(t, data.AgentToolset)
+			if len(got) != 1 || !got[0].URLSources.Equal(tc.want) {
+				t.Errorf("url_sources = %v, want %v", got[0].URLSources, tc.want)
+			}
+		})
+	}
+
+	// The data sources map it the same way.
+	agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+		"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},
+		"configs":[{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_allow"},
+			"url_sources":{"user_input":null,"client_tool_results":{"type":"none"},"server_tool_results":{"type":"only","tools":[{"type":"tool_reference","name":"web_search"}]}}}]}]`)
+	var ds AgentDataSourceModel
+	if diags := mapAgentResponseToDataSource(agent, &ds); diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	got := agentToolConfigsFromToolset(t, ds.AgentToolset)
+	want := urlSources(types.StringNull(), urlFilter("none"), urlFilter("only", "web_search"))
+	if len(got) != 1 || !got[0].URLSources.Equal(want) {
+		t.Errorf("data source url_sources = %v, want %v", got, want)
 	}
 }
 

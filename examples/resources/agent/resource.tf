@@ -23,6 +23,9 @@ resource "anthropic_agent" "assistant" {
 # (allowed_domains or blocked_domains), web_search a user_location and
 # web_fetch a max_content_tokens cap. With `limited` environment networking,
 # allowed_domains entries must also be within the environment's allowed_hosts.
+# web_fetch only fetches URLs already seen in the session; url_sources narrows
+# where they may come from, here user messages and web_search results only, so
+# a URL planted in a custom tool result is never fetched.
 resource "anthropic_agent" "developer" {
   model       = "claude-sonnet-4-6"
   name        = "Developer Agent"
@@ -49,6 +52,10 @@ resource "anthropic_agent" "developer" {
         name               = "web_fetch"
         blocked_domains    = ["ads.example.com"]
         max_content_tokens = 50000
+        url_sources = {
+          client_tool_results = { type = "none" }
+          server_tool_results = { type = "only", tools = ["web_search"] }
+        }
       }
     ]
   }
