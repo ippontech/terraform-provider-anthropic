@@ -29,8 +29,8 @@ shows its recent runs and their logs.
 | `extends` | `config:recommended`, `:semanticCommits`, `:dependencyDashboard`, `:enablePreCommit` |
 | `labels` | `dependencies` |
 | `platformAutomerge` | Uses GitHub's own auto-merge, so branch protection and required checks are respected. This is already the default; kept explicit because the whole automerge policy depends on it |
-| `enabledManagers` | `github-actions`, `gomod`, `mise`, `pre-commit`, `custom.regex` |
-| `customManagers` | Two regex managers, see [Custom managers](#custom-managers) below |
+| `enabledManagers` | `github-actions`, `gomod`, `mise`, `pre-commit`, `custom.regex`, `npm` |
+| `customManagers` | One regex manager, see [Custom managers](#custom-managers) below |
 | `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, except release tooling (see [Release tooling](#release-tooling)), plus a version hold on the Anthropic Go SDK (see [Version holds](#version-holds)) |
 
 Two of these entries are less obvious than they look:
@@ -64,12 +64,11 @@ error issue on the repo.
 
 ## Custom managers
 
-Neither of these dependencies is visible to a built-in manager, so both were drifting unnoticed:
+The GoReleaser version is not visible to a built-in manager, so it was drifting unnoticed:
 
 | What | Where | How it is tracked |
 |---|---|---|
 | GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line |
-| semantic-release and its 6 plugins | `npm install --no-save <pkg>@<version>` in `semantic-release.yml` | regex over `<pkg>@<x.y.z>` in that one file, `npm` datasource |
 
 The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
 well-known inputs such as `setup-node`'s `node-version`, but it does not read arbitrary action inputs —
@@ -81,8 +80,14 @@ hence the annotation. To put another tool version under Renovate's control, add 
           version: v1.2.3
 ```
 
-Both managers are grouped into a single `CI tool versions` PR, except for the versions pinned in the
-release workflows, which go to the `release tooling` PR below.
+It is grouped into the `CI tool versions` PR, except for the version pinned in the release workflow,
+which goes to the `release tooling` PR below.
+
+The semantic-release toolchain is a regular npm project under `.github/semantic-release/`
+(`package.json` with exact versions, `package-lock.json` with integrity hashes, `.npmrc` with
+`ignore-scripts=true`), tracked by the built-in `npm` manager, which regenerates the lockfile in the
+same PR. The workflow installs it with `npm ci --ignore-scripts`, so a new release of a transitive
+package changes nothing until a reviewed PR updates the lockfile.
 
 ## Release tooling
 
@@ -92,8 +97,8 @@ that signs the checksums the Terraform Registry verifies. A malicious patch rele
 otherwise be merged by GitHub auto-merge three days after publication, with no maintainer decision, and
 run with those credentials on the next push or tag.
 
-A `matchFileNames` rule therefore moves these updates (GoReleaser, the semantic-release packages, and the
-actions used by the two workflows) into their own `release tooling` group with `automerge: false`. A
+A `matchFileNames` rule therefore moves these updates (GoReleaser, the semantic-release packages and
+their lockfile, and the actions used by the two workflows) into their own `release tooling` group with `automerge: false`. A
 maintainer reviews the release notes and the diff of each one before merging. The rule matches by file,
 not by package, so the same action used in other workflows (`actions/checkout`, say) keeps its
 automerged `GitHub Actions` group there; only its release-workflow occurrence waits for review.

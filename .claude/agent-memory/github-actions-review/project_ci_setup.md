@@ -20,7 +20,7 @@ Key intentional design decisions:
 - `acctest` GitHub Environment acts as the secret gate for ANTHROPIC_API_KEY
 - `make install` is called inside `make build` chain; no standalone install CI job — intentional (local dev only)
 - `terraform-test` (make terraform-test) IS covered by testacc.yml
-- semantic-release uses pinned npm package versions in the install command (not @latest)
+- semantic-release is an npm project under `.github/semantic-release/` (exact versions + lockfile + `.npmrc ignore-scripts`), installed with `npm ci --ignore-scripts` before the App token is minted; checkout uses `persist-credentials: false` and the job token is `contents: read`
 - All actions/checkout and actions/setup-go references are pinned to full SHA
 - Workflow-level `permissions: {}` is set on every workflow — good baseline
 

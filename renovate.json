@@ -13,7 +13,8 @@
     "gomod",
     "mise",
     "pre-commit",
-    "custom.regex"
+    "custom.regex",
+    "npm"
   ],
   "customManagers": [
     {
@@ -23,16 +24,6 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+\\S+: [\"']?(?<currentValue>[^\"'\\s]+)[\"']?"
       ]
-    },
-    {
-      "customType": "regex",
-      "description": "npm packages installed inline by the semantic-release workflow; there is no package.json for the npm manager to key off",
-      "managerFilePatterns": [".github/workflows/semantic-release.yml"],
-      "matchStrings": [
-        "(?<depName>(?:@[a-z0-9-]+/)?[a-z0-9][a-z0-9-._]*)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
-      ],
-      "datasourceTemplate": "npm",
-      "versioningTemplate": "npm"
     }
   ],
   "packageRules": [
@@ -74,10 +65,11 @@
       "automerge": false
     },
     {
-      "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. Its updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser and the semantic-release packages (custom.regex) as well as the actions those two workflows use (github-actions); the same action in other workflows keeps its usual automerged group.",
+      "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. Its updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser (custom.regex), the semantic-release packages and their lockfile (npm) and the actions those two workflows use (github-actions); the same action in other workflows keeps its usual automerged group.",
       "matchFileNames": [
         ".github/workflows/goreleaser-release.yml",
-        ".github/workflows/semantic-release.yml"
+        ".github/workflows/semantic-release.yml",
+        ".github/semantic-release/package.json"
       ],
       "groupName": "release tooling",
       "groupSlug": "release-tooling",
@@ -91,7 +83,7 @@
     },
     {
       "description": "Hold conventional-changelog-conventionalcommits below 9: 10.x needs conventional-changelog-writer@9, but the latest stable @semantic-release/release-notes-generator (14.1.1) pins writer ^8, so generateNotes fails with 'Missing helper'. Lift once release-notes-generator 15 ships with writer 9.",
-      "matchManagers": ["custom.regex"],
+      "matchManagers": ["npm"],
       "matchDepNames": ["conventional-changelog-conventionalcommits"],
       "allowedVersions": "<9.0.0"
     }

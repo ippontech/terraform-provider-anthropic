@@ -16,10 +16,10 @@ jobs:
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Every write (release commit, tag, GitHub release, issue and PR comments) goes through the
+    # App token below, so the job token only needs to read the repository.
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -30,6 +30,23 @@ jobs:
             github.com:443
             registry.npmjs.org:443
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      # The whole tree, transitive packages included, comes from the committed lockfile with its
+      # integrity hashes, and no package lifecycle script runs (also enforced by the .npmrc there).
+      - name: Install semantic-release and plugins
+        working-directory: .github/semantic-release
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Minted only now, after the install, and handed to the publishing step alone: no code that
+      # runs while packages are installed can read it, and checkout did not persist it in git config.
       - name: Generate app token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -37,20 +54,9 @@ jobs:
           app-id: ${{ secrets.SEMREL_APP_ID }}
           private-key: ${{ secrets.SEMREL_APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '24'
-
-      - name: Install semantic-release and plugins
-        run: npm install --no-save semantic-release@25.0.9 @semantic-release/commit-analyzer@13.0.1 @semantic-release/release-notes-generator@14.1.1 @semantic-release/changelog@7.0.0 @semantic-release/git@11.0.1 @semantic-release/github@12.0.10 conventional-changelog-conventionalcommits@8.0.0
-
+      # semantic-release authenticates its own git push with GITHUB_TOKEN (x-access-token URL).
       - name: Run semantic-release
-        run: ./node_modules/.bin/semantic-release
+        run: ./.github/semantic-release/node_modules/.bin/semantic-release
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           GIT_AUTHOR_NAME: github-actions[bot]
