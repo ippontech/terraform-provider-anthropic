@@ -1,0 +1,370 @@
+// Copyright (c) Ippon
+// SPDX-License-Identifier: MPL-2.0
+
+// Setting spend limits needs a Claude Enterprise organization (user limits) or
+// the Console early access preview (organization and workspace limits); the
+// test organization has neither, so CRUD wiring and mapping are covered here
+// against httptest servers and the live tests are opt-in.
+package spendlimits
+
+import (
+	"context"
+	"net/http"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
+)
+
+const (
+	spendLimitID = "spl_01AbCdEfGhIjKlMnOpQrSt"
+	userID       = "user_01AbCdEfGh"
+	workspaceID  = "wrkspc_01AbCdEfGh"
+)
+
+func userLimitJSON(amount string) string {
+	return `{"type":"spend_limit","id":"` + spendLimitID + `","amount":` + amount + `,"currency":"USD","is_enabled":true,"period":"monthly",` +
+		`"scope":{"type":"user","user_id":"` + userID + `"},"created_at":"2026-06-01T00:00:00Z","updated_at":"2026-06-02T00:00:00Z"}`
+}
+
+func resourcePlan(t *testing.T, r resource.Resource, scope tftypes.Value, period string, amount any) tfsdk.Plan {
+	t.Helper()
+	return tfsdk.Plan{
+		Raw: resourceValue(t, r, map[string]tftypes.Value{
+			"id":         str(tftypes.UnknownValue),
+			"scope":      scope,
+			"period":     str(period),
+			"amount":     str(amount),
+			"currency":   str(tftypes.UnknownValue),
+			"is_enabled": tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue),
+			"created_at": str(tftypes.UnknownValue),
+			"updated_at": str(tftypes.UnknownValue),
+		}),
+		Schema: schematest.ResourceSchema(t, r),
+	}
+}
+
+func stateWithID(t *testing.T, r resource.Resource) tfsdk.State {
+	t.Helper()
+	return tfsdk.State{
+		Raw:    resourceValue(t, r, map[string]tftypes.Value{"id": str(spendLimitID), "scope": scopeValue(t, r, "user", userID, ""), "period": str("monthly")}),
+		Schema: schematest.ResourceSchema(t, r),
+	}
+}
+
+func spendLimitState(t *testing.T, s tfsdk.State) (SpendLimitResourceModel, spendLimitScopeModel) {
+	t.Helper()
+	var m SpendLimitResourceModel
+	if diags := s.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+	var scope spendLimitScopeModel
+	if diags := m.Scope.As(context.Background(), &scope, basetypes.ObjectAsOptions{}); diags.HasError() {
+		t.Fatalf("scope: %v", diags)
+	}
+	return m, scope
+}
+
+// --- Create ---
+
+func TestSpendLimitResource_Create_userLimit(t *testing.T) {
+	t.Parallel()
+
+	srv, rec := stub(t, func(recordedRequest) (int, string) { return http.StatusOK, userLimitJSON(`"50000"`) })
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	plan := resourcePlan(t, r, scopeValue(t, r, "user", userID, ""), "monthly", "50000")
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+
+	req := rec.all()[0]
+	if req.Method != http.MethodPost || req.Path != "/v1/organizations/spend_limits" {
+		t.Errorf("request = %s %s", req.Method, req.Path)
+	}
+	assertBetaQuery(t, req)
+	if req.Beta != "" {
+		t.Errorf("anthropic-beta = %q on a set, want none", req.Beta)
+	}
+	scope, _ := req.Body["scope"].(map[string]any)
+	if scope["type"] != "user" || scope["user_id"] != userID || len(scope) != 2 {
+		t.Errorf("body scope = %v, want only type and user_id", scope)
+	}
+	if req.Body["period"] != "monthly" || req.Body["amount"] != "50000" {
+		t.Errorf("body = %v", req.Body)
+	}
+
+	got, gotScope := spendLimitState(t, resp.State)
+	if got.ID.ValueString() != spendLimitID || got.Amount.ValueString() != "50000" || got.Currency.ValueString() != "USD" || !got.IsEnabled.ValueBool() {
+		t.Errorf("state = %+v", got)
+	}
+	if gotScope.UserID.ValueString() != userID || !gotScope.WorkspaceID.IsNull() {
+		t.Errorf("scope = %+v", gotScope)
+	}
+}
+
+func TestSpendLimitResource_Create_nullAmountIsAnExplicitNoLimitOverride(t *testing.T) {
+	t.Parallel()
+
+	srv, rec := stub(t, func(recordedRequest) (int, string) { return http.StatusOK, userLimitJSON(`null`) })
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	plan := resourcePlan(t, r, scopeValue(t, r, "user", userID, ""), "weekly", nil)
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+
+	body := rec.all()[0].Body
+	if amount, ok := body["amount"]; !ok || amount != nil {
+		t.Errorf("amount = %v (present: %v), want an explicit null", amount, ok)
+	}
+	if body["period"] != "weekly" {
+		t.Errorf("period = %v", body["period"])
+	}
+	if got, _ := spendLimitState(t, resp.State); !got.Amount.IsNull() {
+		t.Errorf("amount = %v, want null", got.Amount)
+	}
+}
+
+func TestSpendLimitResource_Create_workspaceLimit(t *testing.T) {
+	t.Parallel()
+
+	srv, rec := stub(t, func(recordedRequest) (int, string) {
+		return http.StatusOK, `{"type":"spend_limit","id":"spl_ws","amount":"100000","currency":"USD","is_enabled":true,"period":"monthly",` +
+			`"scope":{"type":"workspace","workspace_id":"` + workspaceID + `"},"created_at":"2026-06-01T00:00:00Z","updated_at":"2026-06-01T00:00:00Z"}`
+	})
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	plan := resourcePlan(t, r, scopeValue(t, r, "workspace", "", workspaceID), "monthly", "100000")
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+
+	scope, _ := rec.all()[0].Body["scope"].(map[string]any)
+	if scope["type"] != "workspace" || scope["workspace_id"] != workspaceID || len(scope) != 2 {
+		t.Errorf("body scope = %v, want only type and workspace_id", scope)
+	}
+	if _, gotScope := spendLimitState(t, resp.State); gotScope.WorkspaceID.ValueString() != workspaceID || !gotScope.UserID.IsNull() {
+		t.Errorf("scope = %+v", gotScope)
+	}
+}
+
+func TestSpendLimitResource_Create_apiErrorIsReported(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := stub(t, func(recordedRequest) (int, string) {
+		return http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"organization_type_not_supported"}}`
+	})
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	plan := resourcePlan(t, r, scopeValue(t, r, "organization", "", ""), "monthly", "100000")
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected a diagnostic for a 400")
+	}
+}
+
+// --- Update ---
+
+func TestSpendLimitResource_Update_resetsTheAmount(t *testing.T) {
+	t.Parallel()
+
+	srv, rec := stub(t, func(recordedRequest) (int, string) { return http.StatusOK, userLimitJSON(`"75000"`) })
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	state := stateWithID(t, r)
+	plan := resourcePlan(t, r, scopeValue(t, r, "user", userID, ""), "monthly", "75000")
+	resp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+
+	req := rec.all()[0]
+	if req.Method != http.MethodPost || req.Path != "/v1/organizations/spend_limits" || req.Body["amount"] != "75000" {
+		t.Errorf("request = %s %s %v: an update is the same upsert", req.Method, req.Path, req.Body)
+	}
+	if got, _ := spendLimitState(t, resp.State); got.Amount.ValueString() != "75000" || got.ID.ValueString() != spendLimitID {
+		t.Errorf("state = %+v", got)
+	}
+}
+
+// --- Read ---
+
+func TestSpendLimitResource_Read(t *testing.T) {
+	t.Parallel()
+
+	srv, rec := stub(t, func(recordedRequest) (int, string) { return http.StatusOK, userLimitJSON(`"50000"`) })
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	// An imported limit: only the ID is known.
+	state := tfsdk.State{Raw: resourceValue(t, r, map[string]tftypes.Value{"id": str(spendLimitID)}), Schema: schematest.ResourceSchema(t, r)}
+	resp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+
+	req := rec.all()[0]
+	if req.Method != http.MethodGet || req.Path != "/v1/organizations/spend_limits/"+spendLimitID {
+		t.Errorf("request = %s %s", req.Method, req.Path)
+	}
+	assertBetaQuery(t, req)
+	if req.Beta != "" {
+		t.Errorf("anthropic-beta = %q on a get, want none", req.Beta)
+	}
+
+	got, gotScope := spendLimitState(t, resp.State)
+	if got.Period.ValueString() != "monthly" || got.Amount.ValueString() != "50000" || gotScope.Type.ValueString() != "user" || gotScope.UserID.ValueString() != userID {
+		t.Errorf("state = %+v, scope = %+v", got, gotScope)
+	}
+}
+
+func TestSpendLimitResource_Read_notFoundRemovesFromState(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := stub(t, func(recordedRequest) (int, string) { return http.StatusNotFound, notFoundBody })
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	state := stateWithID(t, r)
+	resp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("expected the resource to be removed from state after a 404")
+	}
+}
+
+// --- Delete ---
+
+func TestSpendLimitResource_Delete(t *testing.T) {
+	t.Parallel()
+
+	for name, status := range map[string]int{"deleted": http.StatusOK, "already gone": http.StatusNotFound} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv, rec := stub(t, func(recordedRequest) (int, string) {
+				if status == http.StatusNotFound {
+					return status, notFoundBody
+				}
+				return status, `{"id":"` + spendLimitID + `","type":"spend_limit_deleted"}`
+			})
+			r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+			state := stateWithID(t, r)
+			resp := resource.DeleteResponse{State: state}
+			r.Delete(context.Background(), resource.DeleteRequest{State: state}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Delete: %v", resp.Diagnostics)
+			}
+			req := rec.all()[0]
+			if req.Method != http.MethodDelete || req.Path != "/v1/organizations/spend_limits/"+spendLimitID {
+				t.Errorf("request = %s %s", req.Method, req.Path)
+			}
+			assertBetaQuery(t, req)
+		})
+	}
+}
+
+func TestSpendLimitResource_Delete_reportsOtherErrors(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := stub(t, func(recordedRequest) (int, string) {
+		return http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"usage_tier limits cannot be deleted"}}`
+	})
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	state := stateWithID(t, r)
+	resp := resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected a diagnostic for a 400")
+	}
+}
+
+// --- ImportState ---
+
+func TestSpendLimitResource_ImportState(t *testing.T) {
+	t.Parallel()
+
+	r := &SpendLimitResource{}
+	resp := resource.ImportStateResponse{State: schematest.NullState(t, r)}
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: spendLimitID}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: %v", resp.Diagnostics)
+	}
+	var id string
+	resp.State.GetAttribute(context.Background(), path.Root("id"), &id)
+	if id != spendLimitID {
+		t.Errorf("id = %q", id)
+	}
+}
+
+// --- Validation ---
+
+func TestSpendLimitConfigValidator(t *testing.T) {
+	t.Parallel()
+
+	r := &SpendLimitResource{}
+	unknown := tftypes.UnknownValue
+
+	cases := []struct {
+		name    string
+		scope   tftypes.Value
+		period  any
+		amount  any
+		wantErr bool
+	}{
+		{"user limit", scopeValue(t, r, "user", userID, ""), nil, "50000", false},
+		{"user no-limit override", scopeValue(t, r, "user", userID, ""), "daily", nil, false},
+		{"user without user_id", scopeValue(t, r, "user", "", ""), nil, "50000", true},
+		{"user with workspace_id", scopeValue(t, r, "user", userID, workspaceID), nil, "50000", true},
+		{"workspace limit", scopeValue(t, r, "workspace", "", workspaceID), "monthly", "100000", false},
+		{"workspace without workspace_id", scopeValue(t, r, "workspace", "", ""), nil, "100000", true},
+		{"workspace with user_id", scopeValue(t, r, "workspace", userID, workspaceID), nil, "100000", true},
+		{"organization limit", scopeValue(t, r, "organization", "", ""), nil, "100000", false},
+		{"organization weekly", scopeValue(t, r, "organization", "", ""), "weekly", "100000", true},
+		{"organization without amount", scopeValue(t, r, "organization", "", ""), nil, nil, true},
+		{"unknown user_id", scopeValue(t, r, "user", unknown, ""), nil, "50000", false},
+		{"unknown scope type", scopeValue(t, r, unknown, "", workspaceID), nil, nil, false},
+		{"unknown amount on organization", scopeValue(t, r, "organization", "", ""), nil, unknown, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			config := tfsdk.Config{
+				Raw:    resourceValue(t, r, map[string]tftypes.Value{"scope": tc.scope, "period": str(tc.period), "amount": str(tc.amount)}),
+				Schema: schematest.ResourceSchema(t, r),
+			}
+			var resp resource.ValidateConfigResponse
+			spendLimitConfigValidator{}.ValidateResource(context.Background(), resource.ValidateConfigRequest{Config: config}, &resp)
+			if got := resp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Errorf("error = %v, want %v (%v)", got, tc.wantErr, resp.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestAmountPattern(t *testing.T) {
+	t.Parallel()
+
+	for amount, want := range map[string]bool{"0": true, "50000": true, "050000": false, "-1": false, "500.00": false, "": false, "1e3": false} {
+		if got := amountPattern.MatchString(amount); got != want {
+			t.Errorf("amountPattern(%q) = %v, want %v", amount, got, want)
+		}
+	}
+}

@@ -254,6 +254,7 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 | `anthropic_service_account_workspace` | resource | Unavailable | Unavailable |
 | `anthropic_service_account_workspaces` | data source | Unavailable | Unavailable |
 | `anthropic_service_accounts` | data source | Unavailable | Unavailable |
+| `anthropic_spend_limit` | resource | Unavailable | Unavailable |
 | `anthropic_telemetry_destination` | resource | Supported | Unavailable |
 | `anthropic_user_profile` | resource, data source | Supported | Unverified |
 | `anthropic_user_profiles` | data source | Supported | Unverified |

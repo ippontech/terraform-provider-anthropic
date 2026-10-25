@@ -20,6 +20,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizationwebhooks"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/spendlimits"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/telemetrydestinations"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
@@ -109,6 +110,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: serviceaccounts.NewServiceAccountWorkspaceResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: skills.NewSkillResource, AWS: supported, GoogleCloud: supported},
 		{New: skills.NewSkillVersionResource, AWS: supported, GoogleCloud: supported},
+		{New: spendlimits.NewSpendLimitResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: telemetrydestinations.NewTelemetryDestinationResource, AWS: supported, GoogleCloud: gcTelemetry},
 		{New: userprofiles.NewUserProfileResource, AWS: supported, GoogleCloud: gcUserProfiles},
 		{New: vaults.NewVaultResource, AWS: supported, GoogleCloud: supported},
