@@ -86,6 +86,11 @@ type APIError struct {
 	StatusCode int
 	ErrType    string
 	Message    string
+	// Details is the raw `error.details` object, when the API sends one. Some
+	// endpoints put a machine-readable cause there (the Plugins API's
+	// `error_code`, plus the ID of the plugin or version it involves), which a
+	// caller needs to tell apart causes that share a status code.
+	Details json.RawMessage
 }
 
 func (e *APIError) Error() string {
@@ -343,8 +348,9 @@ func transportResponse(res *http.Response) *http.Response {
 func newAPIError(statusCode int, respBody []byte) *APIError {
 	var envelope struct {
 		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
+			Type    string          `json:"type"`
+			Message string          `json:"message"`
+			Details json.RawMessage `json:"details"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(respBody, &envelope) == nil && envelope.Error.Message != "" {
@@ -352,6 +358,7 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 			StatusCode: statusCode,
 			ErrType:    envelope.Error.Type,
 			Message:    envelope.Error.Message,
+			Details:    envelope.Error.Details,
 		}
 	}
 	return &APIError{

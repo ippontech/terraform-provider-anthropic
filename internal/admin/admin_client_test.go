@@ -242,6 +242,36 @@ func TestAdminClient_doRequest_jsonErrorBody(t *testing.T) {
 	if apiErr.Message != "workspace not found" {
 		t.Errorf("Message = %q, want %q", apiErr.Message, "workspace not found")
 	}
+	if apiErr.Details != nil {
+		t.Errorf("Details = %s, want nil for an error without details", apiErr.Details)
+	}
+}
+
+func TestAdminClient_doRequest_errorDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"name taken",`+
+			`"details":{"error_code":"plugin_name_taken","plugin_id":"plugin_01"}},"request_id":"req_01"}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/plugins", nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T (%v)", err, err)
+	}
+	var details struct {
+		ErrorCode string `json:"error_code"`
+		PluginID  string `json:"plugin_id"`
+	}
+	if err := json.Unmarshal(apiErr.Details, &details); err != nil {
+		t.Fatalf("Details = %q, not a JSON object: %v", apiErr.Details, err)
+	}
+	if details.ErrorCode != "plugin_name_taken" || details.PluginID != "plugin_01" {
+		t.Errorf("Details = %+v, want the error_code and plugin_id the API sent", details)
+	}
 }
 
 func TestAdminClient_doRequest_nonJsonErrorBody(t *testing.T) {

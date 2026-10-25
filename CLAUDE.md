@@ -8,7 +8,7 @@ A Terraform provider on the [Terraform Plugin Framework](https://developer.hashi
 
 - `internal/provider/`: `provider.go` (schema, credentials, client construction; `Resources()` / `DataSources()` serve the registry), `registry.go` (every resource and data source factory, with its availability on each cloud platform) and `federation.go` (the `federation` block).
 - `internal/services/<service>/`: resources and data sources, one directory per Anthropic service.
-- `internal/admin/`: client for the Admin API (`/v1/organizations/*`), which the SDK does not cover. `DoRequest(ctx, method, path, body, opts...)` takes per-request options: `admin.WithBeta("…")` for the `anthropic-beta` header that beta organization endpoints require (they answer 404 without it: plugins, webhooks, telemetry destinations; listing spend limits needs `spend-limit-reads-2026-09-26`, while getting, setting or deleting one spend limit takes no beta header) and `admin.WithHeader`; a body of type `admin.RawBody{ContentType, Data}` is sent as is (multipart uploads) instead of being marshalled to JSON.
+- `internal/admin/`: client for the Admin API (`/v1/organizations/*`), which the SDK does not cover. `DoRequest(ctx, method, path, body, opts...)` takes per-request options: `admin.WithBeta("…")` for the `anthropic-beta` header that beta organization endpoints require (they answer 404 without it: plugins, webhooks, telemetry destinations; listing spend limits needs `spend-limit-reads-2026-09-26`, while getting, setting or deleting one spend limit takes no beta header) and `admin.WithHeader`; a body of type `admin.RawBody{ContentType, Data}` is sent as is (multipart uploads) instead of being marshalled to JSON. An `*admin.APIError` carries the raw `error.details` object in `Details` when the API sends one (the Plugins API's `error_code`, `plugin_id`, ...).
 - `internal/providerdata/`: `ProviderData`, passed to every `Configure`, and the `OAuthClient` wrapper.
 - `internal/errors/` (import alias `providerrors`): nil-client guards for `Configure`.
 - `internal/tfvalue/`: `StringOrNull` / `TimeOrNull` map the SDK zero values of absent API fields (`""`, the zero time) to null. Use them in every state mapping instead of a per-package helper.
@@ -41,6 +41,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `models/`: none; `model`, `models`. Standard key.
 - `organizations/`: `invite`, `organization_member` (import-only); `organization`, `organization_member(s)`, `invite(s)`. Admin key.
 - `organizationwebhooks/`: `organization_webhook`; none. Admin key (beta `webhooks-2026-10-07`, enabled per organization on request).
+- `plugins/`: `plugin`, `plugin_version`; none. Claude Enterprise scoped Admin key (beta `ce-plugins-2026-09-01`).
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
 - `telemetrydestinations/`: `telemetry_destination`; none. Admin key (beta `telemetry-destinations-2026-08-11`).
