@@ -4,6 +4,8 @@ description: UseStateForUnknown and ModifyPlan patterns to avoid non-empty plans
 type: project
 ---
 
+Checked on 2026-10-25: the reference `ModifyPlan` for `updated_at` is in `internal/services/environments/environment_resource.go`. Re-check: `grep -rln "ModifyPlan(" internal/services/`. Attribute-specific plan modifiers documented in `CLAUDE.md` (for example `anthropic_agent`'s `model_effort`) take precedence over this general pattern.
+
 ## Required plan modifiers on Computed and Optional+Computed attributes
 
 Without plan modifiers, `Computed` and `Optional+Computed` attributes are marked
