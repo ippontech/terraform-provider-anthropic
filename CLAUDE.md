@@ -42,6 +42,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `organizations/`: `invite`, `organization_member` (import-only); `organization`, `organization_member(s)`, `invite(s)`. Admin key.
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
+- `telemetrydestinations/`: `telemetry_destination`; none. Admin key (beta `telemetry-destinations-2026-08-11`).
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
 - `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
 - `workspaces/`: `workspace`, `workspace_member`, `workspace_rate_limit`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key.
@@ -188,6 +189,10 @@ Secrets that must never reach state use write-only attributes (plugin framework 
 ### ConfigValidator Unknown handling
 
 In a `ConfigValidator`, treat Unknown values (unresolved references at plan time) as neither set nor missing, or valid configurations fail spuriously: `isMissing(v) = v.IsNull() && !v.IsUnknown()` for required checks, `isSet(v) = !v.IsNull() && !v.IsUnknown()` for conflicting-attribute checks. Reference: `vaultCredentialConfigValidator`.
+
+### Defaults inside an Optional + Computed object
+
+Do not put a schema `Default` on an attribute nested in an Optional + Computed single-nested attribute whose omission means "keep the API's values". The framework applies nested defaults to the proposed new state, which for an omitted block is the prior state's object, so the default overwrites the stored value, the plan differs from state, and every Computed attribute is marked unknown before `UseStateForUnknown` restores the block: a spurious update on every plan. Make the nested attribute Optional + Computed and plan the default with a modifier that only acts when the block is configured (`tracesDefaultString`/`tracesDefaultBool` in `internal/services/telemetrydestinations/telemetry_destination_resource.go`).
 
 ### Map attributes with PATCH semantics (metadata)
 
