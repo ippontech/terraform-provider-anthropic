@@ -160,8 +160,8 @@ Its behaviour is driven by `renovate.json` at the repository root. See [`.github
 
 ## Claude Code
 
-This project includes a [Claude Code](https://claude.ai/code) configuration under `.claude/` to help contributors follow Terraform provider best practices.
+This project includes a [Claude Code](https://claude.ai/code) configuration under `.claude/` (skills, sub-agents and one hook) to help contributors follow the conventions in `CLAUDE.md`.
 
-The [`terraform-skill@antonbabenko`](https://github.com/antonbabenko/terraform-skill) plugin is enabled for this project. It provides guidance and code generation assistance aligned with HashiCorp's Terraform plugin framework conventions — schema design, resource/data source patterns, testing, and documentation generation.
+The project settings enable HashiCorp's [`terraform@claude-plugins-official`](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/terraform) plugin from Anthropic's official marketplace. It runs the Terraform MCP server in Docker (`hashicorp/terraform-mcp-server:0.4.0`, passing `TFE_TOKEN` from your environment when set), which gives Claude access to Terraform Registry documentation. Without Docker the server does not start, and the rest of the configuration works without it. Other Terraform plugins, if you want them, go in your user settings.
 
-If you use Claude Code, this skill will be automatically active when working in this repository. No additional setup is required.
+Besides that MCP server, the configuration runs one command on your machine: a `Stop` hook, `.claude/hooks/stop-reminders.sh`, which runs when Claude finishes a reply. It reads `git` state and, when the branch has new commits, looks up the open PR with `gh pr view`. It never blocks Claude, edits files or publishes anything: at most it shows you a reminder to run `make` (which regenerates `docs/`), `/update-pr-description` (which drafts a PR description and asks before publishing it) or `/update-project-knowledge`.
