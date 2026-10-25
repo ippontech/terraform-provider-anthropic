@@ -67,6 +67,15 @@ type inviteCreateRequest struct {
 
 // --- Schema ---
 
+// assignableRolesDescription says which roles the Admin API can grant, on
+// invite creation and on a member's role update alike (API reference for
+// POST /v1/organizations/invites and POST /v1/organizations/users/{id}, and
+// https://platform.claude.com/docs/en/manage-claude/user-management#organization-roles).
+const assignableRolesDescription = "The API assigns `user`, `developer`, `billing` or `claude_code_user` in a Claude Console organization, " +
+	"and `user` or `managed` in a Claude Enterprise organization (`managed` needs the `write:rbac_groups` scope on the key, besides `write:members`). " +
+	"`admin` and the Claude Enterprise administrative roles (`owner`, `membership_admin`, `primary_owner`) cannot be assigned through the API: " +
+	"they are granted in the Claude Console or in claude.ai organization settings."
+
 func (r *InviteResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_invite"
 }
@@ -86,11 +95,13 @@ func (r *InviteResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"role": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Organization role to grant once the invite is accepted. The valid set depends on the organization's " +
-					"type: Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise organizations " +
-					"use `user`, `managed`, `owner`, `membership_admin`, `primary_owner`. Not validated against a fixed list here since the " +
-					"valid set is organization-type-dependent; an invalid value is rejected by the API at apply time. " +
+				MarkdownDescription: "Organization role to grant once the invite is accepted. " + assignableRolesDescription + " " +
+					"Not checked against a list, since the accepted set depends on the organization type; the API rejects an invalid value at apply time. " +
 					"Immutable after creation — changing this forces a new resource.",
+				// No OneOf: the accepted set depends on the organization type, and
+				// an invite created outside Terraform and imported can carry a role
+				// the API cannot assign (reads return any organization role), which
+				// the configuration must be able to match.
 				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},

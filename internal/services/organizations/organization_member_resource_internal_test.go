@@ -581,6 +581,17 @@ func TestOrganizationMemberResource_ImportState(t *testing.T) {
 	}
 }
 
+// --- Schema ---
+
+// An imported member can hold admin or an Enterprise administrative role, so
+// the role attribute accepts every organization role (assertRoleAttribute is
+// shared with the invite resource test).
+func TestOrganizationMemberResource_roleAttribute(t *testing.T) {
+	t.Parallel()
+
+	assertRoleAttribute(t, schematest.ResourceSchema(t, &OrganizationMemberResource{}))
+}
+
 // --- mapOrganizationMemberToResourceState ---
 
 func TestMapOrganizationMemberToResourceState(t *testing.T) {

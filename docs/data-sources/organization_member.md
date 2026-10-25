@@ -56,5 +56,5 @@ output "member_role" {
 - `added_at` (String) RFC 3339 timestamp of when the user joined the organization.
 - `email` (String) Email of the user.
 - `name` (String) Name of the user.
-- `role` (String) Organization role of the user (e.g. `user`, `developer`, `billing`, `admin`, `claude_code_user`).
+- `role` (String) Organization role of the user: for example `user`, `developer`, `billing`, `claude_code_user` or `admin` in a Claude Console organization, and `user`, `managed`, `owner`, `membership_admin` or `primary_owner` in a Claude Enterprise organization.
 - `type` (String) Object type. Always `user`.
