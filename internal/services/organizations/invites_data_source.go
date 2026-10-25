@@ -203,6 +203,14 @@ func (d *InvitesDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		if !page.HasMore {
 			break
 		}
+		// has_more with a null last_id, or the cursor just sent, would
+		// request the same page again, forever.
+		if page.LastID == "" || page.LastID == afterID {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf(
+				"Unable to list invites: the API reported more results (has_more) without a new last_id cursor (after_id %q, last_id %q), so the next page cannot be requested.",
+				afterID, page.LastID))
+			return
+		}
 		afterID = page.LastID
 	}
 
