@@ -850,6 +850,114 @@ resource "anthropic_agent" "coordinator" {
 `, block)
 }
 
+// multiagent_20261001: create with predefined subagents only, change the
+// members and fall back to the defaults, switch to the coordinator type, then
+// remove the block. Every post-apply plan must be empty.
+func TestAccAgentResource_multiagent20261001(t *testing.T) {
+	const orch = "anthropic_agent.orchestrator"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("a", "restricted"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(orch, "multiagent.type", "multiagent_20261001"),
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.inline_agents_enabled", "false"),
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.predefined_agents.#", "2"),
+					resource.TestCheckResourceAttrPair(orch, "multiagent.subagents.predefined_agents.0.id", "anthropic_agent.member_a", "id"),
+					resource.TestCheckResourceAttrSet(orch, "multiagent.subagents.predefined_agents.0.version"),
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.predefined_agents.1.type", "self"),
+					resource.TestCheckResourceAttr(orch, "multiagent.workflows.enabled", "false"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.advisor.model"),
+				),
+			},
+			// Import: a self entry cannot be told apart from an explicit reference
+			// without configuration, so the configuration is not compared.
+			{
+				ResourceName:            orch,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"multiagent"},
+			},
+			// Swap the member and drop every other setting: the defaults (inline
+			// agents and workflows on) are sent explicitly and read back as null.
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("b", "defaults"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.predefined_agents.#", "1"),
+					resource.TestCheckResourceAttrPair(orch, "multiagent.subagents.predefined_agents.0.id", "anthropic_agent.member_b", "id"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.subagents.inline_agents_enabled"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.workflows.enabled"),
+				),
+			},
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("b", "coordinator"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(orch, "multiagent.type", "coordinator"),
+					resource.TestCheckResourceAttr(orch, "multiagent.agents.#", "1"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.subagents.predefined_agents.#"),
+				),
+			},
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("b", "none"),
+				Check:  resource.TestCheckNoResourceAttr(orch, "multiagent.type"),
+			},
+		},
+	})
+}
+
+func testAccAgentResourceMultiagent20261001Config(member, layout string) string {
+	var block string
+	switch layout {
+	case "restricted":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      inline_agents_enabled = false
+      predefined_agents = [
+        { type = "agent", id = anthropic_agent.member_%s.id },
+        { type = "self" },
+      ]
+    }
+    workflows = { enabled = false }
+  }`, member)
+	case "defaults":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      predefined_agents = [{ type = "agent", id = anthropic_agent.member_%s.id }]
+    }
+  }`, member)
+	case "coordinator":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type   = "coordinator"
+    agents = [{ type = "agent", id = anthropic_agent.member_%s.id }]
+  }`, member)
+	}
+	return fmt.Sprintf(`
+resource "anthropic_agent" "member_a" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-20261001-member-a"
+}
+
+resource "anthropic_agent" "member_b" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-20261001-member-b"
+}
+
+resource "anthropic_agent" "orchestrator" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-20261001"
+%s
+}
+`, block)
+}
+
 // An unrelated update of the coordinator must not re-pin an unpinned member to the
 // member's newer version.
 func TestAccAgentResource_multiagentKeepsPinnedVersion(t *testing.T) {

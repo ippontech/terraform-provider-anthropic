@@ -1,4 +1,4 @@
-# Tests for the anthropic_agent data source example and the coordinator roster of the resource example.
+# Tests for the anthropic_agent data source example and the multiagent configurations of the resource example.
 # Verifies that the data source returns expected attributes for a freshly-created agent.
 
 test {
@@ -109,5 +109,25 @@ run "agent_resource_example" {
   assert {
     condition     = anthropic_agent.coordinator.multiagent.agents[1].type == "self"
     error_message = "Expected the second roster entry to be self."
+  }
+
+  assert {
+    condition     = anthropic_agent.orchestrator.multiagent.type == "multiagent_20261001"
+    error_message = "Expected a multiagent_20261001 configuration."
+  }
+
+  assert {
+    condition     = anthropic_agent.orchestrator.multiagent.subagents.predefined_agents[0].id == anthropic_agent.assistant.id
+    error_message = "Expected the first predefined subagent to reference the assistant agent."
+  }
+
+  assert {
+    condition     = anthropic_agent.orchestrator.multiagent.subagents.predefined_agents[1].type == "self"
+    error_message = "Expected the second predefined subagent to be self."
+  }
+
+  assert {
+    condition     = anthropic_agent.orchestrator.multiagent.workflows.enabled == false
+    error_message = "Expected dynamic workflows to stay disabled."
   }
 }

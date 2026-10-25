@@ -56,7 +56,7 @@ output "agent" {
 - `model_effort` (String) Effort level of the agent's model (`low`, `medium`, `high`, `xhigh` or `max`).
 - `model_inference_geo` (String) Geographic region pinned for the agent's model requests, or null when unpinned.
 - `model_speed` (String) Inference speed mode (`standard` or `fast`).
-- `multiagent` (Attributes) Coordinator topology, null when the agent has none. A `self` roster entry is resolved by the API into an `agent` entry carrying the agent's own ID. (see [below for nested schema](#nestedatt--multiagent))
+- `multiagent` (Attributes) Multiagent orchestration, null when the agent has none. A `self` entry is resolved by the API into an `agent` entry carrying the agent's own ID. (see [below for nested schema](#nestedatt--multiagent))
 - `name` (String) Human-readable name for the agent.
 - `skills` (Attributes List) Skills available to the agent. (see [below for nested schema](#nestedatt--skills))
 - `system` (String) System prompt for the agent.
@@ -181,8 +181,19 @@ Read-Only:
 
 Read-Only:
 
-- `agents` (Attributes List) Resolved roster of agents the coordinator may spawn. (see [below for nested schema](#nestedatt--multiagent--agents))
-- `type` (String) Topology type (`coordinator`).
+- `advisor` (Attributes) Advisor model of a `multiagent_20261001` configuration, null when disabled. (see [below for nested schema](#nestedatt--multiagent--advisor))
+- `agents` (Attributes List) Resolved roster of agents the coordinator may spawn (`coordinator` only). (see [below for nested schema](#nestedatt--multiagent--agents))
+- `subagents` (Attributes) Delegation to subagents (`multiagent_20261001` only). (see [below for nested schema](#nestedatt--multiagent--subagents))
+- `type` (String) `coordinator` or `multiagent_20261001`.
+- `workflows` (Attributes) Dynamic workflows (`multiagent_20261001` only). (see [below for nested schema](#nestedatt--multiagent--workflows))
+
+<a id="nestedatt--multiagent--advisor"></a>
+### Nested Schema for `multiagent.advisor`
+
+Read-Only:
+
+- `model` (String) Advisor model ID.
+
 
 <a id="nestedatt--multiagent--agents"></a>
 ### Nested Schema for `multiagent.agents`
@@ -193,6 +204,46 @@ Read-Only:
 - `model` (String) Advisor model ID (`advisor` entries).
 - `type` (String) Entry type: `agent` or `advisor`.
 - `version` (Number) Resolved version of the referenced agent (`agent` entries).
+
+
+<a id="nestedatt--multiagent--subagents"></a>
+### Nested Schema for `multiagent.subagents`
+
+Read-Only:
+
+- `enabled` (Boolean) Whether the setting is on.
+- `inline_agents_enabled` (Boolean) Whether inline agents are allowed, null when the setting is off.
+- `predefined_agents` (Attributes List) Resolved predefined agents, null when there are none. (see [below for nested schema](#nestedatt--multiagent--subagents--predefined_agents))
+
+<a id="nestedatt--multiagent--subagents--predefined_agents"></a>
+### Nested Schema for `multiagent.subagents.predefined_agents`
+
+Read-Only:
+
+- `id` (String) Referenced agent ID.
+- `type` (String) Entry type (`agent`).
+- `version` (Number) Resolved version of the referenced agent.
+
+
+
+<a id="nestedatt--multiagent--workflows"></a>
+### Nested Schema for `multiagent.workflows`
+
+Read-Only:
+
+- `enabled` (Boolean) Whether the setting is on.
+- `inline_agents_enabled` (Boolean) Whether inline agents are allowed, null when the setting is off.
+- `predefined_agents` (Attributes List) Resolved predefined agents, null when there are none. (see [below for nested schema](#nestedatt--multiagent--workflows--predefined_agents))
+
+<a id="nestedatt--multiagent--workflows--predefined_agents"></a>
+### Nested Schema for `multiagent.workflows.predefined_agents`
+
+Read-Only:
+
+- `id` (String) Referenced agent ID.
+- `type` (String) Entry type (`agent`).
+- `version` (Number) Resolved version of the referenced agent.
+
 
 
 
