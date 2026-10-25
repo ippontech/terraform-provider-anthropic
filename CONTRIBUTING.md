@@ -74,6 +74,16 @@ Do not export `ANTHROPIC_AUTH_TOKEN` in your shell or keep it in `.env`. Set it 
 
 A `.env` file at the project root (gitignored) can hold the two API keys and other machine-specific values, but not `ANTHROPIC_AUTH_TOKEN`. `mise.toml` declares it under `[env] _.file = ".env"`, so [mise](https://mise.jdx.dev/environments/) exports its variables automatically when you enter the directory; nothing to source by hand.
 
+### Lint
+
+```bash
+make lint
+```
+
+`.golangci.yml` reports only code that differs from `origin/main` (`new-from-merge-base`), so code you did not touch never fails your pull request. This relies on `origin` pointing at `ippontech/terraform-provider-anthropic` and being fetched recently: when `origin` is your fork, run `golangci-lint run --new-from-merge-base=upstream/main` (or whatever the upstream remote is called) instead, otherwise the comparison starts from a stale point. If the ref does not exist at all, golangci-lint silently reports every finding in the repository.
+
+The pre-commit configuration runs `golangci-lint fmt` on the staged Go files (gofmt, plus imports grouped with this module's packages last), `golangci-lint run` and `go mod tidy -diff`, at the versions pinned in `mise.toml`.
+
 ### Run unit tests
 
 ```bash
