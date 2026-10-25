@@ -250,6 +250,9 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 | `anthropic_organization_member` | resource, data source | Unavailable | Unavailable |
 | `anthropic_organization_members` | data source | Unavailable | Unavailable |
 | `anthropic_organization_webhook` | resource | Unavailable | Unavailable |
+| `anthropic_rbac_group` | resource, data source | Unavailable | Unavailable |
+| `anthropic_rbac_group_member` | resource | Unavailable | Unavailable |
+| `anthropic_rbac_groups` | data source | Unavailable | Unavailable |
 | `anthropic_service_account` | resource, data source | Unavailable | Unavailable |
 | `anthropic_service_account_workspace` | resource | Unavailable | Unavailable |
 | `anthropic_service_account_workspaces` | data source | Unavailable | Unavailable |
