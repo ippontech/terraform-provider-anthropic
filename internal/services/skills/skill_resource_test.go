@@ -39,7 +39,9 @@ func testAccCheckSkillDestroyed(s *terraform.State) error {
 		if rs.Type != "anthropic_skill" {
 			continue
 		}
-		_, err := client.Beta.Skills.Get(context.Background(), rs.Primary.ID, anthropic.BetaSkillGetParams{})
+		_, err := client.Beta.Skills.Get(context.Background(), rs.Primary.ID, anthropic.BetaSkillGetParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaSkills2025_10_02},
+		})
 		if err != nil {
 			// Resource not found — destroyed successfully.
 			return nil

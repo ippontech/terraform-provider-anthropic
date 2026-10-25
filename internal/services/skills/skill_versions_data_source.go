@@ -130,11 +130,11 @@ func (d *SkillVersionsDataSource) Read(ctx context.Context, req datasource.ReadR
 		return
 	}
 
-	pager := d.client.Beta.Skills.Versions.ListAutoPaging(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionListParams{})
+	pager := d.client.Beta.Skills.Versions.ListAutoPaging(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionListParams{Betas: skillsBetas()})
 
 	versionObjs := make([]attr.Value, 0)
 	for pager.Next() {
-		item := pager.Current()
+		item := decodeBetaSkillVersion(pager.Current().RawJSON())
 		obj, diags := types.ObjectValue(skillVersionListItemAttrTypes, map[string]attr.Value{
 			"id":          types.StringValue(item.ID),
 			"version":     types.StringValue(item.Version),

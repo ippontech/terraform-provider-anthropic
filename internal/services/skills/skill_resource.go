@@ -152,12 +152,17 @@ func (r *SkillResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	skill, err := provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, func(files []io.Reader) (*anthropic.BetaSkillNewResponse, error) {
-		params := anthropic.BetaSkillNewParams{Files: files}
+	skill, err := provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, func(files []io.Reader) (betaSkill, error) {
+		params := anthropic.BetaSkillNewParams{Files: files, Betas: skillsBetas()}
 		if !data.DisplayTitle.IsNull() && !data.DisplayTitle.IsUnknown() {
-			params.DisplayTitle = anthropic.String(data.DisplayTitle.ValueString())
+			// Beta field name, sent as a multipart extra field: see skill_beta_shape.go.
+			params.SetExtraFields(map[string]any{skillDisplayTitleField: data.DisplayTitle.ValueString()})
 		}
-		return r.client.Beta.Skills.New(ctx, params)
+		res, err := r.client.Beta.Skills.New(ctx, params)
+		if err != nil {
+			return betaSkill{}, err
+		}
+		return decodeBetaSkill(res.RawJSON()), nil
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create skill: %s", err))
@@ -176,7 +181,7 @@ func (r *SkillResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	skill, err := r.client.Beta.Skills.Get(ctx, data.ID.ValueString(), anthropic.BetaSkillGetParams{})
+	res, err := r.client.Beta.Skills.Get(ctx, data.ID.ValueString(), anthropic.BetaSkillGetParams{Betas: skillsBetas()})
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
@@ -186,6 +191,7 @@ func (r *SkillResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read skill: %s", err))
 		return
 	}
+	skill := decodeBetaSkill(res.RawJSON())
 
 	mapSkillGetResponseToState(skill, &data)
 
@@ -209,10 +215,10 @@ func (r *SkillResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	// Only do this when force_destroy = true; otherwise surface the API error so the
 	// user is aware that versions exist and must be removed explicitly.
 	if data.ForceDestroy.ValueBool() {
-		iter := r.client.Beta.Skills.Versions.ListAutoPaging(ctx, skillID, anthropic.BetaSkillVersionListParams{})
+		iter := r.client.Beta.Skills.Versions.ListAutoPaging(ctx, skillID, anthropic.BetaSkillVersionListParams{Betas: skillsBetas()})
 		for iter.Next() {
-			v := iter.Current()
-			_, err := r.client.Beta.Skills.Versions.Delete(ctx, v.Version, anthropic.BetaSkillVersionDeleteParams{SkillID: skillID})
+			v := decodeBetaSkillVersion(iter.Current().RawJSON())
+			_, err := r.client.Beta.Skills.Versions.Delete(ctx, v.Version, anthropic.BetaSkillVersionDeleteParams{SkillID: skillID, Betas: skillsBetas()})
 			if err != nil {
 				var apierr *anthropic.Error
 				if errors.As(err, &apierr) && apierr.StatusCode == 404 {
@@ -228,7 +234,7 @@ func (r *SkillResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		}
 	}
 
-	_, err := r.client.Beta.Skills.Delete(ctx, skillID, anthropic.BetaSkillDeleteParams{})
+	_, err := r.client.Beta.Skills.Delete(ctx, skillID, anthropic.BetaSkillDeleteParams{Betas: skillsBetas()})
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
@@ -248,7 +254,7 @@ func (r *SkillResource) ImportState(ctx context.Context, req resource.ImportStat
 // Helper functions
 // ============================================================================
 
-func mapSkillNewResponseToState(skill *anthropic.BetaSkillNewResponse, data *SkillResourceModel) {
+func mapSkillNewResponseToState(skill betaSkill, data *SkillResourceModel) {
 	data.ID = types.StringValue(skill.ID)
 	data.CreatedAt = types.StringValue(skill.CreatedAt)
 	data.UpdatedAt = types.StringValue(skill.UpdatedAt)
@@ -267,7 +273,7 @@ func mapSkillNewResponseToState(skill *anthropic.BetaSkillNewResponse, data *Ski
 	// Do NOT update Files — the API does not return file paths (they are ForceNew).
 }
 
-func mapSkillGetResponseToState(skill *anthropic.BetaSkillGetResponse, data *SkillResourceModel) {
+func mapSkillGetResponseToState(skill betaSkill, data *SkillResourceModel) {
 	// Detect import context: during a fresh import the state has only the ID,
 	// so created_at is null. We use this to decide whether to always populate
 	// display_title from the API (import) or only when the user has it configured
