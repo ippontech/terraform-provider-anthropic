@@ -46,7 +46,7 @@ func awaitFileGone(client anthropic.Client, id string) error {
 	deadline := time.Now().Add(destroyCheckTimeout)
 	var lastErr error
 	for {
-		_, err := client.Files.GetMetadata(context.Background(), id)
+		_, err := client.Files.GetMetadata(context.Background(), id, anthropic.FileGetMetadataParams{})
 		if isNotFoundError(err) {
 			return nil
 		}

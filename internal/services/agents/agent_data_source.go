@@ -473,7 +473,7 @@ func mapAgentResponseToDataSource(agent *anthropic.BetaManagedAgentsAgent, data 
 	}
 
 	// Multiagent (verbatim from the API)
-	multiagent, d := mapMultiagentToObject(agent.Multiagent)
+	multiagent, d := mapMultiagentToObject(agent.Multiagent, agent.ID)
 	diags.Append(d...)
 	data.Multiagent = multiagent
 
