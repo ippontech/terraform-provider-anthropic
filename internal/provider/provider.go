@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
@@ -261,10 +262,15 @@ func resolveCredential(configValue types.String, envVar string) string {
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
 //
+// Retries follow provretry.DefaultPolicy instead of the SDK's: a request that
+// creates or changes something (a POST) is replayed on 429 only, so a 5xx or
+// a dropped connection after a write that landed cannot create a duplicate.
+//
 // override is applied last, so the base URL of WithBaseURL wins over the
 // variable.
 func newSDKClient(credential option.RequestOption, override ...option.RequestOption) *anthropic.Client {
 	opts := []option.RequestOption{option.WithoutEnvironmentDefaults(), credential}
+	opts = append(opts, provretry.SDKOptions(provretry.DefaultPolicy)...)
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
