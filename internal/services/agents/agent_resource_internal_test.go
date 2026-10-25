@@ -845,15 +845,16 @@ const unplannedTools = `[
 // with every list, map and object typed null so the framework can encode it.
 func agentModelFor(agent *anthropic.BetaManagedAgentsAgent) AgentResourceModel {
 	return AgentResourceModel{
-		Model:        types.StringValue(string(agent.Model.ID)),
-		Name:         types.StringValue(agent.Name),
-		Metadata:     types.MapNull(types.StringType),
-		MCPServers:   types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
-		Skills:       types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
-		CustomTools:  types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
-		Multiagent:   types.ObjectNull(agentMultiagentAttrTypes),
-		AgentToolset: types.ObjectNull(agentToolsetAttrTypes),
-		MCPToolsets:  types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}),
+		Model:             types.StringValue(string(agent.Model.ID)),
+		Name:              types.StringValue(agent.Name),
+		Metadata:          types.MapNull(types.StringType),
+		MCPServers:        types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
+		Skills:            types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
+		CustomTools:       types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
+		Multiagent:        types.ObjectNull(agentMultiagentAttrTypes),
+		ExecutionIdentity: types.ObjectNull(agentExecutionIdentityAttrTypes),
+		AgentToolset:      types.ObjectNull(agentToolsetAttrTypes),
+		MCPToolsets:       types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}),
 	}
 }
 
@@ -1882,15 +1883,16 @@ func agentServer(t *testing.T, agent *anthropic.BetaManagedAgentsAgent) *AgentRe
 // plannedAgent plans agent as it is, except for the toolsets.
 func plannedAgent(agent *anthropic.BetaManagedAgentsAgent, toolset types.Object, mcpToolsets types.List) AgentResourceModel {
 	return AgentResourceModel{
-		Model:        types.StringValue(string(agent.Model.ID)),
-		Name:         types.StringValue(agent.Name),
-		Metadata:     types.MapNull(types.StringType),
-		MCPServers:   types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
-		Skills:       types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
-		CustomTools:  types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
-		Multiagent:   types.ObjectNull(agentMultiagentAttrTypes),
-		AgentToolset: toolset,
-		MCPToolsets:  mcpToolsets,
+		Model:             types.StringValue(string(agent.Model.ID)),
+		Name:              types.StringValue(agent.Name),
+		Metadata:          types.MapNull(types.StringType),
+		MCPServers:        types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
+		Skills:            types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
+		CustomTools:       types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
+		Multiagent:        types.ObjectNull(agentMultiagentAttrTypes),
+		ExecutionIdentity: types.ObjectNull(agentExecutionIdentityAttrTypes),
+		AgentToolset:      toolset,
+		MCPToolsets:       mcpToolsets,
 	}
 }
 

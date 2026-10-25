@@ -412,6 +412,38 @@ func TestAccAgentResource_toolsetDefaults(t *testing.T) {
 	})
 }
 
+// The service account set explicitly, then removed: the API returns it for
+// every agent, so both post-apply plans must be empty. An aws_role identity is
+// only usable on Claude Platform on AWS and is covered by unit tests only.
+func TestAccAgentResource_executionIdentity(t *testing.T) {
+	const name = "anthropic_agent.test"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceEffortConfig(`execution_identity = { type = "service_account" }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "execution_identity.type", "service_account"),
+					resource.TestCheckNoResourceAttr(name, "execution_identity.role_arn"),
+				),
+			},
+			// Import cannot tell an explicit default from an unset attribute.
+			{
+				ResourceName:            name,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"execution_identity"},
+			},
+			{
+				Config: testAccAgentResourceEffortConfig(""),
+				Check:  resource.TestCheckNoResourceAttr(name, "execution_identity.type"),
+			},
+		},
+	})
+}
+
 func TestAccAgentResource_withCustomTools(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },

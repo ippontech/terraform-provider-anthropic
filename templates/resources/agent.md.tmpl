@@ -30,6 +30,30 @@ Those defaults are also the provider's: a toolset that leaves `default_permissio
 
 `auto` is not a human checkpoint: a call the server judges safe runs before anyone sees it, and its effects might not be reversible. Keep `always_ask` on the tools whose calls a person must review. The server reads what your client posts in `user.message` events as your intent, so relaying untrusted end-user input there can get a call allowed. Permission policies do not apply to `custom_tools`, which your application runs.
 
+## Execution identity
+
+`execution_identity` names the principal the agent's runs act as. By default they use the Anthropic-managed service account (`type = "service_account"`), which carries no identifier. The API returns that default for every agent, and the provider keeps the attribute null while it is unset; removing the attribute from the configuration restores the default on the next update.
+
+On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws), each run of a scheduled deployment creates its session as an IAM role in your AWS account, so the agent needs an `aws_role` identity before an `anthropic_deployment` can use it: creating a deployment for an agent without one returns a 400 error ([Scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)).
+
+```terraform
+resource "anthropic_agent" "scheduled" {
+  model = "claude-sonnet-4-6"
+  name  = "Weekly compliance scan"
+
+  execution_identity = {
+    type     = "aws_role"
+    role_arn = "arn:aws:iam::123456789012:role/agent-runner"
+  }
+}
+```
+
+The role must be in the same AWS account and needs:
+
+- **Trust policy:** allow the `aws-external-anthropic.amazonaws.com` service principal to call `sts:AssumeRole` and `sts:SetSourceIdentity`.
+- **Role permissions:** allow `aws-external-anthropic:CreateSession`, `sts:GetWebIdentityToken` and `sts:TagGetWebIdentityToken`.
+- **Caller permissions:** the IAM principal that sets the role on the agent, the one Terraform applies with, needs `iam:PassRole` on that role. No managed policy grants `iam:PassRole`.
+
 ## Web tool restrictions
 
 The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `url_sources`, and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.

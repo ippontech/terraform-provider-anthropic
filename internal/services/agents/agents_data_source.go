@@ -60,6 +60,7 @@ var agentListItemAttrTypes = map[string]attr.Type{
 	"mcp_toolsets":        types.ListType{ElemType: types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}},
 	"custom_tools":        types.ListType{ElemType: types.ObjectType{AttrTypes: agentCustomToolAttrTypes}},
 	"multiagent":          types.ObjectType{AttrTypes: agentMultiagentAttrTypes},
+	"execution_identity":  types.ObjectType{AttrTypes: agentExecutionIdentityAttrTypes},
 	"version":             types.Int64Type,
 	"created_at":          types.StringType,
 	"updated_at":          types.StringType,
@@ -275,6 +276,7 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 								},
 							},
 						},
+						"execution_identity": executionIdentityDataSourceSchema(),
 						"version": schema.Int64Attribute{
 							Computed:            true,
 							MarkdownDescription: "The agent's current version.",
@@ -520,6 +522,9 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 	multiagentObj, d := mapMultiagentToObject(agent.Multiagent, agent.ID)
 	diags.Append(d...)
 
+	identityObj, d := executionIdentityObject(agent.ExecutionIdentity)
+	diags.Append(d...)
+
 	archivedAt := types.StringNull()
 	if !agent.ArchivedAt.IsZero() {
 		archivedAt = types.StringValue(agent.ArchivedAt.Format(time.RFC3339))
@@ -541,6 +546,7 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		"mcp_toolsets":        mcpToolsetsList,
 		"custom_tools":        customToolsList,
 		"multiagent":          multiagentObj,
+		"execution_identity":  identityObj,
 		"version":             types.Int64Value(agent.Version),
 		"created_at":          types.StringValue(agent.CreatedAt.Format(time.RFC3339)),
 		"updated_at":          types.StringValue(agent.UpdatedAt.Format(time.RFC3339)),
