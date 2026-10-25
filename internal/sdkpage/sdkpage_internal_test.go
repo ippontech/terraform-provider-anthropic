@@ -104,7 +104,8 @@ func TestCursor_walksEveryPage(t *testing.T) {
 	}
 }
 
-// An empty page ends the walk even with a cursor, as in the SDK's auto-pager.
+// An empty page ends the walk even with a cursor, as in the SDK's auto-pager up
+// to v1.76.0 (since v1.77.0 the auto-pager follows the cursor past it).
 func TestCursor_stopsOnEmptyPage(t *testing.T) {
 	var s listServer
 	srv := s.start(t, func(page string) (int, string) {

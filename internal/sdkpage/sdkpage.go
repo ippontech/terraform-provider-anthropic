@@ -19,11 +19,12 @@ const MaxPages = 10000
 // and its error as the SDK's List method returns them, and stops on the first
 // error, from the API or from visit.
 //
-// It ends the walk where the SDK's auto-pager does, on an empty page or an
-// empty `next_page`. Unlike the auto-pager, a cursor the API already returned,
-// or a walk past MaxPages, is an error: an API that keeps returning the same
-// cursor, or cycles through a few, would otherwise hang plan and refresh until
-// a context deadline.
+// It ends the walk on an empty page or an empty `next_page`, where the SDK's
+// auto-pager ended it up to v1.76.0 (since v1.77.0 the auto-pager follows a
+// `next_page` past an empty page). Unlike the auto-pager, a cursor the API
+// already returned, or a walk past MaxPages, is an error: an API that keeps
+// returning the same cursor, or cycles through a few, would otherwise hang plan
+// and refresh until a context deadline.
 func Cursor[T any](first *pagination.PageCursor[T], err error, visit func(T) error) error {
 	return cursorUpTo(first, err, MaxPages, visit)
 }

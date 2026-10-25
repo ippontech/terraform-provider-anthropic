@@ -25,7 +25,7 @@ import (
 
 // Web options of an `agent_toolset.configs` entry
 // (https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions).
-// `url_sources` (web_fetch) is not in SDK v1.67.0 and is not exposed yet.
+// `url_sources` (web_fetch, in the SDK since v1.79.0) is not exposed yet.
 
 const (
 	toolNameWebFetch  = "web_fetch"
