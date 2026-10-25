@@ -79,7 +79,9 @@ func TestAccFederationIssuerDataSource_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("data.anthropic_federation_issuer.test", "issuer_url", issuer.IssuerURL),
 					resource.TestCheckResourceAttrSet("data.anthropic_federation_issuer.test", "created_at"),
 					resource.TestCheckResourceAttrSet("data.anthropic_federation_issuer.test", "jwks.type"),
-					resource.TestCheckResourceAttr("data.anthropic_federation_issuer.test", "poll_status.consecutive_failures", "0"),
+					// poll_status is not asserted: it is null until the first
+					// poll of this fresh issuer, then its counters move with
+					// every fetch of the unreachable discovery URL.
 				),
 			},
 		},

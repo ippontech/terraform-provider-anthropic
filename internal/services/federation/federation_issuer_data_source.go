@@ -16,7 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
-	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -33,11 +32,8 @@ type FederationIssuerDataSource struct {
 	client *providerdata.OAuthClient
 }
 
-// FederationIssuerDataSourceModel describes the data source data model.
-//
-// poll_status is exposed here (unlike the sibling anthropic_federation_issuer
-// resource) because a data source re-reads on every plan by design, so it is
-// always fresh.
+// FederationIssuerDataSourceModel describes the data source data model. It is
+// the resource model without the configuration-only jwks_polling_disabled.
 type FederationIssuerDataSourceModel struct {
 	ID                    types.String `tfsdk:"id"`
 	Name                  types.String `tfsdk:"name"`
@@ -53,15 +49,6 @@ type FederationIssuerDataSourceModel struct {
 	UpdatedByActorID      types.String `tfsdk:"updated_by_actor_id"`
 	ArchivedAt            types.String `tfsdk:"archived_at"`
 	ArchivedByActorID     types.String `tfsdk:"archived_by_actor_id"`
-}
-
-// federationIssuerPollStatusAttrTypes describes the `poll_status` nested
-// object. The `jwks` nested object reuses the resource's
-// federationIssuerJWKSAttrTypes.
-var federationIssuerPollStatusAttrTypes = map[string]attr.Type{
-	"consecutive_failures": types.Int64Type,
-	"last_fetched_at":      types.StringType,
-	"next_poll_at":         types.StringType,
 }
 
 // federationIssuerDataSourceAttrTypes mirrors FederationIssuerDataSourceModel
@@ -149,8 +136,9 @@ func (d *FederationIssuerDataSource) Schema(_ context.Context, _ datasource.Sche
 				MarkdownDescription: "RFC 3339 timestamp at which Anthropic's JWKS poller paused polling for this issuer after repeated fetch failures. Null while polling is active.",
 			},
 			"poll_status": schema.SingleNestedAttribute{
-				Computed:            true,
-				MarkdownDescription: "Status of automatic JWKS polling for this issuer.",
+				Computed: true,
+				MarkdownDescription: "Status of automatic JWKS polling for this issuer. Null for inline-key issuers (nothing to fetch), and while the " +
+					"status is unavailable or polling has not started yet.",
 				Attributes: map[string]schema.Attribute{
 					"consecutive_failures": schema.Int64Attribute{
 						Computed:            true,
@@ -238,11 +226,9 @@ func (d *FederationIssuerDataSource) Read(ctx context.Context, req datasource.Re
 }
 
 // mapFederationIssuerDataSourceToState maps an API federation issuer response
-// onto the data source model. Every attribute shared with the
-// anthropic_federation_issuer resource is taken from mapFederationIssuerToState
-// (jwks included), so the two views of an issuer agree on null handling and
-// timestamp formatting; only poll_status, which the resource does not expose,
-// is mapped here.
+// onto the data source model. Every attribute is taken from
+// mapFederationIssuerToState (jwks and poll_status included), so the resource
+// and both data sources agree on null handling and timestamp formatting.
 func mapFederationIssuerDataSourceToState(ctx context.Context, issuer *anthropic.BetaFederationIssuer, data *FederationIssuerDataSourceModel) diag.Diagnostics {
 	var base FederationIssuerResourceModel
 	diags := mapFederationIssuerToState(ctx, issuer, &base)
@@ -257,6 +243,7 @@ func mapFederationIssuerDataSourceToState(ctx context.Context, issuer *anthropic
 	data.CheckJTI = base.CheckJTI
 	data.MaxJWTLifetimeSeconds = base.MaxJWTLifetimeSeconds
 	data.JWKSPollingDisabledAt = base.JWKSPollingDisabledAt
+	data.PollStatus = base.PollStatus
 	data.CreatedAt = base.CreatedAt
 	data.CreatedByActorID = base.CreatedByActorID
 	data.UpdatedAt = base.UpdatedAt
@@ -264,25 +251,5 @@ func mapFederationIssuerDataSourceToState(ctx context.Context, issuer *anthropic
 	data.ArchivedAt = base.ArchivedAt
 	data.ArchivedByActorID = base.ArchivedByActorID
 
-	pollStatusObj, d := mapFederationIssuerPollStatus(issuer.PollStatus)
-	diags.Append(d...)
-	data.PollStatus = pollStatusObj
-
 	return diags
-}
-
-// mapFederationIssuerPollStatus maps the poll_status object. It is
-// data-source-only: the resource omits poll_status entirely, since a resource
-// only refreshes on plan/refresh cycles rather than the always-fresh read a
-// data source performs.
-func mapFederationIssuerPollStatus(status anthropic.BetaFederationIssuerPollStatus) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	obj, d := types.ObjectValue(federationIssuerPollStatusAttrTypes, map[string]attr.Value{
-		"consecutive_failures": types.Int64Value(status.ConsecutiveFailures),
-		"last_fetched_at":      tfvalue.TimeOrNull(status.LastFetchedAt),
-		"next_poll_at":         tfvalue.TimeOrNull(status.NextPollAt),
-	})
-	diags.Append(d...)
-	return obj, diags
 }
