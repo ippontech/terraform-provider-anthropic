@@ -18,8 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
@@ -161,6 +165,51 @@ func emptyState(t *testing.T, r resource.Resource) tfsdk.State {
 	return tfsdk.State{Schema: schematest.ResourceSchema(t, r)}
 }
 
+// readDataSource runs d's Read with a configuration whose attributes are null
+// except those in set.
+func readDataSource(t *testing.T, d datasource.DataSource, set map[string]tftypes.Value) datasource.ReadResponse {
+	t.Helper()
+	ctx := context.Background()
+	var schemaResp datasource.SchemaResponse
+	d.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
+	if schemaResp.Diagnostics.HasError() {
+		t.Fatalf("schema: %v", schemaResp.Diagnostics)
+	}
+	objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object)
+	vals := map[string]tftypes.Value{}
+	for name, typ := range objType.AttributeTypes {
+		vals[name] = tftypes.NewValue(typ, nil)
+	}
+	for name, v := range set {
+		vals[name] = v
+	}
+
+	config := tfsdk.Config{Schema: schemaResp.Schema, Raw: tftypes.NewValue(objType, vals)}
+	resp := datasource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	d.Read(ctx, datasource.ReadRequest{Config: config}, &resp)
+	return resp
+}
+
+func str(s string) tftypes.Value { return tftypes.NewValue(tftypes.String, s) }
+
+func stateString(t *testing.T, resp datasource.ReadResponse, p path.Path) types.String {
+	t.Helper()
+	var v types.String
+	if diags := resp.State.GetAttribute(context.Background(), p, &v); diags.HasError() {
+		t.Fatalf("reading %s: %v", p, diags)
+	}
+	return v
+}
+
+func stateList(t *testing.T, resp datasource.ReadResponse, name string) types.List {
+	t.Helper()
+	var v types.List
+	if diags := resp.State.GetAttribute(context.Background(), path.Root(name), &v); diags.HasError() {
+		t.Fatalf("reading %s: %v", name, diags)
+	}
+	return v
+}
+
 // --- Fixtures ---
 
 // pluginJSON is a plugin as the API returns it, serving servedVersionID.
@@ -190,6 +239,30 @@ func pluginJSON(servedVersionID string, pinned bool) string {
 		"updated_at": "2026-09-15T14:12:30Z"
 	}`, servedVersionID, pinned)
 }
+
+// memberPluginJSON is a plugin in a member's personal marketplace: it has no
+// installation settings, so both organization fields are null.
+const memberPluginJSON = `{
+	"type": "plugin",
+	"id": "plugin_02",
+	"name": "my-helpers",
+	"display_name": null,
+	"description": null,
+	"served_version_id": "pluginver_10",
+	"served_version_pinned": false,
+	"latest_version_id": "pluginver_10",
+	"manifest_version": null,
+	"owner": {"type": "user", "user_id": "user_01"},
+	"marketplace_id": "marketplace_02",
+	"created_by": {"type": "user_actor", "user_id": "user_01", "email_address": "member@example.com"},
+	"organization_installation_preference": null,
+	"organization_installation_preference_inherited": null,
+	"content_scan": null,
+	"components": null,
+	"reach": null,
+	"created_at": "2026-08-20T15:12:00Z",
+	"updated_at": "2026-08-20T15:12:00Z"
+}`
 
 const pluginVersionJSON = `{
 	"type": "plugin_version",
