@@ -113,6 +113,17 @@ type OutputConfigModel struct {
 	Format jsontypes.Normalized `tfsdk:"format"`
 }
 
+// temperatureDeprecationMessage is the warning Terraform prints when a
+// configuration sets temperature. API version 2026-10-21 (Anthropic Go SDK v2)
+// rejects the parameter at any value, so it goes with that migration in the
+// next major version. There is deliberately no "only 1.0" validator: under
+// 2023-06-01, which SDK v1 sends, models older than Claude 4.7 still accept
+// other values, and rejecting them at plan time would break working configs.
+const temperatureDeprecationMessage = "temperature is deprecated and will be removed in the next major version of the provider, " +
+	"together with the move to Anthropic Go SDK v2 and API version 2026-10-21, which rejects temperature (HTTP 400) at any value, 1.0 included. " +
+	"Claude 4.7 and later models already reject any value other than 1.0. " +
+	"Remove the attribute: the request then omits it and the model samples at its default temperature of 1.0."
+
 // stopDetailsAttrTypes is the object type of the computed stop_details attribute.
 var stopDetailsAttrTypes = map[string]attr.Type{
 	"category":    types.StringType,
@@ -165,7 +176,8 @@ func (r *MessageResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			},
 			"temperature": schema.Float64Attribute{
 				Optional:            true,
-				MarkdownDescription: "Amount of randomness injected into the response (0.0–1.0). Lower values (closer to 0) produce more focused and deterministic responses; higher values produce more creative responses. If not specified, the model uses its default.",
+				MarkdownDescription: "Amount of randomness injected into the response (0.0–1.0). Will be removed in the next major version, together with the move to API version `2026-10-21`, which rejects `temperature` (HTTP 400) at any value, `1.0` included. Under the API version the provider sends today (`2023-06-01`), Claude 4.7 and later models already reject any value other than `1.0`. If not specified, the parameter is not sent and the model samples at its default (`1.0`).",
+				DeprecationMessage:  temperatureDeprecationMessage,
 				PlanModifiers:       []planmodifier.Float64{float64planmodifier.RequiresReplace()},
 				Validators:          []validator.Float64{float64validator.Between(0.0, 1.0)},
 			},
@@ -456,6 +468,8 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 		params.System = []anthropic.TextBlockParam{{Text: data.System.ValueString()}}
 	}
 
+	// Deprecated (see temperatureDeprecationMessage): sent only when set, so an
+	// unset temperature never reaches the API, not even as 0.
 	if !data.Temperature.IsNull() && !data.Temperature.IsUnknown() {
 		params.Temperature = anthropic.Float(data.Temperature.ValueFloat64())
 	}

@@ -6,13 +6,17 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -75,9 +79,66 @@ func obj(t *testing.T, m map[string]any, key string) map[string]any {
 
 func TestBuildMessageParams_Minimal(t *testing.T) {
 	out := marshalParams(t, newTestModel(t))
-	for _, k := range []string{"thinking", "output_config", "cache_control", "metadata", "stop_sequences", "service_tier", "inference_geo", "system"} {
+	for _, k := range []string{"thinking", "output_config", "cache_control", "metadata", "stop_sequences", "service_tier", "inference_geo", "system", "temperature"} {
 		if _, ok := out[k]; ok {
 			t.Errorf("unexpected key %q in minimal params: %#v", k, out)
+		}
+	}
+}
+
+// temperature is deprecated: an unset value must never reach the API (not even
+// as 0), while a value the configuration still sets is sent as is, 0 included.
+func TestBuildMessageParams_Temperature(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    types.Float64
+		wantSent bool
+		want     float64
+	}{
+		{name: "null is omitted", value: types.Float64Null()},
+		{name: "unknown is omitted", value: types.Float64Unknown()},
+		{name: "zero is sent", value: types.Float64Value(0), wantSent: true, want: 0},
+		{name: "non-default is sent", value: types.Float64Value(0.5), wantSent: true, want: 0.5},
+		{name: "default is sent", value: types.Float64Value(1), wantSent: true, want: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := newTestModel(t)
+			data.Temperature = tc.value
+			got, sent := marshalParams(t, data)["temperature"]
+			if sent != tc.wantSent {
+				t.Fatalf("temperature sent = %v, want %v (value %#v)", sent, tc.wantSent, got)
+			}
+			if sent && got != tc.want {
+				t.Errorf("temperature = %#v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The deprecation warns without rejecting: under API version 2023-06-01 models
+// older than Claude 4.7 still accept values other than 1.0, so the attribute
+// keeps its 0.0-1.0 range and gains no "only 1.0" validator.
+func TestMessageSchema_TemperatureDeprecated(t *testing.T) {
+	var sresp resource.SchemaResponse
+	NewMessageResource().Schema(context.Background(), resource.SchemaRequest{}, &sresp)
+	temperature, ok := sresp.Schema.Attributes["temperature"].(schema.Float64Attribute)
+	if !ok {
+		t.Fatalf("temperature is %T, want schema.Float64Attribute", sresp.Schema.Attributes["temperature"])
+	}
+	for _, want := range []string{"next major version", "2026-10-21", "1.0 included"} {
+		if !strings.Contains(temperature.DeprecationMessage, want) {
+			t.Errorf("DeprecationMessage %q does not mention %q", temperature.DeprecationMessage, want)
+		}
+	}
+	for _, v := range []float64{0, 0.5, 1} {
+		for _, val := range temperature.Validators {
+			req := validator.Float64Request{Path: path.Root("temperature"), ConfigValue: types.Float64Value(v)}
+			var resp validator.Float64Response
+			val.ValidateFloat64(context.Background(), req, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Errorf("temperature = %v rejected: %v", v, resp.Diagnostics)
+			}
 		}
 	}
 }
