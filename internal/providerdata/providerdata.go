@@ -39,3 +39,20 @@ type ProviderData struct {
 	// token and reject API keys. Nil when auth_token is not configured.
 	OAuthClient *OAuthClient
 }
+
+// ForPlatform is the ProviderData of a provider alias configured for a cloud
+// gateway platform. The gateway authenticates every route the same way (AWS
+// SigV4 or key, Google access token), so one SDK client, built for it, serves
+// both the standard routes and, through admin.NewSDKClient, the Admin API
+// routes the gateway serves. There is no OAuth client: the gateways accept no
+// Anthropic OAuth token.
+//
+// Which Admin API resources may use AdminClient is the provider registry's
+// call, not this client's: it would send a request for any of them.
+func ForPlatform(p platform.Platform, client *anthropic.Client) *ProviderData {
+	return &ProviderData{
+		Platform:    p,
+		Client:      client,
+		AdminClient: admin.NewSDKClient(client),
+	}
+}
