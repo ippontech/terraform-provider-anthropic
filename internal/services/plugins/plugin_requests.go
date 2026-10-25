@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sync"
 
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 )
@@ -149,6 +151,106 @@ func getPluginVersion(ctx context.Context, client *admin.Client, pluginID, versi
 		return nil, err
 	}
 	return decodePluginVersion(respBody)
+}
+
+// --- Installation settings ---
+
+// pluginSettingLocks serializes the installation-setting writes this provider
+// sends for one plugin, keyed by plugin ID. The API handles a plugin's
+// concurrent setting writes one after another and can answer some of them with
+// a 503 instead of applying them, so it asks clients to send them one at a
+// time; Terraform applies independent resources in parallel, so an
+// organization-wide setting and a group setting of the same plugin would
+// otherwise race. (The 503 carries `x-should-retry: true`, which
+// admin.DoRequest honours, for writes from outside this provider.)
+var pluginSettingLocks sync.Map
+
+func lockPluginSettings(pluginID string) (unlock func()) {
+	mu, _ := pluginSettingLocks.LoadOrStore(pluginID, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
+
+// setPluginInstallationSetting creates or changes the setting a plugin holds
+// for target (`organization` or an `rbac_group_` ID). Writing the value the
+// target already holds changes nothing, so the call is safe to repeat.
+func setPluginInstallationSetting(ctx context.Context, client *admin.Client, pluginID, target, preference string) (*pluginInstallationSettingAPIObject, error) {
+	defer lockPluginSettings(pluginID)()
+	respBody, err := pluginsRequest(ctx, client, http.MethodPost, pluginPath(pluginID, "installation_settings", target), nil,
+		map[string]string{"installation_preference": preference})
+	if err != nil {
+		return nil, err
+	}
+	var s pluginInstallationSettingAPIObject
+	if err := json.Unmarshal(respBody, &s); err != nil {
+		return nil, fmt.Errorf("unable to parse the installation setting in the response: %w", err)
+	}
+	return &s, nil
+}
+
+// removePluginInstallationSetting removes the setting a plugin holds for
+// target. A setting that is already gone (404) is not an error.
+func removePluginInstallationSetting(ctx context.Context, client *admin.Client, pluginID, target string) error {
+	defer lockPluginSettings(pluginID)()
+	_, err := pluginsRequest(ctx, client, http.MethodDelete, pluginPath(pluginID, "installation_settings", target), nil, nil)
+	if err != nil && !admin.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// findPluginInstallationSetting returns the setting a plugin holds for target,
+// or nil when it holds none. There is no endpoint for one setting: it pages
+// the plugin's settings, filtered by the target's type.
+func findPluginInstallationSetting(ctx context.Context, client *admin.Client, pluginID, target string) (*pluginInstallationSettingAPIObject, error) {
+	targetType := "rbac_group"
+	if target == "organization" {
+		targetType = "organization"
+	}
+	var found *pluginInstallationSettingAPIObject
+	err := listPluginsPages(ctx, client, pluginPath(pluginID, "installation_settings"),
+		url.Values{"target_type": {targetType}}, 100, func(s pluginInstallationSettingAPIObject) bool {
+			if s.Target.pathSegment() == target {
+				found = &s
+				return false
+			}
+			return true
+		})
+	return found, err
+}
+
+// --- Marketplaces ---
+
+func marketplacePath(marketplaceID string) string {
+	return pluginMarketplacesPath + "/" + url.PathEscape(marketplaceID)
+}
+
+func getPluginMarketplace(ctx context.Context, client *admin.Client, marketplaceID string) (*pluginMarketplaceAPIObject, error) {
+	respBody, err := pluginsRequest(ctx, client, http.MethodGet, marketplacePath(marketplaceID), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeMarketplace(respBody)
+}
+
+// setMarketplaceDefault sets the default installation setting of one of the
+// organization's marketplaces (a member's personal marketplace answers 403).
+// Setting the value already set changes nothing.
+func setMarketplaceDefault(ctx context.Context, client *admin.Client, marketplaceID, preference string) (*pluginMarketplaceAPIObject, error) {
+	respBody, err := pluginsRequest(ctx, client, http.MethodPost, marketplacePath(marketplaceID), nil,
+		map[string]string{"default_installation_preference": preference})
+	if err != nil {
+		return nil, err
+	}
+	return decodeMarketplace(respBody)
+}
+
+func decodeMarketplace(body []byte) (*pluginMarketplaceAPIObject, error) {
+	var m pluginMarketplaceAPIObject
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("unable to parse the plugin marketplace in the response: %w", err)
+	}
+	return &m, nil
 }
 
 func decodePlugin(body []byte) (*pluginAPIObject, error) {

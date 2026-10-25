@@ -13,7 +13,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -27,7 +30,8 @@ const (
 	// carry: without it the endpoints answer 404, as if they did not exist.
 	pluginsBeta = "ce-plugins-2026-09-01"
 
-	pluginsPath = "/v1/organizations/plugins"
+	pluginsPath            = "/v1/organizations/plugins"
+	pluginMarketplacesPath = "/v1/organizations/plugin_marketplaces"
 )
 
 // pluginsRequest sends one Plugins API request. Every call carries the beta
@@ -121,6 +125,91 @@ type pluginComponent struct {
 	Type        string `json:"type"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+// pluginInstallationSettingAPIObject is the setting an organization-owned
+// plugin holds for one target. It has no ID: the plugin and the target
+// address it.
+type pluginInstallationSettingAPIObject struct {
+	PluginID               string       `json:"plugin_id"`
+	Target                 pluginTarget `json:"target"`
+	InstallationPreference string       `json:"installation_preference"`
+	CreatedAt              string       `json:"created_at"`
+	UpdatedAt              string       `json:"updated_at"`
+}
+
+// pluginTarget is who an installation setting or a share is for: the whole
+// `organization`, one `rbac_group`, or one `organization_member` (shares only).
+type pluginTarget struct {
+	Type        string `json:"type"`
+	RBACGroupID string `json:"rbac_group_id"`
+	UserID      string `json:"user_id"`
+}
+
+// pathSegment returns the target as the installation-settings path names it:
+// the literal `organization`, or the group's ID.
+func (t pluginTarget) pathSegment() string {
+	if t.Type == "rbac_group" {
+		return t.RBACGroupID
+	}
+	return t.Type
+}
+
+// pluginMarketplaceAPIObject is a container of plugins: one of the
+// organization's, or a member's personal one.
+type pluginMarketplaceAPIObject struct {
+	ID                            string      `json:"id"`
+	Name                          string      `json:"name"`
+	Owner                         pluginOwner `json:"owner"`
+	Source                        string      `json:"source"`
+	SyncStatus                    string      `json:"sync_status"`
+	LastSyncEndedAt               string      `json:"last_sync_ended_at"`
+	LastSyncReadSHA               string      `json:"last_sync_read_sha"`
+	DefaultInstallationPreference string      `json:"default_installation_preference"`
+	CreatedAt                     string      `json:"created_at"`
+}
+
+// installationPreferences are the values an installation setting or a
+// marketplace default can hold, from the most permissive.
+var installationPreferences = []string{"required", "auto_install", "available", "not_available"}
+
+// --- Pagination ---
+
+// pluginsPage is the envelope of every Plugins API list: an opaque `next_page`
+// cursor, passed back as `page`, until it is null.
+type pluginsPage[T any] struct {
+	Data     []T    `json:"data"`
+	NextPage string `json:"next_page"`
+}
+
+// listPluginsPages pages through a Plugins API list, calling visit with each
+// item until it returns false. A page can be short, or empty, while
+// `next_page` is still set, so only a null cursor ends the walk.
+func listPluginsPages[T any](ctx context.Context, client *admin.Client, path string, query url.Values, limit int, visit func(T) bool) error {
+	q := url.Values{}
+	for k, v := range query {
+		q[k] = v
+	}
+	q.Set("limit", strconv.Itoa(limit))
+	for {
+		respBody, err := pluginsRequest(ctx, client, http.MethodGet, path, q, nil)
+		if err != nil {
+			return err
+		}
+		var page pluginsPage[T]
+		if err := json.Unmarshal(respBody, &page); err != nil {
+			return fmt.Errorf("unable to parse the list response: %w", err)
+		}
+		for _, item := range page.Data {
+			if !visit(item) {
+				return nil
+			}
+		}
+		if page.NextPage == "" {
+			return nil
+		}
+		q.Set("page", page.NextPage)
+	}
 }
 
 // --- Error details ---
