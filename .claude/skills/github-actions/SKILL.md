@@ -113,6 +113,38 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
+# Privileged jobs (release, publication)
+
+A job that signs artifacts or writes to `main` holds credentials that every user of the provider ends up trusting: the GPG key signs the Registry checksums, and the semantic-release App bypasses the `main` ruleset. Write access to the repository must not be enough to reach them. `RELEASE.md` ("Protect the release credentials") has the GitHub settings; when writing or reviewing `goreleaser-release.yml`, `semantic-release.yml` or a new privileged workflow, check these six rules:
+
+1. **Credentials live in an environment, never at repository or organization level.** The job declares `environment:` (`release` for signing, deployable from `v*` tags only, with required reviewers; `semantic-release` for publishing, deployable from `main` only), and the secrets are environment secrets. A repository secret is readable by a workflow pushed on any branch.
+2. **Release tags are protected.** A tag ruleset on `v*` restricts creation, update and deletion, with the semantic-release App as the only bypass, because any `v*` tag starts the signed release.
+3. **No shared cache in a job that signs or publishes.** `actions/setup-go` gets `cache: false` and the job uses no `actions/cache`: a cache restored there may have been saved by a test job, and Go does not re-hash extracted module sources on restore. Run `go mod download && go mod verify` instead.
+4. **Installs come from a committed lockfile, without scripts.** `npm ci --ignore-scripts` from `.github/semantic-release/package-lock.json` (also enforced by its `.npmrc`), never `npm install` with inline versions: every transitive package would otherwise be resolved at release time and could run code next to the credentials.
+5. **Credentials enter the job after the install.** `actions/checkout` sets `persist-credentials: false`, the App token is minted after `npm ci` and passed only to the step that publishes, and the job token keeps `contents: read`.
+6. **Release tooling updates get a human review.** In `renovate.json`, the `release tooling` group (matched by file: both release workflows and `.github/semantic-release/package.json`) keeps `automerge: false` whatever the update type. Do not add these files to an automerged group.
+
+```yaml
+jobs:
+  release:
+    environment: semantic-release        # secrets scoped to main
+    permissions:
+      contents: read                     # writes go through the App token
+    steps:
+      - uses: actions/checkout@<full-sha> # <version tag>
+        with:
+          persist-credentials: false
+      - name: Install semantic-release
+        working-directory: .github/semantic-release
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate app token         # minted after the install
+        id: app-token
+        uses: actions/create-github-app-token@<full-sha> # <version tag>
+        with:
+          app-id: ${{ secrets.SEMREL_APP_ID }}
+          private-key: ${{ secrets.SEMREL_APP_PRIVATE_KEY }}
+```
+
 # Security tooling
 
 ## `security.yml` workflow
