@@ -544,9 +544,10 @@ func isTerminalFederationRuleReadError(err error) bool {
 // as new as writtenAt, the updated_at returned by the write itself. Mirrors
 // awaitVaultUpdateVisible (vault_resource.go): probed on 2026-09-08, GET
 // /v1/organizations/federation_rules/{id} returned the pre-update rule in 1 of
-// 9 trials, converging 556ms after the write (see the read-after-write section
-// of CLAUDE.md). Left alone, Terraform's post-apply refresh lands inside that
-// window and the next plan shows a phantom in-place update.
+// 9 trials, converging 556ms after the write (see
+// internal/services/federation/CLAUDE.md). Left alone, Terraform's post-apply
+// refresh lands inside that window and the next plan shows a phantom in-place
+// update.
 //
 // It is deliberately best-effort: on a read error, a timeout, or a cancelled
 // context it returns without reporting a diagnostic. The write has already
