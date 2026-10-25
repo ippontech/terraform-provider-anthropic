@@ -159,20 +159,7 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 						Computed:            true,
 						MarkdownDescription: "Per-tool configuration overrides.",
 						NestedObject: schema.NestedAttributeObject{
-							Attributes: map[string]schema.Attribute{
-								"name": schema.StringAttribute{
-									Computed:            true,
-									MarkdownDescription: "Built-in tool name.",
-								},
-								"enabled": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether this tool is enabled.",
-								},
-								"permission_policy": schema.StringAttribute{
-									Computed:            true,
-									MarkdownDescription: "Permission policy override.",
-								},
-							},
+							Attributes: agentToolConfigDataSourceAttributes(),
 						},
 					},
 				},
@@ -480,6 +467,49 @@ func mapAgentResponseToDataSource(agent *anthropic.BetaManagedAgentsAgent, data 
 	return diags
 }
 
+// agentToolConfigDataSourceAttributes describes an `agent_toolset.configs`
+// entry, shared by the agent and agents data sources.
+func agentToolConfigDataSourceAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"name": schema.StringAttribute{
+			Computed:            true,
+			MarkdownDescription: "Built-in tool name.",
+		},
+		"enabled": schema.BoolAttribute{
+			Computed:            true,
+			MarkdownDescription: "Whether this tool is enabled.",
+		},
+		"permission_policy": schema.StringAttribute{
+			Computed:            true,
+			MarkdownDescription: "Permission policy: `always_allow` or `always_ask`.",
+		},
+		"allowed_domains": schema.SetAttribute{
+			Computed:            true,
+			ElementType:         types.StringType,
+			MarkdownDescription: "The only hosts the tool can reach (`web_fetch` and `web_search`), null when unrestricted.",
+		},
+		"blocked_domains": schema.SetAttribute{
+			Computed:            true,
+			ElementType:         types.StringType,
+			MarkdownDescription: "Hosts the tool can never reach (`web_fetch` and `web_search`), null when none.",
+		},
+		"max_content_tokens": schema.Int64Attribute{
+			Computed:            true,
+			MarkdownDescription: "Maximum number of tokens of fetched text content included in the context per call (`web_fetch`), null when unset.",
+		},
+		"user_location": schema.SingleNestedAttribute{
+			Computed:            true,
+			MarkdownDescription: "Approximate user location used to localize search results (`web_search`), null when unset.",
+			Attributes: map[string]schema.Attribute{
+				"country":  schema.StringAttribute{Computed: true, MarkdownDescription: "Two-letter ISO 3166-1 country code."},
+				"city":     schema.StringAttribute{Computed: true, MarkdownDescription: "City name."},
+				"region":   schema.StringAttribute{Computed: true, MarkdownDescription: "Region or state name."},
+				"timezone": schema.StringAttribute{Computed: true, MarkdownDescription: "IANA timezone identifier."},
+			},
+		},
+	}
+}
+
 // mapAgentToolsetToDataSource maps an API agent toolset to a Terraform object,
 // emitting all API-returned configs without state filtering.
 func mapAgentToolsetToDataSource(apiToolset *anthropic.BetaManagedAgentsAgentToolset20260401) (types.Object, diag.Diagnostics) {
@@ -492,11 +522,7 @@ func mapAgentToolsetToDataSource(apiToolset *anthropic.BetaManagedAgentsAgentToo
 	if len(apiToolset.Configs) > 0 {
 		configObjs := make([]attr.Value, 0, len(apiToolset.Configs))
 		for _, c := range apiToolset.Configs {
-			obj, d := types.ObjectValue(agentToolConfigAttrTypes, map[string]attr.Value{
-				"name":              types.StringValue(string(c.Name)),
-				"enabled":           types.BoolValue(c.Enabled),
-				"permission_policy": types.StringValue(c.PermissionPolicy.Type),
-			})
+			obj, d := agentToolConfigObject(c)
 			diags.Append(d...)
 			configObjs = append(configObjs, obj)
 		}
