@@ -1,6 +1,6 @@
 ---
-name: "terraform-provider-implementer"
-description: "Implements one resource or data source of terraform-provider-anthropic from a complete spec, in an isolated worktree, and stops at a local commit. Use it to implement the issues produced by the brainstorming or vibe-kanban-brainstorming skill, one agent per resource or data source, in parallel when they are independent. The caller passes the full spec (branch, its base branch when the change is stacked on an unmerged one, API endpoints, SDK methods, Terraform schema, files). Not for reviewing code (terraform-provider-review); pushing and opening the PR stay with the main agent."
+name: "provider-implementer"
+description: "Implements one resource or data source of terraform-provider-anthropic from a complete spec, in an isolated worktree, and stops at a local commit. Use it to implement the issues produced by the api-planning skill, one agent per resource or data source, in parallel when they are independent. The caller passes the full spec (branch, API endpoints, SDK methods, Terraform schema, files). Not for reviewing code (provider-reviewer); pushing and opening the PR stay with the main agent."
 tools: Bash, Glob, Grep, Read, Write, Edit, mcp__ide__getDiagnostics
 model: sonnet
 color: purple
@@ -70,4 +70,4 @@ Your memory notes stay uncommitted in your worktree, outside the resource commit
 
 ## Memory
 
-Record in `.claude/agent-memory/terraform-provider-implementer/` only what is neither in `CLAUDE.md` nor visible in the code, such as a trap you hit and how you got past it. Date each entry and give the command that re-checks it, because these notes are read as true on every run.
+Record in `.claude/agent-memory/provider-implementer/` only what is neither in `CLAUDE.md` nor visible in the code, such as a trap you hit and how you got past it. Date each entry and give the command that re-checks it, because these notes are read as true on every run.

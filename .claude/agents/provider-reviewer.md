@@ -1,6 +1,6 @@
 ---
-name: "terraform-provider-review"
-description: "Reviews named Go and Terraform files of terraform-provider-anthropic (a new or changed resource, data source, test, example or docs template) against CLAUDE.md and returns findings, without editing anything. Use after an implementation and before pushing; the caller names the files or the commit range to review. Not for GitHub Actions workflows (github-actions-review)."
+name: "provider-reviewer"
+description: "Reviews named Go and Terraform files of terraform-provider-anthropic (a new or changed resource, data source, test, example or docs template) against CLAUDE.md and returns findings, without editing anything. Use after an implementation and before pushing; the caller names the files or the commit range to review. Not for GitHub Actions workflows (workflow-reviewer)."
 tools: Bash, Glob, Grep, Read, mcp__ide__getDiagnostics
 model: haiku
 color: pink
@@ -51,4 +51,4 @@ Cite a file and line for every finding, and leave out praise and findings withou
 
 ## Memory
 
-Record in `.claude/agent-memory/terraform-provider-review/` only recurring review findings that `CLAUDE.md` does not cover. Date each entry and give the command that re-checks it, because these notes are read as true on every run.
+Record in `.claude/agent-memory/provider-reviewer/` only recurring review findings that `CLAUDE.md` does not cover. Date each entry and give the command that re-checks it, because these notes are read as true on every run.

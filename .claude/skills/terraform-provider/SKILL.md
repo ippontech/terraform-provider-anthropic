@@ -1,6 +1,6 @@
 ---
 name: terraform-provider
-description: Adds or changes resources, data sources, examples, documentation templates and Terraform native tests in this Go Terraform provider for the Anthropic API. Use when implementing, updating or removing a resource or data source, adding a Go dependency, or writing a `.tftest.hcl` test or a docs template, even when the request only names an Anthropic API endpoint. Not for planning a whole API into issues (brainstorming) or for CI files under `.github/` (github-actions).
+description: Adds or changes resources, data sources, examples, documentation templates and Terraform native tests in this Go Terraform provider for the Anthropic API. Use when implementing, updating or removing a resource or data source, adding a Go dependency, or writing a `.tftest.hcl` test or a docs template, even when the request only names an Anthropic API endpoint. Not for planning a whole API into issues (api-planning) or for CI files under `.github/` (github-actions).
 model: sonnet
 ---
 

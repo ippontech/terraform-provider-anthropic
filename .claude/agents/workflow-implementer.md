@@ -1,6 +1,6 @@
 ---
-name: "github-actions-implementer"
-description: "Implements or modifies a single GitHub Actions workflow in .github/workflows/ in an isolated git worktree. Security best practices (SHA pinning, permissions, harden-runner, secret handling) are applied by default. The caller must pass the full spec (branch, its base branch when the change is stacked on an unmerged one, workflow filename, triggers, jobs, Makefile targets) in the prompt — this agent is stateless. Invoke after a brainstorming session or when adding/updating a workflow."
+name: "workflow-implementer"
+description: "Implements or modifies one GitHub Actions workflow in .github/workflows/ in an isolated git worktree, applying the repository's security rules (SHA pinning, permissions, harden-runner, secret handling), and stops at a local commit. Use when adding or updating a workflow; the caller passes the full spec (branch, workflow file name, triggers, jobs, Makefile targets) because the agent starts with no context. Not for auditing workflows (workflow-reviewer)."
 tools: Bash, Glob, Grep, Read, Write, Edit, mcp__ide__getDiagnostics
 model: sonnet
 color: yellow
@@ -70,4 +70,4 @@ Then stop at this local commit. Do not push or start another agent: the main age
 
 ## Memory
 
-Record action SHAs, recurring security patterns, and CI conventions in `.claude/agent-memory/github-actions-implementer/`.
+Record action SHAs, recurring security patterns, and CI conventions in `.claude/agent-memory/workflow-implementer/`.
