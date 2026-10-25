@@ -10,7 +10,7 @@ description: |-
 Fetches the organization associated with the authenticated Admin API key. It takes no input and always returns the organization tied to the configured admin key. Useful for validating the admin key before an apply, exposing the organization ID to other modules, and audit trails.
 
 > **API**: `GET /v1/organizations/me` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

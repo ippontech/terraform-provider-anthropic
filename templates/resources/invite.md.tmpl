@@ -10,7 +10,7 @@ description: |-
 Creates and manages an invitation for a user to join the organization via the Admin API.
 
 > **API**: `POST/GET/DELETE /v1/organizations/invites[/{id}]` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` and `write:members` scopes (plus `write:rbac_groups` to invite with the `managed` role).
 > **Beta header**: None.
 > **Cost**: Free.
 
