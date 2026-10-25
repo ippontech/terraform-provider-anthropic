@@ -6,6 +6,7 @@ package agents_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
@@ -463,6 +464,22 @@ func TestAccAgentResource_withCustomTools(t *testing.T) {
 					resource.TestCheckResourceAttr("anthropic_agent.test_custom_tools", "custom_tools.0.description", "Look up a user by their email address"),
 				),
 			},
+			// Root-level keywords other than type/properties/required reach the
+			// API: the post-apply plan must be empty, i.e. the stored schema keeps
+			// additionalProperties and $defs.
+			{
+				Config: testAccAgentResourceWithCustomToolsStrictSchemaConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrWith("anthropic_agent.test_custom_tools", "custom_tools.0.input_schema", func(v string) error {
+						for _, keyword := range []string{`"additionalProperties":false`, `"$defs"`} {
+							if !strings.Contains(v, keyword) {
+								return fmt.Errorf("input_schema %s lacks %s", v, keyword)
+							}
+						}
+						return nil
+					}),
+				),
+			},
 		},
 	})
 }
@@ -740,6 +757,36 @@ resource "anthropic_agent" "test_custom_tools" {
           }
         }
         required = ["email"]
+      })
+    }
+  ]
+}
+`
+
+const testAccAgentResourceWithCustomToolsStrictSchemaConfig = `
+resource "anthropic_agent" "test_custom_tools" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-custom-tools"
+
+  custom_tools = [
+    {
+      name        = "lookup_user"
+      description = "Look up a user by their email address"
+      input_schema = jsonencode({
+        type = "object"
+        properties = {
+          email   = { type = "string", description = "The user's email address" }
+          address = { "$ref" = "#/$defs/address" }
+        }
+        required             = ["email"]
+        additionalProperties = false
+        "$defs" = {
+          address = {
+            type                 = "object"
+            properties           = { city = { type = "string" } }
+            additionalProperties = false
+          }
+        }
       })
     }
   ]

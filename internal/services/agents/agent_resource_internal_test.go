@@ -111,19 +111,13 @@ func TestMapAgentResponseToState_customToolInputSchema(t *testing.T) {
 	}
 }
 
-// TestBuildToolsParams_customToolInputSchemaDropsRootExtras pins the request
-// body across the anthropic-sdk-go upgrade (v1.67 -> v1.84): since v1.75.0 the
-// SDK keeps root-level input_schema keys other than type/properties/required
-// and sends them, where v1.67.0 dropped them. buildToolsParams keeps dropping
-// them, so the SDK bump does not change what the API receives. Nested keys
-// (inside properties) were and still are sent.
-func TestBuildToolsParams_customToolInputSchemaDropsRootExtras(t *testing.T) {
-	t.Parallel()
-
+// customToolsList builds a custom_tools list holding one tool with schema.
+func customToolsList(t *testing.T, schema string) types.List {
+	t.Helper()
 	tool, diags := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
 		"name":         types.StringValue("lookup_user"),
 		"description":  types.StringValue("Look up a user"),
-		"input_schema": jsontypes.NewNormalizedValue(`{"type":"object","properties":{"email":{"type":"string","description":"d"}},"required":["email"],"additionalProperties":false,"description":"root"}`),
+		"input_schema": jsontypes.NewNormalizedValue(schema),
 	})
 	if diags.HasError() {
 		t.Fatalf("tool: %+v", diags)
@@ -132,8 +126,24 @@ func TestBuildToolsParams_customToolInputSchemaDropsRootExtras(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("list: %+v", diags)
 	}
+	return list
+}
 
-	tools, diags := buildToolsParams(context.Background(), AgentResourceModel{CustomTools: list})
+// TestBuildToolsParams_customToolInputSchemaKeepsRootKeywords: the configured
+// input_schema reaches the API as is, root-level keywords other than
+// type/properties/required included (additionalProperties, $defs,
+// description). SDK v1.67.0 dropped them, and the SDK v1.84.0 bump kept
+// dropping them on purpose until this fix. An echo of that schema then maps
+// back to a value semantically equal to the configuration.
+func TestBuildToolsParams_customToolInputSchemaKeepsRootKeywords(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const configured = `{"type":"object","properties":{"address":{"$ref":"#/$defs/address"},"email":{"type":"string","description":"d"}},` +
+		`"required":["email"],"additionalProperties":false,"description":"root",` +
+		`"$defs":{"address":{"type":"object","properties":{"city":{"type":"string"}},"additionalProperties":false}}}`
+
+	tools, diags := buildToolsParams(ctx, AgentResourceModel{CustomTools: customToolsList(t, configured)})
 	if diags.HasError() {
 		t.Fatalf("buildToolsParams: %+v", diags)
 	}
@@ -141,10 +151,42 @@ func TestBuildToolsParams_customToolInputSchemaDropsRootExtras(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `[{"description":"Look up a user","input_schema":{"properties":{"email":{"description":"d","type":"string"}},"required":["email"],"type":"object"},"name":"lookup_user","type":"custom"}]`
-	if string(b) != want {
-		t.Fatalf("got  %s\nwant %s", b, want)
+	var sent []struct {
+		InputSchema json.RawMessage `json:"input_schema"`
 	}
+	if err := json.Unmarshal(b, &sent); err != nil || len(sent) != 1 {
+		t.Fatalf("decode request %s: %v", b, err)
+	}
+	assertJSONEqual(t, string(sent[0].InputSchema), configured)
+
+	agent := parseAgentWithTools(t, `[{"type":"custom","name":"lookup_user","description":"Look up a user","input_schema":`+string(sent[0].InputSchema)+`}]`)
+	var data AgentResourceModel
+	if diags := mapAgentResponseToState(ctx, agent, &data, readMapping); diags.HasError() {
+		t.Fatalf("mapAgentResponseToState: %+v", diags)
+	}
+	var mapped []agentCustomToolModel
+	if diags := data.CustomTools.ElementsAs(ctx, &mapped, false); diags.HasError() || len(mapped) != 1 {
+		t.Fatalf("custom tools: %+v", diags)
+	}
+	equal, diags := jsontypes.NewNormalizedValue(configured).StringSemanticEquals(ctx, mapped[0].InputSchema)
+	if diags.HasError() || !equal {
+		t.Errorf("mapped input_schema %s is not semantically equal to the configuration", mapped[0].InputSchema.ValueString())
+	}
+}
+
+// A schema without `type` is still sent with `type: object`, the SDK default
+// that SDK v1.67.0 applied too.
+func TestBuildToolsParams_customToolInputSchemaDefaultsType(t *testing.T) {
+	t.Parallel()
+	tools, diags := buildToolsParams(context.Background(), AgentResourceModel{CustomTools: customToolsList(t, `{"properties":{},"additionalProperties":false}`)})
+	if diags.HasError() {
+		t.Fatalf("buildToolsParams: %+v", diags)
+	}
+	b, err := json.Marshal(tools[0].OfCustom.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, string(b), `{"type":"object","properties":{},"additionalProperties":false}`)
 }
 
 // policyVariant names the permission policy variants set on a union, "" when

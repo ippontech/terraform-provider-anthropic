@@ -97,6 +97,11 @@ run "agent_resource_example" {
   }
 
   assert {
+    condition     = jsondecode(anthropic_agent.custom_tools.custom_tools[0].input_schema).additionalProperties == false
+    error_message = "Expected the custom tool's input_schema to keep additionalProperties."
+  }
+
+  assert {
     condition     = anthropic_agent.coordinator.multiagent.type == "coordinator"
     error_message = "Expected a coordinator topology."
   }

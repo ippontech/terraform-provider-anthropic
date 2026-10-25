@@ -136,7 +136,8 @@ resource "anthropic_agent" "custom_tools" {
             description = "The user's email address"
           }
         }
-        required = ["email"]
+        required             = ["email"]
+        additionalProperties = false
       })
     }
   ]
@@ -386,7 +387,7 @@ Required:
 
 Optional:
 
-- `input_schema` (String) JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.
+- `input_schema` (String) JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted.
 
 
 <a id="nestedatt--execution_identity"></a>
