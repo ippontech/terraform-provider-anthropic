@@ -39,7 +39,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
 - `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
-- `workspaces/`: `workspace`, `workspace_member`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key.
+- `workspaces/`: `workspace`, `workspace_member`, `workspace_rate_limit`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key.
 
 ## Adding a resource or data source
 
