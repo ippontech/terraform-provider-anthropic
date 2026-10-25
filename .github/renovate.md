@@ -31,7 +31,7 @@ shows its recent runs and their logs.
 | `platformAutomerge` | Uses GitHub's own auto-merge, so branch protection and required checks are respected. This is already the default; kept explicit because the whole automerge policy depends on it |
 | `enabledManagers` | `github-actions`, `gomod`, `mise`, `pre-commit`, `custom.regex` |
 | `customManagers` | Two regex managers, see [Custom managers](#custom-managers) below |
-| `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, plus a version hold on the Anthropic Go SDK (see [Version holds](#version-holds)) |
+| `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, except release tooling (see [Release tooling](#release-tooling)), plus a version hold on the Anthropic Go SDK (see [Version holds](#version-holds)) |
 
 Two of these entries are less obvious than they look:
 
@@ -81,7 +81,22 @@ hence the annotation. To put another tool version under Renovate's control, add 
           version: v1.2.3
 ```
 
-Both managers are grouped into a single `CI tool versions` PR.
+Both managers are grouped into a single `CI tool versions` PR, except for the versions pinned in the
+release workflows, which go to the `release tooling` PR below.
+
+## Release tooling
+
+Every dependency declared in `goreleaser-release.yml` and `semantic-release.yml` runs next to a release
+credential: the semantic-release GitHub App token, which bypasses the `main` ruleset, and the GPG key
+that signs the checksums the Terraform Registry verifies. A malicious patch release of any of them would
+otherwise be merged by GitHub auto-merge three days after publication, with no maintainer decision, and
+run with those credentials on the next push or tag.
+
+A `matchFileNames` rule therefore moves these updates (GoReleaser, the semantic-release packages, and the
+actions used by the two workflows) into their own `release tooling` group with `automerge: false`. A
+maintainer reviews the release notes and the diff of each one before merging. The rule matches by file,
+not by package, so the same action used in other workflows (`actions/checkout`, say) keeps its
+automerged `GitHub Actions` group there; only its release-workflow occurrence waits for review.
 
 ## Version holds
 

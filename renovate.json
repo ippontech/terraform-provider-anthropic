@@ -74,6 +74,16 @@
       "automerge": false
     },
     {
+      "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. Its updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser and the semantic-release packages (custom.regex) as well as the actions those two workflows use (github-actions); the same action in other workflows keeps its usual automerged group.",
+      "matchFileNames": [
+        ".github/workflows/goreleaser-release.yml",
+        ".github/workflows/semantic-release.yml"
+      ],
+      "groupName": "release tooling",
+      "groupSlug": "release-tooling",
+      "automerge": false
+    },
+    {
       "description": "Hold anthropic-sdk-go below v1.68.0 until #192 is done: v1.68.0 renames skill fields the deployed API still returns under their old names. Patch releases within 1.67.x stay allowed. Remove this rule as part of #192, not on its own.",
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
