@@ -70,6 +70,7 @@ Unit tests need no environment variables. Go acceptance tests (`TestAcc` prefix,
 - at least 75% of the executable statements a pull request adds or changes in non-test Go files must be covered by unit tests, so write the tests with the code (fake-API tests through `resource.UnitTest` need no credential);
 - the total, outside the exclusions, stays at or above `.coverage-baseline` minus 0.5 point; when a change raises it, the job summary gives the value to commit in `.coverage-baseline` in the same pull request;
 - once the baseline reaches 75%, the total never drops under 75% and the baseline never goes back under it.
+- per package, monitored, not enforced yet: the job summary lists every package outside the exclusions with its coverage and its distance to 75%, least covered first. `package_min` in `.coverage.json` stays `null` until the last PR of the coverage effort sets it to 75; from then on every package stays at 75% or more. Coverage should be even across packages, not only high in total, so add tests to the packages at the top of that table first.
 
 The exclusions are the test-helper packages, `main.go` and `tools/`, nothing else, and there is no ignore comment: code that cannot be unit-tested is a reason to restructure it, not to exclude it. Run `make cover` before pushing; `go test -cover` needs the `covdata` tool (see Commands).
 
