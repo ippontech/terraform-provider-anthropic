@@ -521,7 +521,9 @@ func buildEnvironmentConfigParams(ctx context.Context, configObj types.Object) (
 			if !networkingModel.AllowPackageManagers.IsNull() && !networkingModel.AllowPackageManagers.IsUnknown() {
 				limited.AllowPackageManagers = param.NewOpt(networkingModel.AllowPackageManagers.ValueBool())
 			}
-			if !networkingModel.AllowedHosts.IsNull() && !networkingModel.AllowedHosts.IsUnknown() && len(networkingModel.AllowedHosts.Elements()) > 0 {
+			// An empty list is sent as []: the update endpoint keeps an
+			// omitted allowed_hosts, so leaving it out cannot clear the hosts.
+			if !networkingModel.AllowedHosts.IsNull() && !networkingModel.AllowedHosts.IsUnknown() {
 				var hosts []string
 				diags.Append(networkingModel.AllowedHosts.ElementsAs(ctx, &hosts, false)...)
 				if diags.HasError() {
