@@ -909,7 +909,10 @@ func mapFederationRuleToState(ctx context.Context, rule *anthropic.BetaFederatio
 		diags.Append(d...)
 		data.Attributes = attrsMap
 	} else {
-		data.Attributes = types.MapNull(types.StringType)
+		// The API always answers null today ("Not yet supported; always
+		// null"): keep a configured attributes = {}, or it fails with an
+		// inconsistent result after apply.
+		data.Attributes = tfvalue.MetadataAfterEmptyResponse(data.Attributes)
 	}
 
 	// Timestamps + actor IDs: "" / zero-time -> null.
