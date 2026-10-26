@@ -31,9 +31,9 @@ linters:
     - usestdlibvars
   settings:
     gocognit:
-      # Reports functions scoring above 50. Four do today (buildToolsParams 85,
-      # buildEnvironmentConfigParams 64, TestBuildAgentToolConfigParams 58,
-      # mapMCPToolsetsToState 52); lower it in steps (30, then 20) as they are split.
+      # Reports functions scoring above 50. Three do today (buildToolsParams 85,
+      # buildEnvironmentConfigParams 64, TestBuildAgentToolConfigParams 58); lower
+      # it in steps (30, then 20) as they are split.
       min-complexity: 50
     exhaustive:
       default-signifies-exhaustive: true
@@ -55,7 +55,11 @@ linters:
               desc: test helper, import it from _test.go files only
             - pkg: github.com/ippontech/terraform-provider-anthropic/internal/oauthtest
               desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/providertest
+              desc: test helper, import it from _test.go files only
             - pkg: github.com/ippontech/terraform-provider-anthropic/internal/schematest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/sdktest
               desc: test helper, import it from _test.go files only
             - pkg: net/http/httptest
               desc: test-only package, import it from _test.go files only
@@ -75,7 +79,7 @@ linters:
           - errchkjson
           - gosec
       # These packages are test helpers themselves: they may import httptest.
-      - path: internal/(acctest|wifprobetest|admintest|oauthtest|schematest)/
+      - path: internal/(acctest|wifprobetest|admintest|oauthtest|providertest|schematest|sdktest)/
         linters:
           - depguard
 
