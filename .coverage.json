@@ -1,6 +1,6 @@
 {
   "diff_min": 75,
-  "total_target": 75,
+  "total_target": 80,
   "ratchet_tolerance": 0.5,
   "baseline_file": ".coverage-baseline",
   "package_min": null,

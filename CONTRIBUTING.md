@@ -84,8 +84,8 @@ make test
 
 - **Diff**: at least 75% of the executable statements a pull request adds or changes (non-test Go files) are covered by unit tests. Write the tests with the code; `httptest` fakes and `resource.UnitTest` need no credential.
 - **Ratchet**: the total stays at or above `.coverage-baseline` minus 0.5 point. When a pull request raises the total, the job summary gives the new value to commit in `.coverage-baseline`. Lowering it is possible in the pull request that needs it, with a reason reviewers accept.
-- **Floor**: once the baseline reaches 75%, the total never drops under 75% and the baseline cannot go back under it.
-- **Packages** (monitored, not yet enforced): the job summary lists every package with its coverage and its distance to 75%, least covered first. `package_min` in `.coverage.json` is `null` for now; the last pull request of the coverage effort sets it to 75, and from then on every package must stay at 75% or more, not only the total.
+- **Floor**: once the baseline reaches 80%, the total never drops under 80% and the baseline cannot go back under it.
+- **Packages** (monitored, not yet enforced): the job summary lists every package with its coverage and its distance to 80%, least covered first. `package_min` in `.coverage.json` is `null` for now; the last pull request of the coverage effort sets it to 80, and from then on every package must stay at 80% or more, not only the total.
 
 Locally, `make cover` compares with `origin/main` (`COVER_BASE=<ref>` to change it) and sees committed changes only. `go test -cover` needs Go's `covdata` tool, missing from the toolchains `GOTOOLCHAIN` downloads (`go: no such tool "covdata"`); see the `covdata` note in CLAUDE.md.
 

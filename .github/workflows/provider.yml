@@ -140,7 +140,7 @@ jobs:
 
   # The coverage gate (.coverage.json, tools/coversummary): at least 75% of the
   # statements a pull request changes are covered, the total stays at or above
-  # .coverage-baseline minus the tolerance, and never under 75% once the
+  # .coverage-baseline minus the tolerance, and never under 80% once the
   # baseline reaches it. A required check: it fails, it does not warn. The
   # summary also lists each package's coverage, enforced only once
   # package_min is set in .coverage.json.
