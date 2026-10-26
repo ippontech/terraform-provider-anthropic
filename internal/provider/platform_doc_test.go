@@ -14,7 +14,7 @@ import (
 
 // documentedPlatforms are the columns of the availability table in the
 // provider documentation, in order.
-var documentedPlatforms = []platform.Platform{platform.AWS}
+var documentedPlatforms = []platform.Platform{platform.AWS, platform.GoogleCloud}
 
 const (
 	availabilityStart = "<!-- platform-availability:start -->"

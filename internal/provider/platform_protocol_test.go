@@ -251,3 +251,37 @@ func TestAWSGateThroughTheProtocol(t *testing.T) {
 		t.Errorf("detail = %v", summaries(diags))
 	}
 }
+
+// TestGoogleCloudGateThroughTheProtocol: TestAWSGateThroughTheProtocol for a
+// google_cloud alias, with a static access token so that no credential is
+// looked up, and a closed local base URL.
+func TestGoogleCloudGateThroughTheProtocol(t *testing.T) {
+	isolateGoogleEnv(t)
+	exportFirstPartyEnvironment(t)
+	s := newProtocolServer(t)
+
+	gcType := s.schema.Provider.ValueType().(tftypes.Object).AttributeTypes["google_cloud"]
+	block := map[string]tftypes.Value{}
+	for name, attrType := range gcType.(tftypes.Object).AttributeTypes {
+		block[name] = tftypes.NewValue(attrType, nil)
+	}
+	block["project"] = tfString(gcTestProject)
+	block["access_token"] = tfString(gcTestToken)
+	block["base_url"] = tfString("http://127.0.0.1:9")
+	if diags := s.configure(map[string]tftypes.Value{
+		"workspace_id": tfString(gcTestWorkspace),
+		"google_cloud": tftypes.NewValue(gcType, block),
+	}); hasProtocolError(diags) {
+		t.Fatalf("ConfigureProvider: %v", summaries(diags))
+	}
+
+	const name = "Claude Models on Google Cloud (Anthropic managed)"
+	assertProtocolUnavailable(t, s.planCreate("anthropic_workspace", map[string]tftypes.Value{"name": tfString("w")}), "anthropic_workspace", name)
+	assertProtocolUnavailable(t, s.readDataSource("anthropic_workspaces", nil), "anthropic_workspaces", name)
+	assertProtocolUnavailable(t, s.planCreate("anthropic_invite", map[string]tftypes.Value{
+		"email": tfString("new-teammate@example.com"), "role": tfString("developer"),
+	}), "anthropic_invite", name)
+	if diags := s.planCreate("anthropic_agent", map[string]tftypes.Value{"name": tfString("Simple Agent"), "model": tfString("claude-opus-5-5")}); hasProtocolError(diags) {
+		t.Errorf("anthropic_agent: plan failed on Google Cloud: %v", summaries(diags))
+	}
+}

@@ -636,14 +636,14 @@ func TestConfigureAWSGatesTheRegistry(t *testing.T) {
 		r := f()
 		byName[resourceTypeName(r)] = fmt.Sprintf("%T", r)
 	}
-	if got := byName["anthropic_invite"]; got != "*provider.unavailableResource" {
+	if got := byName["anthropic_invite"]; got != "*provider.refusedResource" {
 		t.Errorf("anthropic_invite is %s, want the unavailable stand-in", got)
 	}
 	for name, want := range map[string]any{
 		"anthropic_workspace":  workspaces.NewWorkspaceResource(),
 		"anthropic_deployment": nil, // unverified: the real type
 	} {
-		if strings.Contains(byName[name], "unavailable") {
+		if strings.Contains(byName[name], "refused") {
 			t.Errorf("%s is refused on AWS", name)
 		}
 		if want != nil && byName[name] != fmt.Sprintf("%T", want) {

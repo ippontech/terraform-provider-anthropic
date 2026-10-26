@@ -38,6 +38,9 @@ type AnthropicProvider struct {
 	// resource and data source factories read it (see gate.go), on other
 	// RPCs' goroutines, hence the atomic.
 	platform atomic.Value
+	// workspaceless is set for a Google Cloud alias without a workspace,
+	// which serves organization routes only (gate.go).
+	workspaceless atomic.Bool
 }
 
 // AnthropicProviderModel describes the provider data model.
@@ -48,6 +51,7 @@ type AnthropicProviderModel struct {
 	Federation  types.Object `tfsdk:"federation"`
 	WorkspaceID types.String `tfsdk:"workspace_id"`
 	AWS         types.Object `tfsdk:"aws"`
+	GoogleCloud types.Object `tfsdk:"google_cloud"`
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -90,9 +94,12 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: " +
 					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only. " +
 					"With the aws block: required, sent on every request except the Admin API ones, and read from " +
-					"ANTHROPIC_AWS_WORKSPACE_ID when unset.",
+					"ANTHROPIC_AWS_WORKSPACE_ID when unset. With the google_cloud block: part of " +
+					"the request URL, never a header, required except for an alias limited to organization routes, and " +
+					"read from ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID when unset.",
 			},
-			"aws": awsSchema(),
+			"aws":          awsSchema(),
+			"google_cloud": googleCloudSchema(),
 		},
 	}
 }
@@ -119,6 +126,28 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	// A platform block, and only the block, selects a cloud gateway: the
 	// variables that fill it are exported for other tools too. The alias then
 	// has one SDK client and none of the first-party ones below.
+	if !data.AWS.IsNull() && !data.GoogleCloud.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("google_cloud"), "Conflicting Platform Configuration",
+			"aws and google_cloud cannot both be set: each reaches a different organization. Use a separate provider alias for each.")
+		return
+	}
+	if !data.GoogleCloud.IsNull() {
+		settings, diags := resolveGoogleCloud(ctx, data)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		client, err := newGoogleCloudClient(ctx, settings.config)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("google_cloud"), "Unable to Configure Claude Models on Google Cloud", err.Error())
+			return
+		}
+		ignoredFirstPartyEnvironment(ctx, platform.GoogleCloud)
+		addPlatformBetaWarning(&resp.Diagnostics, platform.GoogleCloud)
+		p.workspaceless.Store(!settings.workspace)
+		p.serve(resp, providerdata.ForPlatform(platform.GoogleCloud, client))
+		return
+	}
 	if !data.AWS.IsNull() {
 		cfg, diags := resolveAWS(ctx, data)
 		resp.Diagnostics.Append(diags...)
@@ -180,7 +209,8 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
 				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token. "+
-				"For an organization on Claude Platform on AWS, set the aws block instead.",
+				"For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or "+
+				"google_cloud block instead.",
 		)
 		return
 	}

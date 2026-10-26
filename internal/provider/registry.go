@@ -54,7 +54,9 @@ func (r registration[T]) on(p platform.Platform) platform.Support {
 // Reasons a gateway platform does not serve a type, cited by the diagnostic.
 // Sources, re-read on 2026-10-25: the Claude Platform on AWS page ("Features
 // not supported") and its IAM actions page, whose route table states that
-// "the gateway denies any route not listed here by default".
+// "the gateway denies any route not listed here by default"; the Claude
+// Models on Google Cloud (Anthropic managed) page and its IAM permissions
+// page, whose 111 routes are the only ones with a permission.
 var (
 	supported = platform.Supported()
 
@@ -70,82 +72,96 @@ var (
 		"read-only in the Claude Console.")
 	awsNoOAuth = platform.Unavailable("Its gateway accepts no OAuth token, only AWS SigV4 or a key generated in " +
 		"the AWS Console, so Workload Identity Federation and its service accounts do not apply.")
+	gcAdminRoutesReason = "Its gateway serves the external key routes of the Admin API, not this type's; " +
+		"Google Cloud IAM roles on the project control access."
+	gcAdminRoutes = platform.Unavailable(gcAdminRoutesReason)
+	gcMembers     = platform.Unavailable(gcAdminRoutesReason + " There are no organization members, invites or " +
+		"workspace members to manage: the Claude Console is opened through Google Cloud IAM.")
+	gcWorkspaces = platform.Unavailable("Workspaces are created, renamed and archived in the Claude Console only " +
+		"(Settings > Workspaces): the gateway serves no workspace route. Read a workspace's ID there.")
+	gcNoOAuth = platform.Unavailable("Authentication is through Google Cloud credentials only, with no API key and " +
+		"no Anthropic OAuth token, so Workload Identity Federation and its service accounts do not apply.")
+	gcUserProfiles = platform.Unverified("The platform pages and IAM permissions do not mention user profiles. The " +
+		"SDK v1.84 sends their requests to the workspace endpoint, while SDK v2.3.0 sends them to the organization " +
+		"endpoint.")
+	gcTelemetry = platform.Unavailable("Telemetry destinations are not among its gateway's routes: the OpenTelemetry " +
+		"documentation offers API tracing on the Claude API and Claude Platform on AWS only.")
 )
 
 func resourceRegistrations() []registration[resource.Resource] {
 	return []registration[resource.Resource]{
-		{New: agents.NewAgentResource, AWS: supported},
-		{New: apikeys.NewAPIKeyResource, AWS: awsAPIKeys},
-		// Served, though the gateway's route table does not list them.
-		{New: deployments.NewDeploymentResource, AWS: supported},
-		{New: environments.NewEnvironmentResource, AWS: supported},
-		{New: federation.NewFederationIssuerResource, AWS: awsNoOAuth},
-		{New: federation.NewFederationRuleResource, AWS: awsNoOAuth},
-		{New: federation.NewFederationRuleWorkspaceResource, AWS: awsNoOAuth},
-		{New: files.NewFileResource, AWS: supported},
-		{New: memorystores.NewMemoryResource, AWS: supported},
-		{New: memorystores.NewMemoryStoreResource, AWS: supported},
-		{New: messages.NewMessageResource, AWS: supported},
-		{New: organizations.NewInviteResource, AWS: awsMembers},
-		{New: organizations.NewOrganizationMemberResource, AWS: awsMembers},
-		{New: organizationwebhooks.NewOrganizationWebhookResource, AWS: awsAdminRoutes},
-		{New: serviceaccounts.NewServiceAccountResource, AWS: awsNoOAuth},
-		{New: serviceaccounts.NewServiceAccountWorkspaceResource, AWS: awsNoOAuth},
-		{New: skills.NewSkillResource, AWS: supported},
-		{New: skills.NewSkillVersionResource, AWS: supported},
-		{New: telemetrydestinations.NewTelemetryDestinationResource, AWS: supported},
-		{New: userprofiles.NewUserProfileResource, AWS: supported},
-		{New: vaults.NewVaultResource, AWS: supported},
-		{New: vaults.NewVaultCredentialResource, AWS: supported},
-		{New: workspaces.NewWorkspaceResource, AWS: supported},
-		{New: workspaces.NewWorkspaceMemberResource, AWS: awsWorkspaceMembers},
-		{New: workspaces.NewWorkspaceRateLimitResource, AWS: awsRateLimits},
+		{New: agents.NewAgentResource, AWS: supported, GoogleCloud: supported},
+		{New: apikeys.NewAPIKeyResource, AWS: awsAPIKeys, GoogleCloud: gcAdminRoutes},
+		// Served on AWS, though the gateway's route table does not list them.
+		{New: deployments.NewDeploymentResource, AWS: supported, GoogleCloud: supported},
+		{New: environments.NewEnvironmentResource, AWS: supported, GoogleCloud: supported},
+		{New: federation.NewFederationIssuerResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: federation.NewFederationRuleResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: federation.NewFederationRuleWorkspaceResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: files.NewFileResource, AWS: supported, GoogleCloud: supported},
+		{New: memorystores.NewMemoryResource, AWS: supported, GoogleCloud: supported},
+		{New: memorystores.NewMemoryStoreResource, AWS: supported, GoogleCloud: supported},
+		{New: messages.NewMessageResource, AWS: supported, GoogleCloud: supported},
+		{New: organizations.NewInviteResource, AWS: awsMembers, GoogleCloud: gcMembers},
+		{New: organizations.NewOrganizationMemberResource, AWS: awsMembers, GoogleCloud: gcMembers},
+		{New: organizationwebhooks.NewOrganizationWebhookResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: serviceaccounts.NewServiceAccountResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: serviceaccounts.NewServiceAccountWorkspaceResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: skills.NewSkillResource, AWS: supported, GoogleCloud: supported},
+		{New: skills.NewSkillVersionResource, AWS: supported, GoogleCloud: supported},
+		{New: telemetrydestinations.NewTelemetryDestinationResource, AWS: supported, GoogleCloud: gcTelemetry},
+		{New: userprofiles.NewUserProfileResource, AWS: supported, GoogleCloud: gcUserProfiles},
+		{New: vaults.NewVaultResource, AWS: supported, GoogleCloud: supported},
+		{New: vaults.NewVaultCredentialResource, AWS: supported, GoogleCloud: supported},
+		{New: workspaces.NewWorkspaceResource, AWS: supported, GoogleCloud: gcWorkspaces},
+		{New: workspaces.NewWorkspaceMemberResource, AWS: awsWorkspaceMembers, GoogleCloud: gcMembers},
+		{New: workspaces.NewWorkspaceRateLimitResource, AWS: awsRateLimits, GoogleCloud: gcAdminRoutes},
 	}
 }
 
 func dataSourceRegistrations() []registration[datasource.DataSource] {
 	return []registration[datasource.DataSource]{
-		{New: agents.NewAgentDataSource, AWS: supported},
-		{New: apikeys.NewAPIKeyDataSource, AWS: awsAPIKeys},
-		{New: apikeys.NewAPIKeysDataSource, AWS: awsAPIKeys},
-		{New: agents.NewAgentsDataSource, AWS: supported},
-		{New: messages.NewCountTokensDataSource, AWS: supported},
-		{New: deployments.NewDeploymentRunsDataSource, AWS: supported},
-		{New: environments.NewEnvironmentDataSource, AWS: supported},
-		{New: environments.NewEnvironmentsDataSource, AWS: supported},
-		{New: federation.NewFederationIssuersDataSource, AWS: awsNoOAuth},
-		{New: federation.NewFederationRulesDataSource, AWS: awsNoOAuth},
-		{New: federation.NewFederationIssuerDataSource, AWS: awsNoOAuth},
-		{New: federation.NewFederationRuleDataSource, AWS: awsNoOAuth},
-		{New: federation.NewFederationRuleWorkspacesDataSource, AWS: awsNoOAuth},
-		{New: files.NewFileDataSource, AWS: supported},
-		{New: files.NewFilesDataSource, AWS: supported},
-		{New: memorystores.NewMemoryDataSource, AWS: supported},
-		{New: memorystores.NewMemoriesDataSource, AWS: supported},
-		{New: memorystores.NewMemoryStoreDataSource, AWS: supported},
-		{New: memorystores.NewMemoryStoresDataSource, AWS: supported},
-		{New: models.NewModelDataSource, AWS: supported},
-		{New: models.NewModelsDataSource, AWS: supported},
-		{New: organizations.NewOrganizationDataSource, AWS: awsAdminRoutes},
-		{New: organizations.NewOrganizationMemberDataSource, AWS: awsMembers},
-		{New: organizations.NewOrganizationMembersDataSource, AWS: awsMembers},
-		{New: organizations.NewInviteDataSource, AWS: awsMembers},
-		{New: organizations.NewInvitesDataSource, AWS: awsMembers},
-		{New: serviceaccounts.NewServiceAccountsDataSource, AWS: awsNoOAuth},
-		{New: serviceaccounts.NewServiceAccountDataSource, AWS: awsNoOAuth},
-		{New: serviceaccounts.NewServiceAccountWorkspacesDataSource, AWS: awsNoOAuth},
-		{New: skills.NewSkillDataSource, AWS: supported},
-		{New: skills.NewSkillVersionDataSource, AWS: supported},
-		{New: skills.NewSkillVersionsDataSource, AWS: supported},
-		{New: skills.NewSkillsDataSource, AWS: supported},
-		{New: userprofiles.NewUserProfileDataSource, AWS: supported},
-		{New: userprofiles.NewUserProfilesDataSource, AWS: supported},
-		{New: vaults.NewVaultDataSource, AWS: supported},
-		{New: vaults.NewVaultsDataSource, AWS: supported},
-		{New: workspaces.NewWorkspaceDataSource, AWS: supported},
-		{New: workspaces.NewWorkspaceMemberDataSource, AWS: awsWorkspaceMembers},
-		{New: workspaces.NewWorkspaceMembersDataSource, AWS: awsWorkspaceMembers},
-		{New: workspaces.NewWorkspaceRateLimitsDataSource, AWS: awsRateLimits},
-		{New: workspaces.NewWorkspacesDataSource, AWS: supported},
+		{New: agents.NewAgentDataSource, AWS: supported, GoogleCloud: supported},
+		{New: apikeys.NewAPIKeyDataSource, AWS: awsAPIKeys, GoogleCloud: gcAdminRoutes},
+		{New: apikeys.NewAPIKeysDataSource, AWS: awsAPIKeys, GoogleCloud: gcAdminRoutes},
+		{New: agents.NewAgentsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: messages.NewCountTokensDataSource, AWS: supported, GoogleCloud: supported},
+		{New: deployments.NewDeploymentRunsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: environments.NewEnvironmentDataSource, AWS: supported, GoogleCloud: supported},
+		{New: environments.NewEnvironmentsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: federation.NewFederationIssuersDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: federation.NewFederationRulesDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: federation.NewFederationIssuerDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: federation.NewFederationRuleDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: federation.NewFederationRuleWorkspacesDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: files.NewFileDataSource, AWS: supported, GoogleCloud: supported},
+		{New: files.NewFilesDataSource, AWS: supported, GoogleCloud: supported},
+		{New: memorystores.NewMemoryDataSource, AWS: supported, GoogleCloud: supported},
+		{New: memorystores.NewMemoriesDataSource, AWS: supported, GoogleCloud: supported},
+		{New: memorystores.NewMemoryStoreDataSource, AWS: supported, GoogleCloud: supported},
+		{New: memorystores.NewMemoryStoresDataSource, AWS: supported, GoogleCloud: supported},
+		{New: models.NewModelDataSource, AWS: supported, GoogleCloud: supported},
+		{New: models.NewModelsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: organizations.NewOrganizationDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: organizations.NewOrganizationMemberDataSource, AWS: awsMembers, GoogleCloud: gcMembers},
+		{New: organizations.NewOrganizationMembersDataSource, AWS: awsMembers, GoogleCloud: gcMembers},
+		{New: organizations.NewInviteDataSource, AWS: awsMembers, GoogleCloud: gcMembers},
+		{New: organizations.NewInvitesDataSource, AWS: awsMembers, GoogleCloud: gcMembers},
+		{New: serviceaccounts.NewServiceAccountsDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: serviceaccounts.NewServiceAccountDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: serviceaccounts.NewServiceAccountWorkspacesDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
+		{New: skills.NewSkillDataSource, AWS: supported, GoogleCloud: supported},
+		{New: skills.NewSkillVersionDataSource, AWS: supported, GoogleCloud: supported},
+		{New: skills.NewSkillVersionsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: skills.NewSkillsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: userprofiles.NewUserProfileDataSource, AWS: supported, GoogleCloud: gcUserProfiles},
+		{New: userprofiles.NewUserProfilesDataSource, AWS: supported, GoogleCloud: gcUserProfiles},
+		{New: vaults.NewVaultDataSource, AWS: supported, GoogleCloud: supported},
+		{New: vaults.NewVaultsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: workspaces.NewWorkspaceDataSource, AWS: supported, GoogleCloud: gcWorkspaces},
+		{New: workspaces.NewWorkspaceMemberDataSource, AWS: awsWorkspaceMembers, GoogleCloud: gcMembers},
+		{New: workspaces.NewWorkspaceMembersDataSource, AWS: awsWorkspaceMembers, GoogleCloud: gcMembers},
+		{New: workspaces.NewWorkspaceRateLimitsDataSource, AWS: awsRateLimits, GoogleCloud: gcAdminRoutes},
+		{New: workspaces.NewWorkspacesDataSource, AWS: supported, GoogleCloud: gcWorkspaces},
 	}
 }

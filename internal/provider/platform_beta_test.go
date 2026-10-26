@@ -46,7 +46,11 @@ func protocolWarnings(diags []*tfprotov6.Diagnostic) []*tfprotov6.Diagnostic {
 // guide and the issue tracker. A first-party alias gets no warning at all.
 // The base URLs are closed local ports: Configure sends nothing.
 func TestPlatformBetaWarning(t *testing.T) {
-	const awsGuide = "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws"
+	const (
+		awsGuide = "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws"
+		gcGuide  = "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud"
+		gcBeta   = "Claude Models on Google Cloud (Anthropic managed) support is in beta"
+	)
 
 	aliases := []struct {
 		name    string
@@ -84,14 +88,41 @@ func TestPlatformBetaWarning(t *testing.T) {
 			block: "aws", summary: "Claude Platform on AWS support is in beta", guide: awsGuide, gateway: "in part against the real gateway",
 		},
 		{
+			name: "google_cloud, with a workspace",
+			config: func(s *protocolServer) map[string]tftypes.Value {
+				return map[string]tftypes.Value{
+					"workspace_id": tfString(gcTestWorkspace),
+					"google_cloud": s.protocolBlock("google_cloud", map[string]tftypes.Value{
+						"project": tfString(gcTestProject), "access_token": tfString(gcTestToken),
+						"base_url": tfString("http://127.0.0.1:9"),
+					}),
+				}
+			},
+			block: "google_cloud", summary: gcBeta, guide: gcGuide,
+		},
+		{
+			name: "google_cloud, organization routes only",
+			config: func(s *protocolServer) map[string]tftypes.Value {
+				return map[string]tftypes.Value{
+					"google_cloud": s.protocolBlock("google_cloud", map[string]tftypes.Value{
+						"project": tfString("my-other-project"), "access_token": tfString(gcTestToken),
+						"base_url": tfString("http://127.0.0.1:9"),
+					}),
+				}
+			},
+			block: "google_cloud", summary: gcBeta, guide: gcGuide,
+		},
+		{
 			name: "first party, api_key",
 			config: func(*protocolServer) map[string]tftypes.Value {
 				return map[string]tftypes.Value{"api_key": tfString("sk-ant-api03-test")}
 			},
 		},
 		{
-			name: "first party, AWS variables exported",
+			name: "first party, platform variables exported",
 			setup: func(t *testing.T) {
+				t.Setenv("ANTHROPIC_GOOGLE_CLOUD_PROJECT", gcTestProject)
+				t.Setenv("ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID", gcTestWorkspace)
 				t.Setenv("AWS_REGION", awsTestRegion)
 				t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
 				t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
@@ -116,7 +147,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 	warned := 0
 	for _, alias := range aliases {
 		t.Run(alias.name, func(t *testing.T) {
-			isolateAWSEnv(t)
+			isolateGoogleEnv(t) // the AWS isolation included
 			if alias.block != "" {
 				exportFirstPartyEnvironment(t)
 			}
@@ -161,7 +192,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 			}
 		})
 	}
-	if want := 2; warned != want {
+	if want := 4; warned != want {
 		t.Errorf("%d aliases warned, want %d: one per platform alias", warned, want)
 	}
 }

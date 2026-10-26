@@ -24,6 +24,34 @@ func (p *AnthropicProvider) configuredPlatform() platform.Platform {
 	return platform.FirstParty
 }
 
+// refusal makes the diagnostic of a refused type from its type name.
+type refusal func(typeName string) (summary, detail string)
+
+func unavailableOn(p platform.Platform, s platform.Support) refusal {
+	return func(typeName string) (string, string) {
+		return platform.UnavailableSummary(typeName, p), platform.UnavailableDetail(typeName, p, s)
+	}
+}
+
+func workspaceRequiredOn(p platform.Platform) refusal {
+	return func(typeName string) (string, string) {
+		return platform.WorkspaceRequiredSummary(typeName, p), platform.WorkspaceRequiredDetail(typeName, p)
+	}
+}
+
+// refuse returns why a type with this support cannot be configured now, or
+// nil when it can.
+func (p *AnthropicProvider) refuse(support platform.Support) refusal {
+	pl := p.configuredPlatform()
+	switch {
+	case !support.Allows():
+		return unavailableOn(pl, support)
+	case p.workspaceless.Load() && !support.OrganizationRoutes:
+		return workspaceRequiredOn(pl)
+	}
+	return nil
+}
+
 // The framework builds a resource or data source from its factory on every
 // RPC and calls its Configure first, after the provider's own Configure has
 // run (MoveResourceState is the one RPC without a Configure call, and no type
@@ -40,13 +68,17 @@ func (p *AnthropicProvider) configuredPlatform() platform.Platform {
 // Unverified and undeclared types get the real type: they are allowed, and a
 // gateway 404 that is not the API's own is turned into an error by
 // platform.NotFoundGuard rather than read as a deletion.
+//
+// The stand-in also refuses, on a Google Cloud alias without a workspace, the
+// types that need one (all but those marked OrganizationRoutes): the SDK
+// would otherwise fail each of their requests, after its retries, with a
+// message naming a Go field.
 
 func (p *AnthropicProvider) gateResource(reg registration[resource.Resource]) func() resource.Resource {
 	return func() resource.Resource {
 		r := reg.New()
-		pl := p.configuredPlatform()
-		if support := reg.on(pl); !support.Allows() {
-			return &unavailableResource{Resource: r, platform: pl, support: support}
+		if refuse := p.refuse(reg.on(p.configuredPlatform())); refuse != nil {
+			return &refusedResource{Resource: r, refuse: refuse}
 		}
 		return r
 	}
@@ -55,47 +87,40 @@ func (p *AnthropicProvider) gateResource(reg registration[resource.Resource]) fu
 func (p *AnthropicProvider) gateDataSource(reg registration[datasource.DataSource]) func() datasource.DataSource {
 	return func() datasource.DataSource {
 		d := reg.New()
-		pl := p.configuredPlatform()
-		if support := reg.on(pl); !support.Allows() {
-			return &unavailableDataSource{DataSource: d, platform: pl, support: support}
+		if refuse := p.refuse(reg.on(p.configuredPlatform())); refuse != nil {
+			return &refusedDataSource{DataSource: d, refuse: refuse}
 		}
 		return d
 	}
 }
 
-// unavailableResource stands in for a resource the configured platform does
-// not serve. Its Configure fails, so no CRUD method runs.
-type unavailableResource struct {
+// refusedResource stands in for a resource the configured provider alias
+// cannot serve: a type the platform does not serve, or one that needs a
+// workspace the alias does not set. Its Configure fails, so no CRUD method
+// runs.
+type refusedResource struct {
 	resource.Resource
-	platform platform.Platform
-	support  platform.Support
+	refuse refusal
 }
 
-var _ resource.ResourceWithConfigure = &unavailableResource{}
+var _ resource.ResourceWithConfigure = &refusedResource{}
 
-func (u *unavailableResource) Configure(ctx context.Context, _ resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (u *refusedResource) Configure(ctx context.Context, _ resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	var meta resource.MetadataResponse
 	u.Metadata(ctx, resource.MetadataRequest{ProviderTypeName: providerTypeName}, &meta)
-	resp.Diagnostics.AddError(
-		platform.UnavailableSummary(meta.TypeName, u.platform),
-		platform.UnavailableDetail(meta.TypeName, u.platform, u.support),
-	)
+	resp.Diagnostics.AddError(u.refuse(meta.TypeName))
 }
 
-// unavailableDataSource is unavailableResource for data sources.
-type unavailableDataSource struct {
+// refusedDataSource is refusedResource for data sources.
+type refusedDataSource struct {
 	datasource.DataSource
-	platform platform.Platform
-	support  platform.Support
+	refuse refusal
 }
 
-var _ datasource.DataSourceWithConfigure = &unavailableDataSource{}
+var _ datasource.DataSourceWithConfigure = &refusedDataSource{}
 
-func (u *unavailableDataSource) Configure(ctx context.Context, _ datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (u *refusedDataSource) Configure(ctx context.Context, _ datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	var meta datasource.MetadataResponse
 	u.Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: providerTypeName}, &meta)
-	resp.Diagnostics.AddError(
-		platform.UnavailableSummary(meta.TypeName, u.platform),
-		platform.UnavailableDetail(meta.TypeName, u.platform, u.support),
-	)
+	resp.Diagnostics.AddError(u.refuse(meta.TypeName))
 }
