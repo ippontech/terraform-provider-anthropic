@@ -12,7 +12,7 @@ A Terraform provider on the [Terraform Plugin Framework](https://developer.hashi
 - `internal/providerdata/`: `ProviderData`, passed to every `Configure`, and the `OAuthClient` wrapper.
 - `internal/errors/` (import alias `providerrors`): nil-client guards for `Configure`.
 - `internal/tfvalue/`: `StringOrNull` / `TimeOrNull` map the SDK zero values of absent API fields (`""`, the zero time) to null. Use them in every state mapping instead of a per-package helper.
-- `internal/retry/` (import alias `provretry`): multipart bundle upload with 5xx retry.
+- `internal/retry/` (import alias `provretry`): the retry policy of every SDK client (`Middleware`, installed by `newSDKClient` through `SDKOptions`, see [SDK client retries](#sdk-client-retries)) and the multipart bundle helper `MultipartUpload`.
 - `internal/sdkpage/`: `Cursor` walks an SDK `next_page` list (`pagination.PageCursor`) like `ListAutoPaging`, but a cursor the API already returned, or more than `MaxPages` pages, is an error instead of an endless loop. Use it for new cursor-paginated list data sources; the older ones still call `ListAutoPaging`.
 - `internal/acctest/`, `admintest/`, `oauthtest/`, `providertest/`, `schematest/`, `sdktest/`, `wifprobetest/`: test helpers, see [Testing](#testing).
 - `examples/` (`provider/`, `resources/<name>/`, `data-sources/<name>/`): configs embedded in the docs and sourced by the native tests. `templates/`: doc templates that `make generate` renders to `docs/`. `tests/`: native tests. `tools/tools.go`: build-time tool imports only.
@@ -158,6 +158,16 @@ Three optional credentials, plus a fourth way to obtain the third; at least one 
 - The `federation` block (`internal/provider/federation.go`) mints `pd.OAuthClient` through `option.WithFederationTokenProvider`, which calls the identity source on every exchange, so the sources are functions (file re-read, command re-run): the exchange rejects a repeated `jti`. Only the block enables federation, never the SDK's federation variables alone; it conflicts with `auth_token`, even one unknown at plan, and wins over `ANTHROPIC_AUTH_TOKEN` with a warning; its client goes through `newSDKClient`; an attribute unknown at plan is an error. The file's comments and the `TestConfigureFederation*` tests hold the reasons and the command's timeout and stderr handling.
 - `workspace_id`, a fifth argument, is not a credential: it becomes the `anthropic-workspace-id` default header on `pd.Client` only, because a key bound to no single workspace is rejected (400) without it (doc "Select a workspace", re-read 2026-10-13). The admin client is organization-wide and a federated bearer picks its workspace at exchange time, so neither gets the header (`TestConfigureWorkspaceIDHeader`). It has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the SDKs' federation variable, exported by other tools in the same job and by our WIF guide for `federation.workspace_id`, and a single-workspace key answers 404 `Workspace not found` to any `anthropic-workspace-id` header, its own workspace included (measured live on 2026-10-29 on `GET /v1/models` with the `terraform-tests` key; a malformed value is a 400). It is validated at plan time against `^wrkspc_[0-9A-Za-z]+$` (`TestWorkspaceIDValidator`), so a trailing newline fails the plan, and an unknown value at plan is an error (`TestConfigureRejectsUnknownWorkspaceID`), since it is routinely a reference to a resource of the same module.
 
+### SDK client retries
+
+Every SDK client gets its retries from `provretry.Middleware`, installed by `newSDKClient` with `provretry.SDKOptions(provretry.DefaultPolicy)`, which also sets `option.WithMaxRetries(0)` so the SDK does not retry on top of it. The policy is the Admin client's (see [Admin client retries](#admin-client-retries)), applied per request:
+
+- idempotent requests (GET, DELETE and the rest of RFC 9110, plus `POST /v1/messages/count_tokens`, which stores nothing) keep the SDK's rule: 2 retries on 408, 409, 429, 5xx and connection errors;
+- every other request (a POST that creates an object, uploads a file, sends a message, archives, or updates, with or without a precondition such as the agent `version` or the memory `content_sha256`) is replayed on 429 only. After a 5xx, a 409 or a dropped connection the write may have landed, and no endpoint documents an idempotency key: a replay could leave an archive-only duplicate, a second file or a second billed message, or turn an applied precondition update into a misleading 409. A transient 5xx therefore fails the apply; the next apply converges;
+- `x-should-retry` from the server wins either way; `retry-after-ms` / `retry-after` set the delay, capped at 60s (`provretry.MaxRetryAfter`, as in `internal/admin`; the SDK honours it without a bound); otherwise 0.5s doubling to 8s with jitter.
+
+Never add a retry loop around an SDK call, and never pass `option.WithMaxRetries` to a call: either multiplies the attempts (the skill upload used to send nine POSTs for one 5xx). A unit test that counts requests builds its client with `provretry.SDKOptions(...)` to get production behaviour; `option.WithMaxRetries(0)` on a bare client hides what production does (it hid three `POST /v1/files` per 5xx).
+
 ### Configure method pattern
 
 Every `Configure` casts `req.ProviderData` to `*providerdata.ProviderData`, guards the client with the helper from `internal/errors` (alias `providerrors`) for its kind, and returns when the helper reports false; never an inline `if pd.Client == nil` check:
@@ -179,9 +189,7 @@ r.client = pd.Client
 
 ### Multipart uploads
 
-Upload a bundle of files under a common directory name (skills) with `provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, fn)`, taking `bundleRoot` and `dirName` from `provretry.DeriveBundleRoot(filePaths)`. Each part is named `dirName/<path relative to bundleRoot>`, so subdirectories survive. `anthropic_file` uploads a single file with its own helper (see `internal/services/files/CLAUDE.md`).
-
-Known inaccuracy, kept until the retry fix lands: `provretry` rests on the premise that the SDK cannot retry a multipart body, which is wrong for SDK v1.67.0. The SDK buffers the body and replays it, so both layers retry (up to nine `POST /v1/skills` for a persistent 5xx). A separate change will rework the upload retry policy.
+Upload a bundle of files under a common directory name (skills) with `provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, fn)`, taking `bundleRoot` and `dirName` from `provretry.DeriveBundleRoot(filePaths)`. Each part is named `dirName/<path relative to bundleRoot>`, so subdirectories survive; files outside `bundleRoot`, or a path equal to it, are rejected. It opens the files and calls `fn` once: the SDK buffers the multipart body, so the client's retry policy replays it (on 429 only, since the POST creates an object; see [SDK client retries](#sdk-client-retries)). `anthropic_file` uploads a single file with its own helper (see `internal/services/files/CLAUDE.md`).
 
 ### archive_on_destroy pattern
 
