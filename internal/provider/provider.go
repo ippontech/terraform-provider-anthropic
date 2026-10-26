@@ -47,6 +47,7 @@ type AnthropicProviderModel struct {
 	AuthToken   types.String `tfsdk:"auth_token"`
 	Federation  types.Object `tfsdk:"federation"`
 	WorkspaceID types.String `tfsdk:"workspace_id"`
+	AWS         types.Object `tfsdk:"aws"`
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -87,8 +88,11 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"not scoped to a single workspace; must be left unset with a single-workspace key, which the API " +
 					"rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API " +
 					"or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: " +
-					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.",
+					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only. " +
+					"With the aws block: required, sent on every request except the Admin API ones, and read from " +
+					"ANTHROPIC_AWS_WORKSPACE_ID when unset.",
 			},
+			"aws": awsSchema(),
 		},
 	}
 }
@@ -102,9 +106,6 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	apiKey := resolveCredential(data.ApiKey, "ANTHROPIC_API_KEY")
-	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
-	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
 	// Unknown is an error, not unset, as for the federation block: reading
 	// it as unset would send no header and route the plan's reads to the
 	// key's own workspace, and the workspace is routinely a reference to a
@@ -114,6 +115,30 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"workspace_id depends on a value that is not known until apply. Provider configuration must be known at plan time.")
 		return
 	}
+
+	// A platform block, and only the block, selects a cloud gateway: the
+	// variables that fill it are exported for other tools too. The alias then
+	// has one SDK client and none of the first-party ones below.
+	if !data.AWS.IsNull() {
+		cfg, diags := resolveAWS(ctx, data)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		client, err := newAWSClient(ctx, *cfg)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("aws"), "Unable to Configure Claude Platform on AWS", err.Error())
+			return
+		}
+		ignoredFirstPartyEnvironment(ctx, platform.AWS)
+		addPlatformBetaWarning(&resp.Diagnostics, platform.AWS)
+		p.serve(resp, providerdata.ForPlatform(platform.AWS, client))
+		return
+	}
+
+	apiKey := resolveCredential(data.ApiKey, "ANTHROPIC_API_KEY")
+	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
+	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
 	// Configuration only, deliberately: ANTHROPIC_WORKSPACE_ID is the SDKs'
 	// federation variable, exported by other tools in the same job and by the
 	// WIF guide for federation.workspace_id. A single-workspace key answers
@@ -154,7 +179,8 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
-				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token.",
+				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token. "+
+				"For an organization on Claude Platform on AWS, set the aws block instead.",
 		)
 		return
 	}
@@ -186,6 +212,12 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		)}
 	}
 
+	p.serve(resp, pd)
+}
+
+// serve hands pd to every resource and data source, and records its platform
+// for the factory gate (gate.go).
+func (p *AnthropicProvider) serve(resp *provider.ConfigureResponse, pd *providerdata.ProviderData) {
 	p.platform.Store(pd.Platform)
 	resp.DataSourceData = pd
 	resp.ResourceData = pd

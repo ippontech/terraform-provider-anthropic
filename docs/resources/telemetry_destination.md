@@ -16,7 +16,7 @@ Manages an [OpenTelemetry destination](https://platform.claude.com/docs/en/manag
 
 ## Availability
 
-OpenTelemetry export is in beta, for Claude Platform organizations. On Claude Platform on AWS, destinations are managed through the AWS endpoint with AWS credentials, which this provider does not call. An organization can have at most **10** destinations, disabled ones included. With a HIPAA, FERPA or K-12 data-handling restriction, destinations export metadata only, whatever their `content_mode`. Once delivered, spans are held by your observability platform under its own retention and access controls.
+OpenTelemetry export is in beta, for Claude Platform organizations. On Claude Platform on AWS, destinations are managed through the AWS endpoint with AWS credentials: use a provider alias with an `aws` block (see the provider documentation). An organization can have at most **10** destinations, disabled ones included. With a HIPAA, FERPA or K-12 data-handling restriction, destinations export metadata only, whatever their `content_mode`. Once delivered, spans are held by your observability platform under its own retention and access controls.
 
 ## Headers
 

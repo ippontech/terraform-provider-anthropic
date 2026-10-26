@@ -18,4 +18,8 @@ Lists the run history of scheduled deployments (beta). Each run records one atte
 
 {{ codefile "hcl" "examples/data-sources/deployment_runs/data_source.tf" }}
 
+## Claude Platform on AWS
+
+With the provider's `aws` block this data source is **unverified**: the gateway's [route table](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions), which denies any route it does not list, does not list `/v1/deployment_runs`, although the platform page announces scheduled deployments. See `anthropic_deployment`.
+
 {{ .SchemaMarkdown | trimspace }}
