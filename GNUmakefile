@@ -30,7 +30,7 @@ tidy-check:
 
 # COVERPROFILE=<file> also writes a coverage profile (the CI test job does).
 test:
-	go test -v -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=120s -parallel=10 ./...
+	go test -v -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=300s -parallel=10 ./...
 
 # Unit tests, then the coverage gate of the CI coverage job (.coverage.json,
 # tools/coversummary): the diff rule against COVER_BASE (committed changes

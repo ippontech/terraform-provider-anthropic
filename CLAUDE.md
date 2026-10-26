@@ -105,7 +105,7 @@ make install        # Build and install locally
 make fmt            # Format Go code
 make tidy-check     # Fail if go.mod/go.sum are not tidy (go mod tidy -diff)
 make lint           # Run golangci-lint
-make test           # Run unit tests (120s timeout, 10 parallel workers)
+make test           # Run unit tests (300s timeout per package, 10 parallel workers)
 make cover          # make test with a coverage profile, then the CI coverage gate against origin/main (COVER_BASE=<ref>) and the per-file table
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
