@@ -1,0 +1,48 @@
+name: PR Title
+
+# Pull requests are squash-merged and the commit takes the PR title, which
+# semantic-release then reads to choose the next version and write the release
+# notes (.releaserc). A title it cannot parse silently produces no release.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  merge_group:
+
+permissions: {}
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # The check makes no network call.
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ''
+
+      # In the merge queue the title was already checked on the pull request;
+      # the job still runs so that a required check reports there too.
+      - name: Check the PR title
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # The commit types of the conventionalcommits preset .releaserc uses
+          # (DEFAULT_COMMIT_TYPES in conventional-changelog-conventionalcommits).
+          types='feat|feature|fix|perf|revert|docs|style|chore|refactor|test|build|ci'
+          pattern="^(${types})(\([^()]+\))?(!)?: [^[:space:]]"
+          if [[ ! "${TITLE}" =~ ${pattern} ]]; then
+            echo "::error title=PR title::Expected '<type>[(scope)][!]: <subject>' with type one of ${types//|/, } (Conventional Commits, see CONTRIBUTING.md)."
+            exit 1
+          fi
+          # feat! / fix! on main would publish a major release. Breaking
+          # changes go to the major/<version> staging branch (RELEASE.md).
+          if [[ -n "${BASH_REMATCH[3]}" && "${BASE_REF}" == "main" ]]; then
+            echo "::error title=PR title::'!' marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
+            exit 1
+          fi
+          echo "PR title follows Conventional Commits."

@@ -80,6 +80,8 @@ A `.env` file at the project root (gitignored) can hold the two API keys and oth
 make test
 ```
 
+`make cover` runs the same tests, then prints the coverage of every resource and data source file, least covered first (`tools/coversummary`). The CI `test` job publishes that table in its job summary and the profile as the `coverage` artifact; coverage is reported, never enforced.
+
 ### Run acceptance tests
 
 Go acceptance tests run against the live Anthropic API:
@@ -147,6 +149,8 @@ To generate changelog, Pull Requests and Commit messages must follow [convention
 - `test:` for tests
 - `ci:` for CI purpose
 - `chore:` for chores stuff
+
+The `pr-title` check enforces this on the pull request title, which becomes the squash commit: `<type>[(scope)][!]: <subject>`, with a type of the conventionalcommits preset semantic-release uses (`feat`, `feature`, `fix`, `perf`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build`, `ci`). A `!` is refused on pull requests to `main`: breaking changes go to the staging branch described in [RELEASE.md](RELEASE.md#major-versions).
 
 We use the `chore` prefix to generate a new release and for changelog generation (the label '[skip ci]' allows us to skip CI). It can be used for `chore: update changelog` commit message by example.
 
