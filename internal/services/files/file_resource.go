@@ -279,7 +279,11 @@ func (r *FileResource) ImportState(ctx context.Context, req resource.ImportState
 // dropped connection may mean the file was already created, and replaying
 // would upload a duplicate.
 func uploadFile(ctx context.Context, client *anthropic.Client, sourcePath, filename, mimeType string, expiresInSeconds param.Opt[int64]) (*anthropic.FileMetadata, error) {
-	f, err := os.Open(sourcePath)
+	// G304: sourcePath is the resource's own source attribute, a local file
+	// the user names in their configuration; opening it is what anthropic_file
+	// does. filepath.Clean would only silence the check, and it can change
+	// which file a path with a symlink followed by ".." resolves to.
+	f, err := os.Open(sourcePath) //nolint:gosec // G304: the user-configured source path, see above
 	if err != nil {
 		return nil, fmt.Errorf("unable to open file %q: %w", sourcePath, err)
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,9 +61,7 @@ func newScriptedServer(t *testing.T, statuses ...int) *scriptedServer {
 			_, _ = w.Write([]byte(`{}`))
 			return
 		}
-		for k, v := range headers {
-			w.Header()[k] = v
-		}
+		maps.Copy(w.Header(), headers)
 		w.WriteHeader(status)
 		_, _ = fmt.Fprintf(w, `{"type":"error","error":{"type":"error","message":"status %d"}}`, status)
 	}))
