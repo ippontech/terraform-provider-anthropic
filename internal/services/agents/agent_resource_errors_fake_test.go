@@ -27,11 +27,18 @@ func TestAgentResource_inputSchemaAsConfigured(t *testing.T) {
 	}{
 		"without type": {`{ properties = { id = { type = "string" } }, additionalProperties = false }`, `{"type":"object","properties":{"id":{"type":"string"}},"additionalProperties":false}`},
 		"empty":        {`{}`, `{"type":"object"}`},
+		// The API requires an input_schema: none configured sends a tool
+		// without parameters, and the state keeps the attribute null.
+		"omitted": {``, `{"type":"object"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			srv := newAgentsFake(t)
-			config := agentConfig(`  custom_tools = [{ name = "lookup", description = "d", input_schema = jsonencode(` + tc.schema + `) }]
+			inputSchema := ``
+			if tc.schema != `` {
+				inputSchema = `, input_schema = jsonencode(` + tc.schema + `)`
+			}
+			config := agentConfig(`  custom_tools = [{ name = "lookup", description = "d"` + inputSchema + ` }]
 `)
 			resource.UnitTest(t, resource.TestCase{
 				ProtoV6ProviderFactories: providertest.ProviderFactories(srv.Server),

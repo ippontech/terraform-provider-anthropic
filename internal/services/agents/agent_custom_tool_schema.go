@@ -16,6 +16,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// customToolNoParameters is what the request sends for a custom tool
+// configured without an input_schema, which the API requires: once
+// sentInputSchema adds the type, {"type": "object"}, a tool without parameters.
+const customToolNoParameters = "{}"
+
 // sentInputSchema is the input_schema the request sends for a configured
 // one: the JSON object as configured, with "type": "object" added when it has
 // none (the attribute's documented default, and the only type the API takes,
@@ -65,16 +70,22 @@ func customToolInputSchemas(ctx context.Context, current types.List) map[string]
 
 // customToolInputSchemaValue is the state value of a custom tool's
 // input_schema: the current value when the API returns the schema the
-// request sent for it (with the type it added), so the configuration is kept
-// as written; else the API's raw JSON, null when absent.
+// request sent for it (with the type it added, or {"type": "object"} for a
+// tool configured without one), so the configuration is kept as written,
+// null included; else the API's raw JSON, null when absent.
 func customToolInputSchemaValue(raw string, current jsontypes.Normalized) jsontypes.Normalized {
 	if raw == "" || raw == "null" {
 		return jsontypes.NewNormalizedNull()
 	}
-	if !current.IsNull() && !current.IsUnknown() {
-		if sent, err := sentInputSchema(current.ValueString()); err == nil && sameJSON(sent, raw) {
-			return current
-		}
+	if current.IsUnknown() {
+		return jsontypes.NewNormalizedValue(raw)
+	}
+	configured := customToolNoParameters
+	if !current.IsNull() {
+		configured = current.ValueString()
+	}
+	if sent, err := sentInputSchema(configured); err == nil && sameJSON(sent, raw) {
+		return current
 	}
 	return jsontypes.NewNormalizedValue(raw)
 }

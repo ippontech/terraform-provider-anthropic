@@ -419,7 +419,8 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							Optional:   true,
 							CustomType: jsontypes.NormalizedType{},
 							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
-								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted.",
+								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted. " +
+								"When `input_schema` itself is omitted, `{\"type\": \"object\"}` is sent (a tool without parameters), since the API requires an input schema.",
 						},
 					},
 				},
@@ -989,17 +990,20 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 				Description: t.Description.ValueString(),
 				Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
 			}
+			// The schema reaches the API as configured, root-level keywords such
+			// as additionalProperties and $defs included, with "type": "object"
+			// added when it has no type. The API requires one, so a tool
+			// configured without it is sent as a tool without parameters.
+			configured := customToolNoParameters
 			if !t.InputSchema.IsNull() && !t.InputSchema.IsUnknown() {
-				// The schema reaches the API as configured, root-level keywords
-				// such as additionalProperties and $defs included, with
-				// "type": "object" added when it has no type.
-				schema, err := customToolInputSchemaParam(t.InputSchema.ValueString())
-				if err != nil {
-					diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
-					return nil, diags
-				}
-				p.InputSchema = schema
+				configured = t.InputSchema.ValueString()
 			}
+			schema, err := customToolInputSchemaParam(configured)
+			if err != nil {
+				diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
+				return nil, diags
+			}
+			p.InputSchema = schema
 			tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfCustom: &p})
 		}
 	}
