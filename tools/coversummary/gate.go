@@ -33,6 +33,10 @@ type config struct {
 	RatchetTolerance float64 `json:"ratchet_tolerance"`
 	// BaselineFile holds the baseline, relative to the configuration file.
 	BaselineFile string `json:"baseline_file"`
+	// PackageMin is the coverage, in percent, each package outside the
+	// exclusions must reach. While it is null, the summary lists every
+	// package and its distance to total_target, but nothing fails.
+	PackageMin *float64 `json:"package_min"`
 	// Exclude lists module-relative paths left out of every rule: a
 	// directory when it ends with "/", a file otherwise.
 	Exclude []string `json:"exclude"`
@@ -56,6 +60,9 @@ func loadConfig(path string) (config, error) {
 		if v <= 0 || v > 100 {
 			problems = append(problems, fmt.Sprintf("%s must be in (0, 100], got %v", name, v))
 		}
+	}
+	if cfg.PackageMin != nil && (*cfg.PackageMin <= 0 || *cfg.PackageMin > 100) {
+		problems = append(problems, fmt.Sprintf("package_min must be null or in (0, 100], got %v", *cfg.PackageMin))
 	}
 	if cfg.RatchetTolerance < 0 || cfg.RatchetTolerance >= 100 {
 		problems = append(problems, fmt.Sprintf("ratchet_tolerance must be in [0, 100), got %v", cfg.RatchetTolerance))
@@ -241,6 +248,7 @@ type gateResult struct {
 	in gateInput
 
 	total, totalCovered int
+	packages            []packageCoverage // least covered first
 
 	diffChecked                bool
 	diffChanged, diffCovered   int
@@ -266,7 +274,9 @@ func (r gateResult) totalOK() bool {
 
 func (r gateResult) baselineOK() bool { return !r.baselineUnderReachedTarget }
 
-func (r gateResult) passed() bool { return r.diffOK() && r.totalOK() && r.baselineOK() }
+func (r gateResult) passed() bool {
+	return r.diffOK() && r.totalOK() && r.baselineOK() && r.packagesOK()
+}
 
 // evaluate applies the three rules.
 func evaluate(in gateInput, files map[string]*fileCoverage, trim string) gateResult {
@@ -279,6 +289,7 @@ func evaluate(in gateInput, files map[string]*fileCoverage, trim string) gateRes
 		r.total += fc.Total
 		r.totalCovered += fc.Covered
 	}
+	r.packages = packagesOf(files, trim, cfg.excluded)
 
 	r.floor = in.baseline - cfg.RatchetTolerance
 	if in.baseline >= cfg.TotalTarget {
@@ -386,8 +397,10 @@ func writeGate(w io.Writer, r gateResult) error {
 	if r.in.baseBaseline != nil {
 		base = fmt.Sprintf("base branch: %.2f", *r.in.baseBaseline)
 	}
-	fmt.Fprintf(&b, "| Floor: the baseline never goes back under %g%% once reached | %.2f (%s) | not under %g once the base reached it | %s |\n\n",
+	fmt.Fprintf(&b, "| Floor: the baseline never goes back under %g%% once reached | %.2f (%s) | not under %g once the base reached it | %s |\n",
 		cfg.TotalTarget, r.in.baseline, base, cfg.TotalTarget, verdict(r.baselineOK()))
+	writePackageRule(&b, r)
+	b.WriteString("\n")
 
 	if !r.floorAtTarget {
 		fmt.Fprintf(&b, "The target is %g%%: the baseline is %.2f points away. Once the baseline reaches it, the total may never drop below %g%%.\n\n",
@@ -426,6 +439,8 @@ func writeGate(w io.Writer, r gateResult) error {
 		}
 		b.WriteString("\n")
 	}
+
+	writePackages(&b, r)
 
 	excluded := "nothing"
 	if len(cfg.Exclude) > 0 {

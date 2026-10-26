@@ -8,7 +8,7 @@
 // every resource and data source file), least covered first.
 //
 // The gate (gate.go) reads its thresholds and exclusions from .coverage.json
-// and the committed baseline from .coverage-baseline. It has three rules:
+// and the committed baseline from .coverage-baseline. It has four rules:
 //
 //   - diff: at least diff_min % of the executable statements a change touches
 //     (non-test Go files, outside the exclusions) are covered; it needs the
@@ -17,7 +17,11 @@
 //     ratchet_tolerance;
 //   - floor: once the baseline reaches total_target, the total may never drop
 //     below total_target, and the baseline may not be lowered under it
-//     (-base-baseline gives the base branch's baseline).
+//     (-base-baseline gives the base branch's baseline);
+//   - packages: every package outside the exclusions is at package_min % or
+//     more. While package_min is null, the rule is not enforced: the summary
+//     still lists every package with its distance to total_target, least
+//     covered first.
 //
 // It prints the summary on stdout and exits 1 when a rule fails, 2 on a usage
 // or input error.

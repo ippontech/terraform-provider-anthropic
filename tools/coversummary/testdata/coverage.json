@@ -3,5 +3,6 @@
   "total_target": 75,
   "ratchet_tolerance": 0.5,
   "baseline_file": "baseline",
+  "package_min": null,
   "exclude": ["main.go", "internal/helper/"]
 }

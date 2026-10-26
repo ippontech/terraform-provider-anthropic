@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -58,6 +59,10 @@ func set(field, value string) func(string) string {
 	return func(s string) string { return re.ReplaceAllString(s, `"`+field+`": `+value) }
 }
 
+func packageMin(value string) func(string) string {
+	return func(s string) string { return strings.Replace(s, `"package_min": null`, `"package_min": `+value, 1) }
+}
+
 func runGate(t *testing.T, opts options) (string, error) {
 	t.Helper()
 	var out strings.Builder
@@ -91,6 +96,10 @@ func TestGateRules(t *testing.T) {
 				"| `internal/a/é.go` | 4 | 3 | 3 |",
 				"(2 changed Go files)",
 				"Excluded from every rule: `main.go`, `internal/helper/`.",
+				"| Packages: coverage of each package | lowest 66.7% (`internal/a`); 1 of 1 under 75% | none yet: `package_min` is not set | monitored |",
+				"Monitored, not enforced: `package_min` in `.coverage.json` is not set yet. Once it is set to 75, every package must stay at 75% or more.",
+				"| Package | Statements | Covered | Coverage | Points to 75% |",
+				"| `internal/a` | 18 | 12 | 66.7% | 8.3 |",
 				"**66.7%** of 18 statements across 3 files, outside the exclusions of `.coverage.json`",
 				"| `internal/a/a_resource.go` | 6 | 4 | 66.7% |",
 			},
@@ -102,6 +111,29 @@ func TestGateRules(t *testing.T) {
 			baseline: "60.00",
 			fails:    true,
 			want:     []string{"**The gate fails**", "| 75.0% (9 of 12) | at least 75.1% | **FAIL** |"},
+		},
+		{
+			name:     "package_min set and met",
+			edit:     packageMin("60"),
+			baseline: "60.00",
+			want: []string{
+				"All rules pass.",
+				"| Packages: coverage of each package | lowest 66.7% (`internal/a`); 0 of 1 under 60% | at least 60% per package | pass |",
+				"Enforced: every package must be at 60% or more (`package_min`).",
+				"| `internal/a` | 18 | 12 | 66.7% | reached |",
+			},
+			notWant: []string{"Monitored"},
+		},
+		{
+			name:     "package_min set and missed",
+			edit:     packageMin("70"),
+			baseline: "60.00",
+			fails:    true,
+			want: []string{
+				"| Packages: coverage of each package | lowest 66.7% (`internal/a`); 1 of 1 under 70% | at least 70% per package | **FAIL** |",
+				"Under the 70% of `package_min`: 1 of 1 packages.",
+				"| `internal/a` | 18 | 12 | 66.7% | 3.3 |",
+			},
 		},
 		{
 			name:     "no diff given",
@@ -224,6 +256,8 @@ func TestGateInputErrors(t *testing.T) {
 		{"unknown field", func(s string) string { return strings.Replace(s, `"diff_min"`, `"diff_minimum"`, 1) }, "60", nil, `unknown field "diff_minimum"`},
 		{"diff_min out of range", set("diff_min", "0"), "60", nil, "diff_min must be in (0, 100]"},
 		{"total_target out of range", set("total_target", "101"), "60", nil, "total_target must be in (0, 100]"},
+		{"package_min out of range", packageMin("0"), "60", nil, "package_min must be null or in (0, 100], got 0"},
+		{"package_min not a number", packageMin(`"75"`), "60", nil, "cannot unmarshal string"},
 		{"negative tolerance", func(s string) string {
 			return strings.Replace(s, `"ratchet_tolerance": 0.5`, `"ratchet_tolerance": -1`, 1)
 		}, "60", nil, "ratchet_tolerance must be in [0, 100)"},
@@ -319,5 +353,29 @@ func TestParseDiff(t *testing.T) {
 		if _, err := parseDiff(strings.NewReader(diff)); err == nil {
 			t.Errorf("%s: parsed without error", name)
 		}
+	}
+}
+
+func TestPackagesOf(t *testing.T) {
+	f, err := os.Open(filepath.Join("testdata", "packages.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	files, err := parseProfile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config{Exclude: []string{"main.go", "internal/helper/"}}
+	got := packagesOf(files, trimFixture, cfg.excluded)
+	want := []packageCoverage{
+		{dir: "internal/c/d", total: 3, covered: 0},
+		{dir: "internal/b", total: 4, covered: 1},
+		{dir: "internal/e", total: 4, covered: 1},
+		{dir: "internal/a", total: 6, covered: 2},
+		{dir: "internal/f", total: 2, covered: 2},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("packages %+v, want %+v", got, want)
 	}
 }
