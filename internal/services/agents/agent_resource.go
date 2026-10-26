@@ -1123,8 +1123,8 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		serverList, d := types.ListValue(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}, serverObjs)
 		diags.Append(d...)
 		data.MCPServers = serverList
-	} else if !data.MCPServers.IsNull() {
-		data.MCPServers = types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes})
+	} else {
+		data.MCPServers = listAfterEmptyResponse(data.MCPServers, types.ObjectType{AttrTypes: agentMCPServerAttrTypes})
 	}
 
 	// Skills
@@ -1143,8 +1143,8 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		skillList, d := types.ListValue(types.ObjectType{AttrTypes: agentSkillAttrTypes}, skillObjs)
 		diags.Append(d...)
 		data.Skills = skillList
-	} else if !data.Skills.IsNull() {
-		data.Skills = types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes})
+	} else {
+		data.Skills = listAfterEmptyResponse(data.Skills, types.ObjectType{AttrTypes: agentSkillAttrTypes})
 	}
 
 	// Tools: split API response into agent_toolset, mcp_toolsets, and custom_tools
@@ -1178,8 +1178,8 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		mcpList, d := mapMCPToolsetsToState(ctx, apiMCPToolsets, data.MCPToolsets, mode)
 		diags.Append(d...)
 		data.MCPToolsets = mcpList
-	} else if !data.MCPToolsets.IsNull() {
-		data.MCPToolsets = types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes})
+	} else {
+		data.MCPToolsets = listAfterEmptyResponse(data.MCPToolsets, types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes})
 	}
 
 	// Custom tools
@@ -1201,8 +1201,8 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		toolList, d := types.ListValue(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}, toolObjs)
 		diags.Append(d...)
 		data.CustomTools = toolList
-	} else if !data.CustomTools.IsNull() {
-		data.CustomTools = types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes})
+	} else {
+		data.CustomTools = listAfterEmptyResponse(data.CustomTools, types.ObjectType{AttrTypes: agentCustomToolAttrTypes})
 	}
 
 	// Multiagent: correlate with the planned/prior roster (see mapMultiagentToState).
@@ -1211,6 +1211,19 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	data.Multiagent = multiagent
 
 	return diags
+}
+
+// listAfterEmptyResponse is the state value of a list attribute the API
+// returns empty. The API returns [] both for an attribute never set and for
+// one set to [], so a known empty list stays as configured and a null one
+// stays null; anything else becomes null. Mapping a configured [] to null
+// failed the apply with "Provider produced inconsistent result after apply"
+// (tfvalue.MetadataAfterEmptyResponse does the same for metadata).
+func listAfterEmptyResponse(current types.List, elemType attr.Type) types.List {
+	if current.IsNull() || (!current.IsUnknown() && len(current.Elements()) == 0) {
+		return current
+	}
+	return types.ListNull(elemType)
 }
 
 // apiToolConfig is the response-side shape shared by built-in and MCP per-tool
