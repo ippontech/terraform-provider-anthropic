@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -733,9 +734,7 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	params.Multiagent = multiagent
 	if data.Multiagent.IsNull() && !state.Multiagent.IsNull() {
-		for k, v := range multiagentClearField() {
-			extraFields[k] = v
-		}
+		maps.Copy(extraFields, multiagentClearField())
 	}
 	// SetExtraFields replaces the extra fields, so it is called once.
 	if len(extraFields) > 0 {
