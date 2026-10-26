@@ -32,11 +32,15 @@ tidy-check:
 test:
 	go test -v -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=120s -parallel=10 ./...
 
-# Unit tests, then the coverage of each resource and data source file, as the
-# CI job summary shows it (tools/coversummary).
+# Unit tests, then the coverage gate of the CI coverage job (.coverage.json,
+# tools/coversummary): the diff rule against COVER_BASE (committed changes
+# only), the ratchet and the floor, followed by the coverage of each resource
+# and data source file. Fails like the CI job does.
+COVER_BASE ?= origin/main
 cover: COVERPROFILE := coverage.out
 cover: test
-	go run -C tools ./coversummary $(abspath $(COVERPROFILE))
+	git diff --unified=0 --no-color $(COVER_BASE)...HEAD > coverage-diff.out
+	go run -C tools ./coversummary -config $(abspath .coverage.json) -diff $(abspath coverage-diff.out) $(abspath $(COVERPROFILE))
 
 .PHONY: cover
 

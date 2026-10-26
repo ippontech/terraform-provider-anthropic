@@ -80,7 +80,13 @@ A `.env` file at the project root (gitignored) can hold the two API keys and oth
 make test
 ```
 
-`make cover` runs the same tests, then prints the coverage of every resource and data source file, least covered first (`tools/coversummary`). The CI `test` job publishes that table in its job summary and the profile as the `coverage` artifact; coverage is reported, never enforced.
+`make cover` runs the same tests, then the coverage gate of the CI `coverage` job (`tools/coversummary`, thresholds and exclusions in `.coverage.json`), followed by the coverage of every resource and data source file, least covered first. The gate is a required check with three rules, measured on the Go files of the module outside the test-helper packages, `main.go` and `tools/`:
+
+- **Diff**: at least 75% of the executable statements a pull request adds or changes (non-test Go files) are covered by unit tests. Write the tests with the code; `httptest` fakes and `resource.UnitTest` need no credential.
+- **Ratchet**: the total stays at or above `.coverage-baseline` minus 0.5 point. When a pull request raises the total, the job summary gives the new value to commit in `.coverage-baseline`. Lowering it is possible in the pull request that needs it, with a reason reviewers accept.
+- **Floor**: once the baseline reaches 75%, the total never drops under 75% and the baseline cannot go back under it.
+
+Locally, `make cover` compares with `origin/main` (`COVER_BASE=<ref>` to change it) and sees committed changes only. `go test -cover` needs Go's `covdata` tool, missing from the toolchains `GOTOOLCHAIN` downloads (`go: no such tool "covdata"`); see the `covdata` note in CLAUDE.md.
 
 ### Run acceptance tests
 
