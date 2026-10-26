@@ -16,7 +16,7 @@ A Terraform provider on the [Terraform Plugin Framework](https://developer.hashi
 - `internal/sdkpage/`: `Cursor` walks an SDK `next_page` list (`pagination.PageCursor`) like `ListAutoPaging`, but a cursor the API already returned, or more than `MaxPages` pages, is an error instead of an endless loop. Use it for new cursor-paginated list data sources; the older ones still call `ListAutoPaging`.
 - `internal/acctest/`, `admintest/`, `oauthtest/`, `schematest/`, `wifprobetest/`: test helpers, see [Testing](#testing).
 - `examples/` (`provider/`, `resources/<name>/`, `data-sources/<name>/`): configs embedded in the docs and sourced by the native tests. `templates/`: doc templates that `make generate` renders to `docs/`. `tests/`: native tests. `tools/tools.go`: build-time tool imports only.
-- `tools/` is its own Go module. `tools/coversummary/` is the standard-library-only program that turns a coverage profile into the Markdown table of the CI test job.
+- `tools/` is its own Go module. `tools/coversummary/` is the standard-library-only program behind the coverage gate of the CI `coverage` job (rules and exclusions in `.coverage.json`, baseline in `.coverage-baseline`) and its per-file table.
 
 ### Anthropic Go SDK pin
 
@@ -65,6 +65,14 @@ Unit tests need no environment variables. Go acceptance tests (`TestAcc` prefix,
 - Start every acceptance test, and every test that seeds fixtures through the SDK, with the matching `acctest.PreCheck` (standard key), `PreCheckAdmin`, `PreCheckOAuth` (skips without `ANTHROPIC_AUTH_TOKEN`) or `PreCheckMultiWorkspace` (skips without `ANTHROPIC_MULTI_WORKSPACE_API_KEY`) rather than a hand-written `TF_ACC` check. They call `SkipUnlessAcc` first, because fixture setup runs before `resource.Test`'s own `TF_ACC` gate, and a plain `make test` with credentials in `.env` would otherwise create real objects ([#296](https://github.com/ippontech/terraform-provider-anthropic/issues/296)). Providers come from `acctest.ProtoV6ProviderFactories`, live SDK clients from `acctest.NewAPIKeyClient()` / `acctest.NewOAuthClient()` (both `WithoutEnvironmentDefaults`, so the other credential is not sent), never from an inline `anthropic.NewClient`.
 - Clients pointed at an `httptest` server come from the shared helpers, in every package: `admintest.NewClient(t, srv)` for an `*admin.Client`, `oauthtest.NewClient(t, srv)` for a `*providerdata.OAuthClient`, and `oauthtest.NewSDKClient(t, srv)` for a bare `*anthropic.Client`, whatever credential the code under test takes, standard-key tests included (both `oauthtest` helpers take extra `option.RequestOption`s, e.g. `option.WithMaxRetries(0)`). The fake servers do not check the credential, and the helper passes `WithoutEnvironmentDefaults`, so the environment's keys and profile stay out of the test. A few older standard-key tests in `vaults/`, `deployments/`, `files/` and `memorystores/` still build their client inline with `anthropic.NewClient(...)`; do not copy that in new tests. ImportState tests get their null state from `schematest`.
 
+**Coverage gate.** The `coverage` job of `provider.yml` is a required check, and it fails rather than warns (`.coverage.json` holds the thresholds and the exclusions, `.coverage-baseline` the baseline; `tools/coversummary` applies them):
+
+- at least 75% of the executable statements a pull request adds or changes in non-test Go files must be covered by unit tests, so write the tests with the code (fake-API tests through `resource.UnitTest` need no credential);
+- the total, outside the exclusions, stays at or above `.coverage-baseline` minus 0.5 point; when a change raises it, the job summary gives the value to commit in `.coverage-baseline` in the same pull request;
+- once the baseline reaches 75%, the total never drops under 75% and the baseline never goes back under it.
+
+The exclusions are the test-helper packages, `main.go` and `tools/`, nothing else, and there is no ignore comment: code that cannot be unit-tested is a reason to restructure it, not to exclude it. Run `make cover` before pushing; `go test -cover` needs the `covdata` tool (see Commands).
+
 What runs live depends on the credential:
 
 - All tests run in the dedicated `terraform-tests` workspace. The test `ANTHROPIC_API_KEY` is scoped to it; Admin API tests target it with `acctest.TerraformTestsWorkspaceID`, never a `wrkspc_...` literal. A second workspace, `terraform-tests-2` (`acctest.TerraformTests2WorkspaceID`), serves only the `workspace_id` provider-argument tests (`vault_resource_workspace_test.go`). They run with `ANTHROPIC_MULTI_WORKSPACE_API_KEY`, a service account key member of both test workspaces and scoped to neither (a CI secret), and read the API out of band through `acctest.NewMultiWorkspaceClient(workspaceID)`. Use that key and that workspace for nothing else: every other test relies on `ANTHROPIC_API_KEY` being single-workspace, so that its objects land in `terraform-tests` without a header.
@@ -97,7 +105,7 @@ make fmt            # Format Go code
 make tidy-check     # Fail if go.mod/go.sum are not tidy (go mod tidy -diff)
 make lint           # Run golangci-lint
 make test           # Run unit tests (120s timeout, 10 parallel workers)
-make cover          # make test with a coverage profile, then the coverage of each resource and data source file
+make cover          # make test with a coverage profile, then the CI coverage gate against origin/main (COVER_BASE=<ref>) and the per-file table
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
 make generate       # Regenerate docs and format examples
@@ -106,6 +114,16 @@ go test -run TestName -v ./internal/services/agents/  # One service
 ```
 
 Before committing a feature or a fix, run `make`, then `pre-commit run -a`.
+
+`go test -cover` needs the `covdata` tool, which the toolchains Go downloads through `GOTOOLCHAIN` (`golang.org/toolchain@v0.0.1-go1.26.10...`) lack: the run fails with `go: no such tool "covdata"` on packages without test files. The CI toolchain from `setup-go` has it. Locally, build it once into a GOROOT overlay and run that `go`:
+
+    TC=$(go env GOROOT); G=$HOME/.cache/goroot-covdata/$(basename $TC)
+    mkdir -p $G/pkg/tool/linux_amd64
+    for e in $TC/*; do [ "$(basename $e)" = pkg ] || ln -sfn $e $G/; done
+    for e in $TC/pkg/*; do [ "$(basename $e)" = tool ] || ln -sfn $e $G/pkg/; done
+    ln -sf $TC/pkg/tool/linux_amd64/* $G/pkg/tool/linux_amd64/
+    (cd $TC/src/cmd/covdata && GOROOT=$TC GOTOOLCHAIN=local $TC/bin/go build -o $G/pkg/tool/linux_amd64/covdata .)
+    GOROOT=$G GOTOOLCHAIN=local $G/bin/go test -cover ./...
 
 ## Provider coding conventions
 
