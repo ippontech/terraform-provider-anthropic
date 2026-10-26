@@ -168,15 +168,12 @@ func (d *WorkspaceMembersDataSource) Read(ctx context.Context, req datasource.Re
 		if !page.HasMore {
 			break
 		}
-		// has_more with a null last_id, or the cursor just sent, would
-		// request the same page again, forever.
-		if page.LastID == "" || page.LastID == afterID {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf(
-				"Unable to list workspace members: the API reported more results (has_more) without a new last_id cursor (after_id %q, last_id %q), so the next page cannot be requested.",
-				afterID, page.LastID))
+		next, err := admin.NextAfterID(afterID, page.LastID)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspace members: %s.", err))
 			return
 		}
-		afterID = page.LastID
+		afterID = next
 	}
 
 	memberObjs := make([]attr.Value, len(allMembers))
