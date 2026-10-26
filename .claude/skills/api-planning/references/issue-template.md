@@ -1,6 +1,6 @@
 # Implementation issue template
 
-Read at step 3 of `SKILL.md`, before writing the issues. Fill one copy per resource or data source. The paths follow the root `CLAUDE.md` (*Adding a resource or data source*, *Testing pattern*); when the two disagree, `CLAUDE.md` wins and this template needs fixing.
+Read at step 3 of `SKILL.md`, before writing the issues. Fill one copy per resource or data source. The paths follow the root `CLAUDE.md` (*Adding a resource or data source*, *Testing*); when the two disagree, `CLAUDE.md` wins and this template needs fixing.
 
 For a data source, replace `_resource` with `_data_source`, `Resources()` with `DataSources()`, `examples/resources/<name>/resource.tf` with `examples/data-sources/<name>/data_source.tf`, and `resources/` with `data-sources/` in the template and docs paths.
 
