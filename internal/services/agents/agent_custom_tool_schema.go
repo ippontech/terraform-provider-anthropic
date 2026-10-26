@@ -68,6 +68,29 @@ func customToolInputSchemas(ctx context.Context, current types.List) map[string]
 	return schemas
 }
 
+// customToolInputSchemaState is the state value of the input_schema of the
+// custom tool name, which the API returns as raw: customToolInputSchemaValue
+// against the tool's current value, and the API's raw JSON for a tool the
+// current value does not hold (import, or a tool added outside Terraform),
+// so an imported {"type": "object"} reads as such rather than as a tool
+// configured without a schema. A tool held with a null schema still reads
+// null while the API returns {"type": "object"}.
+func customToolInputSchemaState(current map[string]jsontypes.Normalized, name, raw string) jsontypes.Normalized {
+	schema, ok := current[name]
+	if !ok {
+		return rawInputSchema(raw)
+	}
+	return customToolInputSchemaValue(raw, schema)
+}
+
+// rawInputSchema is the API's input_schema as returned, null when absent.
+func rawInputSchema(raw string) jsontypes.Normalized {
+	if raw == "" || raw == "null" {
+		return jsontypes.NewNormalizedNull()
+	}
+	return jsontypes.NewNormalizedValue(raw)
+}
+
 // customToolInputSchemaValue is the state value of a custom tool's
 // input_schema: the current value when the API returns the schema the
 // request sent for it (with the type it added, or {"type": "object"} for a

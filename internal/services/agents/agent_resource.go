@@ -1197,7 +1197,7 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 			obj, d := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
 				"name":         types.StringValue(t.Name),
 				"description":  types.StringValue(t.Description),
-				"input_schema": customToolInputSchemaValue(t.InputSchema.RawJSON(), currentSchemas[t.Name]),
+				"input_schema": customToolInputSchemaState(currentSchemas, t.Name, t.InputSchema.RawJSON()),
 			})
 			diags.Append(d...)
 			toolObjs[i] = obj

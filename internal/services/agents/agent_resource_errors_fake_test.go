@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
 	"github.com/ippontech/terraform-provider-anthropic/internal/providertest"
 )
@@ -65,4 +68,30 @@ func TestAgentResource_inputSchemaAsConfigured(t *testing.T) {
 		})
 		srv.AssertCalled("", 0)
 	})
+}
+
+// An imported custom tool whose schema the API returns as {"type": "object"}
+// reads back as that schema: import has no current value to keep, so the
+// state takes the API's JSON, which is what a configuration with
+// input_schema = jsonencode({ type = "object" }) holds. Only a tool the
+// current value holds without a schema (the "omitted" case above) keeps a
+// null input_schema while the API returns {"type": "object"}.
+func TestAgentResource_inputSchemaObjectImported(t *testing.T) {
+	t.Parallel()
+	srv := newAgentsFake(t)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(srv.Server),
+		CheckDestroy:             checkAgentsArchived(srv),
+		Steps: []resource.TestStep{
+			{
+				Config:           agentConfig("  custom_tools = [{ name = \"lookup\", description = \"d\", input_schema = jsonencode({ type = \"object\" }) }]\n"),
+				ConfigPlanChecks: expectAgentCreated,
+				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue(agentAddr,
+					tfjsonpath.New("custom_tools").AtSliceIndex(0).AtMapKey("input_schema"), knownvalue.StringExact(`{"type":"object"}`))},
+			},
+			{ResourceName: agentAddr, ImportState: true, ImportStateVerify: true},
+		},
+	})
+	srv.AssertJSONBodies(routeCreateAgent, `{"name":"test-agent","model":{"id":"claude-sonnet-4-6"},`+
+		`"tools":[{"type":"custom","name":"lookup","description":"d","input_schema":{"type":"object"}}]}`)
 }
