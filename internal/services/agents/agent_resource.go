@@ -5,7 +5,6 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"time"
@@ -417,9 +416,10 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							MarkdownDescription: "Description shown to the agent. 1-1024 characters.",
 						},
 						"input_schema": schema.StringAttribute{
-							Optional:            true,
-							CustomType:          jsontypes.NormalizedType{},
-							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.",
+							Optional:   true,
+							CustomType: jsontypes.NormalizedType{},
+							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
+								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted.",
 						},
 					},
 				},
@@ -990,8 +990,11 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 				Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
 			}
 			if !t.InputSchema.IsNull() && !t.InputSchema.IsUnknown() {
-				var schema anthropic.BetaManagedAgentsCustomToolInputSchemaParam
-				if err := json.Unmarshal([]byte(t.InputSchema.ValueString()), &schema); err != nil {
+				// The schema reaches the API as configured, root-level keywords
+				// such as additionalProperties and $defs included, with
+				// "type": "object" added when it has no type.
+				schema, err := customToolInputSchemaParam(t.InputSchema.ValueString())
+				if err != nil {
 					diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
 					return nil, diags
 				}
@@ -1184,16 +1187,13 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 
 	// Custom tools
 	if len(apiCustomTools) > 0 {
+		currentSchemas := customToolInputSchemas(ctx, data.CustomTools)
 		toolObjs := make([]attr.Value, len(apiCustomTools))
 		for i, t := range apiCustomTools {
-			inputSchema := jsontypes.NewNormalizedNull()
-			if raw := t.InputSchema.RawJSON(); raw != "" && raw != "null" {
-				inputSchema = jsontypes.NewNormalizedValue(raw)
-			}
 			obj, d := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
 				"name":         types.StringValue(t.Name),
 				"description":  types.StringValue(t.Description),
-				"input_schema": inputSchema,
+				"input_schema": customToolInputSchemaValue(t.InputSchema.RawJSON(), currentSchemas[t.Name]),
 			})
 			diags.Append(d...)
 			toolObjs[i] = obj
