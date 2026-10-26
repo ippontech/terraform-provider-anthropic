@@ -417,6 +417,7 @@ func mapVaultCommon(vault *anthropic.BetaManagedAgentsVault) (vaultModel, diag.D
 // mapVaultResponseToState maps the API response to the Terraform state model,
 // leaving archive_on_destroy (local-only) untouched.
 func mapVaultResponseToState(vault *anthropic.BetaManagedAgentsVault, data *VaultResourceModel) diag.Diagnostics {
+	current := data.Metadata
 	common, diags := mapVaultCommon(vault)
 
 	data.ID = common.ID
@@ -426,6 +427,11 @@ func mapVaultResponseToState(vault *anthropic.BetaManagedAgentsVault, data *Vaul
 	data.UpdatedAt = common.UpdatedAt
 	data.ArchivedAt = common.ArchivedAt
 	data.Metadata = common.Metadata
+	if common.Metadata.IsNull() {
+		// The API answers {} both without metadata and after metadata = {}: keep
+		// a known empty map, or metadata = {} fails with an inconsistent result.
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(current)
+	}
 
 	return diags
 }
