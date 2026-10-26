@@ -210,7 +210,9 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*goog
 	return settings, diags
 }
 
-// googleCredentialsFromJSON parses a credential file of an accepted type.
+// googleCredentialsFromJSON parses a credential file of an accepted type. The
+// type is checked against googleCloudCredentialTypes, then passed to the
+// typed loader, which refuses a file whose type differs from it.
 func googleCredentialsFromJSON(ctx context.Context, contents string) (*google.Credentials, error) {
 	var head struct {
 		Type string `json:"type"`
@@ -221,7 +223,7 @@ func googleCredentialsFromJSON(ctx context.Context, contents string) (*google.Cr
 	if !slices.Contains(googleCloudCredentialTypes, head.Type) {
 		return nil, fmt.Errorf("google_cloud.credentials has type %q; accepted types: %v", head.Type, googleCloudCredentialTypes)
 	}
-	return google.CredentialsFromJSON(ctx, []byte(contents), googleCloudScope)
+	return google.CredentialsFromJSONWithType(ctx, []byte(contents), google.CredentialsType(head.Type), googleCloudScope)
 }
 
 // newGoogleCloudClient builds the single SDK client of a Claude Models on
