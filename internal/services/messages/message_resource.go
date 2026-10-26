@@ -6,6 +6,7 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -504,8 +505,8 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 			oc.Effort = anthropic.OutputConfigEffort(data.OutputConfig.Effort.ValueString())
 		}
 		if !data.OutputConfig.Format.IsNull() && !data.OutputConfig.Format.IsUnknown() {
-			var schemaObj map[string]any
-			if err := json.Unmarshal([]byte(data.OutputConfig.Format.ValueString()), &schemaObj); err != nil {
+			schemaObj, err := decodeFormatSchema(data.OutputConfig.Format)
+			if err != nil {
 				diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid JSON Schema",
 					fmt.Sprintf("output_config.format must be a JSON object holding a JSON schema: %s", err))
 			} else {
@@ -520,6 +521,21 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 	}
 
 	return params, diags
+}
+
+// decodeFormatSchema decodes output_config.format, which must hold a JSON
+// object. JSON null decodes to a nil schema, which the SDK would leave out of
+// the request together with the whole output_config, so it is an error too,
+// as in anthropic_count_tokens.
+func decodeFormatSchema(format jsontypes.Normalized) (map[string]any, error) {
+	var schemaObj map[string]any
+	if err := json.Unmarshal([]byte(format.ValueString()), &schemaObj); err != nil {
+		return nil, err
+	}
+	if schemaObj == nil {
+		return nil, errors.New("got null")
+	}
+	return schemaObj, nil
 }
 
 // mapMessageToState copies the API response into the computed attributes.
