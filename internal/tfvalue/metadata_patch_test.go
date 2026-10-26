@@ -96,3 +96,20 @@ func TestMetadataPatch(t *testing.T) {
 		})
 	}
 }
+
+func TestMetadataAfterEmptyResponse(t *testing.T) {
+	null := types.MapNull(types.StringType)
+	empty := stringMap(t, map[string]string{})
+	for name, tc := range map[string]struct{ current, want types.Map }{
+		"null stays null":             {null, null},
+		"unknown becomes null":        {types.MapUnknown(types.StringType), null},
+		"keys removed out of band":    {stringMap(t, map[string]string{"team": "a"}), null},
+		"metadata = {} is kept as {}": {empty, empty},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := MetadataAfterEmptyResponse(tc.current); !got.Equal(tc.want) {
+				t.Errorf("MetadataAfterEmptyResponse(%v) = %v, want %v", tc.current, got, tc.want)
+			}
+		})
+	}
+}

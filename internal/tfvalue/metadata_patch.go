@@ -50,3 +50,14 @@ func MetadataPatch(ctx context.Context, plan, state types.Map) (map[string]any, 
 
 	return patch, diags
 }
+
+// MetadataAfterEmptyResponse is the state value of a metadata map when the
+// API returns none. The API returns {} both for an object without metadata
+// and after `metadata = {}` cleared it, so a known empty map stays as
+// configured; anything else (null, unknown, or with keys) becomes null.
+func MetadataAfterEmptyResponse(current types.Map) types.Map {
+	if !current.IsNull() && !current.IsUnknown() && len(current.Elements()) == 0 {
+		return current
+	}
+	return types.MapNull(types.StringType)
+}

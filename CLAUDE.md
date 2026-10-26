@@ -223,7 +223,7 @@ The API's `metadata` uses PATCH semantics on update: omitted keys are kept, a ke
 Two rules go with it:
 
 - Keep such a `metadata` (and any user-provided field the API never fills) `Optional` without `Computed`: `Optional` + `Computed` + `UseStateForUnknown` plans the prior value when the attribute is removed, so removing it silently does nothing.
-- The API returns `{}` both when there is no metadata and after `metadata = {}` cleared it: map an empty response to null, except when the plan or prior state is a known empty map, which is kept (otherwise `metadata = {}` fails with an inconsistent result).
+- The API returns `{}` both when there is no metadata and after `metadata = {}` cleared it: map an empty response to null, except when the plan or prior state is a known empty map, which is kept (`tfvalue.MetadataAfterEmptyResponse`; otherwise `metadata = {}` fails with an inconsistent result).
 
 ### Read-after-write consistency waits
 

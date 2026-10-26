@@ -619,10 +619,8 @@ func mapEnvironmentResponseToState(ctx context.Context, env *anthropic.BetaEnvir
 		metaMap, d := types.MapValue(types.StringType, elements)
 		diags.Append(d...)
 		data.Metadata = metaMap
-	} else if data.Metadata.IsUnknown() || len(data.Metadata.Elements()) > 0 {
-		// The API returns {} both with no metadata and after `metadata = {}`
-		// cleared it: keep a known empty map as configured, null otherwise.
-		data.Metadata = types.MapNull(types.StringType)
+	} else {
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(data.Metadata)
 	}
 
 	// Config — always set since API always returns it
