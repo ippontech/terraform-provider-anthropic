@@ -6,6 +6,7 @@ package organizations
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -19,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 )
 
@@ -87,16 +89,12 @@ func readListDataSource(t *testing.T, d datasource.DataSource, overrides map[str
 	for name, typ := range objType.AttributeTypes {
 		values[name] = tftypes.NewValue(typ, nil)
 	}
-	for name, v := range overrides {
-		values[name] = v
-	}
+	maps.Copy(values, overrides)
 
 	resp := datasource.ReadResponse{State: tfsdk.State{Raw: tftypes.NewValue(objType, nil), Schema: schemaResp.Schema}}
 	d.Read(ctx, datasource.ReadRequest{Config: tfsdk.Config{Raw: tftypes.NewValue(objType, values), Schema: schemaResp.Schema}}, &resp)
 	return resp.State, resp.Diagnostics
 }
-
-func cursor(id string) *string { return &id }
 
 // The list loop follows last_id through the real Read, and stops with an
 // error instead of requesting the first page again when has_more comes with
@@ -147,9 +145,9 @@ func TestListDataSources_cursorGuard(t *testing.T) {
 			name: "two pages",
 			pages: func(afterID string) cursorPage {
 				if afterID == "" {
-					return cursorPage{ids: []string{"id_1"}, hasMore: true, lastID: cursor("id_1")}
+					return cursorPage{ids: []string{"id_1"}, hasMore: true, lastID: new("id_1")}
 				}
-				return cursorPage{ids: []string{"id_2"}, lastID: cursor("id_2")}
+				return cursorPage{ids: []string{"id_2"}, lastID: new("id_2")}
 			},
 			wantAfterIDs: []string{"", "id_1"},
 			wantItems:    2,
@@ -165,7 +163,7 @@ func TestListDataSources_cursorGuard(t *testing.T) {
 		{
 			name: "has_more with a repeated last_id",
 			pages: func(string) cursorPage {
-				return cursorPage{ids: []string{"id_1"}, hasMore: true, lastID: cursor("id_1")}
+				return cursorPage{ids: []string{"id_1"}, hasMore: true, lastID: new("id_1")}
 			},
 			wantAfterIDs: []string{"", "id_1"},
 			wantItems:    -1,
