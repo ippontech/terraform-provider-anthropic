@@ -25,6 +25,10 @@ The `govulncheck` CI job fails a pull request that brings in a known vulnerabili
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 ```
 
+### Secret scanning
+
+[gitleaks](https://github.com/gitleaks/gitleaks) scans the commits of every pull request (the `gitleaks` job of `.github/workflows/gitleaks.yml`) and, every week, the whole history. `.gitleaks.toml` adds a rule for Claude Enterprise scoped keys (`sk-ant-api01-`) to the default rules, which already cover `sk-ant-api03-` and `sk-ant-admin01-` keys. The pre-commit hook runs the same rules on your staged changes, with the gitleaks version `mise install` installs. A test fixture that has to look like a secret (a truncated PEM block, a fake key) takes a `gitleaks:allow` comment at the end of its line; a real secret that reached a commit must be revoked first, then removed from the history.
+
 ### Build and install the provider
 
 ```bash
