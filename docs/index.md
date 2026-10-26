@@ -178,6 +178,8 @@ Anthropic also serves the Claude API through cloud gateways, each in front of an
 
 ~> **Beta.** Claude Platform on AWS and Claude Models on Google Cloud support is in beta: it relies on the Anthropic SDK's clients for these platforms, themselves in beta, and its verification against the real gateways is still partial on AWS and limited to offline tests on Google Cloud. Each plan or apply with an `aws` or `google_cloud` block prints a warning saying so. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
+The [Claude Platform on AWS](guides/claude_platform_on_aws#7-what-is-not-verified) and [Claude Models on Google Cloud](guides/claude_models_on_google_cloud#5-what-is-not-verified) guides list what is verified and what is not.
+
 ### Claude Platform on AWS (`aws`)
 
 [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws) serves the API through `https://aws-external-anthropic.<region>.api.aws`, authenticated by AWS:
@@ -223,6 +225,8 @@ provider "anthropic" {
 - `workspace_id` goes into the request URL, never into a header (the gateway rejects `anthropic-workspace-id`). With the `google_cloud` block it is read from `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID`, never from `ANTHROPIC_WORKSPACE_ID`. It may be left unset only for an alias limited to organization routes: then every type that calls workspace routes fails at plan, or at apply for a data source that Terraform reads only then. Workspaces are created in the Claude Console (Settings > Workspaces), where their IDs are shown.
 - `google_cloud` conflicts with `api_key`, `admin_api_key`, `auth_token`, `federation` and `aws`, and the first-party variables are not read.
 - `base_url` (or `ANTHROPIC_GOOGLE_CLOUD_BASE_URL`) replaces both derived endpoints, so every route, organization routes included, goes to it.
+
+The [Claude Platform on AWS](guides/claude_platform_on_aws) and [Claude Models on Google Cloud](guides/claude_models_on_google_cloud) guides cover the cloud-side setup: IAM permissions, roles, keys and credentials.
 
 ### Availability by platform
 
