@@ -36,6 +36,7 @@ import (
 var _ resource.Resource = &VaultCredentialResource{}
 var _ resource.ResourceWithImportState = &VaultCredentialResource{}
 var _ resource.ResourceWithConfigValidators = &VaultCredentialResource{}
+var _ resource.ResourceWithModifyPlan = &VaultCredentialResource{}
 
 func NewVaultCredentialResource() resource.Resource {
 	return &VaultCredentialResource{}
@@ -542,6 +543,33 @@ func (r *VaultCredentialResource) Configure(_ context.Context, req resource.Conf
 	}
 
 	r.client = pd.Client
+}
+
+// --- ModifyPlan ---
+
+// ModifyPlan keeps updated_at when the plan changes nothing else. The header
+// and body fields of injection_location have a default, which the framework
+// applies even when the block is not configured: it then sees a change and
+// plans updated_at as unknown, and UseStateForUnknown restores the stored
+// injection_location. Without this, every credential configured without an
+// injection_location block (or after the block was removed) would plan an
+// in-place update that changes nothing, on every plan.
+func (r *VaultCredentialResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+
+	var updatedAt types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("updated_at"), &updatedAt)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	unchanged := resp.Plan
+	resp.Diagnostics.Append(unchanged.SetAttribute(ctx, path.Root("updated_at"), updatedAt)...)
+	if !resp.Diagnostics.HasError() && unchanged.Raw.Equal(req.State.Raw) {
+		resp.Plan = unchanged
+	}
 }
 
 // --- Create ---
