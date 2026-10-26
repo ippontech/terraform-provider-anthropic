@@ -634,6 +634,7 @@ func (r *VaultCredentialResource) Update(ctx context.Context, req resource.Updat
 		if resp.Diagnostics.HasError() {
 			return
 		}
+		clearRemovedScope(&authUpdate, plan, state)
 		params.Auth = authUpdate
 	}
 
@@ -700,6 +701,21 @@ func (r *VaultCredentialResource) ImportState(ctx context.Context, req resource.
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// clearRemovedScope sends refresh.scope as "" when the plan removes a stored
+// scope: the update keeps an omitted scope and clears it on an empty string
+// ("Send an empty string to clear the stored scope",
+// https://platform.claude.com/docs/en/api/beta/vaults/credentials/update).
+func clearRemovedScope(auth *anthropic.BetaVaultCredentialUpdateParamsAuthUnion, plan, state VaultCredentialResourceModel) {
+	if auth.OfMCPOAuth == nil || plan.Refresh.IsNull() || plan.Refresh.IsUnknown() || state.Refresh.IsNull() || state.Refresh.IsUnknown() {
+		return
+	}
+	planScope, _ := plan.Refresh.Attributes()["scope"].(types.String)
+	stateScope, _ := state.Refresh.Attributes()["scope"].(types.String)
+	if planScope.IsNull() && !stateScope.IsNull() && !stateScope.IsUnknown() {
+		auth.OfMCPOAuth.Refresh.Scope = param.NewOpt("")
+	}
+}
 
 // buildCreateAuthUnion builds the BetaVaultCredentialNewParamsAuthUnion from plan + config (write-only).
 // Write-only values are read from cfg (tfsdk.Config) because they are absent from plan/state.
