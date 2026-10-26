@@ -4,6 +4,7 @@
 package retry
 
 import (
+	"context"
 	"io"
 	"math"
 	"math/rand"
@@ -81,36 +82,59 @@ func Middleware(p Policy) option.Middleware {
 	return func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
 		idempotent := isIdempotent(req)
 		for attempt := 0; ; attempt++ {
-			r := req
-			if attempt > 0 {
-				r = req.Clone(req.Context())
-				if req.GetBody != nil {
-					body, err := req.GetBody()
-					if err != nil {
-						return nil, err
-					}
-					r.Body = body
-				}
-				if r.Header.Get("X-Stainless-Retry-Count") != "" {
-					r.Header.Set("X-Stainless-Retry-Count", strconv.Itoa(attempt))
-				}
+			r, err := attemptRequest(req, attempt)
+			if err != nil {
+				return nil, err
 			}
-
 			resp, err := next(r)
 			if attempt >= p.MaxRetries || !replayable(req) || !shouldRetry(idempotent, resp) {
 				return resp, err
 			}
-			if resp != nil && resp.Body != nil {
-				_, _ = io.Copy(io.Discard, resp.Body)
-				_ = resp.Body.Close()
-			}
-
-			select {
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			case <-time.After(p.delay(resp, attempt)):
+			drain(resp)
+			if err := sleep(req.Context(), p.delay(resp, attempt)); err != nil {
+				return nil, err
 			}
 		}
+	}
+}
+
+// attemptRequest returns the request to send for an attempt: req itself the
+// first time, then a clone with a fresh body and the SDK's retry counter
+// header, when present, set to the attempt number.
+func attemptRequest(req *http.Request, attempt int) (*http.Request, error) {
+	if attempt == 0 {
+		return req, nil
+	}
+	r := req.Clone(req.Context())
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		r.Body = body
+	}
+	if r.Header.Get("X-Stainless-Retry-Count") != "" {
+		r.Header.Set("X-Stainless-Retry-Count", strconv.Itoa(attempt))
+	}
+	return r, nil
+}
+
+// drain reads and closes the body of a response that is about to be retried,
+// so that its connection can be reused.
+func drain(resp *http.Response) {
+	if resp != nil && resp.Body != nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+}
+
+// sleep waits for d, or returns the context's error if it is done first.
+func sleep(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
 	}
 }
 
