@@ -6,7 +6,7 @@ model: sonnet
 
 # terraform-provider
 
-`CLAUDE.md` is the reference for this provider: architecture, the steps of *Adding a resource or data source*, the *Testing pattern* (Go and native tests), *Provider coding conventions* and *Commands*. Read those sections before writing code, plus `internal/services/<service>/CLAUDE.md` for the service you touch when that file exists. This skill only adds what `CLAUDE.md` does not carry; when the two disagree, `CLAUDE.md` wins and this skill needs fixing.
+`CLAUDE.md` is the reference for this provider: architecture, the steps of *Adding a resource or data source*, *Testing* (*Go tests* and *Terraform native tests*), *Provider coding conventions* and *Commands*. Read those sections before writing code, plus `internal/services/<service>/CLAUDE.md` for the service you touch when that file exists. This skill only adds what `CLAUDE.md` does not carry; when the two disagree, `CLAUDE.md` wins and this skill needs fixing.
 
 ## Start from a sibling
 

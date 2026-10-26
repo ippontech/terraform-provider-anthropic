@@ -103,7 +103,7 @@ Use `EnterWorktree` / isolated worktrees to enforce this boundary.
 ## Implementation guidance
 
 Each issue description should reference:
-- **Conventions**: `CLAUDE.md` (*Adding a resource or data source*, *Testing pattern*)
+- **Conventions**: `CLAUDE.md` (*Adding a resource or data source*, *Testing*)
   and the `terraform-provider` skill.
 - **Subagent for review**: after implementation is complete on a branch, launch the
   `terraform-provider-review` subagent pointing at the changed files.

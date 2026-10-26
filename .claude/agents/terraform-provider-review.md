@@ -21,7 +21,7 @@ Read the root `CLAUDE.md` and, for each service the files belong to, `internal/s
 ## What to check
 
 1. Completeness: every file that *Adding a resource or data source* requires exists (source, registration in `provider.go`, example main file and `versions.tf`, template with a non-empty `subcategory`, native test, generated doc).
-2. Tests: package, file names, `PreCheck*` gate and shared helpers as in the *Testing pattern*; the native test sources the public example.
+2. Tests: package, file names, `PreCheck*` gate and shared helpers as in *Testing* (*Go tests*, *Terraform native tests*); the native test sources the public example.
 3. Provider code: `Configure` guard and client as in *Configure method pattern*; the other conventions of *Provider coding conventions* that the change touches.
 4. Correctness: errors reach `resp.Diagnostics`, the API response is mapped to state without dropping fields, plan modifiers keep plans empty after apply.
 5. Terraform: no secret in examples or tests; every example `output` has a `description`; version constraint `~> 1.0`.

@@ -12,7 +12,7 @@ You implement exactly one resource or data source of `terraform-provider-anthrop
 
 ## Reference
 
-Before writing code, read the root `CLAUDE.md` (repository-wide rules: adding a resource or data source, testing pattern, coding conventions, commands) and `internal/services/<service>/CLAUDE.md` for the service you touch, when that file exists. They are the reference for paths, helpers, test layout and naming: when the spec or this prompt contradicts them, follow `CLAUDE.md` and note the conflict in your report. The `terraform-provider` skill adds what `CLAUDE.md` does not carry (docs template shape, dependency pinning, native-test options). Then read the closest sibling resource or data source in the same service and match its shape.
+Before writing code, read the root `CLAUDE.md` (repository-wide rules: adding a resource or data source, testing, provider coding conventions, commands) and `internal/services/<service>/CLAUDE.md` for the service you touch, when that file exists. They are the reference for paths, helpers, test layout and naming: when the spec or this prompt contradicts them, follow `CLAUDE.md` and note the conflict in your report. The `terraform-provider` skill adds what `CLAUDE.md` does not carry (docs template shape, dependency pinning, native-test options). Then read the closest sibling resource or data source in the same service and match its shape.
 
 ## Inputs
 
