@@ -297,10 +297,7 @@ func (r *EnvironmentResource) ModifyPlan(ctx context.Context, req resource.Modif
 		return
 	}
 
-	if !plan.Name.Equal(state.Name) ||
-		!plan.Description.Equal(state.Description) ||
-		!plan.Metadata.Equal(state.Metadata) ||
-		!plan.Config.Equal(state.Config) {
+	if environmentChanged(plan, state) {
 		// Resource is being updated; updated_at will change.
 		plan.UpdatedAt = types.StringUnknown()
 	} else {
@@ -308,6 +305,16 @@ func (r *EnvironmentResource) ModifyPlan(ctx context.Context, req resource.Modif
 		plan.UpdatedAt = state.UpdatedAt
 	}
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
+}
+
+// environmentChanged reports whether plan changes an attribute the API
+// holds. archive_on_destroy, the only other configurable attribute, is
+// local-only.
+func environmentChanged(plan, state EnvironmentResourceModel) bool {
+	return !plan.Name.Equal(state.Name) ||
+		!plan.Description.Equal(state.Description) ||
+		!plan.Metadata.Equal(state.Metadata) ||
+		!plan.Config.Equal(state.Config)
 }
 
 // --- Create ---
@@ -404,6 +411,14 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 	var state EnvironmentResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Only archive_on_destroy changes: nothing to send, and an API write
+	// would move updated_at, which ModifyPlan planned unchanged.
+	if !environmentChanged(data, state) {
+		state.ArchiveOnDestroy = data.ArchiveOnDestroy
+		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 		return
 	}
 
