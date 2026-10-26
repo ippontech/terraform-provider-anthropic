@@ -29,20 +29,32 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          # The commit types of the conventionalcommits preset .releaserc uses
-          # (DEFAULT_COMMIT_TYPES in conventional-changelog-conventionalcommits).
-          types='feat|feature|fix|perf|revert|docs|style|chore|refactor|test|build|ci'
+          # The types semantic-release acts on or knows (.releaserc and the
+          # commit-analyzer default rules, table in CONTRIBUTING.md). `feature`,
+          # an alias in the conventionalcommits preset, is left out: no release
+          # rule matches it, so it would silently publish nothing.
+          types='feat|fix|perf|revert|docs|style|chore|refactor|test|build|ci'
           pattern="^(${types})(\([^()]+\))?(!)?: [^[:space:]]"
-          if [[ ! "${TITLE}" =~ ${pattern} ]]; then
+          if [[ "${TITLE}" =~ ^Revert\ \".+\"$ ]]; then
+            # GitHub's revert button titles the PR 'Revert "<original title>"',
+            # which semantic-release reads as a revert.
+            echo "PR title is a GitHub revert."
+          elif [[ ! "${TITLE}" =~ ${pattern} ]]; then
             echo "::error title=PR title::Expected '<type>[(scope)][!]: <subject>' with type one of ${types//|/, } (Conventional Commits, see CONTRIBUTING.md)."
             exit 1
-          fi
-          # feat! / fix! on main would publish a major release. Breaking
-          # changes go to the major/<version> staging branch (RELEASE.md).
-          if [[ -n "${BASH_REMATCH[3]}" && "${BASE_REF}" == "main" ]]; then
+          elif [[ -n "${BASH_REMATCH[3]}" && "${BASE_REF}" == "main" ]]; then
+            # feat! / fix! on main would publish a major release. Breaking
+            # changes go to the major/<version> staging branch (RELEASE.md).
             echo "::error title=PR title::'!' marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
+            exit 1
+          fi
+          # The PR description becomes the squash commit body, where a
+          # BREAKING CHANGE footer would publish a major release just the same.
+          if [[ "${BASE_REF}" == "main" ]] && grep -qE '^BREAKING[ -]CHANGE:' <<< "${BODY}"; then
+            echo "::error title=PR description::A 'BREAKING CHANGE:' footer marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
             exit 1
           fi
           echo "PR title follows Conventional Commits."
