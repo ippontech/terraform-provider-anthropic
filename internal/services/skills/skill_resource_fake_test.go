@@ -310,10 +310,6 @@ func TestSkillResource_forceDestroyPagesThroughVersions(t *testing.T) {
 // update that must leave a consistent state (the attribute's documentation
 // requires that apply before a destroy can use it).
 func TestSkillResource_toggleForceDestroy(t *testing.T) {
-	t.Skip("bug: SkillResource.Update is a no-op, so the state keeps the prior force_destroy and " +
-		"Terraform fails the apply with \"Provider produced inconsistent result after apply: .force_destroy: " +
-		"was cty.True, but now cty.False\"; force_destroy cannot be switched on for an existing skill. " +
-		"Fix: Update writes the planned force_destroy to the state.")
 	t.Parallel()
 	srv := newSkillsFake(t, 0)
 	files := []string{hclPath(writeBundle(t, "toggled", "Toggled.")[0])}
