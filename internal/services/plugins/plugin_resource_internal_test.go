@@ -554,3 +554,54 @@ func TestComponentsValue_nullAndEmptyStayDistinct(t *testing.T) {
 		t.Errorf("null = %v, empty = %v: a version without recorded components is null, one without components is []", null, empty)
 	}
 }
+
+// Pinning an unpinned plugin moves updated_at, even onto the version it
+// already serves: updated_at "Moves on a served-version change (including
+// pinning an unpinned Plugin to the version it already serves)"
+// (https://platform.claude.com/docs/en/api/beta/organization/plugins/update).
+// Nothing else changes in that configuration, so the plan Terraform hands
+// to ModifyPlan holds every computed value of the state, updated_at
+// included: ModifyPlan must leave it unknown, or the apply fails with
+// "Provider produced inconsistent result after apply: .updated_at". A plugin
+// already pinned, or a plan without served_version_id, keeps it.
+func TestPluginResource_ModifyPlanPinningLeavesUpdatedAtUnknown(t *testing.T) {
+	t.Parallel()
+	r := &PluginResource{}
+	for _, tc := range []struct {
+		name           string
+		pinned         bool
+		servedVersion  types.String
+		wantUnknownNow bool
+	}{
+		{"pins an unpinned plugin to the version it serves", false, types.StringValue("pluginver_02"), true},
+		{"already pinned to that version", true, types.StringValue("pluginver_02"), false},
+		{"no served_version_id", false, types.StringNull(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			prior := statePluginModel(t, "", "pluginver_02", tc.pinned)
+			prior.SourceDir = types.StringNull() // an imported plugin
+			config := newPluginModel()
+			config.ServedVersionID = tc.servedVersion
+			// The plan as Terraform builds it: no configured value differs from
+			// the state, so every computed value is the state's.
+			plan := prior
+
+			req := resource.ModifyPlanRequest{Config: configOf(t, r, config), Plan: planOf(t, r, plan), State: stateOf(t, r, prior)}
+			resp := resource.ModifyPlanResponse{Plan: req.Plan}
+			r.ModifyPlan(context.Background(), req, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatal(resp.Diagnostics)
+			}
+
+			var updatedAt types.String
+			resp.Plan.GetAttribute(context.Background(), path.Root("updated_at"), &updatedAt)
+			if tc.wantUnknownNow && !updatedAt.IsUnknown() {
+				t.Errorf("updated_at = %s, want unknown: the pin moves it, so the planned value makes the apply inconsistent", updatedAt)
+			}
+			if !tc.wantUnknownNow && !updatedAt.Equal(prior.UpdatedAt) {
+				t.Errorf("updated_at = %s, want the state's %s", updatedAt, prior.UpdatedAt)
+			}
+		})
+	}
+}

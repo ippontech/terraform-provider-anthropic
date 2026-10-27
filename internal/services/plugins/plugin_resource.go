@@ -261,6 +261,12 @@ func (r *PluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 						"the plugin keeps its content: publish new content with an `anthropic_plugin_version` resource.", input.name))
 			}
 		}
+		// Pinning moves updated_at, even onto the version already served
+		// ("including pinning an unpinned Plugin to the version it already
+		// serves", Update Plugin): the plan cannot know the new value.
+		if !config.ServedVersionID.IsNull() && !state.ServedVersionPinned.ValueBool() {
+			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("updated_at"), types.StringUnknown())...)
+		}
 	}
 
 	if !config.ServedVersionID.IsNull() {
