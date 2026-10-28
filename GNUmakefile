@@ -68,7 +68,10 @@ terraform-validate: install .dev.tfrc
 		fi; \
 	done; exit $$failed
 
+# Without any -filter, terraform test would run every test file, live ones
+# included: an empty list is an error.
 terraform-test-mock: install .dev.tfrc
+	$(if $(MOCK_TESTS),,$(error no test file in tests/ has a mock_provider block))
 	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests init
 	TF_CLI_CONFIG_FILE=$(CURDIR)/.dev.tfrc terraform -chdir=tests test $(addprefix -filter=,$(MOCK_TESTS))
 
