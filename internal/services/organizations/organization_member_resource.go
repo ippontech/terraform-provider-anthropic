@@ -93,11 +93,11 @@ func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.Schema
 				Required: true,
 				MarkdownDescription: "Organization role of the user. " + assignableRolesDescription + " " +
 					"A member holding `admin` cannot be removed through the API, and one holding a Claude Enterprise administrative role can be neither changed nor removed through it. " +
-					"Not checked against a list, since the accepted set depends on the organization type and an imported member can hold a role the API cannot assign; " +
+					"Not checked against a list, since the accepted set depends on the organization type and a member can hold a role the API cannot assign; " +
 					"the API rejects an invalid change at apply time.",
-				// No OneOf: an imported member can hold admin or an Enterprise
-				// administrative role, and the configuration must be able to match
-				// it; only changing to such a role is impossible.
+				// No OneOf: a member, imported or adopted on create, can hold admin
+				// or an Enterprise administrative role, and the configuration must be
+				// able to match it; only changing to such a role is impossible.
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
 				},
