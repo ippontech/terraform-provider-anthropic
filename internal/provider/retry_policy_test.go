@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // retryFakeAPI serves just enough of the environments, files and skills
@@ -80,7 +81,7 @@ func (f *retryFakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z", "archived_at": nil,
 	}
 	switch route {
-	case "POST /v1/environments", "GET /v1/environments/env_1":
+	case "POST /v1/environments", "GET /v1/environments/env_1", "POST /v1/environments/env_1/archive":
 		_ = json.NewEncoder(w).Encode(environment)
 	case "DELETE /v1/environments/env_1":
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "env_1", "type": "environment_deleted"})
@@ -136,6 +137,51 @@ func TestRetryPolicy_createRateLimitedIsRetried(t *testing.T) {
 
 	if got := fake.count("POST /v1/environments"); got != 2 {
 		t.Errorf("POST /v1/environments sent %d times, want 2 (429, then success)", got)
+	}
+}
+
+// A 529 says the API is overloaded, a capacity answer like a 429, so the
+// create is replayed.
+func TestRetryPolicy_createOverloadedIsRetried(t *testing.T) {
+	fake := newRetryFakeAPI(t)
+	fake.fail("POST /v1/environments", 529)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: retryProviderFactories(),
+		Steps: []resource.TestStep{{
+			Config: retryEnvironmentConfig,
+			Check:  resource.TestCheckResourceAttr("anthropic_environment.test", "id", "env_1"),
+		}},
+	})
+
+	if got := fake.count("POST /v1/environments"); got != 2 {
+		t.Errorf("POST /v1/environments sent %d times, want 2 (529, then success)", got)
+	}
+}
+
+// Archiving sets a state, so a replay cannot leave a duplicate: a transient
+// 5xx on the archive of a destroy is replayed and the destroy succeeds.
+func TestRetryPolicy_archiveServerErrorIsRetried(t *testing.T) {
+	fake := newRetryFakeAPI(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: retryProviderFactories(),
+		Steps: []resource.TestStep{{
+			Config: `
+resource "anthropic_environment" "test" {
+  name               = "retry"
+  archive_on_destroy = true
+}
+`,
+			Check: func(*terraform.State) error {
+				fake.fail("POST /v1/environments/env_1/archive", http.StatusInternalServerError)
+				return nil
+			},
+		}},
+	})
+
+	if got := fake.count("POST /v1/environments/env_1/archive"); got != 2 {
+		t.Errorf("POST /v1/environments/env_1/archive sent %d times, want 2 (500, then success)", got)
 	}
 }
 

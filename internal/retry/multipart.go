@@ -46,9 +46,10 @@ var _ interface{ Filename() string } = NamedReader{}
 // frontmatter.
 //
 // It does not retry: the SDK buffers the multipart body, so the client's
-// Middleware replays the upload, on 429 only since the POST creates an
-// object. A retry loop here would multiply the client's attempts (it used to
-// retry 5xx three times on top of the SDK's three attempts: nine POSTs).
+// Middleware replays the upload, only on 429, 529 or a connection error
+// before it got a connection, since the POST creates an object. A retry
+// loop here would multiply the client's attempts (it used to retry 5xx
+// three times on top of the SDK's three attempts: nine POSTs).
 func MultipartUpload[T any](ctx context.Context, filePaths []string, bundleRoot, dirName string, fn func([]io.Reader) (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {

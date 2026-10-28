@@ -9,8 +9,11 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -62,18 +65,24 @@ func SDKOptions(p Policy) []option.RequestOption {
 // internal/admin's DoRequest, instead of the SDK's single rule for all
 // methods (2 retries on 408, 409, 429, 5xx and connection errors).
 //
-// Idempotent requests (GET, DELETE and the rest of the RFC 9110 set, plus
-// the side-effect-free POST /v1/messages/count_tokens) keep the SDK's rule.
-// Any other request, a POST that creates an object, uploads a file, sends a
-// message or updates with a precondition, is replayed only on 429: the one
-// answer that says the request was not processed. After a 5xx, a 409 or a
-// dropped connection the write may have landed, and a replay would create a
+// Idempotent requests keep the SDK's rule: GET, DELETE and the rest of the
+// RFC 9110 set, and the POSTs that leave the same state when sent twice
+// (see isIdempotent). Any other request, a POST that creates an object,
+// uploads a file, sends a message or updates with a precondition, is
+// replayed only on 429 or 529, which report a capacity limit (rate limited,
+// overloaded) rather than a failure of the request, and on a connection
+// error raised before the request got a connection (DNS, dial, TLS
+// handshake), when none of it can have reached the API. After
+// another 5xx, a 408, a 409 or a connection lost once the request had a
+// connection, the write may have landed, and a replay would create a
 // duplicate (an archive-only agent, a second file, a second billed message)
 // or turn an applied precondition update into a misleading 409. The API
 // documents no idempotency key that would make the replay safe.
 //
-// An x-should-retry header from the server settles the decision either way,
-// as in the SDK. The delay honours retry-after-ms / retry-after, bounded by
+// An x-should-retry header from the server settles the decision either way
+// for an idempotent request, as in the SDK. For any other request it can
+// only turn a retry off: it says the error is transient, not that the write
+// did not land. The delay honours retry-after-ms / retry-after, bounded by
 // MaxRetryAfter, and otherwise backs off exponentially with jitter.
 //
 // Install it with SDKOptions, which turns the SDK's own retries off;
@@ -86,8 +95,9 @@ func Middleware(p Policy) option.Middleware {
 			if err != nil {
 				return nil, err
 			}
+			r, connected := traceConnection(r)
 			resp, err := next(r)
-			if attempt >= p.MaxRetries || !replayable(req) || !shouldRetry(idempotent, resp) {
+			if attempt >= p.MaxRetries || !replayable(req) || !shouldRetry(idempotent, resp, connected.Load()) {
 				return resp, err
 			}
 			drain(resp)
@@ -119,6 +129,18 @@ func attemptRequest(req *http.Request, attempt int) (*http.Request, error) {
 	return r, nil
 }
 
+// traceConnection returns r with a client trace that records whether the
+// request got a connection. Until it has one (DNS lookup, dial and TLS
+// handshake done), no byte of it can have reached the API. The flag is
+// atomic because the HTTP/2 transport calls the hook from its own goroutine.
+func traceConnection(r *http.Request) (*http.Request, *atomic.Bool) {
+	connected := new(atomic.Bool)
+	trace := &httptrace.ClientTrace{
+		GotConn: func(httptrace.GotConnInfo) { connected.Store(true) },
+	}
+	return r.WithContext(httptrace.WithClientTrace(r.Context(), trace)), connected
+}
+
 // drain reads and closes the body of a response that is about to be retried,
 // so that its connection can be reused.
 func drain(resp *http.Response) {
@@ -144,42 +166,68 @@ func replayable(req *http.Request) bool {
 	return req.Body == nil || req.Body == http.NoBody || req.GetBody != nil
 }
 
-// shouldRetry decides whether a failed attempt is worth repeating; resp is
-// nil after a connection error.
-func shouldRetry(idempotent bool, resp *http.Response) bool {
-	if resp != nil {
-		switch resp.Header.Get("x-should-retry") {
-		case "true":
-			return true
-		case "false":
-			return false
-		}
+// statusOverloaded is the API's 529 overloaded_error, "The API is
+// temporarily overloaded" (https://platform.claude.com/docs/en/api/errors).
+// Like a 429 it reports a capacity limit, not a failure of this request,
+// unlike a 500 (an unexpected internal error) or a 504 (timed out while
+// processing), after which the write may have landed.
+const statusOverloaded = 529
+
+// shouldRetry decides whether a failed attempt is worth repeating. resp is
+// nil after a connection error; connected reports whether the request had
+// got a connection by then.
+func shouldRetry(idempotent bool, resp *http.Response, connected bool) bool {
+	if resp == nil {
+		return idempotent || !connected
+	}
+
+	header := resp.Header.Get("x-should-retry")
+	if header == "false" {
+		return false
 	}
 
 	if !idempotent {
-		return resp != nil && resp.StatusCode == http.StatusTooManyRequests
+		return resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == statusOverloaded
 	}
 
-	if resp == nil {
-		return true
-	}
-	return resp.StatusCode == http.StatusRequestTimeout ||
+	return header == "true" ||
+		resp.StatusCode == http.StatusRequestTimeout ||
 		resp.StatusCode == http.StatusConflict ||
 		resp.StatusCode == http.StatusTooManyRequests ||
 		resp.StatusCode >= http.StatusInternalServerError
 }
 
+// idempotentPOST matches the paths of the POSTs that leave the same state
+// when sent twice:
+//   - token counting, which computes without storing anything
+//     (https://platform.claude.com/docs/en/api/messages/count_tokens);
+//   - archiving, pausing or unpausing an object, which sets its state;
+//   - the update of an existing object whose update carries no
+//     precondition: the body sets fields to the values it holds.
+//
+// The agent and memory updates are left out: they carry a version or
+// content_sha256 precondition, so replaying one that landed answers 409,
+// which reads as an out-of-band change. Creates, uploads, messages, other
+// actions (a deployment run, a token rotation) and any path not named here
+// keep the non-idempotent rule.
+var idempotentPOST = regexp.MustCompile(`/v1/(` + strings.Join([]string{
+	`messages/count_tokens`,
+	`.+/(archive|pause|unpause)`,
+	`(environments|vaults|memory_stores|deployments|user_profiles)/[^/]+`,
+	`vaults/[^/]+/credentials/[^/]+`,
+	`organizations/(service_accounts|federation_issuers|federation_rules)/[^/]+`,
+}, "|") + `)$`)
+
 // isIdempotent reports whether sending req twice leaves the same state as
-// sending it once: the RFC 9110 section 9.2.2 methods, and token counting,
-// a POST that computes without storing anything
-// (https://platform.claude.com/docs/en/api/messages/count_tokens).
+// sending it once: the RFC 9110 section 9.2.2 methods, and the POSTs
+// idempotentPOST matches.
 func isIdempotent(req *http.Request) bool {
 	switch strings.ToUpper(req.Method) {
 	case http.MethodGet, http.MethodHead, http.MethodPut,
 		http.MethodDelete, http.MethodOptions, http.MethodTrace:
 		return true
 	case http.MethodPost:
-		return strings.HasSuffix(req.URL.Path, "/v1/messages/count_tokens")
+		return idempotentPOST.MatchString(req.URL.Path)
 	default:
 		return false
 	}

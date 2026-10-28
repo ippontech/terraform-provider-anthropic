@@ -262,9 +262,11 @@ func resolveCredential(configValue types.String, envVar string) string {
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
 //
-// Retries follow provretry.DefaultPolicy instead of the SDK's: a request that
-// creates or changes something (a POST) is replayed on 429 only, so a 5xx or
-// a dropped connection after a write that landed cannot create a duplicate.
+// Retries follow provretry.DefaultPolicy instead of the SDK's: a POST that
+// creates something, sends a message or updates with a precondition is
+// replayed only on 429, 529 or a connection error before it got a
+// connection, so another 5xx or a dropped connection after a write that
+// landed cannot create a duplicate.
 //
 // override is applied last, so the base URL of WithBaseURL wins over the
 // variable.

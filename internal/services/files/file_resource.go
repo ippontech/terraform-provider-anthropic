@@ -197,7 +197,8 @@ func (r *FileResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// provretry.MultipartUpload is shaped for a bundle of files uploaded under
 	// a common directory name (skills); its "dirName/filename" multipart name
 	// would not match this resource's `filename`, so the single file is
-	// uploaded by a local helper. Retries are the client's (429 only).
+	// uploaded by a local helper. Retries are the client's (429, 529, or a
+	// connection error before the request got a connection).
 	file, err := uploadFile(ctx, r.client, sourcePath, filename, mimeType, expiresInSeconds)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to upload file: %s", err))
@@ -275,7 +276,8 @@ func (r *FileResource) ImportState(ctx context.Context, req resource.ImportState
 // uploadFile opens sourcePath and uploads it once. It does not retry: the
 // SDK buffers the multipart body, and the client's retry middleware
 // (provretry.Middleware, installed by the provider on every client) replays
-// it on 429 only. POST /v1/files is not idempotent, so a 5xx, a 409 or a
+// it only on 429, 529 or a connection error before the request got a
+// connection. POST /v1/files is not idempotent, so another 5xx, a 409 or a
 // dropped connection may mean the file was already created, and replaying
 // would upload a duplicate.
 func uploadFile(ctx context.Context, client *anthropic.Client, sourcePath, filename, mimeType string, expiresInSeconds param.Opt[int64]) (*anthropic.FileMetadata, error) {
