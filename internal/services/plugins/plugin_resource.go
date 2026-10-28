@@ -77,6 +77,17 @@ func (r *PluginResource) Metadata(_ context.Context, req resource.MetadataReques
 const createOnlyNote = " Read only when the plugin is created: a later change is recorded in state but uploads nothing " +
 	"(Terraform shows a warning). Publish new content with `anthropic_plugin_version`."
 
+// served_version_id must name a version of this plugin (the API answers 404
+// otherwise), and a plugin about to be created has none yet: whatever it is
+// set to then belongs to another plugin, typically the one being replaced.
+const (
+	servedVersionOnCreateSummary = "served_version_id set on a new plugin"
+	servedVersionOnCreateDetail  = "`served_version_id` must name a version of this plugin, and a plugin about to be created " +
+		"has none yet. This also happens when the plugin is replaced (a `marketplace_id` change, `-replace`) or was deleted " +
+		"outside Terraform: the configured ID belongs to the previous plugin. Remove `served_version_id`, apply to create " +
+		"the plugin, then set it to one of the new plugin's versions."
+)
+
 func (r *PluginResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Uploads an organization-owned plugin to a Claude Enterprise organization (Plugins API, beta), " +
@@ -130,7 +141,8 @@ func (r *PluginResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"the attribute leaves the pin where it is). Set an earlier version to roll back, a newer one to " +
 					"promote it. Because `anthropic_plugin_version` refers to its plugin, a version resource cannot be " +
 					"referenced here (that would be a dependency cycle): pass the version ID in, from a variable for " +
-					"example. With content scanning on, a version whose scan is still running or failed is refused.",
+					"example. Set it only once the plugin exists: a plan that creates the plugin, a replacement included, " +
+					"fails while it is set. With content scanning on, a version whose scan is still running or failed is refused.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				Validators: []validator.String{stringvalidator.RegexMatches(
 					regexp.MustCompile(`^pluginver_`), "must be a plugin version ID (prefixed pluginver_)")},
@@ -217,7 +229,9 @@ func (r *PluginResource) Configure(_ context.Context, req resource.ConfigureRequ
 
 // ModifyPlan does three things the attribute plan modifiers cannot:
 //   - a create needs a source, but an imported plugin does not, so the
-//     requirement is checked here rather than with ExactlyOneOf;
+//     requirement is checked here rather than with ExactlyOneOf; a create
+//     (a replacement included) cannot take served_version_id, which can
+//     only name a version of an existing plugin;
 //   - configuring served_version_id pins the plugin, so the plan says so: an
 //     unpinned plugin whose served version already matches the configuration
 //     then still gets the update that pins it;
@@ -238,6 +252,10 @@ func (r *PluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		if config.SourceDir.IsNull() && config.SourceArchive.IsNull() {
 			resp.Diagnostics.AddAttributeError(path.Root("source_dir"), "Missing plugin source",
 				"Creating a plugin uploads its first version: set `source_dir` or `source_archive`.")
+		}
+		// A value unknown here may still turn out null: Create checks it.
+		if knownString(config.ServedVersionID) != "" {
+			resp.Diagnostics.AddAttributeError(path.Root("served_version_id"), servedVersionOnCreateSummary, servedVersionOnCreateDetail)
 		}
 	} else {
 		var state PluginResourceModel
@@ -281,6 +299,14 @@ func (r *PluginResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	// Checked before anything is uploaded, for a value ModifyPlan could not
+	// see: a tainted plugin would be deleted and uploaded again by every
+	// later apply.
+	if knownString(data.ServedVersionID) != "" {
+		resp.Diagnostics.AddAttributeError(path.Root("served_version_id"), servedVersionOnCreateSummary, servedVersionOnCreateDetail)
+		return
+	}
+
 	src, err := listPluginSource(data.SourceDir.ValueString(), data.SourceArchive.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid plugin source", err.Error())
@@ -291,22 +317,6 @@ func (r *PluginResource) Create(ctx context.Context, req resource.CreateRequest,
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create plugin: %s", err))
 		return
-	}
-
-	// A configured served version pins the plugin, even one that names the
-	// version already served (the plan says served_version_pinned = true).
-	if want := knownString(data.ServedVersionID); want != "" {
-		served, err := servePluginVersion(ctx, r.client, plugin.ID, want)
-		if err != nil {
-			// The plugin exists: record it, so Terraform marks it tainted and
-			// replaces it, instead of losing track of it.
-			resp.Diagnostics.Append(mapPluginToState(plugin, &data)...)
-			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-			resp.Diagnostics.AddError("Client Error",
-				fmt.Sprintf("Plugin %s was created, but serving version %s failed: %s", plugin.ID, want, err))
-			return
-		}
-		plugin = served
 	}
 
 	resp.Diagnostics.Append(mapPluginToState(plugin, &data)...)

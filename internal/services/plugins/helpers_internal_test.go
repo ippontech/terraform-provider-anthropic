@@ -35,11 +35,12 @@ type recordedRequest struct {
 	Body        []byte
 }
 
-// fakeResponse is one canned answer of the fake API.
+// fakeResponse is one canned answer of the fake API, sent after delay.
 type fakeResponse struct {
 	status int
 	body   string
 	header map[string]string
+	delay  time.Duration
 }
 
 func ok(body string) fakeResponse { return fakeResponse{status: http.StatusOK, body: body} }
@@ -93,6 +94,7 @@ func fakePluginsAPI(t *testing.T, routes map[string][]fakeResponse) (*admin.Clie
 			return
 		}
 		resp := responses[min(i, len(responses)-1)]
+		time.Sleep(resp.delay)
 		for k, v := range resp.header {
 			w.Header().Set(k, v)
 		}

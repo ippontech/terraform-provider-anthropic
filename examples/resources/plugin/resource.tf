@@ -5,8 +5,8 @@ resource "anthropic_plugin" "example" {
   source_dir    = "${path.module}/sales-toolkit"
   release_notes = "First release"
 
-  # To choose the version members are served (roll back or promote), set its
-  # ID. This pins the plugin, which cannot be undone.
+  # Once the plugin exists, to choose the version members are served (roll
+  # back or promote), set its ID. This pins the plugin, which cannot be undone.
   # served_version_id = "pluginver_01Km7tL4pR9xF5sU2zV3jP6q"
 }
 

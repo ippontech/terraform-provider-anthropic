@@ -5,7 +5,6 @@ package plugins
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -223,32 +222,51 @@ func TestPluginResource_CreateNamesThePluginHoldingTheName(t *testing.T) {
 	}
 }
 
-func TestPluginResource_CreateServesTheConfiguredVersion(t *testing.T) {
+// A new plugin's versions do not exist before the create, so a configured
+// served_version_id can only name a version of another plugin, typically the
+// one this plugin replaces (marketplace_id change, deleted outside Terraform),
+// which the API answers with a 404. Serving it after the upload left a
+// tainted plugin, deleted and uploaded again by every later apply. Create
+// must refuse it before uploading anything (ModifyPlan already refuses a
+// known value; this covers one unknown at plan time).
+func TestPluginResource_CreateRefusesAServedVersion(t *testing.T) {
 	t.Parallel()
-	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
-		"POST /v1/organizations/plugins":           {ok(pluginJSON("pluginver_02", false))},
-		"POST /v1/organizations/plugins/plugin_01": {ok(pluginJSON("pluginver_02", true))},
-	})
+	client, requests := fakePluginsAPI(t, nil)
 	r := &PluginResource{client: client}
 
 	plan := newPluginModel()
 	plan.SourceDir = types.StringValue(writePluginDir(t))
 	plan.ServedVersionID = types.StringValue("pluginver_02")
-	resp, got := createPluginResource(t, r, plan)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("Create: %v", resp.Diagnostics)
+	resp, _ := createPluginResource(t, r, plan)
+	if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != servedVersionOnCreateSummary {
+		t.Fatalf("diagnostics = %v, want the served_version_id on create error", resp.Diagnostics)
+	}
+	if n := len(requests()); n != 0 {
+		t.Errorf("requests = %d, want none: nothing may be uploaded", n)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Error("a refused create must not record state (a tainted plugin is destroyed and re-created by the next apply)")
+	}
+}
+
+func TestPluginResource_ModifyPlanRefusesAServedVersionOnCreate(t *testing.T) {
+	t.Parallel()
+	config := newPluginModel()
+	config.SourceDir = types.StringValue("/plugins/sales")
+	config.ServedVersionID = types.StringValue("pluginver_02")
+
+	resp := modifyPluginPlan(t, config, nil)
+	if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != servedVersionOnCreateSummary {
+		t.Fatalf("diagnostics = %v, want the served_version_id on create error", resp.Diagnostics)
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "replace") {
+		t.Errorf("detail = %q, want it to cover a replacement too", resp.Diagnostics.Errors()[0].Detail())
 	}
 
-	reqs := requests()
-	if len(reqs) != 2 {
-		t.Fatalf("requests = %d, want the upload then the pin (even on the version already served)", len(reqs))
-	}
-	var body map[string]any
-	if err := json.Unmarshal(reqs[1].Body, &body); err != nil || body["served_version_id"] != "pluginver_02" || len(body) != 1 {
-		t.Errorf("update body = %s, want exactly {\"served_version_id\": ...}", reqs[1].Body)
-	}
-	if !got.ServedVersionPinned.ValueBool() {
-		t.Error("expected the plugin to be pinned")
+	// An unknown value may still turn out null: Create checks it then.
+	config.ServedVersionID = types.StringUnknown()
+	if resp := modifyPluginPlan(t, config, nil); resp.Diagnostics.HasError() {
+		t.Errorf("diagnostics = %v, want none for a value unknown at plan time", resp.Diagnostics)
 	}
 }
 

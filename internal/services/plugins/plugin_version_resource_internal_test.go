@@ -6,10 +6,13 @@ package plugins
 import (
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -264,5 +267,116 @@ func TestPluginSourceHashModifier(t *testing.T) {
 	}
 	if got := modify(filepath.Join(root, "missing")); !got.Equal(stale) {
 		t.Errorf("plan value = %s, want the prior value kept when the source cannot be read at plan time", got)
+	}
+}
+
+// A source that exists but no longer validates must fail the plan. Keeping
+// the prior hash, as for a missing source, made the plan of an existing
+// version say "No changes": the edit was never published and nothing said
+// why (Create, which reads the source again, only runs for a new version).
+func TestPluginSourceHashModifier_invalidSourceFailsThePlan(t *testing.T) {
+	t.Parallel()
+	r := &PluginVersionResource{}
+	stale := types.StringValue(strings.Repeat("a", 64))
+
+	for name, damage := range map[string]func(t *testing.T, root string){
+		"symbolic link added": func(t *testing.T, root string) {
+			if err := os.Symlink(filepath.Join(root, "skills"), filepath.Join(root, "node_modules")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"manifest moved": func(t *testing.T, root string) {
+			if err := os.Rename(filepath.Join(root, ".claude-plugin"), filepath.Join(root, "claude-plugin")); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := writePluginDir(t)
+			damage(t, root)
+
+			plan := newPluginVersionModel()
+			plan.PluginID = types.StringValue("plugin_01")
+			plan.SourceDir = types.StringValue(root)
+			plan.SourceHash = stale
+			req := planmodifier.StringRequest{Path: path.Root("source_hash"), Plan: planOf(t, r, plan), PlanValue: stale, StateValue: stale}
+			resp := planmodifier.StringResponse{PlanValue: req.PlanValue}
+			pluginSourceHashModifier{}.PlanModifyString(context.Background(), req, &resp)
+			if !resp.Diagnostics.HasError() {
+				t.Fatalf("plan value = %s with no error, want the invalid source reported at plan time", resp.PlanValue)
+			}
+			if d := resp.Diagnostics.Errors()[0]; d.Summary() != "Invalid plugin source" {
+				t.Errorf("diagnostic = %s: %s", d.Summary(), d.Detail())
+			}
+		})
+	}
+}
+
+// The version belongs to the plugin the request path names: a payload that
+// leaves plugin_id out must not blank it in state, where the "" would differ
+// from the configuration and, plugin_id being RequiresReplace, upload another
+// version (which cannot be deleted) at every plan.
+func TestPluginVersionResource_KeepsThePluginIDOfTheRequest(t *testing.T) {
+	t.Parallel()
+	withoutPluginID := strings.Replace(pluginVersionJSON, `"plugin_id": "plugin_01",`, "", 1)
+	client, _ := fakePluginsAPI(t, map[string][]fakeResponse{
+		"POST /v1/organizations/plugins/plugin_01/versions":             {ok(withoutPluginID)},
+		"GET /v1/organizations/plugins/plugin_01/versions/pluginver_03": {ok(withoutPluginID)},
+	})
+	r := &PluginVersionResource{client: client}
+
+	plan := newPluginVersionModel()
+	plan.PluginID = types.StringValue("plugin_01")
+	plan.SourceDir = types.StringValue(writePluginDir(t))
+	resp, created := createPluginVersion(t, r, plan)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+	if created.PluginID.ValueString() != "plugin_01" {
+		t.Errorf("plugin_id after create = %s, want the configured plugin_01", created.PluginID)
+	}
+
+	readResp := resource.ReadResponse{State: stateOf(t, r, created)}
+	r.Read(context.Background(), resource.ReadRequest{State: stateOf(t, r, created)}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", readResp.Diagnostics)
+	}
+	var read PluginVersionResourceModel
+	readResp.State.Get(context.Background(), &read)
+	if read.PluginID.ValueString() != "plugin_01" {
+		t.Errorf("plugin_id after refresh = %s, want plugin_01", read.PluginID)
+	}
+}
+
+// The admin client's 60-second timeout covers the whole exchange, body
+// included. A large upload on a slow link, plus the registration the API
+// runs before it answers, can outlast it while the API stores the upload
+// anyway; an upload is never resent, so it would be stored but untracked.
+// Uploads get a timeout sized for their body; every other call keeps the
+// client's, and the shared client is left as it was.
+func TestPluginsRequest_uploadOutlastsTheClientTimeout(t *testing.T) {
+	t.Parallel()
+	const clientTimeout, serverTime = 50 * time.Millisecond, 300 * time.Millisecond
+	slowVersion, slowPlugin := ok(pluginVersionJSON), ok(pluginJSON("pluginver_03", false))
+	slowVersion.delay, slowPlugin.delay = serverTime, serverTime
+	client, _ := fakePluginsAPI(t, map[string][]fakeResponse{
+		"POST /v1/organizations/plugins/plugin_01/versions": {slowVersion},
+		"GET /v1/organizations/plugins/plugin_01":           {slowPlugin},
+	})
+	client.HTTPClient.Timeout = clientTimeout
+	src, err := listPluginSource(writePluginDir(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := uploadPluginVersion(context.Background(), client, src, "plugin_01", ""); err != nil {
+		t.Errorf("upload: %v, want it to outlast the client's own timeout", err)
+	}
+	if _, err := getPlugin(context.Background(), client, "plugin_01"); err == nil {
+		t.Error("a read must keep the client's timeout")
+	}
+	if client.HTTPClient.Timeout != clientTimeout {
+		t.Errorf("client timeout = %s, want the shared client unchanged", client.HTTPClient.Timeout)
 	}
 }

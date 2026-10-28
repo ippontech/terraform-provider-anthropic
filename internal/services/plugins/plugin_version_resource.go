@@ -5,7 +5,9 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
@@ -263,8 +265,9 @@ func (r *PluginVersionResource) Delete(ctx context.Context, req resource.DeleteR
 func mapPluginVersionToState(v *pluginVersionAPIObject, data *PluginVersionResourceModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 
+	// plugin_id stays as configured: the request path names it, and an echo
+	// that came back empty would otherwise force a new version.
 	data.ID = types.StringValue(v.ID)
-	data.PluginID = types.StringValue(v.PluginID)
 	data.DisplayName = tfvalue.StringOrNull(v.DisplayName)
 	data.Description = tfvalue.StringOrNull(v.Description)
 	data.ManifestVersion = tfvalue.StringOrNull(v.ManifestVersion)
@@ -288,9 +291,12 @@ func mapPluginVersionToState(v *pluginVersionAPIObject, data *PluginVersionResou
 // pluginSourceHashModifier recomputes source_hash from the local files at
 // every plan, so an edit to them shows as a change (and, with RequiresReplace
 // after it, as a new version) even though source_dir or source_archive did
-// not change. A source that cannot be read at plan time (it may be produced
+// not change. A source that does not exist at plan time (it may be produced
 // by the same apply) leaves the value alone: Create reads it again and fails
-// there if it is still missing.
+// there if it is still missing. A source that exists but cannot be uploaded
+// (a symbolic link, no manifest, an unreadable file) fails the plan: keeping
+// the prior hash would plan no change for an existing version, and the edit
+// would never be published.
 type pluginSourceHashModifier struct{}
 
 func (m pluginSourceHashModifier) Description(_ context.Context) string {
@@ -314,12 +320,19 @@ func (m pluginSourceHashModifier) PlanModifyString(ctx context.Context, req plan
 	}
 
 	src, err := listPluginSource(dir.ValueString(), archive.ValueString())
-	if err != nil {
+	if err == nil {
+		var hash string
+		if hash, err = src.hash(); err == nil {
+			resp.PlanValue = types.StringValue(hash)
+			return
+		}
+	}
+	if errors.Is(err, fs.ErrNotExist) {
 		return
 	}
-	hash, err := src.hash()
-	if err != nil {
-		return
+	source := path.Root("source_dir")
+	if !archive.IsNull() {
+		source = path.Root("source_archive")
 	}
-	resp.PlanValue = types.StringValue(hash)
+	resp.Diagnostics.AddAttributeError(source, "Invalid plugin source", err.Error())
 }
