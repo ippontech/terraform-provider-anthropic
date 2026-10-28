@@ -16,7 +16,7 @@ Turn local changes into a pull request on `ippontech/terraform-provider-anthropi
 
 ## Step 1: Find the remotes
 
-Shell variables do not survive between commands, so note the three values found here (`<branch>`, `<base-remote>`, `<push-remote>`) and write them into the later commands.
+Shell variables do not survive between commands, so note the values found here (`<base-remote>`, `<push-remote>`, `<head-owner>`) and write them into the later commands. `<branch>` is the branch that gets pushed: the current branch, or, when that is `main`, the branch Step 3 creates.
 
 The base remote is the one that points to the upstream repository (`origin` in a standard clone):
 
@@ -27,7 +27,7 @@ git fetch <base-remote> main
 ```
 
 The push remote is the first of these that gives an answer:
-1. `git config --get branch.<branch>.pushRemote`, then `git config --get remote.pushDefault`;
+1. `git config --get branch.<branch>.pushRemote` (skip it on `main`: the branch Step 3 creates has none yet), then `git config --get remote.pushDefault`;
 2. the base remote, when `gh api repos/ippontech/terraform-provider-anthropic --jq .permissions.push` prints `true`;
 3. your fork: the remote whose URL ends with `<login>/terraform-provider-anthropic` or `<login>/terraform-provider-anthropic.git`, where `<login>` is `gh api user --jq .login`. Match the whole repository name: a remote of another repository whose name merely starts the same way is not the fork.
 
@@ -36,6 +36,8 @@ git remote -v | awk -v l="<login>" '$3 == "(push)" && $2 ~ ("[/:]" l "/terraform
 ```
 
 If none answers, or several remotes match, show `git remote -v` and ask the user which remote to push to, because a wrong guess either fails or publishes to an unexpected repository. Contributors without write access to the upstream repository push to their fork.
+
+`<head-owner>` is the owner in the push remote's URL: `ippontech` for the base remote, `<login>` for your fork.
 
 ## Step 2: Understand the changes
 
@@ -56,6 +58,8 @@ Skip this step when already on a branch other than `main`. Otherwise derive the 
 ```bash
 git switch -c <branch-name>
 ```
+
+From here on, `<branch>` is `<branch-name>`.
 
 ## Step 4: Run the checks
 
@@ -88,13 +92,17 @@ EOF
 
 ## Step 6: Push and open the PR
 
+Push the branch you are on, never `main`: `git branch --show-current` must print `<branch>`. `--head` matches the branch name in every fork, so keep only the PR whose head is in your push remote's repository.
+
 ```bash
+git branch --show-current
 git push -u <push-remote> <branch>
 gh pr list --repo ippontech/terraform-provider-anthropic --head <branch> --state open \
-  --json number,url --jq '.[0] | "\(.number) \(.url)"'
+  --json number,url,headRepositoryOwner \
+  --jq '.[] | select(.headRepositoryOwner.login == "<head-owner>") | "\(.number) \(.url)"'
 ```
 
-If no open PR exists, create one. The title is the commit title; the body is the commit body, with each bullet on a single unbroken line because GitHub renders hard line breaks, followed by the PR footer your session instructions specify, if any. `<head>` is `<branch>` when pushing to the base remote, `<fork owner>:<branch>` when pushing to a fork.
+If no open PR exists, create one. The title is the commit title; the body is the commit body, with each bullet on a single unbroken line because GitHub renders hard line breaks, followed by the PR footer your session instructions specify, if any. `<head>` is `<branch>` when pushing to the base remote, `<head-owner>:<branch>` when pushing to a fork.
 
 ```bash
 body=$(mktemp)

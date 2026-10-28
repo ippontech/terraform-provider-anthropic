@@ -21,8 +21,11 @@ On a normal branch:
 
 ```bash
 gh pr list --repo ippontech/terraform-provider-anthropic --head "$(git branch --show-current)" \
-  --state open --json number,url --jq '.[] | "number=\(.number) url=\(.url)"'
+  --state open --json number,url,headRepositoryOwner \
+  --jq '.[] | "number=\(.number) owner=\(.headRepositoryOwner.login) url=\(.url)"'
 ```
+
+`--head` matches the branch name in every fork: keep only the PR whose owner is the owner of the repository the branch is pushed to (`ippontech`, or the user's fork). If more than one remains, ask the user which one to update.
 
 In a Vibe Kanban worktree (branch `vk/<id>-<name>`), the branch has no PR of its own:
 1. Read the current issue with `mcp__vibe_kanban__get_context` when the Vibe Kanban tools are available.

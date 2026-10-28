@@ -7,8 +7,9 @@
 #      generated (run `make`, which includes `make generate`);
 #   2. the branch has an open PR and commits newer than the last
 #      /update-pr-description or /ship run on this machine;
-#   3. the branch changes Go or Terraform files and has commits newer than the
-#      last /update-project-knowledge run.
+#   3. the branch changes Go or Terraform files and has a commit touching them
+#      newer than the last /update-project-knowledge run (committing the
+#      CLAUDE.md edits that skill writes does not bring the reminder back).
 # The skills mark 2 and 3 as done by touching /tmp/claude-pr-desc-done-<branch>
 # and /tmp/claude-knowledge-done-<branch>. Any failure (missing git, gh or jq,
 # no network) ends silently with exit 0.
@@ -27,15 +28,16 @@ case "$branch" in
 esac
 slug=$(printf '%s' "$branch" | tr '/' '-')
 last_commit=$(git log -1 --format=%ct 2>/dev/null) || exit 0
+last_code_commit=$(git log -1 --format=%ct -- '*.go' '*.tf' 2>/dev/null) || exit 0
 
 # Modification time in seconds since the epoch (GNU stat, then BSD stat).
 mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
 }
 
-# True when the sentinel is missing or older than the last commit.
-older_than_last_commit() {
-  [ ! -f "$1" ] || [ "$(mtime "$1")" -lt "$last_commit" ]
+# True when the sentinel ($1) is missing or older than the commit time $2.
+older_than() {
+  [ ! -f "$1" ] || [ "$(mtime "$1")" -lt "${2:-0}" ]
 }
 
 reminders=()
@@ -61,15 +63,16 @@ fi
 
 # 2. PR description: only query GitHub when the sentinel is older than the
 #    last commit, so a stop without new commits costs no network call.
-if older_than_last_commit "/tmp/claude-pr-desc-done-$slug" && command -v gh >/dev/null 2>&1; then
+if older_than "/tmp/claude-pr-desc-done-$slug" "$last_commit" && command -v gh >/dev/null 2>&1; then
   pr=$(gh pr view "$branch" --json number,state --jq 'select(.state == "OPEN") | .number' 2>/dev/null || true)
   if [ -n "$pr" ]; then
     reminders+=("PR #$pr on $branch has commits its description may not cover yet: run /update-pr-description to draft an update (nothing is published without your approval).")
   fi
 fi
 
-# 3. Project knowledge: the branch touches Go or Terraform files.
-if older_than_last_commit "/tmp/claude-knowledge-done-$slug" &&
+# 3. Project knowledge: the branch touches Go or Terraform files, and a commit
+#    touching them is newer than the last run.
+if older_than "/tmp/claude-knowledge-done-$slug" "$last_code_commit" &&
   git rev-parse --verify -q origin/main >/dev/null &&
   git diff --name-only origin/main...HEAD 2>/dev/null | grep -qE '\.(go|tf)$'; then
   reminders+=("Code changed on $branch: run /update-project-knowledge if this work showed a convention or a trap worth recording.")
