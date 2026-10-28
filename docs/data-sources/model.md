@@ -29,10 +29,19 @@ output "model" {
   description = "Information about the retrieved Anthropic model."
   value       = data.anthropic_model.example
 }
+```
 
-# Warns on every plan once the pinned model is deprecated or retired. A check
-# block never blocks the run; a postcondition on the data source fails the plan
-# instead.
+To be warned once the pinned model leaves `active`, add a check block. It warns on every plan and apply without stopping
+them. Under `terraform test`, though, a failed check fails the run unless the run lists it in `expect_failures`, so keep
+it out of a module that a test runs against the live API:
+
+```hcl
+data "anthropic_model" "example" {
+  model_id = "claude-sonnet-4-5"
+}
+
+# Warns on every plan and apply once the pinned model is deprecated or retired,
+# without stopping them.
 check "model_is_active" {
   assert {
     condition     = data.anthropic_model.example.lifecycle_stage == "active"

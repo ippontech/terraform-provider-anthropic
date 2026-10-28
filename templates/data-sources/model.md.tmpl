@@ -22,6 +22,12 @@ retirement signal rather than `retires_at`, which can be revised and can be in t
 
 {{ codefile "hcl" "examples/data-sources/model/data_source.tf" }}
 
+To be warned once the pinned model leaves `active`, add a check block. It warns on every plan and apply without stopping
+them. Under `terraform test`, though, a failed check fails the run unless the run lists it in `expect_failures`, so keep
+it out of a module that a test runs against the live API:
+
+{{ codefile "hcl" "examples/data-sources/model/lifecycle_check/data_source.tf" }}
+
 To fail the plan instead of warning, put the condition in a postcondition. Every resource that takes its model from
 the data source then waits for it:
 
