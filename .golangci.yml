@@ -6,6 +6,12 @@
 # request must not fail on lines it never touched. Remove that setting once the
 # existing code has been brought up to date in one mechanical pull request, and
 # the 20 gocognit findings by the refactoring lot (see gocognit below).
+#
+# The setting filters every linter, so `make lint` and the CI lint job also run
+# `golangci-lint run --no-config`: the standard linters on the whole tree, as
+# before this file existed. The tree has no finding there, and a change that
+# causes one on a line it does not edit (a helper left unused, an error return
+# ignored by an existing caller) still fails.
 version: "2"
 
 linters:
@@ -62,6 +68,8 @@ linters:
           files:
             - "!$test"
           deny:
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/acctest
+              desc: test helper, import it from _test.go files only
             - pkg: github.com/ippontech/terraform-provider-anthropic/internal/admintest
               desc: test helper, import it from _test.go files only
             - pkg: github.com/ippontech/terraform-provider-anthropic/internal/oauthtest
@@ -71,6 +79,8 @@ linters:
             - pkg: github.com/ippontech/terraform-provider-anthropic/internal/schematest
               desc: test helper, import it from _test.go files only
             - pkg: github.com/ippontech/terraform-provider-anthropic/internal/sdktest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/wifprobetest
               desc: test helper, import it from _test.go files only
             - pkg: net/http/httptest
               desc: test-only package, import it from _test.go files only

@@ -50,11 +50,19 @@ repos:
   # poutine hook above, so they match `make lint` and the CI lint job.
   - repo: local
     hooks:
-      # gofmt + goimports as configured in .golangci.yml, on the staged files only.
+      # gofmt + goimports as configured in .golangci.yml, which rewrite whole
+      # files. Of the files pre-commit passes, only those that differ from the
+      # merge base with origin/main (from HEAD when that ref is missing) are
+      # formatted: the staged files on commit, and with `pre-commit run -a`
+      # the files the branch changed, never the untouched ones.
       - id: golangci-lint-fmt
         name: golangci-lint fmt
         language: system
-        entry: mise exec -- golangci-lint fmt
+        entry: >-
+          bash -c 'base=$(git merge-base origin/main HEAD 2>/dev/null) || base=HEAD;
+          changed=$(git -c core.quotePath=false diff --name-only "$base");
+          files=(); for f in "$@"; do grep -qxF -- "$f" <<<"$changed" && files+=("$f"); done;
+          [ ${#files[@]} -eq 0 ] || exec mise exec -- golangci-lint fmt "${files[@]}"' --
         types: [go]
       # Lints the packages, but reports only code that differs from origin/main
       # (new-from-merge-base in .golangci.yml), as the CI lint job does.

@@ -82,7 +82,9 @@ make lint
 
 `.golangci.yml` reports only code that differs from `origin/main` (`new-from-merge-base`), so code you did not touch never fails your pull request. This relies on `origin` pointing at `ippontech/terraform-provider-anthropic` and being fetched recently: when `origin` is your fork, run `golangci-lint run --new-from-merge-base=upstream/main` (or whatever the upstream remote is called) instead, otherwise the comparison starts from a stale point. If the ref does not exist at all, golangci-lint silently reports every finding in the repository.
 
-The pre-commit configuration runs `golangci-lint fmt` on the staged Go files (gofmt, plus imports grouped with this module's packages last), `golangci-lint run` and `go mod tidy -diff`, at the versions pinned in `mise.toml`.
+`make lint` then runs `golangci-lint run --no-config`, as the CI lint job does: the standard linters (errcheck, govet, ineffassign, staticcheck, unused) on the whole tree. The tree has no finding there, so a change that causes one, even on a line it does not edit (a helper left without callers, for instance), fails.
+
+The pre-commit configuration runs `golangci-lint fmt` (gofmt, plus imports grouped with this module's packages last) on the Go files that differ from `origin/main`: the staged ones on commit, and with `pre-commit run -a` the files your branch changed, never the others. It also runs `golangci-lint run` and `go mod tidy -diff`, at the versions pinned in `mise.toml`.
 
 ### Run unit tests
 

@@ -54,6 +54,14 @@ jobs:
           # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.15.0
 
+      # .golangci.yml reports only code that differs from origin/main, for
+      # every linter. The standard linters (errcheck, govet, ineffassign,
+      # staticcheck, unused) have no finding on the whole tree, so they keep
+      # running on every line, as before that file existed. The action above
+      # put golangci-lint on the PATH.
+      - name: Run the standard linters on the whole tree
+        run: golangci-lint run --no-config
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
