@@ -176,16 +176,24 @@ jobs:
         with:
           name: coverage
 
-      # BASE_SHA is the base branch's commit of the pull request, or of the
-      # merge queue entry. The diff rule reads the lines the change adds or
-      # modifies; the floor rule reads the base branch's baseline, absent
-      # until this gate lands.
+      # The gate's own tests: tools/ is a separate module, which the root
+      # `go test ./...` of the test job does not reach.
+      - name: Test the coverage gate
+        run: go test -C tools ./...
+
+      # The base is the merge queue entry's base commit, or, on a pull
+      # request, the first parent of the merge commit the test job measured
+      # (pull_request.base.sha is not guaranteed to be that commit: an older
+      # one would bring other pull requests' code into the diff).
+      # The diff rule reads the lines the change adds or modifies; the floor
+      # rule reads the base branch's baseline, absent until this gate lands.
       - name: Coverage gate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          git diff --unified=0 --no-color "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/changes.diff"
-          git show "${BASE_SHA}:.coverage-baseline" > "${RUNNER_TEMP}/base-baseline" 2> /dev/null || rm -f "${RUNNER_TEMP}/base-baseline"
+          base="${MERGE_GROUP_BASE_SHA:-$(git rev-parse HEAD^1)}"
+          git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --unified=0 --no-color "${base}...HEAD" > "${RUNNER_TEMP}/changes.diff"
+          git show "${base}:.coverage-baseline" > "${RUNNER_TEMP}/base-baseline" 2> /dev/null || rm -f "${RUNNER_TEMP}/base-baseline"
           go run -C tools ./coversummary -config ../.coverage.json \
             -diff "${RUNNER_TEMP}/changes.diff" -base-baseline "${RUNNER_TEMP}/base-baseline" \
             ../coverage.out >> "${GITHUB_STEP_SUMMARY}"

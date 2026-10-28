@@ -38,7 +38,7 @@ type config struct {
 	// package and its distance to total_target, but nothing fails.
 	PackageMin *float64 `json:"package_min"`
 	// Exclude lists module-relative paths left out of every rule: a
-	// directory when it ends with "/", a file otherwise.
+	// directory when it ends with "/", a .go file otherwise.
 	Exclude []string `json:"exclude"`
 
 	baselinePath string
@@ -71,8 +71,13 @@ func loadConfig(path string) (config, error) {
 		problems = append(problems, "baseline_file is missing")
 	}
 	for _, e := range cfg.Exclude {
-		if e == "" || strings.HasPrefix(e, "/") || strings.HasPrefix(e, "./") || slices.Contains(strings.Split(e, "/"), "..") {
+		switch {
+		case e == "" || strings.HasPrefix(e, "/") || strings.HasPrefix(e, "./") || slices.Contains(strings.Split(e, "/"), ".."):
 			problems = append(problems, fmt.Sprintf("exclude entry %q is not a clean module-relative path", e))
+		case !strings.HasSuffix(e, "/") && !strings.HasSuffix(e, ".go"):
+			// Matched as a file name, a directory without its slash would
+			// silently exclude nothing.
+			problems = append(problems, fmt.Sprintf("exclude entry %q is neither a directory ending in / nor a .go file", e))
 		}
 	}
 	if len(problems) > 0 {
@@ -124,13 +129,16 @@ type lineRange struct{ from, to int }
 
 // parseDiff reads the output of git diff --unified=0 and returns, per file
 // of the new tree, the line ranges the change adds or modifies. Deleted
-// files and pure deletions add nothing.
+// files and pure deletions add nothing, and neither do added lines that are
+// blank or hold only a // comment: a coverage block spans the comment and
+// blank lines inside it, which are no executable statement.
 func parseDiff(r io.Reader) (map[string][]lineRange, error) {
 	changes := map[string][]lineRange{}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	var file string
 	oldLeft, newLeft := 0, 0 // content lines still expected in the current hunk
+	newLine := 0             // line number, in the new file, of the next added or context line
 	line := 0
 	for scanner.Scan() {
 		line++
@@ -141,9 +149,12 @@ func parseDiff(r io.Reader) (map[string][]lineRange, error) {
 				oldLeft--
 			case strings.HasPrefix(text, "+"):
 				newLeft--
+				addChangedLine(changes, file, text[1:], newLine)
+				newLine++
 			case strings.HasPrefix(text, " "):
 				oldLeft--
 				newLeft--
+				newLine++
 			case strings.HasPrefix(text, `\`): // "\ No newline at end of file"
 			default:
 				return nil, fmt.Errorf("line %d: hunk ends early at %q", line, text)
@@ -164,10 +175,7 @@ func parseDiff(r io.Reader) (map[string][]lineRange, error) {
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %w", line, err)
 			}
-			oldLeft, newLeft = oldCount, newCount
-			if file != "" && newCount > 0 {
-				changes[file] = append(changes[file], lineRange{newStart, newStart + newCount - 1})
-			}
+			oldLeft, newLeft, newLine = oldCount, newCount, newStart
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -177,6 +185,21 @@ func parseDiff(r io.Reader) (map[string][]lineRange, error) {
 		return nil, errors.New("the diff ends inside a hunk")
 	}
 	return changes, nil
+}
+
+// addChangedLine records line n of file, added with the given text, unless
+// the file is deleted ("") or the line is blank or holds only a // comment.
+// Lines come in ascending order: one that follows the last range extends it.
+func addChangedLine(changes map[string][]lineRange, file, text string, n int) {
+	if trimmed := strings.TrimSpace(text); file == "" || trimmed == "" || strings.HasPrefix(trimmed, "//") {
+		return
+	}
+	ranges := changes[file]
+	if last := len(ranges) - 1; last >= 0 && ranges[last].to == n-1 {
+		ranges[last].to = n
+		return
+	}
+	changes[file] = append(ranges, lineRange{n, n})
 }
 
 // diffPath returns the path of a "+++ b/path" line, "" for /dev/null. Git
@@ -421,7 +444,7 @@ func writeGate(w io.Writer, r gateResult) error {
 	}
 
 	if len(r.diffFiles) > 0 {
-		b.WriteString("### Statements the change touches\n\nA coverage block the diff touches counts with all its statements. Test files and the exclusions of `.coverage.json` are left out")
+		b.WriteString("### Statements the change touches\n\nA coverage block the diff touches counts with all its statements; blank lines and lines holding only a `//` comment do not touch it. Test files and the exclusions of `.coverage.json` are left out")
 		if r.diffIgnored > 0 {
 			fmt.Fprintf(&b, " (%d changed Go files)", r.diffIgnored)
 		}

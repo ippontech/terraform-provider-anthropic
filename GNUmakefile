@@ -35,11 +35,12 @@ test:
 # Unit tests, then the coverage gate of the CI coverage job (.coverage.json,
 # tools/coversummary): the diff rule against COVER_BASE (committed changes
 # only), the ratchet and the floor, followed by the coverage of each resource
-# and data source file. Fails like the CI job does.
+# and data source file. Fails like the CI job does. The git diff options pin
+# the format the gate parses, whatever the local git configuration says.
 COVER_BASE ?= origin/main
 cover: COVERPROFILE := coverage.out
 cover: test
-	git diff --unified=0 --no-color $(COVER_BASE)...HEAD > coverage-diff.out
+	git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --unified=0 --no-color $(COVER_BASE)...HEAD > coverage-diff.out
 	go run -C tools ./coversummary -config $(abspath .coverage.json) -diff $(abspath coverage-diff.out) $(abspath $(COVERPROFILE))
 
 .PHONY: cover

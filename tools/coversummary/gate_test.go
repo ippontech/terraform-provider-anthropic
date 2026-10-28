@@ -245,6 +245,41 @@ func TestGateDiffFromStdin(t *testing.T) {
 	}
 }
 
+// Editing a comment or a blank line inside an untested block changes no
+// executable statement: the diff rule passes with nothing to measure. A line
+// holding code and a comment still counts.
+func TestGateCommentAndBlankLines(t *testing.T) {
+	header := "diff --git a/internal/a/a.go b/internal/a/a.go\n--- a/internal/a/a.go\n+++ b/internal/a/a.go\n"
+	for _, tc := range []struct {
+		name, hunks, want string
+	}{
+		{
+			name: "comment and blank lines only",
+			// Line 8 is in the uncovered block 7-9, line 17 in the uncovered block 16-18.
+			hunks: "@@ -8 +8 @@ func B() {\n-\t// old words\n+\t  // new words\n@@ -16,0 +17,2 @@ func D() {\n+\n+\t\n",
+			want:  "| no executable statement changed | at least 75% | pass |",
+		},
+		{
+			name:  "code with a trailing comment",
+			hunks: "@@ -8 +8 @@ func B() {\n-\tx()\n+\tx() // now commented\n",
+			want:  "| 0.0% (0 of 2) | at least 75% | **FAIL** |",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := gateFixture(t, nil, "60")
+			opts.diffPath = filepath.Join(t.TempDir(), "change.diff")
+			write(t, opts.diffPath, header+tc.hunks)
+			out, err := runGate(t, opts)
+			if err != nil && !errors.Is(err, errGateFailed) {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("summary misses %q:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
 func TestGateInputErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -264,6 +299,9 @@ func TestGateInputErrors(t *testing.T) {
 		{"no baseline file", func(s string) string { return strings.Replace(s, `"baseline"`, `""`, 1) }, "60", nil, "baseline_file is missing"},
 		{"absolute exclusion", func(s string) string { return strings.Replace(s, `"main.go"`, `"/main.go"`, 1) }, "60", nil, `exclude entry "/main.go"`},
 		{"escaping exclusion", func(s string) string { return strings.Replace(s, `"main.go"`, `"../main.go"`, 1) }, "60", nil, `exclude entry "../main.go"`},
+		{"directory exclusion without its slash", func(s string) string {
+			return strings.Replace(s, `"internal/helper/"`, `"internal/helper"`, 1)
+		}, "60", nil, `exclude entry "internal/helper" is neither a directory ending in / nor a .go file`},
 		{"missing baseline", nil, "", nil, "no such file"},
 		{"baseline not a number", nil, "sixty", nil, `want a percentage between 0 and 100, got "sixty"`},
 		{"baseline over 100", nil, "100.5", nil, "want a percentage between 0 and 100"},
