@@ -41,8 +41,8 @@ const (
 	TestAuthToken = "sk-ant-oat01-sdktest"   //nolint:gosec // G101: a dummy value only the fake sees
 )
 
-// Credential names one of the provider's three credentials (CLAUDE.md, "API
-// key model").
+// Credential names one of the provider's three credentials (CLAUDE.md,
+// "Credentials and clients").
 type Credential int
 
 const (
@@ -94,8 +94,8 @@ func (c Credential) check(h http.Header) error {
 
 // TerminalReadStatuses are the statuses a read-after-write consistency wait
 // stops on at once instead of polling to its deadline: the object or the
-// access to it is gone for good (CLAUDE.md, "Read-after-write consistency on
-// the vaults API").
+// access to it is gone for good (CLAUDE.md, "Read-after-write consistency
+// waits").
 var TerminalReadStatuses = []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound}
 
 // NewAPIKeyClient returns an SDK client that sends TestAPIKey to srv and

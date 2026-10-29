@@ -9,7 +9,7 @@
 //
 // It imports internal/provider, which imports every service package, so only
 // external test packages (package <service>_test) can use it, like
-// internal/acctest (CLAUDE.md, "Testing pattern").
+// internal/acctest (CLAUDE.md, "Go tests").
 //
 //	func TestSkillResource_lifecycle(t *testing.T) {
 //		t.Parallel()
