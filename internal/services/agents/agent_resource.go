@@ -356,7 +356,8 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						Default:  stringdefault.StaticString(agentToolsetDefaultPermissionPolicy),
 						MarkdownDescription: "Default permission policy: " + permissionPolicyValuesDescription + ". " +
 							"Defaults to `always_allow`, the API's documented default for the built-in toolset. " +
-							"When unset, the plan holds the default, so a policy changed outside Terraform is reverted on the next apply.",
+							"When unset, the plan holds the default, so a policy changed outside Terraform is reverted on the next apply. " +
+							"Removing the attribute plans `always_allow`, which reverts `auto` or any other policy set before.",
 						Validators: []validator.String{permissionPolicyValidator},
 					},
 					"configs": schema.ListNestedAttribute{
@@ -471,7 +472,8 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							Default:  stringdefault.StaticString(mcpToolsetDefaultPermissionPolicy),
 							MarkdownDescription: "Default permission policy: " + permissionPolicyValuesDescription + ". " +
 								"Defaults to `always_ask`, the API's documented default for MCP toolsets, so that a tool added to the server later needs approval. " +
-								"When unset, the plan holds the default, so a policy changed outside Terraform (to `always_allow`, say) is reverted on the next apply.",
+								"When unset, the plan holds the default, so a policy changed outside Terraform (to `always_allow`, say) is reverted on the next apply. " +
+								"Removing the attribute plans `always_ask`, which reverts `auto` or any other policy set before.",
 							Validators: []validator.String{permissionPolicyValidator},
 						},
 						"configs": schema.ListNestedAttribute{

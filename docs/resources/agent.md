@@ -185,6 +185,8 @@ output "coordinator_roster_size" {
 - `always_ask`: the session pauses until your client approves or denies the call. MCP toolsets use it when no default is set, so tools added to an MCP server later do not run without approval.
 - `auto`: the server evaluates each call from the tool, its input and the session so far, then runs it, denies it (the agent gets an error tool result) or pauses for approval when it reaches no determination. No toolset uses it by default.
 
+Those defaults are also the provider's: a toolset that leaves `default_permission_policy` unset plans its default, and the apply sends it. Removing the attribute from an existing toolset therefore plans the default, which reverts `auto` or any other policy set before.
+
 `auto` is not a human checkpoint: a call the server judges safe runs before anyone sees it, and its effects might not be reversible. Keep `always_ask` on the tools whose calls a person must review. The server reads what your client posts in `user.message` events as your intent, so relaying untrusted end-user input there can get a call allowed. Permission policies do not apply to `custom_tools`, which your application runs.
 
 ## Web tool restrictions
@@ -234,7 +236,7 @@ Optional:
 
 - `configs` (Attributes List) Per-tool configuration overrides. The `web_fetch` and `web_search` entries also accept `allowed_domains` or `blocked_domains`, plus `max_content_tokens` (`web_fetch`) or `user_location` (`web_search`); setting one of these on another tool fails at plan time. When unset or empty, an update sends an empty list, which removes any override set outside Terraform. (see [below for nested schema](#nestedatt--agent_toolset--configs))
 - `default_enabled` (Boolean) Whether tools are enabled by default. Defaults to `true`, the API's documented default. When unset, the plan holds the default, so a value changed outside Terraform is reverted on the next apply.
-- `default_permission_policy` (String) Default permission policy: `always_allow` (runs without confirmation), `always_ask` (waits for approval) or `auto` (the server evaluates each call and runs it, denies it or waits for approval; not a human checkpoint, since a call it judges safe runs before anyone sees it). Defaults to `always_allow`, the API's documented default for the built-in toolset. When unset, the plan holds the default, so a policy changed outside Terraform is reverted on the next apply.
+- `default_permission_policy` (String) Default permission policy: `always_allow` (runs without confirmation), `always_ask` (waits for approval) or `auto` (the server evaluates each call and runs it, denies it or waits for approval; not a human checkpoint, since a call it judges safe runs before anyone sees it). Defaults to `always_allow`, the API's documented default for the built-in toolset. When unset, the plan holds the default, so a policy changed outside Terraform is reverted on the next apply. Removing the attribute plans `always_allow`, which reverts `auto` or any other policy set before.
 
 <a id="nestedatt--agent_toolset--configs"></a>
 ### Nested Schema for `agent_toolset.configs`
@@ -298,7 +300,7 @@ Optional:
 
 - `configs` (Attributes List) Per-MCP-tool configuration overrides. When unset or empty, an update sends an empty list, which removes any override set outside Terraform. (see [below for nested schema](#nestedatt--mcp_toolsets--configs))
 - `default_enabled` (Boolean) Whether MCP tools are enabled by default. Defaults to `true`, the API's documented default. When unset, the plan holds the default, so a value changed outside Terraform is reverted on the next apply.
-- `default_permission_policy` (String) Default permission policy: `always_allow` (runs without confirmation), `always_ask` (waits for approval) or `auto` (the server evaluates each call and runs it, denies it or waits for approval; not a human checkpoint, since a call it judges safe runs before anyone sees it). Defaults to `always_ask`, the API's documented default for MCP toolsets, so that a tool added to the server later needs approval. When unset, the plan holds the default, so a policy changed outside Terraform (to `always_allow`, say) is reverted on the next apply.
+- `default_permission_policy` (String) Default permission policy: `always_allow` (runs without confirmation), `always_ask` (waits for approval) or `auto` (the server evaluates each call and runs it, denies it or waits for approval; not a human checkpoint, since a call it judges safe runs before anyone sees it). Defaults to `always_ask`, the API's documented default for MCP toolsets, so that a tool added to the server later needs approval. When unset, the plan holds the default, so a policy changed outside Terraform (to `always_allow`, say) is reverted on the next apply. Removing the attribute plans `always_ask`, which reverts `auto` or any other policy set before.
 
 <a id="nestedatt--mcp_toolsets--configs"></a>
 ### Nested Schema for `mcp_toolsets.configs`

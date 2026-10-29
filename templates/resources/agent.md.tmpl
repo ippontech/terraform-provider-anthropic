@@ -26,6 +26,8 @@ Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are
 - `always_ask`: the session pauses until your client approves or denies the call. MCP toolsets use it when no default is set, so tools added to an MCP server later do not run without approval.
 - `auto`: the server evaluates each call from the tool, its input and the session so far, then runs it, denies it (the agent gets an error tool result) or pauses for approval when it reaches no determination. No toolset uses it by default.
 
+Those defaults are also the provider's: a toolset that leaves `default_permission_policy` unset plans its default, and the apply sends it. Removing the attribute from an existing toolset therefore plans the default, which reverts `auto` or any other policy set before.
+
 `auto` is not a human checkpoint: a call the server judges safe runs before anyone sees it, and its effects might not be reversible. Keep `always_ask` on the tools whose calls a person must review. The server reads what your client posts in `user.message` events as your intent, so relaying untrusted end-user input there can get a call allowed. Permission policies do not apply to `custom_tools`, which your application runs.
 
 ## Web tool restrictions
