@@ -11,7 +11,7 @@ Assigns a Workload Identity Federation service account to a workspace with a giv
 
 > **API**: `POST /v1/organizations/service_accounts/{service_account_id}/workspaces` (add), `GET /v1/organizations/service_accounts/{service_account_id}/workspaces` (list, used for Read), `POST /v1/organizations/workspaces/{workspace_id}/service_accounts/{service_account_id}` (role update), `DELETE /v1/organizations/service_accounts/{service_account_id}/workspaces/{workspace_id}` (remove).
 > **Auth**: org:admin OAuth bearer token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`). Admin API keys are not accepted.
-> **Role changes are in place**: changing `workspace_role` updates the membership without removing it, so federated tokens keep access to the workspace throughout. Changing `service_account_id` or `workspace_id` forces replacement. The API only updates explicit memberships (the only kind this resource manages) and rejects updates in an archived workspace (400) or for an archived service account.
+> **Role changes are in place**: changing `workspace_role` updates the membership without removing it, so federated tokens keep access to the workspace throughout. Changing `service_account_id` or `workspace_id` forces replacement. The API only updates explicit memberships (the only kind this resource manages) and rejects updates in an archived workspace (400) or for an archived service account. If the membership no longer exists when the role changes (removed since the plan), it is added back with the new role.
 
 ## Example Usage
 

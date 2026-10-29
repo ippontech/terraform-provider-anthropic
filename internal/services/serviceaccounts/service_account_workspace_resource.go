@@ -201,6 +201,15 @@ func (r *ServiceAccountWorkspaceResource) Read(ctx context.Context, req resource
 // List and Remove: POST
 // /v1/organizations/workspaces/{workspace_id}/service_accounts/{service_account_id}.
 // It only accepts explicit memberships, which is all this resource tracks.
+//
+// A 404 means the membership is gone since the plan (an apply with
+// -refresh=false, or a removal between plan and apply): it is added back with
+// the planned role, as the replace this attribute used to force did.
+//
+// The state is the plan: the write leaves the IDs alone, and implicit and
+// created_by_actor_id are pinned from state by UseStateForUnknown, so taking
+// them from a response nobody probed live could only turn a successful role
+// change into an inconsistent-result error. The next refresh reads them back.
 func (r *ServiceAccountWorkspaceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan ServiceAccountWorkspaceResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -218,13 +227,21 @@ func (r *ServiceAccountWorkspaceResource) Update(ctx context.Context, req resour
 	workspaceID := state.WorkspaceID.ValueString()
 	role := plan.WorkspaceRole.ValueString()
 
-	member, err := updateServiceAccountWorkspaceRole(ctx, r.client, serviceAccountID, workspaceID, role)
+	_, err := updateServiceAccountWorkspaceRole(ctx, r.client, serviceAccountID, workspaceID, role)
+	var apierr *anthropic.Error
+	if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		tflog.Warn(ctx, "service account workspace membership not found on role update; adding it back with the planned role",
+			map[string]any{"service_account_id": serviceAccountID, "workspace_id": workspaceID})
+		if _, addErr := addServiceAccountToWorkspace(ctx, r.client, serviceAccountID, workspaceID, role); addErr != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to add service account %s back to workspace %s after the role update found no membership (%s): %s", serviceAccountID, workspaceID, err, addErr))
+			return
+		}
+		err = nil
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update the role of service account %s in workspace %s: %s", serviceAccountID, workspaceID, err))
 		return
 	}
-
-	mapServiceAccountWorkspaceToState(member, &plan)
 
 	awaitServiceAccountWorkspaceRoleVisible(ctx, r.client, serviceAccountID, workspaceID, role, serviceAccountWorkspaceConsistencyTimeout, serviceAccountWorkspaceConsistencyInterval)
 
@@ -315,8 +332,13 @@ func updateServiceAccountWorkspaceRole(ctx context.Context, client *providerdata
 // arguments, and stopped by a terminal read error or a membership no longer
 // listed (a stale list still holds a membership that existed before the
 // write, so its absence means it was removed, which Read reports as drift).
+// The polls run under a context bounded by timeout, so a slow or throttled
+// list (the SDK retries and honors retry-after) is cut off at the deadline
+// instead of running past it.
 func awaitServiceAccountWorkspaceRoleVisible(ctx context.Context, client *providerdata.OAuthClient, serviceAccountID, workspaceID, role string, timeout, interval time.Duration) {
 	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 
 	for {
 		member, err := findServiceAccountWorkspaceMembership(ctx, client, serviceAccountID, workspaceID)

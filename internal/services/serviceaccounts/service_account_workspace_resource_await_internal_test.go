@@ -148,3 +148,25 @@ func TestAwaitServiceAccountWorkspaceRoleVisible_honoursContextCancellation(t *t
 		t.Errorf("took %s, want an immediate return on a cancelled context", elapsed)
 	}
 }
+
+// A list call that is slow or throttled (the SDK retries and honors
+// retry-after) is cut off at the timeout: the wait does not run past it by a
+// whole poll.
+func TestAwaitServiceAccountWorkspaceRoleVisible_cutsASlowListAtTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(3 * time.Second):
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"data": [%s], "next_page": null}`, serviceAccountWorkspaceMemberJSON("svac_01ABC", "wrkspc_01XYZ", "workspace_developer"))
+	}))
+	t.Cleanup(srv.Close)
+	client := oauthtest.NewClient(t, srv, option.WithMaxRetries(0))
+
+	start := time.Now()
+	awaitServiceAccountWorkspaceRoleVisible(context.Background(), client, "svac_01ABC", "wrkspc_01XYZ", "workspace_admin", 150*time.Millisecond, 10*time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Errorf("wait took %v, want it cut off near the 150ms timeout", elapsed)
+	}
+}

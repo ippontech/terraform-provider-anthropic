@@ -407,6 +407,92 @@ func TestServiceAccountWorkspaceUpdate_ErrorKeepsAPIMessage(t *testing.T) {
 	}
 }
 
+// A role change on a membership removed since the plan (-refresh=false, or a
+// removal between plan and apply) gets a 404 from the update endpoint: the
+// membership is added back with the planned role, as the replace this
+// attribute used to force did, instead of failing the apply.
+func TestServiceAccountWorkspaceUpdate_MembershipGoneIsAddedBack(t *testing.T) {
+	var requests []string
+	var addBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/workspaces/wrkspc_01XYZ/service_accounts/svac_01ABC":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"not_found_error","message":"membership not found"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/service_accounts/svac_01ABC/workspaces":
+			b, _ := io.ReadAll(r.Body)
+			addBody = string(b)
+			_, _ = io.WriteString(w, serviceAccountWorkspaceMemberJSON("svac_01ABC", "wrkspc_01XYZ", "workspace_admin"))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/service_accounts/svac_01ABC/workspaces":
+			_, _ = io.WriteString(w, `{"data": [`+serviceAccountWorkspaceMemberJSON("svac_01ABC", "wrkspc_01XYZ", "workspace_admin")+`], "next_page": null}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	r := &ServiceAccountWorkspaceResource{client: oauthtest.NewClient(t, srv)}
+	req, resp := serviceAccountWorkspaceUpdateRequest(t, r, "workspace_developer", "workspace_admin")
+
+	r.Update(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update returned errors: %v", resp.Diagnostics)
+	}
+	want := []string{
+		"POST /v1/organizations/workspaces/wrkspc_01XYZ/service_accounts/svac_01ABC",
+		"POST /v1/organizations/service_accounts/svac_01ABC/workspaces",
+		"GET /v1/organizations/service_accounts/svac_01ABC/workspaces",
+	}
+	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
+		t.Errorf("requests = %v, want %v", requests, want)
+	}
+	if !strings.Contains(addBody, `"workspace_role":"workspace_admin"`) || !strings.Contains(addBody, `"workspace_id":"wrkspc_01XYZ"`) {
+		t.Errorf("add body = %s, want the workspace and the planned role", addBody)
+	}
+
+	var got ServiceAccountWorkspaceResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("get state: %v", diags)
+	}
+	if got.WorkspaceRole.ValueString() != "workspace_admin" {
+		t.Errorf("workspace_role = %q, want workspace_admin", got.WorkspaceRole.ValueString())
+	}
+}
+
+// The update response is not mapped over the plan: implicit and
+// created_by_actor_id are pinned from state, so a response that leaves out
+// or changes created_by_actor_id must not turn a successful role change into
+// an inconsistent result.
+func TestServiceAccountWorkspaceUpdate_KeepsPlannedComputedValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_, _ = io.WriteString(w, `{"implicit": false, "service_account_id": "svac_01ABC", "type": "service_account_workspace_member", "workspace_id": "wrkspc_01XYZ", "workspace_role": "workspace_admin"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data": [`+serviceAccountWorkspaceMemberJSON("svac_01ABC", "wrkspc_01XYZ", "workspace_admin")+`], "next_page": null}`)
+	}))
+	defer srv.Close()
+
+	r := &ServiceAccountWorkspaceResource{client: oauthtest.NewClient(t, srv)}
+	req, resp := serviceAccountWorkspaceUpdateRequest(t, r, "workspace_developer", "workspace_admin")
+
+	r.Update(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update returned errors: %v", resp.Diagnostics)
+	}
+	var got ServiceAccountWorkspaceResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("get state: %v", diags)
+	}
+	if got.CreatedByActorID.ValueString() != "user_01CREATOR" || got.ID.ValueString() != "svac_01ABC:wrkspc_01XYZ" || got.Implicit.ValueBool() {
+		t.Errorf("state = %+v, want the planned id, implicit and created_by_actor_id", got)
+	}
+}
+
 // --- findServiceAccountWorkspaceMembership: find-in-list, pagination, gone-from-list, implicit skip ---
 
 func TestFindServiceAccountWorkspaceMembership_FoundOnFirstPage(t *testing.T) {
