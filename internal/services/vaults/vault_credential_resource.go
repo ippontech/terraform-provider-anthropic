@@ -309,10 +309,16 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 				Computed: true,
 				MarkdownDescription: "Where in an outbound request the secret is substituted. Applicable for `environment_variable`. " +
 					"Without the block, the API enables both locations on create; in the block, a field left out defaults to `false` " +
-					"and at least one of `header` and `body` must be `true`. Removing the block keeps the current value. " +
+					"and at least one of `header` and `body` must be `true`. Removing the block keeps the current value, " +
+					"until the credential is replaced or recreated: the new credential gets both locations again, so keep the block " +
+					"to hold a narrower value. " +
 					"Enabling only `header` is the narrower choice: request bodies are often built from content the agent works with.",
+				// UseNonNullStateForUnknown, not UseStateForUnknown: state written
+				// before this attribute existed holds null, and planning that null
+				// for an environment_variable credential would fail the apply once
+				// Update stores the location the API returns.
 				PlanModifiers: []planmodifier.Object{
-					objectplanmodifier.UseStateForUnknown(),
+					objectplanmodifier.UseNonNullStateForUnknown(),
 					injectionLocationNullUnlessEnvVar(),
 				},
 				Attributes: map[string]schema.Attribute{
@@ -550,10 +556,15 @@ func (r *VaultCredentialResource) Configure(_ context.Context, req resource.Conf
 // ModifyPlan keeps updated_at when the plan changes nothing else. The header
 // and body fields of injection_location have a default, which the framework
 // applies even when the block is not configured: it then sees a change and
-// plans updated_at as unknown, and UseStateForUnknown restores the stored
-// injection_location. Without this, every credential configured without an
-// injection_location block (or after the block was removed) would plan an
+// plans updated_at as unknown, and UseNonNullStateForUnknown restores the
+// stored injection_location. Without this, every credential configured without
+// an injection_location block (or after the block was removed) would plan an
 // in-place update that changes nothing, on every plan.
+//
+// State written before injection_location existed holds null, which stays
+// unknown in the plan (see the attribute's plan modifiers) until a refresh
+// reads it. With nothing else changed, that unknown changes nothing either, so
+// the stored null is kept rather than an update planned.
 func (r *VaultCredentialResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
 		return
@@ -567,9 +578,29 @@ func (r *VaultCredentialResource) ModifyPlan(ctx context.Context, req resource.M
 
 	unchanged := resp.Plan
 	resp.Diagnostics.Append(unchanged.SetAttribute(ctx, path.Root("updated_at"), updatedAt)...)
+	resp.Diagnostics.Append(keepUnreadInjectionLocation(ctx, req, &unchanged)...)
 	if !resp.Diagnostics.HasError() && unchanged.Raw.Equal(req.State.Raw) {
 		resp.Plan = unchanged
 	}
+}
+
+// keepUnreadInjectionLocation sets plan's injection_location back to the
+// stored null when the plan left it unknown only because state has none and
+// the block is not configured.
+func keepUnreadInjectionLocation(ctx context.Context, req resource.ModifyPlanRequest, plan *tfsdk.Plan) diag.Diagnostics {
+	var planned, stored types.Object
+	diags := plan.GetAttribute(ctx, path.Root("injection_location"), &planned)
+	diags.Append(req.State.GetAttribute(ctx, path.Root("injection_location"), &stored)...)
+	if diags.HasError() || !planned.IsUnknown() || !stored.IsNull() {
+		return diags
+	}
+	var configured types.Object
+	diags.Append(req.Config.GetAttribute(ctx, path.Root("injection_location"), &configured)...)
+	if diags.HasError() || !configured.IsNull() {
+		return diags
+	}
+	diags.Append(plan.SetAttribute(ctx, path.Root("injection_location"), stored)...)
+	return diags
 }
 
 // --- Create ---
@@ -774,14 +805,16 @@ func (r *VaultCredentialResource) ImportState(ctx context.Context, req resource.
 // which Terraform cannot diff). The remaining mutable, non-secret auth fields are
 // networking / injection_location (environment_variable) and expires_at /
 // refresh (mcp_oauth); immutable auth fields are RequiresReplace and never reach
-// Update.
+// Update. An unknown injection_location (state without one, not refreshed yet)
+// sends nothing, so it is not a change.
 func authUpdateNeeded(plan, state VaultCredentialResourceModel) bool {
 	if !plan.TokenWoVersion.Equal(state.TokenWoVersion) {
 		return true
 	}
 	switch plan.Type.ValueString() {
 	case "environment_variable":
-		return !plan.Networking.Equal(state.Networking) || !plan.InjectionLocation.Equal(state.InjectionLocation)
+		locationChanged := !plan.InjectionLocation.IsUnknown() && !plan.InjectionLocation.Equal(state.InjectionLocation)
+		return !plan.Networking.Equal(state.Networking) || locationChanged
 	case "mcp_oauth":
 		return !plan.ExpiresAt.Equal(state.ExpiresAt) || !plan.Refresh.Equal(state.Refresh)
 	}

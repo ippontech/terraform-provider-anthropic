@@ -19,7 +19,7 @@ import (
 // for an environment_variable credential configured without an
 // injection_location block: the framework applies the defaults of
 // injection_location.header and .body, sees a change and plans updated_at as
-// unknown, then UseStateForUnknown restores the stored injection_location.
+// unknown, then UseNonNullStateForUnknown restores the stored injection_location.
 // That plan changes nothing but updated_at, so the resource's ModifyPlan
 // must turn it back into an empty plan, or every plan shows an in-place
 // update that changes nothing. A real change keeps updated_at unknown, and a
@@ -112,6 +112,71 @@ func TestVaultCredentialModifyPlan_updatedAt(t *testing.T) {
 			}
 			if !tc.wantUpdatedAt.IsUnknown() && !resp.Plan.Raw.Equal(tc.state) {
 				t.Errorf("plan is not the state, so Terraform still plans an update:\n got %v\nwant %v", resp.Plan.Raw, tc.state)
+			}
+		})
+	}
+}
+
+// TestVaultCredentialModifyPlan_unreadInjectionLocation covers an
+// environment_variable credential whose state was written before
+// injection_location existed (null) and that is planned without a refresh
+// (-refresh=false), with no injection_location block. The attribute stays
+// unknown so that Update can store the location the API returns. With no other
+// change, the plan must still be empty; with one, injection_location stays
+// unknown.
+func TestVaultCredentialModifyPlan_unreadInjectionLocation(t *testing.T) {
+	t.Parallel()
+
+	r := NewVaultCredentialResource()
+	sch := schematest.ResourceSchema(t, r)
+	objType := schematest.ResourceObjectType(t, r)
+	locationType := objType.AttributeTypes["injection_location"].(tftypes.Object)
+	const storedUpdatedAt = "2026-01-01T00:00:02Z"
+
+	credential := func(displayName string, location, updatedAt tftypes.Value) tftypes.Value {
+		vals := schematest.NullValues(t, r)
+		vals["id"] = tftypes.NewValue(tftypes.String, "vcrd_01")
+		vals["vault_id"] = tftypes.NewValue(tftypes.String, "vlt_01")
+		vals["type"] = tftypes.NewValue(tftypes.String, "environment_variable")
+		vals["secret_name"] = tftypes.NewValue(tftypes.String, "API_KEY")
+		vals["display_name"] = tftypes.NewValue(tftypes.String, displayName)
+		vals["injection_location"] = location
+		vals["updated_at"] = updatedAt
+		return tftypes.NewValue(objType, vals)
+	}
+	nullLocation := tftypes.NewValue(locationType, nil)
+	unknownLocation := tftypes.NewValue(locationType, tftypes.UnknownValue)
+	stored := tftypes.NewValue(tftypes.String, storedUpdatedAt)
+	unknown := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	state := credential("old", nullLocation, stored)
+
+	tests := []struct {
+		name string
+		plan tftypes.Value
+		want tftypes.Value
+	}{
+		{"no other change plans nothing", credential("old", unknownLocation, unknown), state},
+		{"another change keeps injection_location unknown", credential("new", unknownLocation, unknown), credential("new", unknownLocation, unknown)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			config := schematest.NullValues(t, r)
+			config["type"] = tftypes.NewValue(tftypes.String, "environment_variable")
+			req := resource.ModifyPlanRequest{
+				Config: tfsdk.Config{Schema: sch, Raw: tftypes.NewValue(objType, config)},
+				State:  tfsdk.State{Schema: sch, Raw: state},
+				Plan:   tfsdk.Plan{Schema: sch, Raw: tc.plan},
+			}
+			resp := resource.ModifyPlanResponse{Plan: req.Plan}
+			if m, ok := r.(resource.ResourceWithModifyPlan); ok {
+				m.ModifyPlan(context.Background(), req, &resp)
+			}
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("diags: %v", resp.Diagnostics)
+			}
+			if !resp.Plan.Raw.Equal(tc.want) {
+				t.Errorf("plan:\n got %v\nwant %v", resp.Plan.Raw, tc.want)
 			}
 		})
 	}

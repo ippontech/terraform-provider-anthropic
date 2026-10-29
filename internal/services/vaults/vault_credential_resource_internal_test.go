@@ -869,6 +869,11 @@ func TestAuthUpdateNeeded_InjectionLocation(t *testing.T) {
 	if authUpdateNeeded(both, both) {
 		t.Error("an unchanged injection_location must not re-push the auth object")
 	}
+	// State written before the attribute existed: the plan leaves it unknown and
+	// nothing is sent for it.
+	if authUpdateNeeded(envVarPlan(types.ObjectUnknown(credentialInjectionLocationAttrTypes)), envVarPlan(types.ObjectNull(credentialInjectionLocationAttrTypes))) {
+		t.Error("an unknown injection_location must not re-push the auth object")
+	}
 }
 
 func parseCredential(t *testing.T, auth string) *anthropic.BetaManagedAgentsCredential {

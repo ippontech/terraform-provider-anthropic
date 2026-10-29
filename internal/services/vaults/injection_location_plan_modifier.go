@@ -14,9 +14,10 @@ import (
 // injectionLocationNullUnlessEnvVar returns a plan modifier for the Optional +
 // Computed `injection_location` attribute. Only environment_variable
 // credentials have one, so for any other known `type` an unset value is planned
-// as null instead of "known after apply" (UseStateForUnknown leaves it unknown
-// whenever the prior state is null, i.e. on create and for every credential of
-// another type).
+// as null instead of "known after apply" (UseNonNullStateForUnknown leaves it
+// unknown whenever the prior state is null, i.e. on create and for every
+// credential of another type). An environment_variable credential stays
+// unknown, so Update can store the location the API returns.
 func injectionLocationNullUnlessEnvVar() planmodifier.Object {
 	return injectionLocationNullUnlessEnvVarModifier{}
 }

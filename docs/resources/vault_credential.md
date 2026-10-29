@@ -29,6 +29,7 @@ Creates and manages a vault credential for Anthropic Managed Agents (beta). A cr
 
 - Without the block, the API enables both locations when the credential is created. In a block, a field left out defaults to `false`, and at least one of the two must be `true` (checked at plan time).
 - The provider always sends both fields, so the update API's per-field merge never mixes old and new values. Removing the block keeps the current value; set both fields to `true` to go back to the default.
+- A value kept without the block, or read back from an import, does not survive a replacement or a recreate after the credential was deleted outside Terraform: the new credential gets both locations. Keep the block in the configuration to hold a narrower value.
 - A placeholder in a disabled location is sent literally, and the third party then rejects it. Credentials created in the Claude Console enable `header` only, so importing one reads back `header = true` and `body = false`.
 
 ## Example Usage
@@ -144,7 +145,7 @@ output "vault_credential_env_var_id" {
 - `archive_on_destroy` (Boolean) If `true`, destroying this resource archives the credential instead of permanently deleting it. Default: `false`.
 - `display_name` (String) Human-readable name for the credential (up to 255 characters).
 - `expires_at` (String) Optional expiry time of the access token (RFC 3339). Applicable for `mcp_oauth`.
-- `injection_location` (Attributes) Where in an outbound request the secret is substituted. Applicable for `environment_variable`. Without the block, the API enables both locations on create; in the block, a field left out defaults to `false` and at least one of `header` and `body` must be `true`. Removing the block keeps the current value. Enabling only `header` is the narrower choice: request bodies are often built from content the agent works with. (see [below for nested schema](#nestedatt--injection_location))
+- `injection_location` (Attributes) Where in an outbound request the secret is substituted. Applicable for `environment_variable`. Without the block, the API enables both locations on create; in the block, a field left out defaults to `false` and at least one of `header` and `body` must be `true`. Removing the block keeps the current value, until the credential is replaced or recreated: the new credential gets both locations again, so keep the block to hold a narrower value. Enabling only `header` is the narrower choice: request bodies are often built from content the agent works with. (see [below for nested schema](#nestedatt--injection_location))
 - `mcp_server_url` (String) URL of the MCP server this credential authenticates against. Required for `static_bearer` and `mcp_oauth`; must be absent for `environment_variable`.
 - `metadata` (Map of String) Arbitrary key-value metadata. Maximum 16 pairs; keys up to 64 chars; values up to 512 chars.
 - `networking` (Attributes) Networking scope for the environment variable credential. Required for `environment_variable`. (see [below for nested schema](#nestedatt--networking))
