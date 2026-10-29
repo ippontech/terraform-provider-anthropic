@@ -109,10 +109,12 @@ func (r *SpendLimitResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					"user_id": schema.StringAttribute{
 						Optional:            true,
 						MarkdownDescription: "ID of the member (`user_...`). Required when `type` is `user`, not allowed otherwise.",
+						Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 					},
 					"workspace_id": schema.StringAttribute{
 						Optional:            true,
 						MarkdownDescription: "ID of the workspace (`wrkspc_...`). Required when `type` is `workspace`, not allowed otherwise.",
+						Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 					},
 				},
 			},
@@ -212,12 +214,17 @@ func (r *SpendLimitResource) set(ctx context.Context, plan SpendLimitResourceMod
 		return
 	}
 
+	writes := writesFor(r.client)
+	defer writes.lock(body.Scope, body.Period)()
+
 	respBody, err := r.client.DoRequest(ctx, "POST", spendLimitsURL(spendLimitsPath, nil), body)
 	if err != nil {
 		diags.AddError("Client Error", fmt.Sprintf("Unable to %s spend limit: %s", op, err))
 		return
 	}
-	r.setState(ctx, respBody, op, state, diags)
+	if id := r.setState(ctx, respBody, op, state, diags); id != "" {
+		writes.recordSet(id)
+	}
 }
 
 // --- Read ---
@@ -244,15 +251,37 @@ func (r *SpendLimitResource) Read(ctx context.Context, req resource.ReadRequest,
 // --- Delete ---
 
 // Delete removes the limit; the member or workspace falls back to any
-// inherited limit for that period. A 404 means it is already gone.
+// inherited limit for that period. A 404 means it is already gone. A limit
+// that another resource instance set during this apply (the upsert keeps its
+// ID) is left in place: that instance now manages it.
 func (r *SpendLimitResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state SpendLimitResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	var scope spendLimitScopeModel
+	resp.Diagnostics.Append(state.Scope.As(ctx, &scope, basetypes.ObjectAsOptions{UnhandledNullAsEmpty: true, UnhandledUnknownAsEmpty: true})...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	_, err := r.client.DoRequest(ctx, "DELETE", spendLimitsURL(spendLimitPath(state.ID.ValueString()), nil), nil)
+	id := state.ID.ValueString()
+	writes := writesFor(r.client)
+	defer writes.lock(spendLimitScopeAPI{
+		Type:        scope.Type.ValueString(),
+		UserID:      scope.UserID.ValueString(),
+		WorkspaceID: scope.WorkspaceID.ValueString(),
+	}, state.Period.ValueString())()
+	if writes.wasSet(id) {
+		resp.Diagnostics.AddWarning("Spend Limit Not Deleted",
+			fmt.Sprintf("Spend limit %s was set again during this apply by another anthropic_spend_limit with the same scope and "+
+				"period (the API upserts on that pair and keeps the ID), which now manages it. It was left in place and only "+
+				"removed from this resource's state.", id))
+		return
+	}
+
+	_, err := r.client.DoRequest(ctx, "DELETE", spendLimitsURL(spendLimitPath(id), nil), nil)
 	if err != nil && !admin.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete spend limit: %s", err))
 	}
@@ -292,19 +321,21 @@ func buildSpendLimitSetRequest(ctx context.Context, plan SpendLimitResourceModel
 	return body, diags
 }
 
-// setState decodes a spend limit response and writes it to state.
-func (r *SpendLimitResource) setState(ctx context.Context, body []byte, op string, state *tfsdk.State, diags *diag.Diagnostics) {
+// setState decodes a spend limit response and writes it to state. It returns
+// the limit's ID, or "" when nothing was written.
+func (r *SpendLimitResource) setState(ctx context.Context, body []byte, op string, state *tfsdk.State, diags *diag.Diagnostics) string {
 	var limit spendLimitAPIResponse
 	if err := json.Unmarshal(body, &limit); err != nil {
 		diags.AddError("Parse Error", fmt.Sprintf("Unable to parse %s spend limit response: %s", op, err))
-		return
+		return ""
 	}
 	model, d := mapSpendLimitToState(limit)
 	diags.Append(d...)
 	if diags.HasError() {
-		return
+		return ""
 	}
 	diags.Append(state.Set(ctx, &model)...)
+	return limit.ID
 }
 
 // mapSpendLimitToState maps an API spend limit to the resource model. The

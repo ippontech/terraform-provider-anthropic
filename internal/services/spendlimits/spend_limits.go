@@ -34,7 +34,11 @@ var (
 )
 
 // spendLimitsURL appends the query to a spend limit path, always with
-// `beta=true`, as the SDK (v1.77.0+) sends on every spend limit call.
+// `beta=true`, as the SDK (v1.77.0+) sends on every spend limit call. No
+// `anthropic-beta` header: of these endpoints only the list (`GET
+// /v1/organizations/spend_limits`, not used here) requires one,
+// `spend-limit-reads-2026-09-26`; the get, set and delete references require
+// none, and SDK v1.84.0 sends none on them.
 func spendLimitsURL(path string, query url.Values) string {
 	if query == nil {
 		query = url.Values{}

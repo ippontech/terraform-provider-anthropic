@@ -12,9 +12,13 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
@@ -277,6 +281,75 @@ func TestSpendLimitResource_Delete(t *testing.T) {
 			}
 			assertBetaQuery(t, req)
 		})
+	}
+}
+
+// The set endpoint upserts on (scope, period), so a create can adopt the very
+// limit another instance is about to destroy: `count` going from [A, B] to
+// [B] replaces [0] (A's limit deleted, B's pair set, the upsert returning the
+// limit [1] tracks) while [1] is destroyed, and a create_before_destroy
+// replacement sets the pair before deleting its old object. The delete must
+// not then remove the limit the other write now manages: the member would be
+// left without a cap while state still tracks it.
+func TestSpendLimitResource_Delete_leavesALimitSetAgainInTheSameApply(t *testing.T) {
+	t.Parallel()
+
+	srv, rec := stub(t, func(req recordedRequest) (int, string) {
+		if req.Method == http.MethodDelete {
+			return http.StatusOK, `{"id":"` + spendLimitID + `","type":"spend_limit_deleted"}`
+		}
+		return http.StatusOK, userLimitJSON(`"50000"`)
+	})
+	client := admintest.NewClient(t, srv)
+
+	// Instance [0] sets the pair: the upsert answers with the existing limit.
+	creator := &SpendLimitResource{client: client}
+	plan := resourcePlan(t, creator, scopeValue(t, creator, "user", userID, ""), "monthly", "50000")
+	createResp := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	creator.Create(context.Background(), resource.CreateRequest{Plan: plan}, &createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", createResp.Diagnostics)
+	}
+
+	// Instance [1], which tracked that limit, is destroyed.
+	destroyed := &SpendLimitResource{client: client}
+	state := stateWithID(t, destroyed)
+	deleteResp := resource.DeleteResponse{State: state}
+	destroyed.Delete(context.Background(), resource.DeleteRequest{State: state}, &deleteResp)
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete: %v", deleteResp.Diagnostics)
+	}
+	for _, req := range rec.all() {
+		if req.Method == http.MethodDelete {
+			t.Fatalf("DELETE %s sent: it removes the cap instance [0] just set and still tracks", req.Path)
+		}
+	}
+	if deleteResp.Diagnostics.WarningsCount() != 1 {
+		t.Errorf("diagnostics = %v, want one warning saying the limit was left in place", deleteResp.Diagnostics)
+	}
+}
+
+// An empty identifier (an empty variable, a lookup that found nothing) must
+// fail validation: the request would otherwise drop it (omitempty) and the
+// API answer 400 in the middle of the apply.
+func TestSpendLimitResource_scopeIdentifiersRejectAnEmptyString(t *testing.T) {
+	t.Parallel()
+
+	scope := schematest.ResourceSchema(t, &SpendLimitResource{}).Attributes["scope"].(schema.SingleNestedAttribute)
+	for _, name := range []string{"user_id", "workspace_id"} {
+		attr := scope.Attributes[name].(schema.StringAttribute)
+		var diags diag.Diagnostics
+		for _, v := range attr.Validators {
+			var resp validator.StringResponse
+			v.ValidateString(context.Background(), validator.StringRequest{
+				Path:        path.Root("scope").AtName(name),
+				ConfigValue: types.StringValue(""),
+			}, &resp)
+			diags.Append(resp.Diagnostics...)
+		}
+		if !diags.HasError() {
+			t.Errorf("scope.%s = \"\" passes validation, want an error", name)
+		}
 	}
 }
 

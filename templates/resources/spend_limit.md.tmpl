@@ -19,7 +19,7 @@ Any other combination is rejected by the API with a 400.
 > **Beta header**: None.
 > **Cost**: Free.
 
-> **Note on adoption:** the API upserts on (`scope`, `period`). Creating this resource when a limit already exists for that pair **adopts** it and overwrites its amount, and destroying the resource then deletes it. Two `anthropic_spend_limit` resources with the same scope and period manage the same limit and will fight. `scope` and `period` force replacement; `amount` is updated in place.
+> **Note on adoption:** the API upserts on (`scope`, `period`). Creating this resource when a limit already exists for that pair **adopts** it and overwrites its amount, and destroying the resource then deletes it. Two `anthropic_spend_limit` resources with the same scope and period manage the same limit and will fight. When one instance sets a pair during the apply that destroys another instance holding the same limit (a `count` that shrinks, instances re-keyed without `moved` blocks, a `create_before_destroy` replacement), the destroy leaves the limit in place with a warning, since the upsert kept its ID for the instance that set it. `scope` and `period` force replacement; `amount` is updated in place.
 
 > **Note on `amount`:** a non-negative integer decimal string in the minor unit of `currency` (cents for USD): `"50000"` is $500.00. Leaving it out on a `user` limit sets an explicit no-limit override for that period only; caps for other periods still apply. Deleting a `user` limit returns the member to the limit they inherit for that period, or leaves them unlimited if there is none.
 
