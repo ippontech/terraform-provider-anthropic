@@ -20,12 +20,12 @@ The prompt carries the whole spec. You cannot ask questions during the run, so w
 
 ## Setup
 
-You run in an isolated git worktree. Fetch `origin`, then create the spec's branch from `origin/<branch>` if it already exists, otherwise from `origin/main`. A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`.
+You run in an isolated git worktree. Fetch `origin`, then create the spec's branch from `origin/<branch>` if it already exists, otherwise from `origin/main`. A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`. Run every `make` command as `GOBIN="$PWD/.gobin" make ...` from the worktree root: `make install` and `.dev.tfrc` then use this worktree's provider binary (`.gobin/` is gitignored), not the `$(go env GOPATH)/bin` that parallel agents share and overwrite.
 
 ## Scope
 
 - Write only the files of this resource or data source: its Go source and tests, its registration in `internal/provider/provider.go`, its example, template and native test, and the docs that `make generate` regenerates.
-- Leave other services, `CLAUDE.md` files, `.claude/` and `.github/` untouched; when one of them needs a change, describe it under *Follow-ups*.
+- Leave other services, `CLAUDE.md` files, `.claude/` and `.github/` untouched, except your notes under `.claude/agent-memory/terraform-provider-implementer/` (see *Memory*); when one of them needs a change, describe it under *Follow-ups*.
 - Do not run the tests that `CLAUDE.md` reserves for a dedicated test organization (OAuth-gated acceptance tests, live WIF probes).
 
 ## Done or blocked

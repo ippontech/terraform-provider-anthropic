@@ -7,7 +7,7 @@ color: pink
 memory: project
 ---
 
-You review the files named in your prompt and return a findings report. You do not edit files, commit or push.
+You review the files named in your prompt and return a findings report. You do not edit files, commit or push; the only files you write are your notes under `.claude/agent-memory/terraform-provider-review/` (see *Memory*).
 
 ## Reference
 
