@@ -371,3 +371,45 @@ func TestConfigValidator_Thinking(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigValidator_OutputFormat: a format that is valid JSON but not an
+// object fails at plan time with the error Create gives; unknown values pass,
+// and invalid JSON keeps the error of jsontypes.Normalized.
+func TestConfigValidator_OutputFormat(t *testing.T) {
+	r := NewMessageResource()
+	var sresp resource.SchemaResponse
+	r.Schema(context.Background(), resource.SchemaRequest{}, &sresp)
+	ot := sresp.Schema.Type().TerraformType(context.Background()).(tftypes.Object).AttributeTypes["output_config"].(tftypes.Object)
+	outputConfig := func(format any) map[string]tftypes.Value {
+		return map[string]tftypes.Value{"output_config": tftypes.NewValue(ot, map[string]tftypes.Value{
+			"effort": tftypes.NewValue(tftypes.String, nil),
+			"format": tftypes.NewValue(tftypes.String, format),
+		})}
+	}
+	const invalidSchema = "Invalid JSON Schema"
+	tests := []struct {
+		name        string
+		cfg         map[string]tftypes.Value
+		wantSummary string // "" for no diagnostic
+	}{
+		{"object", outputConfig(`{"type":"object"}`), ""},
+		{"null", outputConfig(`null`), invalidSchema},
+		{"array", outputConfig(`[1]`), invalidSchema},
+		{"invalid JSON", outputConfig(`{`), "Invalid JSON String Value"},
+		{"unknown format", outputConfig(tftypes.UnknownValue), ""},
+		{"no format", outputConfig(nil), ""},
+		{"unknown output_config", map[string]tftypes.Value{"output_config": tftypes.NewValue(ot, tftypes.UnknownValue)}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := validateConfig(t, tc.cfg)
+			var got []string
+			for _, d := range diags {
+				got = append(got, d.Summary())
+			}
+			if (tc.wantSummary == "" && len(got) != 0) || (tc.wantSummary != "" && (len(got) != 1 || got[0] != tc.wantSummary)) {
+				t.Errorf("diagnostics = %q, want %q", got, tc.wantSummary)
+			}
+		})
+	}
+}

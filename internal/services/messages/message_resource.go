@@ -28,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -507,8 +508,7 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 		if !data.OutputConfig.Format.IsNull() && !data.OutputConfig.Format.IsUnknown() {
 			schemaObj, err := decodeFormatSchema(data.OutputConfig.Format)
 			if err != nil {
-				diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid JSON Schema",
-					fmt.Sprintf("output_config.format must be a JSON object holding a JSON schema: %s", err))
+				addInvalidFormatError(&diags, err)
 			} else {
 				oc.Format = anthropic.JSONOutputFormatParam{Schema: schemaObj}
 			}
@@ -536,6 +536,29 @@ func decodeFormatSchema(format jsontypes.Normalized) (map[string]any, error) {
 		return nil, errors.New("got null")
 	}
 	return schemaObj, nil
+}
+
+// addInvalidFormatError reports a format that decodeFormatSchema rejected.
+func addInvalidFormatError(diags *diag.Diagnostics, err error) {
+	diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid JSON Schema",
+		fmt.Sprintf("output_config.format must be a JSON object holding a JSON schema: %s", err))
+}
+
+// validateFormatSchema runs decodeFormatSchema at plan time, so a format that
+// is valid JSON but not an object (null included) fails before any resource
+// of the apply is created. An unknown format is checked by Create. Invalid
+// JSON fails GetAttribute with the error of jsontypes.Normalized, the one
+// attribute validation gives (Terraform shows it once).
+func validateFormatSchema(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) {
+	var format jsontypes.Normalized
+	getDiags := config.GetAttribute(ctx, path.Root("output_config").AtName("format"), &format)
+	diags.Append(getDiags...)
+	if getDiags.HasError() || format.IsNull() || format.IsUnknown() {
+		return
+	}
+	if _, err := decodeFormatSchema(format); err != nil {
+		addInvalidFormatError(diags, err)
+	}
 }
 
 // mapMessageToState copies the API response into the computed attributes.
@@ -573,7 +596,7 @@ func mapMessageToState(message *anthropic.Message, data *MessageResourceModel) {
 type messageConfigValidator struct{}
 
 func (messageConfigValidator) Description(context.Context) string {
-	return "validates thinking budget/display combinations"
+	return "validates thinking budget/display combinations and the output_config.format schema"
 }
 
 func (v messageConfigValidator) MarkdownDescription(ctx context.Context) string {
@@ -610,4 +633,6 @@ func (messageConfigValidator) ValidateResource(ctx context.Context, req resource
 			}
 		}
 	}
+
+	validateFormatSchema(ctx, req.Config, &resp.Diagnostics)
 }
