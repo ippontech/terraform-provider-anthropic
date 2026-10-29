@@ -131,7 +131,7 @@ A job that signs artifacts or writes to `main` holds credentials that every user
 2. **Release tags are protected.** A tag ruleset on `v*` restricts creation, update and deletion, with the semantic-release App as the only bypass, because any `v*` tag starts the signed release.
 3. **No shared cache in a job that signs or publishes.** `actions/setup-go` gets `cache: false` and the job uses no `actions/cache`: a cache restored there may have been saved by a test job, and Go does not re-hash extracted module sources on restore. Run `go mod download && go mod verify` instead.
 4. **Installs come from a committed lockfile, without scripts.** `npm ci --ignore-scripts` from `.github/semantic-release/package-lock.json` (also enforced by its `.npmrc`), never `npm install` with inline versions: every transitive package would otherwise be resolved at release time and could run code next to the credentials.
-5. **Credentials enter the job after the install.** `actions/checkout` sets `persist-credentials: false`, the App token is minted after `npm ci` and passed only to the step that publishes, and the job token keeps `contents: read`.
+5. **Credentials enter the job after the install, with only the permissions they need.** `actions/checkout` sets `persist-credentials: false`, the App token is minted after `npm ci` and passed only to the step that publishes, and the job token keeps `contents: read`. The App token lists its permissions (`permission-contents`, `permission-issues`, `permission-pull-requests`, all `write`): without them it inherits every permission the App holds, including any granted later.
 6. **Release tooling updates get a human review.** In `renovate.json`, the `release tooling` group (matched by file: both release workflows and `.github/semantic-release/package.json`) keeps `automerge: false` whatever the update type. Do not add these files to an automerged group.
    The group also matches `testacc.yml`, whose jobs hold the `acctest` keys. Add to it any new workflow whose jobs read a secret other than `GITHUB_TOKEN` or run in a protected environment. Root `go.mod` updates are never automerged either, because the acceptance tests compile them, and a tool that such a job downloads is pinned, never `latest` (`terraform_version` in `testacc.yml`).
 
@@ -154,6 +154,9 @@ jobs:
         with:
           app-id: ${{ secrets.SEMREL_APP_ID }}
           private-key: ${{ secrets.SEMREL_APP_PRIVATE_KEY }}
+          permission-contents: write     # only what semantic-release uses
+          permission-issues: write
+          permission-pull-requests: write
 ```
 
 # Security tooling

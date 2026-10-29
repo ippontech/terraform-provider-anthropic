@@ -93,6 +93,8 @@ Fill in:
 | Pull requests | Read & write |
 | Metadata | Read only (mandatory) |
 
+`semantic-release.yml` requests exactly these three write permissions when it mints the token (`permission-*` inputs of `actions/create-github-app-token`). A permission added to the App later does not reach the token, and if the App lacks one of the three, the token step fails.
+
 Click **Create GitHub App**.
 
 ## Generate a private key
