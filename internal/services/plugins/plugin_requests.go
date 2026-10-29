@@ -122,9 +122,21 @@ func uploadPluginVersion(ctx context.Context, client *admin.Client, src pluginSo
 }
 
 // postPluginVersion sends an already-built version upload.
+//
+// A 503 `registration_pending` comes with `x-should-retry: true`, so the
+// admin client resends the upload; each attempt stores a version. When the
+// last attempt is still pending, the error names the version the API stored,
+// which stays in the plugin's history: the API cannot delete one version.
 func postPluginVersion(ctx context.Context, client *admin.Client, pluginID string, body admin.RawBody) (*pluginVersionAPIObject, error) {
 	respBody, err := pluginsRequest(ctx, client, http.MethodPost, pluginPath(pluginID, "versions"), nil, body)
 	if err != nil {
+		status, details := pluginErrorOf(err)
+		if status == http.StatusServiceUnavailable && details.ErrorCode == "registration_pending" && details.PluginVersionID != "" {
+			return nil, fmt.Errorf("%w\n\nThe API stored this upload as version %s of plugin %s, but its registration "+
+				"was still pending after the retries. That version stays in the plugin's version history, and "+
+				"`served_version_id` on `anthropic_plugin` can serve it once its registration completes. Applying "+
+				"again uploads another version", err, details.PluginVersionID, pluginID)
+		}
 		return nil, err
 	}
 	return decodePluginVersion(respBody)

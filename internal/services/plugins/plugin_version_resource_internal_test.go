@@ -5,6 +5,7 @@ package plugins
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -147,6 +148,37 @@ func TestPluginVersionResource_CreateResendsAPendingRegistrationWhenAsked(t *tes
 	}
 	if got.SourceHash.ValueString() != sourceHashOf(t, "", archive) {
 		t.Error("source_hash must be the archive's hash")
+	}
+}
+
+func TestPluginVersionResource_CreateNamesTheVersionStillPendingAfterRetries(t *testing.T) {
+	t.Parallel()
+	pending := func(versionID string) fakeResponse {
+		return apiError(http.StatusServiceUnavailable, "api_error", "registration pending",
+			`{"error_code":"registration_pending","plugin_version_id":"`+versionID+`"}`,
+			map[string]string{"x-should-retry": "true"})
+	}
+	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
+		"POST /v1/organizations/plugins/plugin_01/versions": {
+			pending("pluginver_02"), pending("pluginver_03"), pending("pluginver_04"), pending("pluginver_05"),
+		},
+	})
+	r := &PluginVersionResource{client: client}
+
+	plan := newPluginVersionModel()
+	plan.PluginID = types.StringValue("plugin_01")
+	plan.SourceDir = types.StringValue(writePluginDir(t))
+	resp, _ := createPluginVersion(t, r, plan)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	n := len(requests())
+	last := fmt.Sprintf("pluginver_%02d", n+1)
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, last) || !strings.Contains(detail, "plugin_01") {
+		t.Errorf("detail = %q, want the version %s the last attempt stored", detail, last)
+	}
+	if n < 2 {
+		t.Errorf("requests = %d, want the upload resent as x-should-retry asks", n)
 	}
 }
 
