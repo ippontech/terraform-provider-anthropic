@@ -8,9 +8,10 @@
 #      on any branch, main and a detached HEAD included;
 #   2. the branch has an open PR and commits newer than the last
 #      /update-pr-description or /ship run on this machine;
-#   3. the branch changes Go or Terraform files and has a commit touching them
-#      newer than the last /update-project-knowledge run (committing the
-#      CLAUDE.md edits that skill writes does not bring the reminder back).
+#   3. the branch changes Go or Terraform files and has a commit of its own
+#      touching them newer than the last /update-project-knowledge run
+#      (committing the CLAUDE.md edits that skill writes, or merging main,
+#      does not bring the reminder back).
 # The skills mark 2 and 3 as done by touching /tmp/claude-pr-desc-done-<branch>
 # and /tmp/claude-knowledge-done-<branch>. Any failure (missing git, gh or jq,
 # no network) ends silently with exit 0.
@@ -36,7 +37,8 @@ finish() {
 
 # 1. Docs generation: an uncommitted change to a non-test Go file, a template
 #    or an example that is newer than docs/index.md (make generate rewrites
-#    every file under docs/), or its deletion (no time to compare).
+#    every file under docs/). A deleted file has no time of its own: the
+#    nearest directory still there changed when the entry went away.
 docs_stale=false
 while IFS= read -r line; do
   path=${line:3}
@@ -44,10 +46,8 @@ while IFS= read -r line; do
   case "$path" in
     *_test.go) continue ;;
   esac
-  case "${line:0:2}" in
-    *D*) docs_stale=true; break ;;
-  esac
-  if [ ! -f docs/index.md ] || { [ -f "$path" ] && [ "$path" -nt docs/index.md ]; }; then
+  while [ ! -e "$path" ]; do path=$(dirname "$path"); done
+  if [ ! -f docs/index.md ] || [ "$path" -nt docs/index.md ]; then
     docs_stale=true
     break
   fi
@@ -63,7 +63,9 @@ case "$branch" in
 esac
 slug=$(printf '%s' "$branch" | tr '/' '-')
 last_commit=$(git log -1 --format=%ct 2>/dev/null) || finish
-last_code_commit=$(git log -1 --format=%ct -- '*.go' '*.tf' 2>/dev/null) || finish
+# The branch's own last commit touching Go or Terraform files: not the main
+# commits a merge brings in, nor the merge itself. Empty without origin/main.
+last_code_commit=$(git log -1 --format=%ct --no-merges origin/main..HEAD -- '*.go' '*.tf' 2>/dev/null || true)
 
 # Modification time in seconds since the epoch (GNU stat, then BSD stat).
 mtime() {
