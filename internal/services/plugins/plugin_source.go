@@ -30,6 +30,12 @@ const (
 
 	// pluginArchivePattern matches the archive formats the upload accepts.
 	pluginArchivePattern = `(?i)\.(zip|plugin)$`
+
+	// gitMetadataName is the directory (or, in a worktree or submodule, the
+	// file) a Git checkout keeps its metadata in. A source_dir walk leaves it
+	// out: it would publish the repository's history and .git/config, and its
+	// content changes on every clone or fetch.
+	gitMetadataName = ".git"
 )
 
 // pluginSource is the content of one upload: either every file under a plugin
@@ -57,10 +63,11 @@ type formField struct {
 // listPluginSource lists the files to upload from a plugin directory, or from
 // a single archive when archive is set (dir is then ignored).
 //
-// A directory upload sends every regular file under it, so point it at the
-// plugin's root, not at a repository checkout. Symbolic links and special
-// files are refused rather than followed or skipped, the way the API refuses
-// them inside an archive.
+// A directory upload sends every regular file under it except Git metadata
+// (gitMetadataName, at any depth), so point it at the plugin's root: a Git
+// checkout whose root is the plugin's root is fine, a larger repository is
+// not. Symbolic links and special files are refused rather than followed or
+// skipped, the way the API refuses them inside an archive.
 func listPluginSource(dir, archive string) (pluginSource, error) {
 	if archive != "" {
 		info, err := os.Stat(archive)
@@ -92,6 +99,15 @@ func listPluginSource(dir, archive string) (pluginSource, error) {
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		// Git metadata is not plugin content: a .git directory (or the .git
+		// file of a worktree or submodule) is left out of the upload and of the
+		// hash, at any depth.
+		if d.Name() == gitMetadataName && p != root {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			return nil

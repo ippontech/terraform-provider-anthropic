@@ -256,3 +256,45 @@ func TestPluginSourceUploadBody_refusesOversizedUploadsBeforeReading(t *testing.
 		t.Errorf("err = %v, want the 200 MB limit (and no attempt to open the file)", err)
 	}
 }
+
+// A plugin whose root is a Git checkout holds a .git directory: uploading it
+// published the repository's history and .git/config (where CI checkouts keep
+// credentials) to every member, and its hash, which changes on every clone or
+// fetch, made anthropic_plugin_version upload a new version on most applies.
+// The walk leaves out .git, as a directory or as the file a worktree or a
+// submodule has, at any depth, from the upload and from the hash alike. Other
+// hidden paths stay: .claude-plugin/ and .mcp.json are plugin files.
+func TestListPluginSource_leavesOutGitMetadata(t *testing.T) {
+	t.Parallel()
+	clean := writePluginDir(t)
+	writeFile(t, filepath.Join(clean, ".mcp.json"), `{"mcpServers": {}}`)
+
+	checkout := writePluginDir(t)
+	writeFile(t, filepath.Join(checkout, ".mcp.json"), `{"mcpServers": {}}`)
+	writeFile(t, filepath.Join(checkout, ".git", "config"), "[http]\n\textraheader = AUTHORIZATION: basic secret\n")
+	writeFile(t, filepath.Join(checkout, ".git", "objects", "pack", "pack-1.pack"), "PACK")
+	writeFile(t, filepath.Join(checkout, "skills", "vendored", ".git"), "gitdir: ../../.git/modules/vendored\n")
+
+	src, err := listPluginSource(checkout, "")
+	if err != nil {
+		t.Fatalf("listPluginSource: %v", err)
+	}
+	var names []string
+	for _, f := range src.files {
+		names = append(names, f.name)
+	}
+	if got := strings.Join(names, ","); got != ".claude-plugin/plugin.json,.mcp.json,skills/account-research/SKILL.md" {
+		t.Errorf("files = %s, want the plugin's files without any .git", got)
+	}
+
+	body, hash, err := src.uploadBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(body.Data, []byte("secret")) || bytes.Contains(body.Data, []byte("gitdir")) {
+		t.Error("the upload carries Git metadata")
+	}
+	if want := sourceHashOf(t, clean, ""); hash != want || sourceHashOf(t, checkout, "") != want {
+		t.Errorf("hash = %s, want %s: the same plugin with or without .git must hash the same", hash, want)
+	}
+}

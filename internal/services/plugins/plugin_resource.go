@@ -106,8 +106,9 @@ func (r *PluginResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"source_dir": schema.StringAttribute{
 				Optional: true,
 				MarkdownDescription: "Local directory holding the plugin, with its manifest at `.claude-plugin/plugin.json`. " +
-					"Every regular file under it is uploaded under its path within the directory, so point it at the " +
-					"plugin's root, not at a repository checkout; symbolic links are refused. Conflicts with " +
+					"Every regular file under it is uploaded under its path within the directory, except Git metadata " +
+					"(`.git`, at any depth), so point it at the plugin's root (a Git checkout of the plugin alone is fine); " +
+					"symbolic links are refused. Conflicts with " +
 					"`source_archive`; one of them is required to create a plugin." + createOnlyNote,
 				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
 			},

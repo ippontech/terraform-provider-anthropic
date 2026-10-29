@@ -18,6 +18,7 @@ Uploads a version of an organization-owned plugin through the Claude Enterprise 
 ## Behavior
 
 - **Every input forces a new version**, and so does any edit to the uploaded files: `source_hash` is recomputed from them at every plan. The manifest's `name` must be the plugin's `name`.
+- **Git metadata is left out.** `.git` directories and files under `source_dir`, at any depth, are neither uploaded nor hashed, so `source_dir` can be a Git checkout of the plugin: a fresh clone or a fetch does not force a new version.
 - **Served or stored.** While the plugin is not pinned, the new version is served to members as soon as it is stored. Once the plugin is pinned (`served_version_id` on `anthropic_plugin`), it is stored but not served until chosen.
 - **Content scanning.** With content scanning on, the version's `content_scan` reads `processing` after the upload, and the verdict shows on a later refresh. A served version is withheld from members until its scan is `completed` with `pass` or `warn`: pin the plugin first if members should keep the current version meanwhile.
 - **Destroy only removes the version from state**, with a warning: the API cannot delete a single version, so it stays in the plugin's history until the plugin is deleted. Replacing this resource therefore adds a version each time.
@@ -62,7 +63,7 @@ output "content_scan_status" {
 
 - `release_notes` (String) Release notes, shown in the version history in claude.ai (up to 5,000 characters).
 - `source_archive` (String) Local `.zip` or `.plugin` archive holding the plugin.
-- `source_dir` (String) Local directory holding the plugin, with its manifest at `.claude-plugin/plugin.json` declaring the plugin's `name`. Every regular file under it is uploaded under its path within the directory; symbolic links are refused. Exactly one of `source_dir` and `source_archive` is required.
+- `source_dir` (String) Local directory holding the plugin, with its manifest at `.claude-plugin/plugin.json` declaring the plugin's `name`. Every regular file under it is uploaded under its path within the directory, except Git metadata (`.git`, at any depth), which `source_hash` leaves out too; symbolic links are refused. Exactly one of `source_dir` and `source_archive` is required.
 
 ### Read-Only
 

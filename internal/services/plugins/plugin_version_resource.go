@@ -92,7 +92,8 @@ func (r *PluginVersionResource) Schema(_ context.Context, _ resource.SchemaReque
 				Optional: true,
 				MarkdownDescription: "Local directory holding the plugin, with its manifest at `.claude-plugin/plugin.json` " +
 					"declaring the plugin's `name`. Every regular file under it is uploaded under its path within the " +
-					"directory; symbolic links are refused. Exactly one of `source_dir` and `source_archive` is required.",
+					"directory, except Git metadata (`.git`, at any depth), which `source_hash` leaves out too; symbolic " +
+					"links are refused. Exactly one of `source_dir` and `source_archive` is required.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
