@@ -12,7 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
+	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -236,12 +239,15 @@ func TestConfigureWorkspaceIDHeader(t *testing.T) {
 			want:   "wrkspc_config",
 		},
 		{
-			name: "environment fallback",
+			// The SDKs' federation variable: exported by other tools and
+			// by the WIF guide, and fatal to a single-workspace key, so it
+			// never reaches the standard client on its own.
+			name: "environment ignored",
 			env:  "wrkspc_env",
-			want: "wrkspc_env",
+			want: "",
 		},
 		{
-			name:   "config wins over environment",
+			name:   "config with environment set",
 			config: map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, "wrkspc_config")},
 			env:    "wrkspc_env",
 			want:   "wrkspc_config",
@@ -288,13 +294,48 @@ func TestConfigureWorkspaceIDHeader(t *testing.T) {
 	}
 }
 
+// TestWorkspaceIDValidator: the format is checked at plan time, so a trailing
+// newline (file() without trimspace) or a non-workspace ID never reaches the
+// header, where net/http would fail every request of the standard client.
+func TestWorkspaceIDValidator(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := &provider.SchemaResponse{}
+	(&AnthropicProvider{version: "test"}).Schema(ctx, provider.SchemaRequest{}, schemaResp)
+	attr, ok := schemaResp.Schema.Attributes["workspace_id"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("workspace_id is %T, want schema.StringAttribute", schemaResp.Schema.Attributes["workspace_id"])
+	}
+	if len(attr.Validators) == 0 {
+		t.Fatal("workspace_id has no validator")
+	}
+
+	for value, valid := range map[string]bool{
+		"wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ":   true,
+		"wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ\n": false,
+		" wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ":  false,
+		"01JwQvzr7rXLA5AGx3HKfFUJ":          false,
+		"wrkspc_":                           false,
+		"":                                  false,
+	} {
+		resp := &validator.StringResponse{}
+		for _, v := range attr.Validators {
+			v.ValidateString(ctx, validator.StringRequest{
+				Path:        path.Root("workspace_id"),
+				ConfigValue: types.StringValue(value),
+			}, resp)
+		}
+		if got := !resp.Diagnostics.HasError(); got != valid {
+			t.Errorf("workspace_id %q: valid = %v, want %v (%v)", value, got, valid, resp.Diagnostics)
+		}
+	}
+}
+
 // TestConfigureRejectsUnknownWorkspaceID: same rule as the federation block.
-// Read as unset, an unknown workspace_id would send no header, or the
-// environment's, and route the plan's reads to the wrong workspace.
+// Read as unset, an unknown workspace_id would send no header and route the
+// plan's reads to the key's own workspace.
 func TestConfigureRejectsUnknownWorkspaceID(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api03-env")
-	t.Setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_env")
 
 	resp := configureProvider(t, map[string]tftypes.Value{
 		"workspace_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),

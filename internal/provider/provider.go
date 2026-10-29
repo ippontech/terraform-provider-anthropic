@@ -6,14 +6,17 @@ package provider
 import (
 	"context"
 	"os"
+	"regexp"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -81,12 +84,14 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 			},
 			"federation": federationSchema(),
 			"workspace_id": schema.StringAttribute{
-				Optional: true,
+				Optional:   true,
+				Validators: []validator.String{stringvalidator.RegexMatches(workspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits)")},
 				Description: "Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header " +
 					"on every request of the standard client. Required with a personal or service account key that is " +
-					"not scoped to a single workspace; unnecessary with a single-workspace key. Not sent on the Admin API " +
-					"or the org:admin OAuth client, which select their workspace otherwise. Can also be set via the " +
-					"ANTHROPIC_WORKSPACE_ID environment variable, shared with `federation.workspace_id`.",
+					"not scoped to a single workspace; must be left unset with a single-workspace key, which the API " +
+					"rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API " +
+					"or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: " +
+					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.",
 			},
 		},
 	}
@@ -105,14 +110,21 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
 	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
 	// Unknown is an error, not unset, as for the federation block: reading
-	// it as unset would send no header, or the environment's, and the
-	// workspace is routinely a reference to a resource of the same module.
+	// it as unset would send no header and route the plan's reads to the
+	// key's own workspace, and the workspace is routinely a reference to a
+	// resource of the same module.
 	if data.WorkspaceID.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(path.Root("workspace_id"), "Unknown Workspace Configuration",
 			"workspace_id depends on a value that is not known until apply. Provider configuration must be known at plan time.")
 		return
 	}
-	workspaceID := resolveCredential(data.WorkspaceID, "ANTHROPIC_WORKSPACE_ID")
+	// Configuration only, deliberately: ANTHROPIC_WORKSPACE_ID is the SDKs'
+	// federation variable, exported by other tools in the same job and by the
+	// WIF guide for federation.workspace_id. A single-workspace key answers
+	// 404 to any anthropic-workspace-id header, its own workspace included
+	// (measured 2026-10-29), so an exported variable must never reach the
+	// standard client on its own. Null reads as "".
+	workspaceID := data.WorkspaceID.ValueString()
 
 	federation, diags := resolveFederation(ctx, data.Federation)
 	resp.Diagnostics.Append(diags...)
@@ -181,6 +193,11 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	resp.DataSourceData = pd
 	resp.ResourceData = pd
 }
+
+// workspaceIDPattern is the shape of a workspace ID. Checked at plan time so
+// a stray newline (file() without trimspace) or a wrong ID never reaches the
+// header, where net/http would reject the request on every call.
+var workspaceIDPattern = regexp.MustCompile(`^wrkspc_[0-9A-Za-z]+$`)
 
 // resolveCredential returns the credential to use for one authentication
 // method: the provider argument when it is set, otherwise the environment

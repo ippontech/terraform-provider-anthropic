@@ -18,7 +18,9 @@ import (
 
 // Live tests of the provider's workspace_id argument, run with a personal or
 // service account API key that is not scoped to a single workspace (see
-// acctest.PreCheckMultiWorkspace). Vaults are the probe: free to manage,
+// acctest.PreCheckMultiWorkspace). The argument has no environment fallback,
+// so an ANTHROPIC_WORKSPACE_ID exported for federation cannot interfere with
+// the no-workspace case below. Vaults are the probe: free to manage,
 // workspace-scoped, and already covered by CRUD acceptance tests, so what is
 // asserted here is only the routing — the API rejects the key without the
 // header, and the vault lands in the workspace the header names and in no
@@ -132,23 +134,4 @@ func TestAccVaultResource_multiWorkspaceKeyRoutesToWorkspaceID(t *testing.T) {
 			})
 		})
 	}
-}
-
-// ANTHROPIC_WORKSPACE_ID stands in for workspace_id when the argument is not
-// set, the same fallback the credentials have.
-func TestAccVaultResource_multiWorkspaceKeyReadsWorkspaceIDFromEnv(t *testing.T) {
-	acctest.PreCheckMultiWorkspace(t)
-	workspaceID := acctest.TerraformTests2WorkspaceID
-	t.Setenv("ANTHROPIC_WORKSPACE_ID", workspaceID)
-
-	resource.Test(t, resource.TestCase{
-		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckVaultDestroyedInWorkspace(workspaceID),
-		Steps: []resource.TestStep{
-			{
-				Config: multiWorkspaceVaultConfig(multiWorkspaceProviderConfig(""), "tf-acc-test-vault-env-workspace"),
-				Check:  testAccCheckVaultInWorkspace(workspaceID),
-			},
-		},
-	})
 }

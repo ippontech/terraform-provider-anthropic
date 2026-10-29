@@ -33,7 +33,7 @@ provider "anthropic" {
 }
 ```
 
-### Workspace (`workspace_id` / `ANTHROPIC_WORKSPACE_ID`)
+### Workspace (`workspace_id`)
 
 API keys are [personal or service account keys](https://platform.claude.com/docs/en/manage-claude/authentication#key-types), bound to an identity rather than to a workspace. A key created for a single workspace needs nothing more. A key that is not must say which workspace each request acts in, or the API answers `400 anthropic-workspace-id is required when authenticating with an identity-linked API key`. Set `workspace_id` and the provider sends that header on every request of the standard client, so one key serves one provider alias per workspace:
 
@@ -49,7 +49,7 @@ provider "anthropic" {
 }
 ```
 
-The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time (see `federation.workspace_id`, which reads the same `ANTHROPIC_WORKSPACE_ID` variable: one variable, one workspace, for both; the two attributes may still name different workspaces explicitly, each client follows its own). An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
+Leave it unset with a single-workspace key: the API answers `404 Workspace not found` to any `anthropic-workspace-id` header on such a key, even one naming the key's own workspace. For the same reason `workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the Anthropic SDKs' federation variable, often exported for other tools in the same job, and it is read by `federation.workspace_id` only. The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time. An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
 
 ### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
 
@@ -164,7 +164,7 @@ provider "anthropic" {}
 - `api_key` (String, Sensitive) The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.
 - `auth_token` (String, Sensitive) An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, such as the Workload Identity Federation admin endpoints. Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.
 - `federation` (Attributes) Obtain the org:admin OAuth bearer token through Workload Identity Federation instead of `auth_token`. The provider exchanges an identity token from your platform (a CI OIDC token, a Kubernetes projected service account token, an Entra token...) for an Anthropic access token, and exchanges again before it expires, fetching a fresh identity token each time. Every attribute falls back to the environment variable the Anthropic SDKs read. Conflicts with `auth_token`; an exported ANTHROPIC_AUTH_TOKEN is ignored, with a warning. Give the federation rule a `token_lifetime_seconds` well above 120: the SDK refreshes within the last 120 seconds of a token's life, so a shorter lifetime refreshes, and fetches an identity token, on nearly every request. (see [below for nested schema](#nestedatt--federation))
-- `workspace_id` (String) Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header on every request of the standard client. Required with a personal or service account key that is not scoped to a single workspace; unnecessary with a single-workspace key. Not sent on the Admin API or the org:admin OAuth client, which select their workspace otherwise. Can also be set via the ANTHROPIC_WORKSPACE_ID environment variable, shared with `federation.workspace_id`.
+- `workspace_id` (String) Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header on every request of the standard client. Required with a personal or service account key that is not scoped to a single workspace; must be left unset with a single-workspace key, which the API rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.
 
 <a id="nestedatt--federation"></a>
 ### Nested Schema for `federation`

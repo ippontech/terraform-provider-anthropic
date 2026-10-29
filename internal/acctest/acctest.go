@@ -102,18 +102,30 @@ func PreCheckMultiWorkspace(t *testing.T) {
 	}
 }
 
+// newSDKClient builds an SDK client from explicit options only, the way the
+// provider's own newSDKClient does: option.WithoutEnvironmentDefaults keeps
+// the other exported credential (and any ant profile) out of the client, and
+// ANTHROPIC_BASE_URL is re-applied by hand since the marker option skips it
+// too. Without that second step a test's out-of-band reads would query the
+// production host while the provider under test talks to another one.
+func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
+	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
+	c := anthropic.NewClient(opts...)
+	return &c
+}
+
 // NewMultiWorkspaceClient returns an SDK client authenticated with the
 // multi-workspace key and routed to workspaceID through the
 // anthropic-workspace-id header, for tests that check out of band which
-// workspace an object landed in. Call PreCheckMultiWorkspace first. Like the
-// other constructors it opts out of the SDK's environment defaults.
+// workspace an object landed in. Call PreCheckMultiWorkspace first.
 func NewMultiWorkspaceClient(workspaceID string) *anthropic.Client {
-	c := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
+	return newSDKClient(
 		option.WithAPIKey(os.Getenv(MultiWorkspaceAPIKeyEnv)),
 		option.WithHeader("anthropic-workspace-id", workspaceID),
 	)
-	return &c
 }
 
 // NewOAuthClient returns an SDK client authenticated with the org:admin OAuth
@@ -125,11 +137,7 @@ func NewMultiWorkspaceClient(workspaceID string) *anthropic.Client {
 // ANTHROPIC_API_KEY (always present in a test run) is not sent alongside the
 // bearer, which these endpoints reject.
 func NewOAuthClient() *anthropic.Client {
-	c := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
-		option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")),
-	)
-	return &c
+	return newSDKClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
 }
 
 // NewAPIKeyClient returns an SDK client authenticated with the standard API
@@ -139,9 +147,5 @@ func NewOAuthClient() *anthropic.Client {
 // defaults, so an exported ANTHROPIC_AUTH_TOKEN is not sent alongside the
 // key.
 func NewAPIKeyClient() *anthropic.Client {
-	c := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
-		option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")),
-	)
-	return &c
+	return newSDKClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
 }
