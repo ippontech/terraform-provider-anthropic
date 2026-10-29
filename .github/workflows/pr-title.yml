@@ -31,7 +31,19 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
           BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
         run: |
+          # The breaking-change guards below apply to pull requests to main,
+          # except the major/<version> release PR of this repository (RELEASE.md,
+          # "Cutting the release"): it is merged with a merge commit, so neither
+          # its title nor its description becomes a commit semantic-release
+          # parses; the commits it brings carry the breaking changes.
+          guard_breaking=false
+          if [[ "${BASE_REF}" == "main" && ! ( "${HEAD_REPO}" == "${REPO}" && "${HEAD_REF}" == major/* ) ]]; then
+            guard_breaking=true
+          fi
           # The types semantic-release acts on or knows (.releaserc and the
           # commit-analyzer default rules, table in CONTRIBUTING.md). `feature`,
           # an alias in the conventionalcommits preset, is left out: no release
@@ -45,7 +57,7 @@ jobs:
           elif [[ ! "${TITLE}" =~ ${pattern} ]]; then
             echo "::error title=PR title::Expected '<type>[(scope)][!]: <subject>' with type one of ${types//|/, } (Conventional Commits, see CONTRIBUTING.md)."
             exit 1
-          elif [[ -n "${BASH_REMATCH[3]}" && "${BASE_REF}" == "main" ]]; then
+          elif [[ -n "${BASH_REMATCH[3]}" && "${guard_breaking}" == true ]]; then
             # feat! / fix! on main would publish a major release. Breaking
             # changes go to the major/<version> staging branch (RELEASE.md).
             echo "::error title=PR title::'!' marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
@@ -56,7 +68,7 @@ jobs:
           # The pattern is the notes rule of conventional-commits-parser, which
           # semantic-release applies to every line of the body:
           # ^[\s|*]*(BREAKING CHANGE|BREAKING-CHANGE)[:\s]+, case-insensitive.
-          if [[ "${BASE_REF}" == "main" ]] && grep -qiE '^[[:space:]|*]*BREAKING[ -]CHANGE[:[:space:]]' <<< "${BODY}"; then
+          if [[ "${guard_breaking}" == true ]] && grep -qiE '^[[:space:]|*]*BREAKING[ -]CHANGE[:[:space:]]' <<< "${BODY}"; then
             echo "::error title=PR description::A line starting with 'BREAKING CHANGE' or 'BREAKING-CHANGE' (any case, after spaces or '*', followed by ':' or a space) marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
             exit 1
           fi
