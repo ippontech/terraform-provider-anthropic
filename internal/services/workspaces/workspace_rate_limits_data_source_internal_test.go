@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -257,5 +258,73 @@ func TestListRateLimitPages_keepsFiltersIntact(t *testing.T) {
 	}
 	if got := filters.Encode(); got != "group_type=batch" {
 		t.Errorf("filters mutated to %q", got)
+	}
+}
+
+// A next_page the listing already sent, the one just sent or an earlier one,
+// fails the read instead of looping. The fake stops answering with a cursor
+// after a few requests, so the test ends even without the guard.
+func TestListRateLimitPages_repeatedCursorFails(t *testing.T) {
+	cases := []struct {
+		name     string
+		next     map[string]string // page sent -> next_page returned
+		requests int
+	}{
+		{name: "echoed cursor", next: map[string]string{"": "cursor_2", "cursor_2": "cursor_2"}, requests: 2},
+		{name: "cycle", next: map[string]string{"": "cursor_2", "cursor_2": "cursor_3", "cursor_3": "cursor_2"}, requests: 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				next := `"` + tc.next[r.URL.Query().Get("page")] + `"`
+				if requests >= 6 {
+					next = "null"
+				}
+				w.Header().Set("content-type", "application/json")
+				_, _ = io.WriteString(w, `{"data":[{"rate_limit_id":"rl_01A"}],"next_page":`+next+`}`)
+			}))
+			defer srv.Close()
+
+			items, err := listRateLimitPages[workspaceRateLimitAPIItem](context.Background(), newTestAdminClient(t, srv), "/v1/organizations/workspaces/wrkspc_01WS/rate_limits", nil)
+			if err == nil {
+				t.Fatalf("listRateLimitPages returned %d items and no error, want a repeated cursor error", len(items))
+			}
+			if !strings.Contains(err.Error(), "cursor already sent") {
+				t.Errorf("err = %v, want a repeated cursor error", err)
+			}
+			if requests != tc.requests {
+				t.Errorf("requests = %d, want %d", requests, tc.requests)
+			}
+		})
+	}
+}
+
+// Identifiers and types the API leaves out map to null, not to "": an empty
+// rate_limit_id would otherwise look like a real ID.
+func TestMapRateLimitToObject_absentStringsMapToNull(t *testing.T) {
+	item := workspaceRateLimitAPIItem{
+		Type:   "workspace_rate_limit",
+		Group:  &rateLimitGroupAPI{},
+		Limits: []workspaceRateLimitEntry{{Type: "requests_per_minute", Value: 10, Source: &workspaceRateLimitSource{}}},
+	}
+	obj, diags := mapRateLimitToObject(context.Background(), item)
+	if diags.HasError() {
+		t.Fatalf("mapRateLimitToObject: %v", diags)
+	}
+	attrs := obj.(types.Object).Attributes()
+	if id := attrs["rate_limit_id"].(types.String); !id.IsNull() {
+		t.Errorf("rate_limit_id = %v, want null", id)
+	}
+	group := attrs["group"].(types.Object).Attributes()
+	for _, name := range []string{"id", "type"} {
+		if v := group[name].(types.String); !v.IsNull() {
+			t.Errorf("group.%s = %v, want null", name, v)
+		}
+	}
+	source := attrs["limits"].(types.List).Elements()[0].(types.Object).Attributes()["source"].(types.Object).Attributes()
+	if v := source["type"].(types.String); !v.IsNull() {
+		t.Errorf("source.type = %v, want null", v)
 	}
 }

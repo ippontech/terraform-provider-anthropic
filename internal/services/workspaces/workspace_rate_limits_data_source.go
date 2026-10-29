@@ -283,7 +283,7 @@ func mapRateLimitToObject(ctx context.Context, item workspaceRateLimitAPIItem) (
 		if entry.Source != nil {
 			var d diag.Diagnostics
 			source, d = types.ObjectValue(rateLimitSourceAttrTypes, map[string]attr.Value{
-				"type": types.StringValue(entry.Source.Type),
+				"type": tfvalue.StringOrNull(entry.Source.Type),
 			})
 			diags.Append(d...)
 		}
@@ -305,7 +305,7 @@ func mapRateLimitToObject(ctx context.Context, item workspaceRateLimitAPIItem) (
 
 	obj, d := types.ObjectValue(rateLimitAttrTypes, map[string]attr.Value{
 		"type":          types.StringValue(item.Type),
-		"rate_limit_id": types.StringValue(item.RateLimitID),
+		"rate_limit_id": tfvalue.StringOrNull(item.RateLimitID),
 		"group":         group,
 		"group_type":    tfvalue.StringOrNull(item.GroupType),
 		"models":        modelsList,

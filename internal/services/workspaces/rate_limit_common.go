@@ -33,11 +33,14 @@ type rateLimitPage[T any] struct {
 
 // listRateLimitPages fetches every page of the rate-limit list at path.
 // filters carries the endpoint's filters; the page size and the cursor are set
-// here, and next_page is followed until the API returns null.
+// here, and next_page is followed until the API returns null. A next_page
+// already sent during this listing is an error: following it would loop.
 func listRateLimitPages[T any](ctx context.Context, client *admin.Client, path string, filters url.Values) ([]T, error) {
 	var all []T
 	cursor := ""
+	sent := map[string]bool{}
 	for {
+		sent[cursor] = true
 		query := maps.Clone(filters)
 		if query == nil {
 			query = url.Values{}
@@ -60,6 +63,9 @@ func listRateLimitPages[T any](ctx context.Context, client *admin.Client, path s
 
 		if page.NextPage == nil || *page.NextPage == "" {
 			return all, nil
+		}
+		if sent[*page.NextPage] {
+			return nil, fmt.Errorf("rate limits list returned next_page %q, a cursor already sent: stopping instead of looping", *page.NextPage)
 		}
 		cursor = *page.NextPage
 	}
@@ -96,8 +102,8 @@ func rateLimitGroupValue(g *rateLimitGroupAPI) (types.Object, diag.Diagnostics) 
 		return types.ObjectNull(rateLimitGroupAttrTypes), nil
 	}
 	return types.ObjectValue(rateLimitGroupAttrTypes, map[string]attr.Value{
-		"id":           types.StringValue(g.ID),
-		"type":         types.StringValue(g.Type),
+		"id":           tfvalue.StringOrNull(g.ID),
+		"type":         tfvalue.StringOrNull(g.Type),
 		"display_name": tfvalue.StringOrNull(g.DisplayName),
 	})
 }
