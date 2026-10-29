@@ -109,21 +109,38 @@ func WithHeader(name, value string) RequestOption {
 	}
 }
 
-// WithBeta sends the given `anthropic-beta` values, comma-separated, as the
-// Admin API expects for endpoints in beta (plugins, webhooks, telemetry
-// destinations, ...). A request without the header gets a 404 from them.
+// WithBeta adds the given values to the `anthropic-beta` header,
+// comma-separated, as the Admin API expects for endpoints in beta (plugins,
+// webhooks, telemetry destinations, ...). A request without the header gets a
+// 404 from them. Several WithBeta options on one request add up: each keeps
+// the values set before it.
 func WithBeta(betas ...string) RequestOption {
-	return WithHeader("anthropic-beta", strings.Join(betas, ","))
+	return func(req *http.Request) {
+		if len(betas) == 0 {
+			return
+		}
+		values := betas
+		if prior := req.Header.Get("anthropic-beta"); prior != "" {
+			values = append([]string{prior}, betas...)
+		}
+		req.Header.Set("anthropic-beta", strings.Join(values, ","))
+	}
 }
 
 // DoRequest executes an HTTP request against the Admin API and returns the raw response body.
-// body is marshalled to JSON unless it is a RawBody; opts apply to this request only.
+// body is marshalled to JSON unless it is a RawBody or a *RawBody; opts apply to this request only.
 func (c *Client) DoRequest(ctx context.Context, method, path string, body any, opts ...RequestOption) ([]byte, error) {
 	var reqBody []byte
 	contentType := "application/json"
 	switch b := body.(type) {
 	case nil:
 	case RawBody:
+		reqBody = b.Data
+		contentType = b.ContentType
+	case *RawBody:
+		if b == nil {
+			return nil, errors.New("request body is a nil *RawBody")
+		}
 		reqBody = b.Data
 		contentType = b.ContentType
 	default:
