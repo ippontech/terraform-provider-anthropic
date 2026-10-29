@@ -237,7 +237,11 @@ func (r *PluginResource) Configure(_ context.Context, req resource.ConfigureRequ
 //   - configuring served_version_id pins the plugin, so the plan says so: an
 //     unpinned plugin whose served version already matches the configuration
 //     then still gets the update that pins it, with the values that update
-//     returns left unknown (unknown too while served_version_id is);
+//     returns left unknown. The pin itself is planned unknown while
+//     served_version_id is, and when it names the version an unpinned plugin
+//     already serves: with ignore_changes, that value is the prior one that
+//     Terraform puts in the plan's configuration but not in the apply's, and
+//     Update pins only for the configuration it applies;
 //   - a change to an input read only at creation is a no-op, which a warning
 //     says.
 func (r *PluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -251,6 +255,7 @@ func (r *PluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		return
 	}
 
+	pinMayComeFromIgnoreChanges := false
 	if req.State.Raw.IsNull() {
 		if config.SourceDir.IsNull() && config.SourceArchive.IsNull() {
 			resp.Diagnostics.AddAttributeError(path.Root("source_dir"), "Missing plugin source",
@@ -291,13 +296,16 @@ func (r *PluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		// between plan and apply.
 		if !config.ServedVersionID.IsNull() && !state.ServedVersionPinned.ValueBool() {
 			resp.Diagnostics.Append(planServeResultUnknown(ctx, &resp.Plan)...)
+			pinMayComeFromIgnoreChanges = config.ServedVersionID.Equal(state.ServedVersionID)
 		}
 	}
 
 	switch {
-	case config.ServedVersionID.IsUnknown():
-		// It may still turn out null, which pins nothing: a pin planned now
-		// would change in the plan Terraform makes at apply.
+	case config.ServedVersionID.IsUnknown(), pinMayComeFromIgnoreChanges:
+		// An unknown value may still turn out null, which pins nothing; the
+		// version an unpinned plugin serves may be ignore_changes' prior value,
+		// absent from the configuration Update applies. A pin planned now would
+		// then not be made.
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("served_version_pinned"), types.BoolUnknown())...)
 	case !config.ServedVersionID.IsNull():
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("served_version_pinned"), true)...)

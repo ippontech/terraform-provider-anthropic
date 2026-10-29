@@ -524,8 +524,16 @@ func TestPluginResource_ModifyPlanPinsAConfiguredServedVersion(t *testing.T) {
 	}
 	var pinned types.Bool
 	resp.Plan.GetAttribute(context.Background(), path.Root("served_version_pinned"), &pinned)
+	if !pinned.IsUnknown() {
+		t.Errorf("served_version_pinned = %s, want unknown: the version an unpinned plugin serves may come from ignore_changes, "+
+			"and Update pins only when the applied configuration sets it", pinned)
+	}
+
+	config.ServedVersionID = types.StringValue("pluginver_01")
+	resp = modifyPluginPlan(t, config, &prior)
+	resp.Plan.GetAttribute(context.Background(), path.Root("served_version_pinned"), &pinned)
 	if !pinned.ValueBool() {
-		t.Error("configuring served_version_id must plan served_version_pinned = true, so an unpinned plugin gets pinned")
+		t.Error("serving another version pins the plugin: served_version_pinned must be planned true")
 	}
 
 	config.ServedVersionID = types.StringNull()
@@ -704,6 +712,46 @@ func TestPluginResource_PinAppliesOnAPluginChangedSinceThePlan(t *testing.T) {
 	r.Update(context.Background(), resource.UpdateRequest{Config: req.Config, Plan: planResp.Plan, State: req.State}, &updateResp)
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("Update: %v", updateResp.Diagnostics)
+	}
+	assertAppliedAsPlanned(t, planResp.Plan, updateResp.State)
+}
+
+// With `ignore_changes = [served_version_id]` (or `all`), Terraform plans
+// with the prior value in the configuration but applies with the
+// configuration as written. On an unpinned plugin, the value it already
+// serves then looked configured at plan time: a planned pin that Update, which
+// reads the configuration it applies, never made, and every apply failed with
+// "inconsistent result after apply". A configured version equal to the one
+// an unpinned plugin serves now plans the pin as unknown, and the pin happens
+// only when the applied configuration sets served_version_id.
+func TestPluginResource_IgnoredServedVersionNeitherPinsNorFails(t *testing.T) {
+	t.Parallel()
+	client, requests := fakePluginsAPI(t, nil)
+	r := &PluginResource{client: client}
+	prior := statePluginModel(t, "/plugins/sales", "pluginver_02", false)
+
+	// The configuration Terraform plans with: served_version_id is ignored,
+	// so it holds the prior value.
+	planConfig := newPluginModel()
+	planConfig.SourceDir = types.StringValue("/plugins/sales")
+	planConfig.ServedVersionID = prior.ServedVersionID
+	req := resource.ModifyPlanRequest{Config: configOf(t, r, planConfig), Plan: planOf(t, r, prior), State: stateOf(t, r, prior)}
+	planResp := resource.ModifyPlanResponse{Plan: req.Plan}
+	r.ModifyPlan(context.Background(), req, &planResp)
+	if planResp.Diagnostics.HasError() {
+		t.Fatal(planResp.Diagnostics)
+	}
+
+	// The configuration it applies with: served_version_id as written (unset).
+	applyConfig := planConfig
+	applyConfig.ServedVersionID = types.StringNull()
+	updateResp := resource.UpdateResponse{State: stateOf(t, r, prior)}
+	r.Update(context.Background(), resource.UpdateRequest{Config: configOf(t, r, applyConfig), Plan: planResp.Plan, State: req.State}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", updateResp.Diagnostics)
+	}
+	if n := len(requests()); n != 0 {
+		t.Errorf("requests = %d, want none: a pin cannot be undone, so it needs served_version_id in the applied configuration", n)
 	}
 	assertAppliedAsPlanned(t, planResp.Plan, updateResp.State)
 }
