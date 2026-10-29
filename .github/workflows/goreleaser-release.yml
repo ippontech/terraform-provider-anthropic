@@ -8,7 +8,55 @@ on:
 permissions: {}
 
 jobs:
+  # Runs before the approval that releases the GPG key, with no secret: it writes on the run's
+  # summary page the go.mod lines that changed since the previous release, which the approver
+  # checks before approving (RELEASE.md, "Approve a release"). Renovate automerges module
+  # updates, so this approval is the one human decision before they ship signed.
+  dependency-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # the previous release tag and its go.mod
+          persist-credentials: false
+
+      - name: List the go.mod changes since the previous release
+        run: |
+          set -euo pipefail
+          if ! previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "${GITHUB_SHA}^" 2>/dev/null); then
+            echo "No previous release tag: nothing to compare." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          changes=$(git diff --unified=0 "${previous}" "${GITHUB_SHA}" -- go.mod | grep -E '^[-+][^-+]' || true)
+          {
+            echo "## go.mod changes from ${previous} to ${GITHUB_REF_NAME}"
+            echo
+            if [ -z "${changes}" ]; then
+              echo "None: this release compiles the same modules as ${previous}."
+            else
+              echo "\`go.mod\` lists every module compiled into the provider. Check each change before approving the signing job (RELEASE.md, \"Approve a release\")."
+              echo
+              echo '```diff'
+              echo "${changes}"
+              echo '```'
+            fi
+            echo
+            echo "Full diff: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${previous}...${GITHUB_REF_NAME}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   goreleaser-release:
+    needs: dependency-changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # The GPG key and its passphrase are secrets of this environment only, whose deployment

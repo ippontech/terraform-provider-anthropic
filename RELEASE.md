@@ -10,6 +10,18 @@ A red acceptance run publishes nothing. Fix the cause, or, if the API itself was
 
 The workflow runs one at a time on `main` (`concurrency` group, no cancellation): when several commits land while a run is testing, only the newest waiting one runs. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit. The run that was testing publishes nothing, even when green, because semantic-release publishes only from the head of `main`; the newer run releases every pending commit once its own tests pass. A running test is never cancelled to make room: the objects it had created would stay in the test workspace, since nothing deletes them afterwards.
 
+## Approve a release
+
+Renovate merges minor and patch module updates on its own, three days after they are published, and each one cuts a version. The approval of the signing job is the one human decision before those modules ship signed to every user, so it checks them.
+
+The signing job waits in `Actions > GoReleaser Release`, on the run of the new tag, behind **Review deployments**, for one of the `release` environment's reviewers. Before approving:
+
+1. Open the run's summary. The `dependency-changes` job lists every `go.mod` line that changed since the previous release; `go.mod` lists every module compiled into the provider, indirect ones included. "None" means the release compiles the same modules as the previous one.
+2. For each changed module, check that the new version is a published release of that module (a tag or release notes on its repository), and look for anything unexpected: a module nobody added on purpose, a version published a few days ago without notes, a repository that changed owner.
+3. Approve. If in doubt, reject: nothing is built, signed or published. The tag and the GitHub release stay without binaries, and the next fix ships under the next version number. Delete that GitHub release (the tag stays: the tag ruleset forbids deleting it) and say in the next release notes why the number was skipped. Never re-sign or replace a published version: the Terraform Registry asks to release a new version instead.
+
+After approving, check that the version shows up on the [Terraform Registry](https://registry.terraform.io/providers/ippontech/anthropic/latest). semantic-release publishes the GitHub release before the signed binaries are attached, now possibly hours apart. If the version does not appear, the Resync button on the provider's settings page in the Registry re-creates its webhook.
+
 # GPG Key Setup
 
 The release workflow signs the provider checksums with a GPG key. This is required by the [Terraform Registry](https://registry.terraform.io) to verify the authenticity of provider binaries.
@@ -185,7 +197,7 @@ Create two environments (`Settings > Environments > New environment`):
 | `semantic-release` | `semantic-release.yml` | **Selected branches and tags**, one branch rule `main` | `SEMREL_APP_ID`, `SEMREL_APP_PRIVATE_KEY` |
 | `acctest` (already set up) | `testacc.yml`, which `semantic-release.yml` calls before releasing | **Selected branches and tags**, one branch rule `main` | `ANTHROPIC_API_KEY`, `ANTHROPIC_ADMIN_API_KEY`, `ANTHROPIC_MULTI_WORKSPACE_API_KEY` |
 
-On `release`, also tick **Required reviewers** and add the maintainers: every signed release then waits for one approval in the Actions UI, which is the only control that holds even if a tag slips through. Leave **Allow administrators to bypass** unticked.
+On `release`, also tick **Required reviewers** and add the maintainers: every signed release then waits for one approval in the Actions UI ([Approve a release](#approve-a-release) says what to check), which is the only control that holds even if a tag slips through. Leave **Allow administrators to bypass** unticked.
 
 Then **delete the four secrets at repository level** (`Settings > Secrets and variables > Actions`), and check that no organization secret carries them. Until they are deleted, the environments protect nothing.
 
