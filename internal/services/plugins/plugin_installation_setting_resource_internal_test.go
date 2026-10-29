@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -73,6 +74,56 @@ func TestPluginInstallationSettingResource_Create(t *testing.T) {
 			}
 			if got.CreatedAt.ValueString() != "2026-09-02T10:00:00Z" || got.UpdatedAt.ValueString() != "2026-09-03T10:00:00Z" {
 				t.Errorf("timestamps = %s / %s", got.CreatedAt, got.UpdatedAt)
+			}
+		})
+	}
+}
+
+func TestListPluginsPages_StopsOnARepeatedOrEndlessCursor(t *testing.T) {
+	t.Parallel()
+	const path = "/v1/organizations/plugins/plugin_01/installation_settings"
+	for name, tc := range map[string]struct {
+		pages    []fakeResponse
+		maxPages int
+		wantErr  string
+		wantReqs int
+	}{
+		"the cursor just sent": {
+			pages:    []fakeResponse{ok(`{"data": [], "next_page": "page_2"}`)},
+			maxPages: maxPluginsListPages, wantErr: `cursor "page_2" again`, wantReqs: 2,
+		},
+		"a cycle of cursors": {
+			pages: []fakeResponse{
+				ok(`{"data": [], "next_page": "page_2"}`), ok(`{"data": [], "next_page": "page_3"}`),
+				ok(`{"data": [], "next_page": "page_2"}`),
+			},
+			maxPages: maxPluginsListPages, wantErr: `cursor "page_2" again`, wantReqs: 3,
+		},
+		"more pages than the bound": {
+			pages: []fakeResponse{
+				ok(`{"data": [], "next_page": "page_2"}`), ok(`{"data": [], "next_page": "page_3"}`),
+				ok(`{"data": [], "next_page": "page_4"}`),
+			},
+			maxPages: 2, wantErr: "after 2 pages", wantReqs: 2,
+		},
+		"the last page": {
+			pages:    []fakeResponse{ok(`{"data": [], "next_page": "page_2"}`), ok(`{"data": [], "next_page": null}`)},
+			maxPages: 2, wantReqs: 2,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			client, requests := fakePluginsAPI(t, map[string][]fakeResponse{"GET " + path: tc.pages})
+			err := listPluginsPagesUpTo(context.Background(), client, path, nil, 100, tc.maxPages,
+				func(pluginInstallationSettingAPIObject) bool { return true })
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("err = %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
+			}
+			if n := len(requests()); n != tc.wantReqs {
+				t.Errorf("requests = %d, want %d", n, tc.wantReqs)
 			}
 		})
 	}

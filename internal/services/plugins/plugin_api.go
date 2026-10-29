@@ -182,16 +182,30 @@ type pluginsPage[T any] struct {
 	NextPage string `json:"next_page"`
 }
 
+// maxPluginsListPages bounds a list walk: at the limits the provider asks for,
+// far more items than an organization can hold.
+const maxPluginsListPages = 10000
+
 // listPluginsPages pages through a Plugins API list, calling visit with each
 // item until it returns false. A page can be short, or empty, while
 // `next_page` is still set, so only a null cursor ends the walk.
 func listPluginsPages[T any](ctx context.Context, client *admin.Client, path string, query url.Values, limit int, visit func(T) bool) error {
+	return listPluginsPagesUpTo(ctx, client, path, query, limit, maxPluginsListPages, visit)
+}
+
+// listPluginsPagesUpTo is listPluginsPages with its page bound as a
+// parameter. A cursor already sent, or a walk past maxPages, is an error
+// rather than a loop that only a context deadline would stop: empty pages
+// with a cursor are allowed, so an API that keeps returning the same cursor,
+// or cycles through a few, would otherwise hang plan and refresh.
+func listPluginsPagesUpTo[T any](ctx context.Context, client *admin.Client, path string, query url.Values, limit, maxPages int, visit func(T) bool) error {
 	q := url.Values{}
 	for k, v := range query {
 		q[k] = v
 	}
 	q.Set("limit", strconv.Itoa(limit))
-	for {
+	sent := map[string]bool{}
+	for pages := 1; ; pages++ {
 		respBody, err := pluginsRequest(ctx, client, http.MethodGet, path, q, nil)
 		if err != nil {
 			return err
@@ -205,9 +219,15 @@ func listPluginsPages[T any](ctx context.Context, client *admin.Client, path str
 				return nil
 			}
 		}
-		if page.NextPage == "" {
+		switch {
+		case page.NextPage == "":
 			return nil
+		case sent[page.NextPage]:
+			return fmt.Errorf("the API returned the next_page cursor %q again, so the list of %s cannot be read to its end", page.NextPage, path)
+		case pages >= maxPages:
+			return fmt.Errorf("the list of %s still had a next_page cursor after %d pages; stopping", path, maxPages)
 		}
+		sent[page.NextPage] = true
 		q.Set("page", page.NextPage)
 	}
 }
