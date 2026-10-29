@@ -16,7 +16,7 @@ Manages an [organization webhook endpoint](https://platform.claude.com/docs/en/m
 
 ## Availability
 
-Organization webhooks are in beta and turned on per organization: ask your Anthropic account team for access. They are not available to organizations with [HIPAA readiness](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention#hipaa-readiness) enabled, nor to an organization whose default workspace uses a customer-managed encryption key. Until the feature is on, every request answers `404`, so creating this resource fails and reading an existing one removes it from state.
+Organization webhooks are in beta and turned on per organization: ask your Anthropic account team for access. They are not available to organizations with [HIPAA readiness](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention#hipaa-readiness) enabled, nor to an organization whose default workspace uses a customer-managed encryption key. Until the feature is on, every request answers `404`, so creating this resource fails. An existing endpoint is removed from state only when its own read answers `404` while the list of endpoints still answers; if the list answers `404` too (the beta was turned off, or its version retired), the refresh fails and the endpoint stays in state with its signing secret.
 
 An organization can have at most **32** organization webhook endpoints, disabled ones included. Two enabled endpoints cannot share a URL.
 

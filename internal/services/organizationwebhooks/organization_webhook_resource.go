@@ -240,24 +240,30 @@ func (r *OrganizationWebhookResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
-	// A new endpoint always starts enabled: the create body has no state, so
-	// enabled = false takes a second call.
-	if created.State == organizationWebhookStateEnabled && !wantEnabled.IsNull() && !wantEnabled.IsUnknown() && !wantEnabled.ValueBool() {
-		updated, err := r.update(ctx, created.ID, organizationWebhookUpdateRequest{State: organizationWebhookStateDisabled})
-		if err != nil {
-			// Save the endpoint as created (enabled, with its secret) so it is not
-			// orphaned; Terraform marks it tainted because of the error.
-			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Organization webhook %s was created but could not be disabled: %s", created.ID, err))
-			return
-		}
+	// The create body has no state, so enabled = false takes a second call. A
+	// new endpoint should start enabled; if the API created it disabled (for
+	// example over its URL), the same call turns it on as planned.
+	if wantEnabled.IsNull() || wantEnabled.IsUnknown() || data.Enabled.Equal(wantEnabled) {
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		return
+	}
+	want := organizationWebhookStateDisabled
+	if wantEnabled.ValueBool() {
+		want = organizationWebhookStateEnabled
+	}
+	updated, err := r.update(ctx, created.ID, organizationWebhookUpdateRequest{State: want})
+	if err == nil {
 		resp.Diagnostics.Append(applyOrganizationWebhookResponse(updated, &data)...)
-		if resp.Diagnostics.HasError() {
-			return
+		if !resp.Diagnostics.HasError() && !data.Enabled.Equal(wantEnabled) {
+			err = fmt.Errorf("the API still reports it %s (disabled_reason: %q)", updated.State, updated.DisabledReason)
 		}
 	}
-
+	// Save the endpoint as it is (with its secret) so it is not orphaned;
+	// on an error Terraform marks it tainted.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Organization webhook %s was created but could not be set to state %q: %s", created.ID, want, err))
+	}
 }
 
 // --- Read ---
@@ -271,11 +277,18 @@ func (r *OrganizationWebhookResource) Read(ctx context.Context, req resource.Rea
 
 	ep, err := r.get(ctx, data.ID.ValueString())
 	if err != nil {
-		if admin.IsNotFound(err) {
-			resp.State.RemoveResource(ctx)
+		if !admin.IsNotFound(err) {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read organization webhook: %s", err))
 			return
 		}
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read organization webhook: %s", err))
+		if lerr := organizationWebhooksUnavailable(ctx, r.client); lerr != nil {
+			resp.Diagnostics.AddError("Organization webhooks unavailable", fmt.Sprintf(
+				"Organization webhook %s answered 404, and so did the list of endpoints (%s). The organization may have lost the "+
+					"webhooks beta, or the %q beta version may be retired: the endpoint is kept in state, with its signing secret, "+
+					"rather than dropped as deleted.", data.ID.ValueString(), lerr, organizationWebhooksBeta))
+			return
+		}
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -376,8 +389,17 @@ func (r *OrganizationWebhookResource) Delete(ctx context.Context, req resource.D
 	}
 
 	_, err := doOrganizationWebhookRequest(ctx, r.client, "DELETE", organizationWebhookPath(data.ID.ValueString()), nil)
-	if err != nil && !admin.IsNotFound(err) {
+	switch {
+	case err == nil:
+	case !admin.IsNotFound(err):
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete organization webhook: %s", err))
+	default:
+		// A 404 means already deleted only if the API answers at all.
+		if lerr := organizationWebhooksUnavailable(ctx, r.client); lerr != nil {
+			resp.Diagnostics.AddError("Organization webhooks unavailable", fmt.Sprintf(
+				"Deleting organization webhook %s answered 404, and so did the list of endpoints (%s): the organization may have lost "+
+					"the webhooks beta, so the endpoint may still exist and receive events.", data.ID.ValueString(), lerr))
+		}
 	}
 }
 

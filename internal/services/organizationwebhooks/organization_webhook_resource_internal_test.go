@@ -12,7 +12,10 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -203,6 +206,90 @@ func TestOrganizationWebhookResource_CreateDisableFailureKeepsEndpoint(t *testin
 	}
 }
 
+// If the API creates the endpoint disabled while the plan wants it enabled
+// (the default), the follow-up call turns it on, so the state matches the
+// plan; if it stays disabled, the create fails with the reason instead of
+// saving a value that contradicts the plan.
+func TestOrganizationWebhookResource_CreateEnablesEndpointCreatedDisabled(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		afterEnable string
+		wantErr     bool
+	}{
+		"enabled by the second call": {afterEnable: "enabled"},
+		"still disabled":             {afterEnable: "disabled", wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			api, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
+				if r.Path == organizationWebhooksPath {
+					return http.StatusOK, webhookJSON(t, map[string]any{
+						"signing_secret": "whsec_created", "state": "disabled", "disabled_reason": "The URL resolves to a non-public address.",
+					})
+				}
+				return http.StatusOK, webhookJSON(t, map[string]any{"state": tc.afterEnable})
+			})
+			r := &OrganizationWebhookResource{client: client}
+
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: schematest.ResourceSchema(t, r)}}
+			r.Create(context.Background(), resource.CreateRequest{Plan: webhookPlan(t, r, baseWebhookModel(t))}, &resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("Create diagnostics = %v, want error %v", resp.Diagnostics, tc.wantErr)
+			}
+			if body := api.request(t, 1).Body; !reflect.DeepEqual(body, map[string]any{"state": "enabled"}) {
+				t.Errorf("second call body = %v, want only state=enabled", body)
+			}
+			got := readWebhookState(t, resp.State)
+			if got.SigningSecret.ValueString() != "whsec_created" {
+				t.Errorf("signing_secret = %v, want the secret of the create response", got.SigningSecret)
+			}
+			if !tc.wantErr && !got.Enabled.ValueBool() {
+				t.Error("enabled = false, want the planned true")
+			}
+		})
+	}
+}
+
+// Writes to the organization's endpoints go one at a time, so that several
+// endpoints applied in parallel do not hit the 409 the API documents for
+// concurrent changes. The fake answers 409 to a write that overlaps another.
+func TestDoOrganizationWebhookRequest_serializesWrites(t *testing.T) {
+	var inFlight atomic.Int32
+	_, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
+		if r.Method == http.MethodGet {
+			return http.StatusOK, webhookJSON(t, nil)
+		}
+		defer inFlight.Add(-1)
+		if inFlight.Add(1) > 1 {
+			return http.StatusConflict, `{"type":"error","error":{"type":"conflict_error","message":"concurrent change"}}`
+		}
+		time.Sleep(20 * time.Millisecond)
+		return http.StatusOK, webhookJSON(t, nil)
+	})
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			method, path := http.MethodPost, organizationWebhooksPath
+			if i%2 == 1 {
+				method, path = http.MethodDelete, organizationWebhookPath(testWebhookID)
+			}
+			if _, err := doOrganizationWebhookRequest(context.Background(), client, method, path, nil); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("write failed: %v", err)
+	}
+}
+
 // --- Read ---
 
 func TestOrganizationWebhookResource_ReadPreservesSigningSecret(t *testing.T) {
@@ -276,10 +363,19 @@ func TestOrganizationWebhookResource_ReadAfterImportLeavesSecretNull(t *testing.
 	}
 }
 
+// emptyListOr404 answers the list of endpoints with an empty page and any
+// other request with a 404: the endpoint is gone, the API is reachable.
+func emptyListOr404(r recordedRequest) (int, string) {
+	if r.Method == http.MethodGet && r.Path == organizationWebhooksPath {
+		return http.StatusOK, `{"data":[],"has_more":false,"first_id":null,"last_id":null}`
+	}
+	return notFound()
+}
+
 func TestOrganizationWebhookResource_ReadNotFoundRemovesFromState(t *testing.T) {
 	t.Parallel()
 
-	_, client := newFakeWebhookAPI(t, func(recordedRequest) (int, string) { return notFound() })
+	api, client := newFakeWebhookAPI(t, emptyListOr404)
 	r := &OrganizationWebhookResource{client: client}
 
 	state := webhookState(t, r, stateWebhookModel(t))
@@ -290,6 +386,31 @@ func TestOrganizationWebhookResource_ReadNotFoundRemovesFromState(t *testing.T) 
 	}
 	if !resp.State.Raw.IsNull() {
 		t.Error("expected the resource to be removed from state after a 404")
+	}
+	want := []string{"GET /v1/organizations/webhooks/" + testWebhookID, "GET /v1/organizations/webhooks"}
+	if got := api.calls(); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %v, want %v", got, want)
+	}
+	api.assertBetaOnEveryRequest(t)
+}
+
+// When the list answers 404 too, the organization has lost the beta (or the
+// beta version is retired): the endpoint is not dropped from state, with its
+// signing secret, as if it had been deleted.
+func TestOrganizationWebhookResource_ReadNotFoundKeepsStateWhenBetaUnavailable(t *testing.T) {
+	t.Parallel()
+
+	_, client := newFakeWebhookAPI(t, func(recordedRequest) (int, string) { return notFound() })
+	r := &OrganizationWebhookResource{client: client}
+
+	state := webhookState(t, r, stateWebhookModel(t))
+	resp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "beta") {
+		t.Fatalf("diagnostics = %v, want an error about the beta", resp.Diagnostics)
+	}
+	if got := readWebhookState(t, resp.State); got.SigningSecret.ValueString() != "whsec_original" {
+		t.Errorf("signing_secret = %v, want the stored secret kept", got.SigningSecret)
 	}
 }
 
@@ -442,24 +563,33 @@ func TestOrganizationWebhookResource_UpdateErrorKeepsPriorState(t *testing.T) {
 func TestOrganizationWebhookResource_Delete(t *testing.T) {
 	t.Parallel()
 
-	for name, status := range map[string]int{"deleted": http.StatusOK, "already gone": http.StatusNotFound} {
+	del := "DELETE /v1/organizations/webhooks/" + testWebhookID
+	for name, tc := range map[string]struct {
+		handle    func(recordedRequest) (int, string)
+		wantCalls []string
+		wantErr   bool
+	}{
+		"deleted": {
+			handle: func(recordedRequest) (int, string) {
+				return http.StatusOK, `{"id":"` + testWebhookID + `","type":"webhook_endpoint_deleted"}`
+			},
+			wantCalls: []string{del},
+		},
+		"already gone":         {handle: emptyListOr404, wantCalls: []string{del, "GET /v1/organizations/webhooks"}},
+		"404 without the beta": {handle: func(recordedRequest) (int, string) { return notFound() }, wantCalls: []string{del, "GET /v1/organizations/webhooks"}, wantErr: true},
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			api, client := newFakeWebhookAPI(t, func(recordedRequest) (int, string) {
-				if status == http.StatusNotFound {
-					return notFound()
-				}
-				return status, `{"id":"` + testWebhookID + `","type":"webhook_endpoint_deleted"}`
-			})
+			api, client := newFakeWebhookAPI(t, tc.handle)
 			r := &OrganizationWebhookResource{client: client}
 
 			var resp resource.DeleteResponse
 			r.Delete(context.Background(), resource.DeleteRequest{State: webhookState(t, r, stateWebhookModel(t))}, &resp)
-			if resp.Diagnostics.HasError() {
-				t.Fatalf("Delete: %v", resp.Diagnostics)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("Delete diagnostics = %v, want error %v", resp.Diagnostics, tc.wantErr)
 			}
-			if got, want := api.calls(), []string{"DELETE /v1/organizations/webhooks/" + testWebhookID}; !reflect.DeepEqual(got, want) {
-				t.Errorf("calls = %v, want %v", got, want)
+			if got := api.calls(); !reflect.DeepEqual(got, tc.wantCalls) {
+				t.Errorf("calls = %v, want %v", got, tc.wantCalls)
 			}
 			api.assertBetaOnEveryRequest(t)
 		})

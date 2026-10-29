@@ -10,7 +10,9 @@ package organizationwebhooks
 
 import (
 	"context"
+	"net/http"
 	"net/url"
+	"sync"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -48,10 +50,33 @@ func organizationWebhookPath(id string) string {
 	return organizationWebhooksPath + "/" + url.PathEscape(id)
 }
 
+// organizationWebhookWrites serializes this provider's writes to the
+// organization's webhook endpoints. The organization webhooks guide documents
+// a 409 for concurrent changes to an organization's endpoints, Terraform
+// creates, updates and deletes several endpoints in parallel, and the Admin
+// client does not replay a POST after a 409. Writes are few (at most 32
+// endpoints), so waiting costs little.
+var organizationWebhookWrites sync.Mutex
+
 // doOrganizationWebhookRequest sends one Admin API request with the beta
-// header these endpoints require.
+// header these endpoints require. Any request other than a GET waits for the
+// other writes of this provider to finish.
 func doOrganizationWebhookRequest(ctx context.Context, client *admin.Client, method, path string, body any) ([]byte, error) {
+	if method != http.MethodGet {
+		organizationWebhookWrites.Lock()
+		defer organizationWebhookWrites.Unlock()
+	}
 	return client.DoRequest(ctx, method, path, body, admin.WithBeta(organizationWebhooksBeta))
+}
+
+// organizationWebhooksUnavailable reports, after a 404 on an endpoint, whether
+// the whole API answers 404 too: the API also answers 404 when the
+// organization does not have the webhooks beta or the pinned beta version is
+// retired, and only a list that answers tells a deleted endpoint from that.
+// It returns the list's error, or nil when the list answered.
+func organizationWebhooksUnavailable(ctx context.Context, client *admin.Client) error {
+	_, err := doOrganizationWebhookRequest(ctx, client, http.MethodGet, organizationWebhooksPath+"?limit=1", nil)
+	return err
 }
 
 // --- Admin API request/response types ---
