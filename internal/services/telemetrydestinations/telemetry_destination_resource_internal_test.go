@@ -766,3 +766,243 @@ func TestEndpointHostOrPortChanged(t *testing.T) {
 		}
 	}
 }
+
+// --- Review follow-up ---
+
+// With the traces block left out, a custom traces URL on the old host cannot
+// follow an endpoint_url host change: the plan modifier plans traces unknown
+// (with a warning) and the update clears the URL instead of replaying it.
+func TestTracesFollowEndpointHost(t *testing.T) {
+	t.Parallel()
+
+	r := &TelemetryDestinationResource{}
+	stored := storedDestination(t)
+	stored.Traces = tracesObject("metadata_only", types.StringValue("https://gateway.example.com/custom/traces"), types.Int64Null())
+	omittedBlock := func(endpoint types.String) TelemetryDestinationResourceModel {
+		m := updatePlan(stored)
+		m.EndpointURL = endpoint
+		m.Traces = types.ObjectNull(tracesAttrTypes)
+		return m
+	}
+	setBlock := omittedBlock(types.StringValue("https://collector.example.org/otlp"))
+	setBlock.Traces = tracesObject("metadata_only", types.StringValue("https://collector.example.org/custom/traces"), types.Int64Null())
+	noStoredURL := stored
+	noStoredURL.Traces = tracesObject("metadata_only", types.StringNull(), types.Int64Null())
+
+	for name, tc := range map[string]struct {
+		state       TelemetryDestinationResourceModel
+		config      TelemetryDestinationResourceModel
+		wantUnknown bool
+		wantWarning bool
+	}{
+		"block omitted, host changes":     {stored, omittedBlock(types.StringValue("https://collector.example.org/otlp")), true, true},
+		"block omitted, port changes":     {stored, omittedBlock(types.StringValue("https://gateway.example.com:4318/otlp")), true, true},
+		"block omitted, endpoint unknown": {stored, omittedBlock(types.StringUnknown()), true, false},
+		"block omitted, same host":        {stored, omittedBlock(types.StringValue("https://gateway.example.com/v2/otlp")), false, false},
+		"block set":                       {stored, setBlock, false, false},
+		"no stored traces URL":            {noStoredURL, omittedBlock(types.StringValue("https://collector.example.org/otlp")), false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := toConfig(t, r, tc.config, types.MapNull(types.StringType))
+			plan := tc.config
+			plan.Traces = tc.state.Traces // what UseStateForUnknown plans for an omitted block
+			if !tc.config.Traces.IsNull() {
+				plan.Traces = tc.config.Traces
+			}
+			req := planmodifier.ObjectRequest{
+				Config: cfg, ConfigValue: tc.config.Traces,
+				Plan: toPlan(t, r, plan), PlanValue: plan.Traces,
+				State: toState(t, r, tc.state), StateValue: tc.state.Traces,
+				Path: path.Root("traces"),
+			}
+			resp := planmodifier.ObjectResponse{PlanValue: req.PlanValue}
+			tracesFollowEndpointHost{}.PlanModifyObject(context.Background(), req, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("diagnostics: %v", resp.Diagnostics)
+			}
+			if resp.PlanValue.IsUnknown() != tc.wantUnknown {
+				t.Errorf("traces planned unknown = %v, want %v", resp.PlanValue.IsUnknown(), tc.wantUnknown)
+			}
+			if got := resp.Diagnostics.WarningsCount() == 1; got != tc.wantWarning {
+				t.Errorf("warning = %v, want %v (%v)", got, tc.wantWarning, resp.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestTelemetryDestinationResource_UpdateHostChangeClearsUnmanagedTracesURL(t *testing.T) {
+	t.Parallel()
+
+	state := storedDestination(t)
+	state.Traces = tracesObject("metadata_only", types.StringValue("https://gateway.example.com/custom/traces"), types.Int64Null())
+	plan := updatePlan(state)
+	plan.EndpointURL = types.StringValue("https://collector.example.org/otlp")
+	plan.Traces = types.ObjectUnknown(tracesAttrTypes) // tracesFollowEndpointHost
+	plan.HeaderNames = types.SetUnknown(types.StringType)
+
+	api, resp := runUpdate(t, state, plan, types.MapNull(types.StringType), func(recordedRequest) (int, string) {
+		return http.StatusOK, destinationJSON(t, map[string]any{"endpoint_url": "https://collector.example.org/otlp", "header_names": []string{}})
+	})
+
+	body := api.request(t, 0).Body
+	if want := map[string]any{"endpoint_url": nil}; !reflect.DeepEqual(body["traces"], want) {
+		t.Errorf("traces = %v, want %v: the stored traces URL is on the old host", body["traces"], want)
+	}
+	if got := tracesEndpointURL(fromState(t, resp.State).Traces); !got.IsNull() {
+		t.Errorf("traces.endpoint_url = %v, want the API's null", got)
+	}
+}
+
+// If the API answers the create with the destination disabled while the plan
+// wants it enabled (the default), a second call enables it; if it stays
+// disabled, the create fails with the reason and the destination is saved as
+// it is, rather than saving false against a planned true.
+func TestTelemetryDestinationResource_CreateEnablesDestinationCreatedDisabled(t *testing.T) {
+	t.Parallel()
+
+	disabled := map[string]any{"state": map[string]any{"type": "disabled", "reason": map[string]any{"type": "invalid_address"}}}
+	for name, tc := range map[string]struct {
+		afterEnable map[string]any
+		wantErr     bool
+	}{
+		"enabled by the second call": {afterEnable: nil},
+		"still disabled":             {afterEnable: disabled, wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			api, client := newFakeTelemetryAPI(t, func(r recordedRequest) (int, string) {
+				if r.Path == telemetryDestinationsPath {
+					return http.StatusOK, destinationJSON(t, disabled)
+				}
+				return http.StatusOK, destinationJSON(t, tc.afterEnable)
+			})
+			r := &TelemetryDestinationResource{client: client}
+
+			plan := plannedDestination(t)
+			cfg := toConfig(t, r, plan, types.MapNull(types.StringType))
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: cfg.Schema}}
+			r.Create(context.Background(), resource.CreateRequest{Plan: toPlan(t, r, plan), Config: cfg}, &resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("Create diagnostics = %v, want error %v", resp.Diagnostics, tc.wantErr)
+			}
+			if body := api.request(t, 1).Body; !reflect.DeepEqual(body, map[string]any{"state": map[string]any{"type": "enabled"}}) {
+				t.Errorf("second call body = %v", body)
+			}
+			got := fromState(t, resp.State)
+			if got.ID.ValueString() != testDestinationID {
+				t.Errorf("id = %v, want the created destination saved", got.ID)
+			}
+			if got.Enabled.ValueBool() == tc.wantErr {
+				t.Errorf("enabled = %v", got.Enabled)
+			}
+		})
+	}
+}
+
+// An update the API answers with the destination disabled, while the plan
+// says enabled, fails with the reason instead of an inconsistent result.
+func TestTelemetryDestinationResource_UpdateDisabledByAPIFails(t *testing.T) {
+	t.Parallel()
+
+	api, client := newFakeTelemetryAPI(t, func(recordedRequest) (int, string) {
+		return http.StatusOK, destinationJSON(t, map[string]any{
+			"endpoint_url": "https://collector.example.org/otlp",
+			"state":        map[string]any{"type": "disabled", "reason": map[string]any{"type": "invalid_address"}},
+		})
+	})
+	r := &TelemetryDestinationResource{client: client}
+	state := storedDestination(t)
+	plan := updatePlan(state)
+	plan.EndpointURL = types.StringValue("https://collector.example.org/otlp")
+	plan.HeaderNames = types.SetUnknown(types.StringType)
+
+	resp := resource.UpdateResponse{State: toState(t, r, state)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: toPlan(t, r, plan), State: toState(t, r, state), Config: toConfig(t, r, plan, types.MapNull(types.StringType)),
+	}, &resp)
+	if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "invalid_address") {
+		t.Fatalf("diagnostics = %v, want an error naming the reason", resp.Diagnostics)
+	}
+	if got := fromState(t, resp.State); got.Enabled.ValueBool() || got.EndpointURL.ValueString() != "https://collector.example.org/otlp" {
+		t.Errorf("state = enabled %v, endpoint %v; want the API's values saved", got.Enabled, got.EndpointURL)
+	}
+	if len(api.calls()) != 1 {
+		t.Errorf("calls = %v", api.calls())
+	}
+}
+
+// The configured spelling of endpoint_url and traces.endpoint_url stays in
+// state when the API returns the same URL normalized.
+func TestTelemetryDestinationResource_CreateKeepsURLSpelling(t *testing.T) {
+	t.Parallel()
+
+	_, client := newFakeTelemetryAPI(t, func(recordedRequest) (int, string) {
+		return http.StatusOK, destinationJSON(t, map[string]any{"traces": map[string]any{
+			"content_mode": "metadata_only", "enabled": true, "endpoint_url": "https://gateway.example.com/custom/traces", "max_content_bytes": nil,
+		}})
+	})
+	r := &TelemetryDestinationResource{client: client}
+
+	plan := plannedDestination(t)
+	plan.EndpointURL = types.StringValue("https://Gateway.example.com:443/otlp/")
+	plan.Traces = tracesObject("metadata_only", types.StringValue("https://GATEWAY.example.com/custom/traces/"), types.Int64Unknown())
+	cfg := toConfig(t, r, plan, types.MapNull(types.StringType))
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: cfg.Schema}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: toPlan(t, r, plan), Config: cfg}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+	got := fromState(t, resp.State)
+	if got.EndpointURL.ValueString() != "https://Gateway.example.com:443/otlp/" {
+		t.Errorf("endpoint_url = %v, want the planned spelling", got.EndpointURL)
+	}
+	if u := tracesEndpointURL(got.Traces); u.ValueString() != "https://GATEWAY.example.com/custom/traces/" {
+		t.Errorf("traces.endpoint_url = %v, want the planned spelling", u)
+	}
+}
+
+func TestSameURL(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{"https://gateway.example.com/otlp", "https://gateway.example.com/otlp", true},
+		{"https://Gateway.example.com/otlp/", "https://gateway.example.com/otlp", true},
+		{"https://gateway.example.com:443/otlp", "https://gateway.example.com/otlp", true},
+		{"https://gateway.example.com", "https://gateway.example.com/", true},
+		{"https://gateway.example.com/OTLP", "https://gateway.example.com/otlp", false},
+		{"https://gateway.example.com:4318/otlp", "https://gateway.example.com/otlp", false},
+		{"https://other.example.com/otlp", "https://gateway.example.com/otlp", false},
+		{"https://gateway.example.com/otlp?a=1", "https://gateway.example.com/otlp", false},
+	} {
+		if got := sameURL(tc.a, tc.b); got != tc.want {
+			t.Errorf("sameURL(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// A 404 from the workspace list of a destination the item read just returned
+// is an error, not a deleted destination.
+func TestTelemetryDestinationResource_ReadWorkspaceListNotFoundKeepsState(t *testing.T) {
+	t.Parallel()
+
+	_, client := newFakeTelemetryAPI(t, func(r recordedRequest) (int, string) {
+		if strings.HasSuffix(r.Path, "/workspaces") {
+			return notFound()
+		}
+		return http.StatusOK, destinationJSON(t, nil)
+	})
+	r := &TelemetryDestinationResource{client: client}
+
+	state := toState(t, r, storedDestination(t))
+	resp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want an error when the workspace list answers 404")
+	}
+	if resp.State.Raw.IsNull() {
+		t.Error("the destination was removed from state")
+	}
+}

@@ -128,7 +128,7 @@ Optional:
 
 - `content_mode` (String) `metadata_only` (default: identifiers, timing, status, token counts) or `content` (adds prompts, responses and tool inputs and outputs). Organizations with a HIPAA, FERPA or K-12 data-handling restriction export metadata only.
 - `enabled` (Boolean) Whether the destination receives traces. Default: `true`.
-- `endpoint_url` (String) Full URL of the collector's traces endpoint, when it is not `endpoint_url` plus `/v1/traces`. Same scheme, host and port as `endpoint_url`; the API posts to it as given. Removing it goes back to `endpoint_url` plus `/v1/traces`.
+- `endpoint_url` (String) Full URL of the collector's traces endpoint, when it is not `endpoint_url` plus `/v1/traces`. Same scheme, host and port as `endpoint_url`; the API posts to it as given. Removing it goes back to `endpoint_url` plus `/v1/traces`, and so does a change of the hostname or port of `endpoint_url` while the traces block is omitted.
 - `max_content_bytes` (Number) Most bytes of content one exported span can hold, applied once `content_mode` is `content`. Null means only the API's maximum applies. Removing it keeps the current value.
 
 

@@ -142,7 +142,7 @@ func (r *TelemetryDestinationResource) Schema(_ context.Context, _ resource.Sche
 				Computed: true,
 				MarkdownDescription: "Settings for the traces the destination receives. Omit the block to keep the API's values " +
 					"(`metadata_only`, enabled, no traces URL, no content bound on create).",
-				PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+				PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown(), tracesFollowEndpointHost{}},
 				Attributes: map[string]schema.Attribute{
 					"content_mode": schema.StringAttribute{
 						Optional: true,
@@ -161,7 +161,8 @@ func (r *TelemetryDestinationResource) Schema(_ context.Context, _ resource.Sche
 					"endpoint_url": schema.StringAttribute{
 						Optional: true,
 						MarkdownDescription: "Full URL of the collector's traces endpoint, when it is not `endpoint_url` plus `/v1/traces`. Same scheme, " +
-							"host and port as `endpoint_url`; the API posts to it as given. Removing it goes back to `endpoint_url` plus `/v1/traces`.",
+							"host and port as `endpoint_url`; the API posts to it as given. Removing it goes back to `endpoint_url` plus `/v1/traces`, " +
+							"and so does a change of the hostname or port of `endpoint_url` while the traces block is omitted.",
 						Validators: []validator.String{
 							stringvalidator.RegexMatches(httpsURL, "must be an HTTPS URL"),
 							stringvalidator.LengthAtMost(2048),
@@ -370,24 +371,29 @@ func (r *TelemetryDestinationResource) Create(ctx context.Context, req resource.
 		return
 	}
 
-	// A destination starts enabled: the create body has no state, so
-	// enabled = false takes a second call.
-	if created.State.Type == stateEnabled && isKnownFalse(plan.Enabled) {
-		updated, err := r.update(ctx, created.ID, map[string]any{"state": map[string]any{"type": stateDisabled}})
-		if err != nil {
-			// Save the destination as created so it is not orphaned; Terraform
-			// marks it tainted because of the error.
-			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Telemetry destination %s was created but could not be disabled: %s", created.ID, err))
-			return
-		}
-		resp.Diagnostics.Append(applyTelemetryDestinationResponse(ctx, updated, plan.Workspaces, &data)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	// The create body has no state, so enabled = false takes a second call. A
+	// destination should start enabled; if the API created it disabled (an
+	// invalid_address, say), the same call turns it on as planned.
+	if plan.Enabled.IsNull() || plan.Enabled.IsUnknown() || data.Enabled.Equal(plan.Enabled) {
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		return
 	}
-
+	want := stateDisabled
+	if plan.Enabled.ValueBool() {
+		want = stateEnabled
+	}
+	updated, err := r.update(ctx, created.ID, map[string]any{"state": map[string]any{"type": want}})
+	if err == nil {
+		resp.Diagnostics.Append(applyTelemetryDestinationResponse(ctx, updated, plan.Workspaces, &data)...)
+	}
+	// Save the destination as it is so it is not orphaned; on an error
+	// Terraform marks it tainted.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Telemetry destination %s was created but could not be set to state %q: %s", created.ID, want, err))
+		return
+	}
+	addEnabledMismatchError(&resp.Diagnostics, created.ID, plan.Enabled, data)
 }
 
 // --- Read ---
@@ -401,7 +407,9 @@ func (r *TelemetryDestinationResource) Read(ctx context.Context, req resource.Re
 
 	d, ids, err := readTelemetryDestination(ctx, r.client, data.ID.ValueString())
 	if err != nil {
-		if admin.IsNotFound(err) {
+		// Only a 404 on the destination itself says it is gone: d is set when
+		// that read succeeded and the workspace list failed.
+		if d == nil && admin.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -466,6 +474,21 @@ func (r *TelemetryDestinationResource) Update(ctx context.Context, req resource.
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	addEnabledMismatchError(&resp.Diagnostics, id, plan.Enabled, data)
+}
+
+// addEnabledMismatchError reports a destination the API left in another state
+// than the planned one, for example disabled at once over an invalid address.
+// The state is saved as the API reports it; the error keeps Terraform from
+// taking it for the planned value (an inconsistent result) and names the
+// reason.
+func addEnabledMismatchError(diags *diag.Diagnostics, id string, planned types.Bool, data TelemetryDestinationResourceModel) {
+	if planned.IsNull() || planned.IsUnknown() || data.Enabled.Equal(planned) {
+		return
+	}
+	diags.AddError("Telemetry destination state differs from the plan", fmt.Sprintf(
+		"Telemetry destination %s should be enabled = %t, but the API reports enabled = %t (disabled_reason: %s). "+
+			"Fix the cause, then apply again.", id, planned.ValueBool(), data.Enabled.ValueBool(), data.DisabledReason))
 }
 
 // --- Delete ---
@@ -509,8 +532,14 @@ func (r *TelemetryDestinationResource) update(ctx context.Context, id string, bo
 // ============================================================================
 
 // setFromModel copies the API-derived attributes into the resource model,
-// leaving headers_wo (always null) and headers_wo_version alone.
+// leaving headers_wo (always null) and headers_wo_version alone. endpoint_url
+// and traces.endpoint_url keep the spelling data already holds (plan or
+// state) when the API returns the same URL normalized (see sameURL).
 func setFromModel(data *TelemetryDestinationResourceModel, m TelemetryDestinationModel) {
+	if isKnownString(data.EndpointURL) && sameURL(data.EndpointURL.ValueString(), m.EndpointURL.ValueString()) {
+		m.EndpointURL = data.EndpointURL
+	}
+	m.Traces = keepTracesURLSpelling(data.Traces, m.Traces)
 	data.ID = m.ID
 	data.DisplayName = m.DisplayName
 	data.EndpointURL = m.EndpointURL
@@ -543,10 +572,6 @@ func applyTelemetryDestinationResponse(ctx context.Context, d *telemetryDestinat
 	diags.Append(dd...)
 	setFromModel(data, m)
 	return diags
-}
-
-func isKnownFalse(v types.Bool) bool {
-	return !v.IsNull() && !v.IsUnknown() && !v.ValueBool()
 }
 
 // buildWorkspacesPayload returns the `workspaces` object of a request. On
@@ -663,11 +688,17 @@ func buildTelemetryDestinationUpdate(ctx context.Context, plan, state TelemetryD
 		body["workspaces"] = ws
 	}
 	// A host or port change must also move traces.endpoint_url to the new host
-	// (or clear it) in the same request, so the planned traces go along.
-	if !plan.Traces.IsNull() && !plan.Traces.IsUnknown() && (!plan.Traces.Equal(state.Traces) || hostChanged) {
+	// (or clear it) in the same request, so the planned traces go along. With
+	// the traces block left out, tracesFollowEndpointHost plans traces unknown
+	// when the stored traces URL is on the old host: it is cleared, back to
+	// endpoint_url plus /v1/traces, rather than replayed.
+	switch {
+	case !plan.Traces.IsNull() && !plan.Traces.IsUnknown() && (!plan.Traces.Equal(state.Traces) || hostChanged):
 		t, d := buildTracesPayload(ctx, plan.Traces, true)
 		diags.Append(d...)
 		body["traces"] = t
+	case plan.Traces.IsUnknown() && hostChanged && !tracesEndpointURL(state.Traces).IsNull():
+		body["traces"] = map[string]any{"endpoint_url": nil}
 	}
 
 	patch, d := buildHeadersPatch(ctx, headers, state.HeaderNames)
@@ -721,6 +752,56 @@ func buildHeadersPatch(ctx context.Context, headers types.Map, registered types.
 		return nil, diags
 	}
 	return patch, diags
+}
+
+// sameURL reports whether two URLs differ at most in what a server may
+// normalize: the letter case of the scheme and host, an explicit default
+// port 443, and a trailing slash. Whether the API normalizes endpoint URLs
+// is not documented; keeping the configured spelling in that case avoids an
+// inconsistent result after apply.
+func sameURL(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil || endpointHostOrPortChanged(a, b) {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.TrimSuffix(ua.EscapedPath(), "/") == strings.TrimSuffix(ub.EscapedPath(), "/") &&
+		ua.RawQuery == ub.RawQuery
+}
+
+// keepTracesURLSpelling returns got with the traces.endpoint_url of prior when
+// both are known and sameURL.
+func keepTracesURLSpelling(prior, got types.Object) types.Object {
+	if prior.IsNull() || prior.IsUnknown() || got.IsNull() || got.IsUnknown() {
+		return got
+	}
+	priorURL, gotURL := tracesEndpointURL(prior), tracesEndpointURL(got)
+	if !isKnownString(priorURL) || !isKnownString(gotURL) || priorURL.Equal(gotURL) || !sameURL(priorURL.ValueString(), gotURL.ValueString()) {
+		return got
+	}
+	attrs := got.Attributes()
+	attrs["endpoint_url"] = priorURL
+	return types.ObjectValueMust(tracesAttrTypes, attrs)
+}
+
+// tracesEndpointURL returns the endpoint_url of a traces object, null when the
+// object is null or unknown.
+func tracesEndpointURL(traces types.Object) types.String {
+	if traces.IsNull() || traces.IsUnknown() {
+		return types.StringNull()
+	}
+	if v, ok := traces.Attributes()["endpoint_url"].(types.String); ok {
+		return v
+	}
+	return types.StringNull()
+}
+
+func isKnownString(v types.String) bool {
+	return !v.IsNull() && !v.IsUnknown()
 }
 
 // endpointHostOrPortChanged reports whether two endpoint URLs differ in
@@ -801,6 +882,45 @@ func (m tracesDefaultBool) MarkdownDescription(ctx context.Context) string {
 func (m tracesDefaultBool) PlanModifyBool(ctx context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
 	if req.ConfigValue.IsNull() && tracesConfigured(ctx, req.Config, &resp.Diagnostics) {
 		resp.PlanValue = types.BoolValue(m.value)
+	}
+}
+
+// tracesFollowEndpointHost plans traces as unknown when the block is left out
+// of the configuration (UseStateForUnknown then plans the stored object), the
+// stored traces.endpoint_url is set, and endpoint_url changes hostname or port
+// (or is unknown). That URL must share the host and port of endpoint_url, so
+// Update clears it, back to endpoint_url plus /v1/traces, instead of
+// replaying the stored one, which the API would refuse; the API's values land
+// in state. A warning says the custom traces URL goes.
+type tracesFollowEndpointHost struct{}
+
+func (tracesFollowEndpointHost) Description(context.Context) string {
+	return "Moves an unmanaged traces.endpoint_url along with an endpoint_url host or port change."
+}
+
+func (m tracesFollowEndpointHost) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (tracesFollowEndpointHost) PlanModifyObject(ctx context.Context, req planmodifier.ObjectRequest, resp *planmodifier.ObjectResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() || !req.ConfigValue.IsNull() || tracesEndpointURL(req.StateValue).IsNull() {
+		return
+	}
+	var planURL, stateURL types.String
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("endpoint_url"), &planURL)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("endpoint_url"), &stateURL)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !planURL.IsUnknown() && !endpointHostOrPortChanged(stateURL.ValueString(), planURL.ValueString()) {
+		return
+	}
+	resp.PlanValue = types.ObjectUnknown(tracesAttrTypes)
+	if !planURL.IsUnknown() {
+		resp.Diagnostics.AddAttributeWarning(path.Root("traces"), "Custom traces URL will be reset",
+			fmt.Sprintf("traces.endpoint_url (%s) must share the hostname and port of endpoint_url, which changes, and the traces block "+
+				"is not set: the update resets it to endpoint_url plus /v1/traces. Set the traces block with an endpoint_url on the new "+
+				"host to keep a custom path.", tracesEndpointURL(req.StateValue).ValueString()))
 	}
 }
 

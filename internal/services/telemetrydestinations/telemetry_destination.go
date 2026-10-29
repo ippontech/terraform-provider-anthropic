@@ -278,7 +278,9 @@ func listTelemetryDestinationWorkspaceIDs(ctx context.Context, client *admin.Cli
 }
 
 // readTelemetryDestination reads a destination and, unless it covers every
-// workspace, its workspace list.
+// workspace, its workspace list. When the list fails it returns the
+// destination with the error, so that a caller can tell a 404 on the list
+// from a destination that is gone.
 func readTelemetryDestination(ctx context.Context, client *admin.Client, id string) (*telemetryDestinationAPIResponse, []string, error) {
 	d, err := getTelemetryDestination(ctx, client, id)
 	if err != nil {
@@ -289,7 +291,7 @@ func readTelemetryDestination(ctx context.Context, client *admin.Client, id stri
 	}
 	ids, err := listTelemetryDestinationWorkspaceIDs(ctx, client, d.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list the workspaces of telemetry destination %s: %w", d.ID, err)
+		return d, nil, fmt.Errorf("list the workspaces of telemetry destination %s: %w", d.ID, err)
 	}
 	return d, ids, nil
 }
