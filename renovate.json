@@ -65,7 +65,7 @@
       "automerge": false
     },
     {
-      "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. Its updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser (custom.regex), the semantic-release packages and their lockfile (npm) and the actions those two workflows use (github-actions); the same action in other workflows keeps its usual automerged group.",
+      "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. Its updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser (custom.regex), the semantic-release packages and their lockfile (npm) and the actions those two workflows use (github-actions); the same action in other workflows keeps its usual automerged group. The commit type is forced to chore: the npm manager gives the semantic-release packages the dependencies depType, which config:recommended would title fix(deps), and a fix title would publish a provider patch release for a tooling bump.",
       "matchFileNames": [
         ".github/workflows/goreleaser-release.yml",
         ".github/workflows/semantic-release.yml",
@@ -73,7 +73,17 @@
       ],
       "groupName": "release tooling",
       "groupSlug": "release-tooling",
-      "automerge": false
+      "automerge": false,
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "GoReleaser is pinned twice, in goreleaser-release.yml (above) and in goreleaser-check.yml, which validates .goreleaser.yml on every PR. Both pins must move in the same reviewed PR: otherwise the check job runs a newer GoReleaser than the release job for the three days before the ci-tools group automerges, and a config change it accepts can fail at tag time, after the GitHub release and the tag already exist.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["goreleaser/goreleaser"],
+      "groupName": "release tooling",
+      "groupSlug": "release-tooling",
+      "automerge": false,
+      "semanticCommitType": "chore"
     },
     {
       "description": "Hold anthropic-sdk-go below v1.68.0 until #192 is done: v1.68.0 renames skill fields the deployed API still returns under their old names. Patch releases within 1.67.x stay allowed. Remove this rule as part of #192, not on its own.",
