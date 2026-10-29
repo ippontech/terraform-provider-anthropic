@@ -37,8 +37,7 @@ func TestMapFederationIssuerDataSourceToState_Discovery(t *testing.T) {
 			Type: "discovery",
 		},
 		// PollStatus left zero, and a struct built by hand carries no wire
-		// metadata for it, so it maps like an API null (see
-		// TestMapFederationIssuerDataSourceToState_InlineKeys for a decoded one).
+		// metadata for it, so it maps like an API null.
 	}
 
 	var data FederationIssuerDataSourceModel
@@ -95,8 +94,18 @@ func TestMapFederationIssuerDataSourceToState_Discovery(t *testing.T) {
 		t.Error("jwks.keys should be null for discovery mode")
 	}
 
-	if !data.PollStatus.IsNull() {
-		t.Errorf("PollStatus = %v, want null when the response carries none", data.PollStatus)
+	// The data sources keep the all-zero object they have always returned
+	// for a poll_status the API sends as null: configurations read
+	// poll_status.consecutive_failures, and a null object would fail them.
+	if data.PollStatus.IsNull() {
+		t.Fatal("PollStatus is null, want the all-zero object the data source has always returned")
+	}
+	pollAttrs := data.PollStatus.Attributes()
+	if got := pollAttrs["consecutive_failures"].(types.Int64).ValueInt64(); got != 0 {
+		t.Errorf("poll_status.consecutive_failures = %d, want 0", got)
+	}
+	if !pollAttrs["last_fetched_at"].(types.String).IsNull() || !pollAttrs["next_poll_at"].(types.String).IsNull() {
+		t.Errorf("poll_status = %v, want null timestamps", data.PollStatus)
 	}
 }
 

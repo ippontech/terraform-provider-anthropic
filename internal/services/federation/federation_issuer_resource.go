@@ -817,17 +817,23 @@ func mapFederationIssuerToState(_ context.Context, issuer *anthropic.BetaFederat
 	return diags
 }
 
-// mapFederationIssuerPollStatus maps poll_status, which the API sends as null
-// for inline-key issuers (nothing to fetch) and while the status is
-// unavailable or polling has not started. The SDK decodes that null into a
+// mapFederationIssuerPollStatus maps the resource's poll_status, which the API
+// sends as null for inline-key issuers (nothing to fetch) and while the status
+// is unavailable or polling has not started. The SDK decodes that null into a
 // zero-valued struct, so the wire metadata decides: anything but a valid
 // object maps to a null attribute rather than to consecutive_failures = 0.
+// The data sources keep their released all-zero object instead
+// (pollStatusObject).
 func mapFederationIssuerPollStatus(issuer *anthropic.BetaFederationIssuer) (types.Object, diag.Diagnostics) {
 	if !issuer.JSON.PollStatus.Valid() {
 		return types.ObjectNull(federationIssuerPollStatusAttrTypes), nil
 	}
+	return pollStatusObject(issuer.PollStatus)
+}
 
-	status := issuer.PollStatus
+// pollStatusObject maps a poll_status object as decoded, all-zero
+// (consecutive_failures = 0, null timestamps) when the API sent null.
+func pollStatusObject(status anthropic.BetaFederationIssuerPollStatus) (types.Object, diag.Diagnostics) {
 	return types.ObjectValue(federationIssuerPollStatusAttrTypes, map[string]attr.Value{
 		"consecutive_failures": types.Int64Value(status.ConsecutiveFailures),
 		"last_fetched_at":      tfvalue.TimeOrNull(status.LastFetchedAt),

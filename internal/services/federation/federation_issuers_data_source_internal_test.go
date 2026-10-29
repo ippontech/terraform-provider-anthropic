@@ -306,7 +306,9 @@ func TestMapFederationIssuersListEntry_Archived(t *testing.T) {
 }
 
 // An inline-key issuer has nothing to poll, and the API sends poll_status as
-// null: each list entry must carry a null object, not a zero-valued one.
+// null: each list entry keeps the all-zero object the data source has always
+// returned, so a `for` expression reading poll_status.consecutive_failures
+// over every issuer still plans.
 func TestMapFederationIssuersListEntry_NullPollStatus(t *testing.T) {
 	raw := strings.Replace(sprintfIssuer("fdis_01INLINE"),
 		`"poll_status": {"consecutive_failures": 0, "last_fetched_at": null, "next_poll_at": null}`,
@@ -318,7 +320,11 @@ func TestMapFederationIssuersListEntry_NullPollStatus(t *testing.T) {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
 
-	if !objVal.(types.Object).Attributes()["poll_status"].IsNull() {
-		t.Errorf("poll_status = %v, want null", objVal.(types.Object).Attributes()["poll_status"])
+	poll := objVal.(types.Object).Attributes()["poll_status"].(types.Object)
+	if poll.IsNull() {
+		t.Fatal("poll_status is null, want the all-zero object")
+	}
+	if got := poll.Attributes()["consecutive_failures"].(types.Int64).ValueInt64(); got != 0 {
+		t.Errorf("poll_status.consecutive_failures = %d, want 0", got)
 	}
 }

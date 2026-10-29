@@ -114,8 +114,8 @@ func (d *FederationIssuersDataSource) Schema(_ context.Context, _ datasource.Sch
 						},
 						"poll_status": schema.SingleNestedAttribute{
 							Computed: true,
-							MarkdownDescription: "Status of automatic JWKS polling for this issuer. Null for inline-key issuers (nothing to fetch), and " +
-								"while the status is unavailable or polling has not started yet.",
+							MarkdownDescription: "Status of automatic JWKS polling for this issuer. For inline-key issuers (nothing to fetch), and while the " +
+								"status is unavailable or polling has not started yet, `consecutive_failures` is `0` and both timestamps are null.",
 							Attributes: map[string]schema.Attribute{
 								"consecutive_failures": schema.Int64Attribute{
 									Computed:            true,

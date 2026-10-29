@@ -137,8 +137,8 @@ func (d *FederationIssuerDataSource) Schema(_ context.Context, _ datasource.Sche
 			},
 			"poll_status": schema.SingleNestedAttribute{
 				Computed: true,
-				MarkdownDescription: "Status of automatic JWKS polling for this issuer. Null for inline-key issuers (nothing to fetch), and while the " +
-					"status is unavailable or polling has not started yet.",
+				MarkdownDescription: "Status of automatic JWKS polling for this issuer. For inline-key issuers (nothing to fetch), and while the " +
+					"status is unavailable or polling has not started yet, `consecutive_failures` is `0` and both timestamps are null.",
 				Attributes: map[string]schema.Attribute{
 					"consecutive_failures": schema.Int64Attribute{
 						Computed:            true,
@@ -226,9 +226,13 @@ func (d *FederationIssuerDataSource) Read(ctx context.Context, req datasource.Re
 }
 
 // mapFederationIssuerDataSourceToState maps an API federation issuer response
-// onto the data source model. Every attribute is taken from
-// mapFederationIssuerToState (jwks and poll_status included), so the resource
-// and both data sources agree on null handling and timestamp formatting.
+// onto the data source model. Every attribute but poll_status is taken from
+// mapFederationIssuerToState (jwks included), so the resource and both data
+// sources agree on null handling and timestamp formatting. poll_status keeps
+// the object the data sources have always returned, all-zero when the API
+// sends null (inline-key issuers, polling not started): configurations read
+// poll_status.consecutive_failures, and a null object would fail them at plan
+// time after an upgrade. Only the resource's newer attribute maps it to null.
 func mapFederationIssuerDataSourceToState(ctx context.Context, issuer *anthropic.BetaFederationIssuer, data *FederationIssuerDataSourceModel) diag.Diagnostics {
 	var base FederationIssuerResourceModel
 	diags := mapFederationIssuerToState(ctx, issuer, &base)
@@ -243,13 +247,16 @@ func mapFederationIssuerDataSourceToState(ctx context.Context, issuer *anthropic
 	data.CheckJTI = base.CheckJTI
 	data.MaxJWTLifetimeSeconds = base.MaxJWTLifetimeSeconds
 	data.JWKSPollingDisabledAt = base.JWKSPollingDisabledAt
-	data.PollStatus = base.PollStatus
 	data.CreatedAt = base.CreatedAt
 	data.CreatedByActorID = base.CreatedByActorID
 	data.UpdatedAt = base.UpdatedAt
 	data.UpdatedByActorID = base.UpdatedByActorID
 	data.ArchivedAt = base.ArchivedAt
 	data.ArchivedByActorID = base.ArchivedByActorID
+
+	pollStatus, d := pollStatusObject(issuer.PollStatus)
+	diags.Append(d...)
+	data.PollStatus = pollStatus
 
 	return diags
 }
