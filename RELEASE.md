@@ -16,7 +16,7 @@ Renovate merges minor and patch module updates on its own, three days after they
 
 The signing job waits in `Actions > GoReleaser Release`, on the run of the new tag, behind **Review deployments**, for one of the `release` environment's reviewers. Before approving:
 
-1. Open the run's summary. The `dependency-changes` job lists every `go.mod` line that changed since the previous release; `go.mod` lists every module compiled into the provider, indirect ones included. "None" means the release compiles the same modules as the previous one.
+1. Open the run's summary. The `dependency-changes` job lists every `go.mod` line that changed since the last release with signed binaries; `go.mod` lists every module compiled into the provider, indirect ones included. A version that was tagged but never signed, or whose GitHub release was deleted, does not count as a baseline: its changes are listed again, and the summary names it. "None" means the release compiles the same modules as that last signed release.
 2. For each changed module, check that the new version is a published release of that module (a tag or release notes on its repository), and look for anything unexpected: a module nobody added on purpose, a version published a few days ago without notes, a repository that changed owner.
 3. Approve. If in doubt, reject: nothing is built, signed or published. The tag and the GitHub release stay without binaries, and the next fix ships under the next version number. Delete that GitHub release (the tag stays: the tag ruleset forbids deleting it) and say in the next release notes why the number was skipped. Never re-sign or replace a published version: the Terraform Registry asks to release a new version instead.
 

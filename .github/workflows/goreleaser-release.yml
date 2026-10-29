@@ -8,10 +8,11 @@ on:
 permissions: {}
 
 jobs:
-  # Runs before the approval that releases the GPG key, with no secret: it writes on the run's
-  # summary page the go.mod lines that changed since the previous release, which the approver
-  # checks before approving (RELEASE.md, "Approve a release"). Renovate automerges module
-  # updates, so this approval is the one human decision before they ship signed.
+  # Runs before the approval that releases the GPG key, with no secret (only the read-only job
+  # token): it writes on the run's summary page the go.mod lines that changed since the last
+  # release users received signed, which the approver checks before approving (RELEASE.md,
+  # "Approve a release"). Renovate automerges module updates, so this approval is the one human
+  # decision before they ship signed.
   dependency-changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -31,17 +32,42 @@ jobs:
           fetch-depth: 0  # the previous release tag and its go.mod
           persist-credentials: false
 
-      - name: List the go.mod changes since the previous release
+      # The baseline is the newest earlier tag whose GitHub release carries the signed checksums.
+      # A version tagged but never signed (approval rejected, signing failed, release deleted) is
+      # skipped, so its module changes are listed again here rather than shipping unseen. A failed
+      # API call also counts as unsigned: it widens the comparison, never narrows it.
+      - name: List the go.mod changes since the last signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "${GITHUB_SHA}^" 2>/dev/null); then
-            echo "No previous release tag: nothing to compare." >> "${GITHUB_STEP_SUMMARY}"
+          mapfile -t tags < <(git tag --merged "${GITHUB_SHA}^" --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname)
+          previous=""
+          unsigned=()
+          for tag in "${tags[@]:0:20}"; do
+            assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq '.assets[].name' 2>/dev/null || true)
+            if grep -q '_SHA256SUMS\.sig$' <<< "${assets}"; then
+              previous="${tag}"
+              break
+            fi
+            unsigned+=("${tag}")
+          done
+          if [ -z "${previous}" ]; then
+            if [ "${#tags[@]}" -eq 0 ]; then
+              echo "No previous release tag: nothing to compare." >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "No release with signed binaries among the ${#unsigned[@]} most recent tags: compare \`go.mod\` by hand before approving." >> "${GITHUB_STEP_SUMMARY}"
+            fi
             exit 0
           fi
           changes=$(git diff --unified=0 "${previous}" "${GITHUB_SHA}" -- go.mod | grep -E '^[-+][^-+]' || true)
           {
             echo "## go.mod changes from ${previous} to ${GITHUB_REF_NAME}"
             echo
+            if [ "${#unsigned[@]}" -gt 0 ]; then
+              echo "${previous} is the last release with signed binaries. Tagged but never signed, so included here: ${unsigned[*]}."
+              echo
+            fi
             if [ -z "${changes}" ]; then
               echo "None: this release compiles the same modules as ${previous}."
             else
