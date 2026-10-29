@@ -44,7 +44,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: '26'
 
       - name: Install semantic-release and plugins
         run: npm install --no-save semantic-release@25.0.9 @semantic-release/commit-analyzer@13.0.1 @semantic-release/release-notes-generator@14.1.1 @semantic-release/changelog@7.0.0 @semantic-release/git@11.0.1 @semantic-release/github@12.0.10 conventional-changelog-conventionalcommits@8.0.0
