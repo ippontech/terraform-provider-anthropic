@@ -90,10 +90,14 @@ func (r *SpendLimitResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"and destroying it deletes that limit, the member or workspace falling back to any inherited limit. " +
 			enterpriseKeyNote,
 		Attributes: map[string]schema.Attribute{
+			// No UseStateForUnknown on id and created_at: an amount change is the
+			// same upsert as a create, and it answers with a new limit when the
+			// tracked one was deleted since the plan's refresh (a saved plan,
+			// -refresh=false, another instance on the pair destroyed first).
 			"id": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "ID of the spend limit (`spl_...`).",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed: true,
+				MarkdownDescription: "ID of the spend limit (`spl_...`). An amount change shows it as known after apply: " +
+					"if the limit was deleted outside Terraform since the last refresh, the set creates it again under a new ID.",
 			},
 			"scope": schema.SingleNestedAttribute{
 				Required: true,
@@ -146,7 +150,6 @@ func (r *SpendLimitResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"created_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "RFC 3339 timestamp of when the limit was created.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"updated_at": schema.StringAttribute{
 				Computed:            true,

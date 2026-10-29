@@ -9,6 +9,7 @@ package spendlimits
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -439,5 +441,85 @@ func TestAmountPattern(t *testing.T) {
 		if got := amountPattern.MatchString(amount); got != want {
 			t.Errorf("amountPattern(%q) = %v, want %v", amount, got, want)
 		}
+	}
+}
+
+// assertAppliedAsPlanned fails for every top-level attribute the plan holds
+// as a known value that the applied state does not: Terraform reports those
+// as "Provider produced inconsistent result after apply".
+func assertAppliedAsPlanned(t *testing.T, plan tfsdk.Plan, state tfsdk.State) {
+	t.Helper()
+	var planned, applied map[string]tftypes.Value
+	if err := plan.Raw.As(&planned); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Raw.As(&applied); err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range planned {
+		if p.IsFullyKnown() && !p.Equal(applied[name]) {
+			t.Errorf("%s: planned %s, applied %s", name, p, applied[name])
+		}
+	}
+}
+
+// The upsert creates a limit under a new ID when the tracked one is gone: an
+// override removed in claude.ai after a saved plan, `-refresh=false`, or
+// another instance on the same pair destroyed first. An amount change cannot
+// promise the prior id and created_at, so the plan must leave them unknown
+// for Update to record the limit the set answered with.
+func TestSpendLimitResource_Update_acceptsTheLimitTheUpsertReturns(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	const newID = "spl_02NewLimitAfterUpsert"
+	srv, _ := stub(t, func(recordedRequest) (int, string) {
+		return http.StatusOK, `{"type":"spend_limit","id":"` + newID + `","amount":"75000","currency":"USD","is_enabled":true,"period":"monthly",` +
+			`"scope":{"type":"user","user_id":"` + userID + `"},"created_at":"2026-07-01T00:00:00Z","updated_at":"2026-07-01T00:00:00Z"}`
+	})
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+	sch := schematest.ResourceSchema(t, r)
+
+	// The state as the last refresh saw the limit.
+	var limit spendLimitAPIResponse
+	if err := json.Unmarshal([]byte(userLimitJSON(`"50000"`)), &limit); err != nil {
+		t.Fatal(err)
+	}
+	prior, diags := mapSpendLimitToState(limit)
+	state := tfsdk.State{Schema: sch}
+	diags.Append(state.Set(ctx, &prior)...)
+
+	// The plan the framework builds for an amount change: every computed
+	// attribute without configuration unknown, then the plan modifiers.
+	planned := prior
+	planned.Amount = types.StringValue("75000")
+	planned.ID, planned.Currency, planned.CreatedAt, planned.UpdatedAt = types.StringUnknown(), types.StringUnknown(), types.StringUnknown(), types.StringUnknown()
+	planned.IsEnabled = types.BoolUnknown()
+	plan := tfsdk.Plan{Schema: sch}
+	diags.Append(plan.Set(ctx, &planned)...)
+	for _, name := range []string{"id", "currency", "created_at", "updated_at"} {
+		var stateValue types.String
+		diags.Append(state.GetAttribute(ctx, path.Root(name), &stateValue)...)
+		value := types.StringUnknown()
+		for _, m := range sch.Attributes[name].(schema.StringAttribute).PlanModifiers {
+			resp := planmodifier.StringResponse{PlanValue: value}
+			m.PlanModifyString(ctx, planmodifier.StringRequest{
+				Path: path.Root(name), Plan: plan, State: state, StateValue: stateValue, PlanValue: value, ConfigValue: types.StringNull(),
+			}, &resp)
+			value = resp.PlanValue
+		}
+		diags.Append(plan.SetAttribute(ctx, path.Root(name), value)...)
+	}
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+
+	resp := resource.UpdateResponse{State: state}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+	assertAppliedAsPlanned(t, plan, resp.State)
+	if got, _ := spendLimitState(t, resp.State); got.ID.ValueString() != newID {
+		t.Errorf("id = %s, want the limit the upsert answered with", got.ID)
 	}
 }

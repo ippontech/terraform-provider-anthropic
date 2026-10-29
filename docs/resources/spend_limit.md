@@ -86,7 +86,7 @@ output "member_spend_limit_currency" {
 
 - `created_at` (String) RFC 3339 timestamp of when the limit was created.
 - `currency` (String) ISO 4217 code of the organization's billing currency, the unit of `amount`.
-- `id` (String) ID of the spend limit (`spl_...`).
+- `id` (String) ID of the spend limit (`spl_...`). An amount change shows it as known after apply: if the limit was deleted outside Terraform since the last refresh, the set creates it again under a new ID.
 - `is_enabled` (Boolean) Read-only. `false` when extra usage is switched off for the organization (`organization` limit); the amount is kept and applies again once it is switched back on. Always `true` for other limits.
 - `updated_at` (String) RFC 3339 timestamp of when the limit was last modified.
 
