@@ -53,7 +53,7 @@ func cliSchema() schema.SingleNestedAttribute {
 			},
 			"workspace_id": schema.StringAttribute{
 				Optional:    true,
-				Description: "Workspace (`wrkspc_...`) the profile was logged in to, used to narrow the search when none is named. Can also be set via the ANTHROPIC_WORKSPACE_ID environment variable.",
+				Description: "Workspace (`wrkspc_...`) the profile was logged in to, used to narrow the search when none is named. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.",
 			},
 		},
 	}
@@ -115,6 +115,26 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 		return nil, diags
 	}
 
+	// resolveCredential reads an Unknown as unset and falls back to the
+	// environment, which here would pick a different profile than the
+	// configuration names.
+	for _, a := range []struct {
+		name  string
+		value types.String
+	}{
+		{"profile", m.Profile},
+		{"organization_id", m.OrganizationID},
+		{"workspace_id", m.WorkspaceID},
+	} {
+		if a.value.IsUnknown() {
+			diags.AddAttributeError(path.Root("cli").AtName(a.name), "Unknown CLI Configuration",
+				fmt.Sprintf("cli.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
+		}
+	}
+	if diags.HasError() {
+		return nil, diags
+	}
+
 	dir := config.DefaultDir()
 	if dir == "" {
 		diags.AddAttributeError(path.Root("cli"), "No Anthropic Config Directory",
@@ -124,7 +144,10 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 
 	name := resolveCredential(m.Profile, "ANTHROPIC_PROFILE")
 	orgID := resolveCredential(m.OrganizationID, "ANTHROPIC_ORGANIZATION_ID")
-	workspaceID := resolveCredential(m.WorkspaceID, "ANTHROPIC_WORKSPACE_ID")
+	// No environment fallback: ANTHROPIC_WORKSPACE_ID is the SDKs' federation
+	// variable, often exported for other tools, and as a filter it would only
+	// hide the operator's org:admin login.
+	workspaceID := m.WorkspaceID.ValueString()
 
 	var p *cliProfile
 	var err error
@@ -147,6 +170,17 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 		return nil, diags
 	}
 
+	// A profile named in the configuration is the operator's choice, so a
+	// missing scope is only a warning. One taken from ANTHROPIC_PROFILE is
+	// usually their everyday login, exported for other tools, and would make
+	// every request fail.
+	if !p.hasAdminScope() && m.Profile.IsNull() {
+		diags.AddAttributeError(path.Root("cli"), "Unusable Anthropic CLI Profile",
+			fmt.Sprintf("Profile %q from ANTHROPIC_PROFILE was granted scope %q, not %s. Name an org:admin profile with cli.profile, "+
+				"or unset ANTHROPIC_PROFILE so the provider can find one by organization. %s",
+				p.name, p.scope(), adminScope, loginHint(p.name)))
+		return nil, diags
+	}
 	if !p.hasAdminScope() {
 		diags.AddAttributeWarning(path.Root("cli"), "Anthropic CLI Profile Lacks org:admin",
 			fmt.Sprintf("Profile %q was granted scope %q. The endpoints that use this token require org:admin. %s",
@@ -177,6 +211,7 @@ func findCLIProfile(dir, orgID, workspaceID string) (*cliProfile, error) {
 	}
 
 	var matches []*cliProfile
+	var unusable []error
 	for _, name := range names {
 		p, err := readCLIProfile(dir, name)
 		if err != nil || p.config.AuthenticationInfo.Type != config.AuthenticationTypeUserOAuth {
@@ -188,6 +223,12 @@ func findCLIProfile(dir, orgID, workspaceID string) (*cliProfile, error) {
 		if workspaceID != "" && p.workspaceID() != workspaceID {
 			continue
 		}
+		// A stale login beside a working one is common after logging in
+		// again under another name; it should not make discovery ambiguous.
+		if err := checkCLIProfile(p); err != nil {
+			unusable = append(unusable, err)
+			continue
+		}
 		matches = append(matches, p)
 	}
 
@@ -197,6 +238,9 @@ func findCLIProfile(dir, orgID, workspaceID string) (*cliProfile, error) {
 	}
 	switch len(matches) {
 	case 0:
+		if len(unusable) > 0 {
+			return nil, fmt.Errorf("no usable org:admin profile in %s is for %s: %w", dir, target, errors.Join(unusable...))
+		}
 		return nil, fmt.Errorf("no org:admin profile in %s is for %s. %s", dir, target, loginHint("admin"))
 	case 1:
 		return matches[0], nil

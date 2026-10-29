@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
@@ -159,8 +160,13 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	// The cli block is the fallback for an operator's workstation: CI supplies
 	// auth_token or federation, and the same configuration then never reads
 	// a profile left on the runner.
+	// The gate reads the configuration, as the federation check above does:
+	// an auth_token unknown at plan time is still configured.
 	var cliConfig *config.Config
-	if authToken == "" && federation == nil {
+	if !data.CLI.IsNull() && data.AuthToken.IsNull() && authToken != "" {
+		tflog.Info(ctx, "cli block not used: ANTHROPIC_AUTH_TOKEN is set and supplies the org:admin bearer token")
+	}
+	if data.AuthToken.IsNull() && authToken == "" && federation == nil {
 		cliConfig, diags = resolveCLI(ctx, data.CLI)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
