@@ -28,6 +28,23 @@ var ProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, erro
 // source tests, which are organization-wide, target this workspace by ID.
 const TerraformTestsWorkspaceID = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
 
+// TerraformTests2WorkspaceID is the ID of the second dedicated test workspace,
+// "terraform-tests-2". It exists only so the multi-workspace key (see
+// PreCheckMultiWorkspace) has two workspaces to be routed between, and holds
+// nothing else: tests that do not exercise the workspace_id provider argument
+// must keep using TerraformTestsWorkspaceID.
+const TerraformTests2WorkspaceID = "wrkspc_01MdoKe74QuV4kFCC23VKZfY"
+
+// MultiWorkspaceAPIKeyEnv names the variable carrying the multi-workspace key
+// used by the workspace_id provider-argument tests: a service account key of
+// the terraform-provider-anthropic-tests account, member of terraform-tests
+// and terraform-tests-2 and scoped to neither, so the API rejects its requests
+// with a 400 until the anthropic-workspace-id header names one of them. Kept
+// apart from ANTHROPIC_API_KEY on purpose: every other acceptance test relies
+// on that key being single-workspace so its objects land in terraform-tests
+// without any header.
+const MultiWorkspaceAPIKeyEnv = "ANTHROPIC_MULTI_WORKSPACE_API_KEY"
+
 // SkipUnlessAcc skips the test unless TF_ACC is set. resource.Test applies
 // the same gate, but fixture setup that runs before it (seeding objects
 // through the SDK) does not, so every PreCheck* helper calls this first:
@@ -70,6 +87,33 @@ func PreCheckOAuth(t *testing.T) {
 	if v := os.Getenv("ANTHROPIC_AUTH_TOKEN"); v == "" {
 		t.Skip("ANTHROPIC_AUTH_TOKEN must be set for OAuth acceptance tests; skipping")
 	}
+}
+
+// PreCheckMultiWorkspace gates the acceptance tests of the workspace_id
+// provider argument, which need the multi-workspace key named by
+// MultiWorkspaceAPIKeyEnv. Unlike PreCheck it skips rather than fails when
+// the variable is unset: the key is a CI secret contributors do not have,
+// and the tests it gates are the only ones that need it.
+func PreCheckMultiWorkspace(t *testing.T) {
+	t.Helper()
+	SkipUnlessAcc(t)
+	if v := os.Getenv(MultiWorkspaceAPIKeyEnv); v == "" {
+		t.Skipf("%s must be set for multi-workspace acceptance tests; skipping", MultiWorkspaceAPIKeyEnv)
+	}
+}
+
+// NewMultiWorkspaceClient returns an SDK client authenticated with the
+// multi-workspace key and routed to workspaceID through the
+// anthropic-workspace-id header, for tests that check out of band which
+// workspace an object landed in. Call PreCheckMultiWorkspace first. Like the
+// other constructors it opts out of the SDK's environment defaults.
+func NewMultiWorkspaceClient(workspaceID string) *anthropic.Client {
+	c := anthropic.NewClient(
+		option.WithoutEnvironmentDefaults(),
+		option.WithAPIKey(os.Getenv(MultiWorkspaceAPIKeyEnv)),
+		option.WithHeader("anthropic-workspace-id", workspaceID),
+	)
+	return &c
 }
 
 // NewOAuthClient returns an SDK client authenticated with the org:admin OAuth

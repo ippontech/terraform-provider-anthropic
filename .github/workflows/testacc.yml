@@ -47,6 +47,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_ADMIN_API_KEY: ${{ secrets.ANTHROPIC_ADMIN_API_KEY }}
+          ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
 
   terraform-test:
     runs-on: ubuntu-latest
