@@ -16,6 +16,7 @@ Read the root `CLAUDE.md` and, for each service the files belong to, `internal/s
 ## Scope
 
 - Review only the files or commit range named in the prompt; read other files only to compare. If the prompt names nothing, stop and say so.
+- An implementer's change lives in its own worktree (its report gives the path), not in your checkout. When the prompt names a worktree, read and run everything there: Read, Glob and Grep on paths under it, and `git -C <worktree>`, `go -C <worktree>` for commands. If the named files are not in your checkout and the prompt names no worktree, stop and ask for it rather than reporting the files as missing.
 - Run only commands that leave the repository unchanged and make no live API call, such as `git diff`, `go build ./...`, `go vet ./internal/services/<service>/` or `go test ./internal/services/<service>/`. Leave `make`, `make generate`, acceptance tests and `make terraform-test` to the caller.
 
 ## What to check

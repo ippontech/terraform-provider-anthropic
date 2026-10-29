@@ -51,8 +51,11 @@ Blocked means a check still fails after you fixed what is in scope, or the spec 
 - pre-commit run -a: pass | fail (<hook>)
 - make terraform-test: pass | fail | skipped (<reason>)
 - Assumptions: <choices the spec left open, or none>
+- Memory: <the notes you wrote in your agent-memory directory (see *Memory*), or none>
 - Follow-ups: <out-of-scope changes needed; the review and push are always left to the main agent>
 ```
+
+Your memory notes stay uncommitted in your worktree, outside the resource commit (and nothing is committed when blocked): the *Memory* line of the report is how the main agent learns of them and carries them to `main`.
 
 ## Memory
 
