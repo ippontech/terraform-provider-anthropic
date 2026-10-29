@@ -38,7 +38,7 @@ provider "anthropic" {
 
 Three things to know about this token:
 
-- **It is short-lived.** A long `terraform apply` can outlive it and start failing with `401`. Re-run the `export` line immediately before every run (the CLI refreshes the token on export); the provider cannot refresh a token it was handed. To skip the export, give the provider `cli = { profile = "admin" }` instead: it reads the login itself and refreshes it (see [`ant` CLI login](../#ant-cli-login-cli)).
+- **It is short-lived.** A long `terraform apply` can outlive it and start failing with `401`. Re-run the `export` line immediately before every run (the CLI refreshes the token on export); the provider cannot refresh a token it was handed. To skip the export, give the provider `cli = { profile = "admin" }` instead and unset `ANTHROPIC_AUTH_TOKEN`, which would otherwise still win: the provider reads the login itself and refreshes it (see [`ant` CLI login](../#ant-cli-login-cli)).
 - **A workload doesn't need it.** Once the bootstrap rule exists, the provider's `federation` block exchanges the workload's own identity token and refreshes the result, see below.
 - **`ant auth login --profile admin` also makes that profile active for the CLI.** The provider ignores profiles unless it has a `cli` block (every client is built from the resolved credential and nothing else), but the `ant` CLI and SDKs in the same shell do not. Switch back with `ant profile activate default` and unset the variable when you are done.
 
