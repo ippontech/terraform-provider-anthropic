@@ -11,6 +11,8 @@ Sets a workspace's rate-limit overrides for one rate-limit group (a model family
 
 The resource manages **only the limiter types listed in `limits`**: the API changes the types a request names and leaves the others alone, so overrides on other types of the same group, set in the Console or by another resource, are not touched. Removing a key from `limits` clears that override; destroying the resource clears every override it manages, and the workspace falls back to the organization's limits.
 
+Terraform updates two resources on the same group in parallel. To move a limiter type from one resource to another, give the resource that takes it a `depends_on` on the one that gives it up, or move it over two applies (remove it, apply, then add it): otherwise the request clearing it can land after the request setting it, and the override is gone while state still shows it.
+
 A value above the organization's own limit is stored, but the lower of the two is enforced. Changes take effect within about an hour.
 
 > **API**: `POST /v1/organizations/workspaces/{workspace_id}/rate_limits/{rate_limit_id}` to set and clear overrides, `GET /v1/organizations/workspaces/{workspace_id}/rate_limits` to read them (Admin API).
@@ -63,7 +65,8 @@ resource "anthropic_workspace_rate_limit" "sonnet" {
   workspace_id = anthropic_workspace.example.id
   rate_limit_id = one([
     for rl in data.anthropic_workspace_rate_limits.inherited.rate_limits : rl.rate_limit_id
-    if contains(rl.models, "claude-sonnet-4-5")
+    # models is null for a group with no model this workspace can use.
+    if contains(coalesce(rl.models, []), "claude-sonnet-4-5")
   ])
 
   limits = {
@@ -97,7 +100,7 @@ Read-Only:
 
 ## Import
 
-Import the overrides of one group using the composite ID `<workspace_id>:<rate_limit_id>`. Every override the group currently has in the workspace is imported into `limits`; the import fails if the group has none.
+Import the overrides of one group using the composite ID `<workspace_id>:<rate_limit_id>`. Every override the group currently has in the workspace is imported into `limits`; the import fails if the group has none. Import is meant for a group that one resource manages: if other `anthropic_workspace_rate_limit` resources manage other types of the same group, their types are imported too, the next plan shows them removed from the imported resource, and applying it clears them.
 
 ```shell
 terraform import anthropic_workspace_rate_limit.example wrkspc_01abc123:rl_01xyz789
