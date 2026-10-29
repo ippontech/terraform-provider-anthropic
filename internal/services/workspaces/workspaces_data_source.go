@@ -219,12 +219,12 @@ func (d *WorkspacesDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		}
 		wsObjs = append(wsObjs, objs...)
 
-		if !page.HasMore || page.LastID == nil {
+		if !page.HasMore {
 			break
 		}
-		// An empty last_id, or the cursor just sent, would request the same
-		// page again forever.
-		next, err := admin.NextAfterID(afterID, *page.LastID)
+		// A null or empty last_id cannot name the next page, and the cursor
+		// just sent would request the same page again forever.
+		next, err := admin.NextAfterID(afterID, page.lastID())
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspaces: %s.", err))
 			return
@@ -240,6 +240,14 @@ func (d *WorkspacesDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	data.Workspaces = wsList
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// lastID returns the page's last_id, "" when it is null.
+func (p *workspaceListAPIResponse) lastID() string {
+	if p.LastID == nil {
+		return ""
+	}
+	return *p.LastID
 }
 
 // mapWorkspacesToListObjects maps one page of workspaces to list elements.

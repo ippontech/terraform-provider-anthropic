@@ -18,15 +18,16 @@ import (
 // the cursor the client just sent, or with an empty last_id, ends the read
 // with an error, as admin.NextAfterID makes the other Admin lists do
 // (CLAUDE.md, "Admin client retries"), instead of requesting the same page
-// forever. A null last_id still ends the list silently.
+// forever. So does a null last_id, instead of returning a truncated list.
 func TestWorkspacesDataSource_repeatedCursor(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
-		lastID  string
+		lastID  any // nil is sent as JSON null
 		queries []string
 	}{
 		"repeated last_id": {lastID: "wrkspc_loop", queries: []string{"limit=1000", "after_id=wrkspc_loop&limit=1000"}},
 		"empty last_id":    {lastID: "", queries: []string{"limit=1000"}},
+		"null last_id":     {lastID: nil, queries: []string{"limit=1000"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
