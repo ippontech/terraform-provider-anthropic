@@ -115,9 +115,11 @@
       "semanticCommitType": "chore"
     },
     {
-      "description": "gitleaks is installed in gitleaks.yml from a pinned release archive whose sha256 is hardcoded next to the version, like tflint above: Renovate bumps the version but not the hash, so never automerge it. mise.toml pins the same version for the pre-commit hook.",
-      "matchManagers": ["custom.regex"],
-      "matchDepNames": ["gitleaks/gitleaks"],
+      "description": "gitleaks is installed in gitleaks.yml from a pinned release archive whose sha256 is hardcoded next to the version, like tflint above: Renovate bumps the version but not the hash, so never automerge it. mise.toml pins the same version for the pre-commit hook: both bumps go in one PR, so the hook never runs a newer gitleaks than CI.",
+      "matchManagers": ["custom.regex", "mise"],
+      "matchPackageNames": ["gitleaks/gitleaks"],
+      "groupName": "gitleaks",
+      "groupSlug": "gitleaks",
       "automerge": false
     },
     {

@@ -30,7 +30,7 @@ repos:
       # Secrets in the staged changes, with the rules of .gitleaks.toml, at the
       # version pinned in mise.toml (the gitleaks workflow scans the commits of
       # a pull request). A deliberate fake in a test takes `gitleaks:allow` at
-      # the end of its line.
+      # the end of its line, in the commit that adds the line.
       - id: gitleaks
         name: gitleaks
         language: system

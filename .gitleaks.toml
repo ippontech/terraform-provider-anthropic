@@ -3,7 +3,9 @@
 # and the pre-commit hook.
 #
 # A deliberate fake secret in a test (a truncated PEM block, for example)
-# takes an inline `gitleaks:allow` comment on its line, not an allowlist here.
+# takes an inline `gitleaks:allow` comment on its line, in the commit that
+# adds the line (the workflow scans every commit of a pull request), not an
+# allowlist here.
 title = "terraform-provider-anthropic"
 
 [extend]
@@ -14,12 +16,13 @@ useDefault = true
 # created in claude.ai: Admin API keys with scopes, Compliance Access Keys),
 # which the provider takes as admin_api_key. Same shape as the two default
 # rules, but their length is not documented: 80 to 120 key characters
-# instead of exactly 93 plus "AA", still ended by a quote, a space, a
-# semicolon, an escaped newline or the end of the line. The entropy floor
-# keeps placeholders such as sk-ant-api01-xxxx... out.
+# instead of exactly 93 plus "AA", ended by any character outside the key
+# alphabet (a quote, a space, `&` in a query string, `<` in XML, `,` in CSV)
+# or the end of the line. The entropy floor keeps placeholders such as
+# sk-ant-api01-xxxx... out.
 [[rules]]
 id = "anthropic-enterprise-scoped-key"
 description = "Identified a Claude Enterprise scoped key (sk-ant-api01-), which can reach an organization's members, invites or compliance records."
-regex = '''\b(sk-ant-api01-[a-zA-Z0-9_\-]{80,120})(?:[\x60'"\s;]|\\[nr]|$)'''
+regex = '''\b(sk-ant-api01-[a-zA-Z0-9_\-]{80,120})(?:[^a-zA-Z0-9_\-]|$)'''
 entropy = 3.5
 keywords = ["sk-ant-api01"]

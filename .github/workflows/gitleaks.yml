@@ -43,7 +43,7 @@ jobs:
       # release's gitleaks_<version>_checksums.txt, linux_x64 line), and keep
       # the version in step with mise.toml. Renovate only bumps the version, so
       # its PR fails here until the hash is updated by hand; renovate.json
-      # excludes gitleaks from automerge.
+      # excludes gitleaks from automerge and bumps mise.toml in the same PR.
       - name: Install gitleaks
         env:
           # renovate: datasource=github-releases depName=gitleaks/gitleaks
@@ -85,7 +85,7 @@ jobs:
             {
               echo "## gitleaks findings"
               echo
-              echo "Add \`gitleaks:allow\` at the end of the line only for a deliberate fake (a test fixture); a real secret must be revoked, then removed from the history."
+              echo "Add \`gitleaks:allow\` at the end of the line only for a deliberate fake (a test fixture), and in the commit that adds the line: every commit of the pull request is scanned, so a later commit adding the comment does not clear the finding (amend or rebase, then force-push). A real secret must be revoked, then removed from the history."
               echo
               echo "| Rule | File | Line | Commit |"
               echo "|---|---|---:|---|"
