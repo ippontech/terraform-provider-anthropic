@@ -87,7 +87,7 @@ make test
 - **Floor**: once the baseline reaches 80%, the total never drops under 80% and the baseline cannot go back under it.
 - **Packages** (monitored, not yet enforced): the job summary lists every package with its coverage and its distance to 80%, least covered first. `package_min` in `.coverage.json` is `null` for now; the last pull request of the coverage effort sets it to 80, and from then on every package must stay at 80% or more, not only the total.
 
-Locally, `make cover` compares with `origin/main` (`COVER_BASE=<ref>` to change it) and sees committed changes only. `go test -cover` needs Go's `covdata` tool, missing from the toolchains `GOTOOLCHAIN` downloads (`go: no such tool "covdata"`); see the `covdata` note in CLAUDE.md.
+Locally, `make cover` compares the working tree, as the tests profile it, with its merge base with `origin/main` (`COVER_BASE=<ref>` to change it): committed and uncommitted changes count, in tracked files only (`git add -N` a new file for the diff rule to see it). `go test -cover` needs Go's `covdata` tool, missing from the toolchains `GOTOOLCHAIN` downloads (`go: no such tool "covdata"`); see the `covdata` note in CLAUDE.md.
 
 ### Run acceptance tests
 
