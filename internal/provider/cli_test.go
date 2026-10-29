@@ -411,3 +411,103 @@ func TestConfigureCLIDefersToFederation(t *testing.T) {
 		}),
 	}))
 }
+
+// TestConfigureCLIDefersToUnknownAuthToken: an auth_token unknown at plan
+// time is still configured, so a runner without profiles must not fail on the
+// cli block in the same configuration.
+func TestConfigureCLIDefersToUnknownAuthToken(t *testing.T) {
+	clearCredentialEnv(t)
+	cliConfigDir(t)
+
+	resp := configureProvider(t, map[string]tftypes.Value{
+		"api_key":    tftypes.NewValue(tftypes.String, "sk-ant-api03-test"),
+		"auth_token": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"cli":        cliValue(t, map[string]string{"profile": "does-not-exist"}),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Configure returned errors: %v", resp.Diagnostics)
+	}
+}
+
+// TestConfigureCLIRejectsUnknownAttributes: an unknown attribute would
+// otherwise fall back to the environment and pick another profile.
+func TestConfigureCLIRejectsUnknownAttributes(t *testing.T) {
+	clearCredentialEnv(t)
+	cliConfigDir(t)
+	t.Setenv("ANTHROPIC_PROFILE", "admin")
+
+	cli := cliValue(t, nil)
+	var attrs map[string]tftypes.Value
+	if err := cli.As(&attrs); err != nil {
+		t.Fatalf("cli value: %v", err)
+	}
+	attrs["profile"] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+
+	resp := configureProvider(t, map[string]tftypes.Value{"cli": tftypes.NewValue(cli.Type(), attrs)})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected Configure to fail")
+	}
+	if got := resp.Diagnostics.Errors()[0].Summary(); got != "Unknown CLI Configuration" {
+		t.Errorf("summary = %q, want Unknown CLI Configuration", got)
+	}
+}
+
+// TestConfigureCLIRejectsEnvironmentProfileWithoutAdminScope: an exported
+// ANTHROPIC_PROFILE is usually the everyday login. Only a profile the
+// configuration names gets away with a warning.
+func TestConfigureCLIRejectsEnvironmentProfileWithoutAdminScope(t *testing.T) {
+	clearCredentialEnv(t)
+	login := adminLogin(testOrg, "sk-ant-oat01-everyday")
+	login.scope = "user:inference"
+	writeCLIProfile(t, cliConfigDir(t), "default", login)
+	t.Setenv("ANTHROPIC_PROFILE", "default")
+
+	wantContains(t, cliError(t, map[string]string{"organization_id": testOrg}), "ANTHROPIC_PROFILE", "user:inference")
+}
+
+// TestConfigureCLIIgnoresWorkspaceEnvironment: ANTHROPIC_WORKSPACE_ID is the
+// SDKs' federation variable and must not filter the search.
+func TestConfigureCLIIgnoresWorkspaceEnvironment(t *testing.T) {
+	clearCredentialEnv(t)
+	writeCLIProfile(t, cliConfigDir(t), "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
+	t.Setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_other")
+
+	resp := configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, map[string]string{"organization_id": testOrg})})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Configure returned errors: %v", resp.Diagnostics)
+	}
+}
+
+// TestConfigureCLISkipsUnusableCandidates: a stale login beside a working one
+// must not make discovery ambiguous.
+func TestConfigureCLISkipsUnusableCandidates(t *testing.T) {
+	cs := newCLIServer(t)
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
+	dir := cliConfigDir(t)
+	stale := adminLogin(testOrg, "sk-ant-oat01-stale")
+	stale.expiresAt = time.Now().Add(-time.Hour)
+	writeCLIProfile(t, dir, "admin", stale)
+	writeCLIProfile(t, dir, "admin-2", adminLogin(testOrg, "sk-ant-oat01-admin-2"))
+
+	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
+		"cli": cliValue(t, map[string]string{"organization_id": testOrg}),
+	}))
+	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if _, headers := cs.snapshot(); headers[0].Get("Authorization") != "Bearer sk-ant-oat01-admin-2" {
+		t.Errorf("authorization = %q, want admin-2's token", headers[0].Get("Authorization"))
+	}
+}
+
+// TestConfigureCLIReportsOnlyUnusableCandidates: with no usable login left,
+// the error says why the candidates were rejected.
+func TestConfigureCLIReportsOnlyUnusableCandidates(t *testing.T) {
+	clearCredentialEnv(t)
+	stale := adminLogin(testOrg, "sk-ant-oat01-stale")
+	stale.expiresAt = time.Now().Add(-time.Hour)
+	writeCLIProfile(t, cliConfigDir(t), "admin", stale)
+
+	wantContains(t, cliError(t, map[string]string{"organization_id": testOrg}), "no usable org:admin profile", `"admin"`, "cannot be refreshed")
+}
