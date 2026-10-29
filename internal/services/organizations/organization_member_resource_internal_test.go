@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -320,15 +321,22 @@ func TestOrganizationMemberResource_Update(t *testing.T) {
 	vals := schematest.NullValues(t, r)
 	vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "user_01WCz1FkmYMm4gnmykNKUu3Q")
 	vals["role"] = tftypes.NewValue(objType.AttributeTypes["role"], "developer")
+	stateValues := schematest.NullValues(t, r)
+	stateValues["id"] = vals["id"]
+	stateValues["role"] = tftypes.NewValue(objType.AttributeTypes["role"], "user")
 
 	plan := tfsdk.Plan{
 		Raw:    tftypes.NewValue(objType, vals),
 		Schema: schema,
 	}
+	state := tfsdk.State{
+		Raw:    tftypes.NewValue(objType, stateValues),
+		Schema: schema,
+	}
 
 	var resp resource.UpdateResponse
 	resp.State = tfsdk.State{Schema: schema}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan}, &resp)
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Update returned errors: %v", resp.Diagnostics)
 	}
@@ -355,6 +363,58 @@ func TestOrganizationMemberResource_Update(t *testing.T) {
 	}
 }
 
+func TestOrganizationMemberResource_UpdateOnlyRemoveOnDestroy(t *testing.T) {
+	t.Parallel()
+
+	var requestCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requestCount.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	member := &OrganizationMemberResource{client: admintest.NewClient(t, srv)}
+	schema := schematest.ResourceSchema(t, member)
+	objType := schematest.ResourceObjectType(t, member)
+	stateValues := schematest.NullValues(t, member)
+	stateValues["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "user_01WCz1FkmYMm4gnmykNKUu3Q")
+	stateValues["email"] = tftypes.NewValue(objType.AttributeTypes["email"], "user@example.com")
+	stateValues["name"] = tftypes.NewValue(objType.AttributeTypes["name"], "Example User")
+	stateValues["role"] = tftypes.NewValue(objType.AttributeTypes["role"], "developer")
+	stateValues["added_at"] = tftypes.NewValue(objType.AttributeTypes["added_at"], "2026-01-01T00:00:00Z")
+	stateValues["type"] = tftypes.NewValue(objType.AttributeTypes["type"], "user")
+	stateValues["remove_on_destroy"] = tftypes.NewValue(objType.AttributeTypes["remove_on_destroy"], false)
+	state := tfsdk.State{Raw: tftypes.NewValue(objType, stateValues), Schema: schema}
+
+	planValues := schematest.NullValues(t, member)
+	for name, value := range stateValues {
+		planValues[name] = value
+	}
+	planValues["remove_on_destroy"] = tftypes.NewValue(objType.AttributeTypes["remove_on_destroy"], true)
+	plan := tfsdk.Plan{Raw: tftypes.NewValue(objType, planValues), Schema: schema}
+
+	var resp resource.UpdateResponse
+	resp.State = state
+	member.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update returned errors: %v", resp.Diagnostics)
+	}
+	if got := requestCount.Load(); got != 0 {
+		t.Errorf("API request count = %d, want 0 for a local-only change", got)
+	}
+
+	var got OrganizationMemberResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("failed to read resulting state: %v", diags)
+	}
+	if !got.RemoveOnDestroy.ValueBool() {
+		t.Errorf("remove_on_destroy = false, want true")
+	}
+	if got.ID.ValueString() != "user_01WCz1FkmYMm4gnmykNKUu3Q" || got.Email.ValueString() != "user@example.com" || got.Name.ValueString() != "Example User" || got.Role.ValueString() != "developer" || got.AddedAt.ValueString() != "2026-01-01T00:00:00Z" || got.Type.ValueString() != "user" {
+		t.Errorf("API-derived state changed during local-only update: %+v", got)
+	}
+}
+
 func TestOrganizationMemberResource_RemoveOnDestroySurvivesLifecycle(t *testing.T) {
 	for _, value := range []types.Bool{types.BoolValue(true), types.BoolValue(false), types.BoolNull()} {
 		for _, operation := range []string{"create", "read", "update"} {
@@ -365,6 +425,7 @@ func TestOrganizationMemberResource_RemoveOnDestroySurvivesLifecycle(t *testing.
 				}))
 				defer srv.Close()
 				member := &OrganizationMemberResource{client: admintest.NewClient(t, srv)}
+				objType := schematest.ResourceObjectType(t, member)
 				ctx := context.Background()
 				state := schematest.NullState(t, member)
 				data := mapOrganizationMemberToResourceState(organizationMemberAPIResponse{
@@ -375,6 +436,14 @@ func TestOrganizationMemberResource_RemoveOnDestroySurvivesLifecycle(t *testing.
 					t.Fatalf("State.Set: %v", diags)
 				}
 				plan := tfsdk.Plan(state)
+				if operation == "update" && value.IsNull() {
+					var planValues map[string]tftypes.Value
+					if err := plan.Raw.As(&planValues); err != nil {
+						t.Fatalf("Plan.Raw.As: %v", err)
+					}
+					planValues["remove_on_destroy"] = tftypes.NewValue(objType.AttributeTypes["remove_on_destroy"], false)
+					plan.Raw = tftypes.NewValue(objType, planValues)
+				}
 				switch operation {
 				case "create":
 					resp := resource.CreateResponse{State: state}
