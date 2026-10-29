@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
@@ -234,7 +236,8 @@ func (r *PluginResource) Configure(_ context.Context, req resource.ConfigureRequ
 //     only name a version of an existing plugin;
 //   - configuring served_version_id pins the plugin, so the plan says so: an
 //     unpinned plugin whose served version already matches the configuration
-//     then still gets the update that pins it;
+//     then still gets the update that pins it, with the values that update
+//     returns left unknown (unknown too while served_version_id is);
 //   - a change to an input read only at creation is a no-op, which a warning
 //     says.
 func (r *PluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -281,15 +284,47 @@ func (r *PluginResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		}
 		// Pinning moves updated_at, even onto the version already served
 		// ("including pinning an unpinned Plugin to the version it already
-		// serves", Update Plugin): the plan cannot know the new value.
+		// serves", Update Plugin), and Update maps the whole answer of the
+		// serve. When no configured value changed, the framework plans every
+		// computed value from state; they are left unknown here, as the
+		// framework does for any other change, since the plugin may change
+		// between plan and apply.
 		if !config.ServedVersionID.IsNull() && !state.ServedVersionPinned.ValueBool() {
-			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("updated_at"), types.StringUnknown())...)
+			resp.Diagnostics.Append(planServeResultUnknown(ctx, &resp.Plan)...)
 		}
 	}
 
-	if !config.ServedVersionID.IsNull() {
+	switch {
+	case config.ServedVersionID.IsUnknown():
+		// It may still turn out null, which pins nothing: a pin planned now
+		// would change in the plan Terraform makes at apply.
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("served_version_pinned"), types.BoolUnknown())...)
+	case !config.ServedVersionID.IsNull():
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("served_version_pinned"), true)...)
 	}
+}
+
+// planServeResultUnknown leaves unknown in the plan every computed attribute
+// that Update takes from the serve's answer and that has no
+// UseStateForUnknown.
+func planServeResultUnknown(ctx context.Context, plan *tfsdk.Plan) diag.Diagnostics {
+	var diags diag.Diagnostics
+	for name, unknown := range map[string]attr.Value{
+		"latest_version_id":                    types.StringUnknown(),
+		"display_name":                         types.StringUnknown(),
+		"description":                          types.StringUnknown(),
+		"manifest_version":                     types.StringUnknown(),
+		"organization_installation_preference": types.StringUnknown(),
+		"organization_installation_preference_inherited": types.BoolUnknown(),
+		"content_scan": types.ObjectUnknown(pluginContentScanAttrTypes),
+		"components":   types.ListUnknown(types.ObjectType{AttrTypes: pluginComponentAttrTypes}),
+		"reach":        types.StringUnknown(),
+		"created_by":   types.ObjectUnknown(pluginActorAttrTypes),
+		"updated_at":   types.StringUnknown(),
+	} {
+		diags.Append(plan.SetAttribute(ctx, path.Root(name), unknown)...)
+	}
+	return diags
 }
 
 func (r *PluginResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

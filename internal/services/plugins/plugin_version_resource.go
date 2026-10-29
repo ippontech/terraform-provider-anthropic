@@ -291,12 +291,13 @@ func mapPluginVersionToState(v *pluginVersionAPIObject, data *PluginVersionResou
 // pluginSourceHashModifier recomputes source_hash from the local files at
 // every plan, so an edit to them shows as a change (and, with RequiresReplace
 // after it, as a new version) even though source_dir or source_archive did
-// not change. A source that does not exist at plan time (it may be produced
-// by the same apply) leaves the value alone: Create reads it again and fails
-// there if it is still missing. A source that exists but cannot be uploaded
-// (a symbolic link, no manifest, an unreadable file) fails the plan: keeping
-// the prior hash would plan no change for an existing version, and the edit
-// would never be published.
+// not change. A source that cannot be read at plan time leaves the value
+// alone when it does not exist, or when the version is new: the same apply may
+// produce or complete it, and Create reads it again and fails there if it is
+// still missing or invalid. For an existing version, a source that exists but
+// cannot be uploaded (a symbolic link, no manifest, an unreadable file) fails
+// the plan: keeping the prior hash would plan no change, and the edit would
+// never be published.
 type pluginSourceHashModifier struct{}
 
 func (m pluginSourceHashModifier) Description(_ context.Context) string {
@@ -327,7 +328,7 @@ func (m pluginSourceHashModifier) PlanModifyString(ctx context.Context, req plan
 			return
 		}
 	}
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || req.StateValue.IsNull() {
 		return
 	}
 	source := path.Root("source_dir")

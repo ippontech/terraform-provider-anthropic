@@ -313,6 +313,34 @@ func TestPluginSourceHashModifier_invalidSourceFailsThePlan(t *testing.T) {
 	}
 }
 
+// A new version's directory can exist at plan time while the same apply still
+// writes into it (its manifest rendered from a template, say). With no prior
+// state the source is checked by Create, at apply, so the plan leaves
+// source_hash unknown instead of failing; an existing version still fails the
+// plan (previous test).
+func TestPluginSourceHashModifier_newVersionDefersAnIncompleteSourceToApply(t *testing.T) {
+	t.Parallel()
+	r := &PluginVersionResource{}
+	root := t.TempDir() // exists, but holds no manifest yet
+
+	plan := newPluginVersionModel()
+	plan.PluginID = types.StringValue("plugin_01")
+	plan.SourceDir = types.StringValue(root)
+	plan.SourceHash = types.StringUnknown()
+	req := planmodifier.StringRequest{
+		Path: path.Root("source_hash"), Plan: planOf(t, r, plan), State: emptyState(t, r),
+		PlanValue: types.StringUnknown(), StateValue: types.StringNull(),
+	}
+	resp := planmodifier.StringResponse{PlanValue: req.PlanValue}
+	pluginSourceHashModifier{}.PlanModifyString(context.Background(), req, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diagnostics = %v, want none: Create checks a new version's source at apply", resp.Diagnostics)
+	}
+	if !resp.PlanValue.IsUnknown() {
+		t.Errorf("plan value = %s, want unknown", resp.PlanValue)
+	}
+}
+
 // The version belongs to the plugin the request path names: a payload that
 // leaves plugin_id out must not blank it in state, where the "" would differ
 // from the configuration and, plugin_id being RequiresReplace, upload another

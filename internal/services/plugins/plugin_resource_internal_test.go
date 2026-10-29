@@ -12,7 +12,9 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
@@ -622,4 +624,86 @@ func TestPluginResource_ModifyPlanPinningLeavesUpdatedAtUnknown(t *testing.T) {
 			}
 		})
 	}
+}
+
+// assertAppliedAsPlanned fails for every top-level attribute the plan holds
+// as a known value that the applied state does not: Terraform reports those
+// as "Provider produced inconsistent result after apply".
+func assertAppliedAsPlanned(t *testing.T, plan tfsdk.Plan, state tfsdk.State) {
+	t.Helper()
+	var planned, applied map[string]tftypes.Value
+	if err := plan.Raw.As(&planned); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Raw.As(&applied); err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range planned {
+		if p.IsFullyKnown() && !p.Equal(applied[name]) {
+			t.Errorf("%s: planned %s, applied %s", name, p, applied[name])
+		}
+	}
+}
+
+// served_version_id can come from an expression unknown at plan time that
+// turns out null at apply. A served_version_pinned planned true would then
+// change in the plan Terraform makes at apply ("Provider produced
+// inconsistent final plan"), on a create as on an unpinned plugin: it is
+// planned unknown until the value is known.
+func TestPluginResource_ModifyPlanLeavesThePinOpenForAnUnknownServedVersion(t *testing.T) {
+	t.Parallel()
+	unpinned := statePluginModel(t, "/plugins/sales", "pluginver_02", false)
+	for name, prior := range map[string]*PluginResourceModel{"create": nil, "unpinned plugin": &unpinned} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			config := newPluginModel()
+			config.SourceDir = types.StringValue("/plugins/sales")
+			config.ServedVersionID = types.StringUnknown()
+
+			resp := modifyPluginPlan(t, config, prior)
+			if resp.Diagnostics.HasError() {
+				t.Fatal(resp.Diagnostics)
+			}
+			var pinned types.Bool
+			resp.Plan.GetAttribute(context.Background(), path.Root("served_version_pinned"), &pinned)
+			if !pinned.IsUnknown() {
+				t.Errorf("served_version_pinned = %s, want unknown while served_version_id is", pinned)
+			}
+		})
+	}
+}
+
+// Pinning an unpinned plugin to the version it serves changes no configured
+// value, so the framework plans every computed attribute from state, and
+// Update maps the whole answer of the serve. A plugin that changed between
+// plan and apply (a version uploaded, an installation setting changed) made
+// the apply fail after the pin, which cannot be undone. ModifyPlan leaves the
+// computed attributes unknown, as the framework does for any other change.
+func TestPluginResource_PinAppliesOnAPluginChangedSinceThePlan(t *testing.T) {
+	t.Parallel()
+	changed := strings.Replace(pluginJSON("pluginver_02", true), `"latest_version_id": "pluginver_02"`, `"latest_version_id": "pluginver_04"`, 1)
+	client, _ := fakePluginsAPI(t, map[string][]fakeResponse{
+		"POST /v1/organizations/plugins/plugin_01": {ok(changed)},
+	})
+	r := &PluginResource{client: client}
+	prior := statePluginModel(t, "/plugins/sales", "pluginver_02", false)
+	config := newPluginModel()
+	config.SourceDir = types.StringValue("/plugins/sales")
+	config.ServedVersionID = types.StringValue("pluginver_02")
+
+	// The plan as Terraform builds it: no configured value differs from the
+	// state, so every computed value is the state's.
+	req := resource.ModifyPlanRequest{Config: configOf(t, r, config), Plan: planOf(t, r, prior), State: stateOf(t, r, prior)}
+	planResp := resource.ModifyPlanResponse{Plan: req.Plan}
+	r.ModifyPlan(context.Background(), req, &planResp)
+	if planResp.Diagnostics.HasError() {
+		t.Fatal(planResp.Diagnostics)
+	}
+
+	updateResp := resource.UpdateResponse{State: stateOf(t, r, prior)}
+	r.Update(context.Background(), resource.UpdateRequest{Config: req.Config, Plan: planResp.Plan, State: req.State}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", updateResp.Diagnostics)
+	}
+	assertAppliedAsPlanned(t, planResp.Plan, updateResp.State)
 }
