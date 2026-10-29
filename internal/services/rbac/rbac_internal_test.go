@@ -59,6 +59,30 @@ func TestListAll_followsCursorUntilHasMoreIsFalse(t *testing.T) {
 	}
 }
 
+// The reference lists has_more on both RBAC lists, but a page that left it
+// out decoded it as false and ended the walk while next_page still held a
+// cursor: a member past the first page dropped from state and was added again
+// at every apply. A missing has_more defers to the cursor; an explicit false
+// still wins over a stray one (previous test).
+func TestListAll_missingHasMoreFollowsTheCursor(t *testing.T) {
+	t.Parallel()
+
+	srv, rec := stub(t, func(req recordedRequest) (int, string) {
+		if req.Query["page"] == nil {
+			return http.StatusOK, `{"data":[{"id":"rbac_group_a"}],"next_page":"cur_2"}`
+		}
+		return http.StatusOK, `{"data":[{"id":"rbac_group_b"}],"next_page":null}`
+	})
+
+	groups, err := listAll[rbacGroupAPIResponse](context.Background(), admintest.NewClient(t, srv), rbacGroupsPath)
+	if err != nil {
+		t.Fatalf("listAll: %v", err)
+	}
+	if len(groups) != 2 || len(rec.all()) != 2 {
+		t.Errorf("groups = %+v after %d requests, want both pages", groups, len(rec.all()))
+	}
+}
+
 func TestListAll_stopsOnMissingOrRepeatedCursor(t *testing.T) {
 	t.Parallel()
 

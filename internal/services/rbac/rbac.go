@@ -85,10 +85,11 @@ type rbacGroupMemberAPIResponse struct {
 
 // cursorPage is the envelope of the RBAC list endpoints, which page with an
 // opaque cursor (`page` / `next_page`) rather than the `after_id` the member
-// and invite lists use.
+// and invite lists use. HasMore is a pointer so that a page without the field
+// is told apart from `has_more: false`.
 type cursorPage[T any] struct {
 	Data     []T     `json:"data"`
-	HasMore  bool    `json:"has_more"`
+	HasMore  *bool   `json:"has_more"`
 	NextPage *string `json:"next_page"`
 }
 
@@ -96,7 +97,10 @@ type cursorPage[T any] struct {
 // items to visit until visit returns false or the pages run out. A page can
 // hold fewer than `limit` items while `has_more` is true (the members list
 // filters out users who left), so only `has_more` and the cursor end the
-// loop. A missing or repeated cursor also ends it rather than looping forever.
+// loop: an explicit `has_more: false` wins over a stray cursor (the
+// reference's own example pairs them), and a page without `has_more` defers
+// to the cursor. A missing or repeated cursor also ends it rather than
+// looping forever.
 func listPages[T any](ctx context.Context, client *admin.Client, path string, visit func([]T) bool) error {
 	cursor := ""
 	for {
@@ -119,7 +123,7 @@ func listPages[T any](ctx context.Context, client *admin.Client, path string, vi
 		if !visit(page.Data) {
 			return nil
 		}
-		if !page.HasMore || page.NextPage == nil || *page.NextPage == "" || *page.NextPage == cursor {
+		if (page.HasMore != nil && !*page.HasMore) || page.NextPage == nil || *page.NextPage == "" || *page.NextPage == cursor {
 			return nil
 		}
 		cursor = *page.NextPage

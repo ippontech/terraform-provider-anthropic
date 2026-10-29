@@ -66,7 +66,7 @@ func (r *RBACGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"name": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Name of the RBAC group, 1 to 255 characters. Not unique: two groups can share a name.",
-				Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
+				Validators:          []validator.String{stringvalidator.UTF8LengthBetween(1, 255)},
 			},
 			"source_type": schema.StringAttribute{
 				Computed: true,

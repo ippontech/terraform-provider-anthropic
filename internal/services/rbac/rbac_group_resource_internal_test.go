@@ -10,11 +10,17 @@ package rbac
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
@@ -289,5 +295,35 @@ func TestRBACGroupResource_ModifyPlan_create(t *testing.T) {
 	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{State: state, Plan: plan}, &resp)
 	if len(resp.Diagnostics) != 0 {
 		t.Errorf("create plan: %v", resp.Diagnostics)
+	}
+}
+
+// The reference sets the name at 1 to 255 characters (minLength/maxLength,
+// which count characters), as the schema says. A byte count rejected a
+// 100-character Japanese name (300 bytes) at plan time.
+func TestRBACGroupResource_nameLengthCountsCharacters(t *testing.T) {
+	t.Parallel()
+
+	attr := schematest.ResourceSchema(t, &RBACGroupResource{}).Attributes["name"].(schema.StringAttribute)
+	validate := func(name string) bool {
+		var diags diag.Diagnostics
+		for _, v := range attr.Validators {
+			var resp validator.StringResponse
+			v.ValidateString(context.Background(), validator.StringRequest{Path: path.Root("name"), ConfigValue: types.StringValue(name)}, &resp)
+			diags.Append(resp.Diagnostics...)
+		}
+		return !diags.HasError()
+	}
+
+	for name, want := range map[string]bool{
+		strings.Repeat("営", 100): true, // 300 bytes
+		strings.Repeat("é", 255): true, // 510 bytes
+		strings.Repeat("a", 255): true,
+		strings.Repeat("é", 256): false,
+		"":                       false,
+	} {
+		if got := validate(name); got != want {
+			t.Errorf("name of %d characters (%d bytes): valid = %v, want %v", utf8.RuneCountInString(name), len(name), got, want)
+		}
 	}
 }
