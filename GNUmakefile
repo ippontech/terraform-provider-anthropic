@@ -36,7 +36,7 @@ test:
 # CI job summary shows it (tools/coversummary).
 cover: COVERPROFILE := coverage.out
 cover: test
-	go run -C tools ./coversummary ../$(COVERPROFILE)
+	go run -C tools ./coversummary $(abspath $(COVERPROFILE))
 
 .PHONY: cover
 

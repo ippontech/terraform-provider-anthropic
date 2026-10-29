@@ -53,8 +53,11 @@ jobs:
           fi
           # The PR description becomes the squash commit body, where a
           # BREAKING CHANGE footer would publish a major release just the same.
-          if [[ "${BASE_REF}" == "main" ]] && grep -qE '^BREAKING[ -]CHANGE:' <<< "${BODY}"; then
-            echo "::error title=PR description::A 'BREAKING CHANGE:' footer marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
+          # The pattern is the notes rule of conventional-commits-parser, which
+          # semantic-release applies to every line of the body:
+          # ^[\s|*]*(BREAKING CHANGE|BREAKING-CHANGE)[:\s]+, case-insensitive.
+          if [[ "${BASE_REF}" == "main" ]] && grep -qiE '^[[:space:]|*]*BREAKING[ -]CHANGE[:[:space:]]' <<< "${BODY}"; then
+            echo "::error title=PR description::A line starting with 'BREAKING CHANGE' or 'BREAKING-CHANGE' (any case, after spaces or '*', followed by ':' or a space) marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
             exit 1
           fi
           echo "PR title follows Conventional Commits."

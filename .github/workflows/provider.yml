@@ -95,6 +95,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # The coverage summary's own tests: tools/ is a separate module, which
+      # the root `go test ./...` above does not reach.
+      - name: Test the coverage summary
+        run: go test -C tools ./coversummary
+
   generate:
     runs-on: ubuntu-latest
     timeout-minutes: 10

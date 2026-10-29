@@ -153,7 +153,7 @@ Pull requests are squash-merged: the PR title becomes the subject of the commit 
 
 `build`, `refactor` and `docs` release by choice of this repository (`releaseRules` in `.releaserc`); the others follow the defaults of `@semantic-release/commit-analyzer`. The `chore(release): <version>` commits on `main` are written by semantic-release itself after each release, to update `CHANGELOG.md`: a `chore` commit never triggers a release.
 
-A breaking change, marked by `!` after the type or a `BREAKING CHANGE:` footer, publishes a major version. The `pr-title` check refuses both on pull requests to `main`: breaking changes go through the staging branch described in [RELEASE.md](RELEASE.md#major-versions).
+A breaking change, marked by `!` after the type or a `BREAKING CHANGE:` footer, publishes a major version. semantic-release reads such a footer on any line of the description that starts with `BREAKING CHANGE` or `BREAKING-CHANGE`, in any case and after spaces or `*`, so `Breaking change: none` counts too. The `pr-title` check refuses both on pull requests to `main`: breaking changes go through the staging branch described in [RELEASE.md](RELEASE.md#major-versions).
 
 To check your own commit messages locally, `pre-commit install` also installs a `commit-msg` hook ([conventional-pre-commit](https://github.com/compilerla/conventional-pre-commit)) that rejects a message outside these types.
 

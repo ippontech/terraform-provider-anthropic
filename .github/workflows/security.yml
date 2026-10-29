@@ -95,7 +95,7 @@ jobs:
       # Same rules and flags as the pre-commit hook; no metrics, no version
       # check, so the scan itself makes no network call.
       - name: Run semgrep
-        uses: docker://semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
+        uses: docker://semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
         with:
           args: semgrep scan --config tools/semgrep.yml --error --metrics=off --disable-version-check
 
