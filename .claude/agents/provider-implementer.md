@@ -22,7 +22,7 @@ The prompt carries the whole spec. You cannot ask questions during the run, so w
 
 You run in an isolated git worktree, on a branch of its own. Commit on that branch and never check out the spec's branch: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Fetch `origin`, then reset your branch to the first start point that applies (`git reset --hard <start>`; the worktree is fresh, so nothing is lost):
 
-1. the spec's branch, when it holds commits that neither `origin/main` nor the spec's base branch has (a branch just created from `main` holds none): `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
+1. the spec's branch, when it exists: `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
 2. `origin/<base>`, when the spec names a base branch (a change stacked on an unmerged branch);
 3. `origin/main`.
 
@@ -35,7 +35,7 @@ A worktree has no `.env`, so live credentials are unavailable: do not read, prin
 ## Scope
 
 - Write only the files of this resource or data source: its Go source and tests, its registration in `internal/provider/provider.go`, its example, template and native test, and the docs that `make generate` regenerates.
-- Leave other services, `CLAUDE.md` files, `.claude/` and `.github/` untouched, except your notes under `.claude/agent-memory/terraform-provider-implementer/` (see *Memory*); when one of them needs a change, describe it under *Follow-ups*. This rule wins over step 7 of *Adding a resource or data source* in `CLAUDE.md`: list under *Follow-ups* what the service's `CLAUDE.md` should record, since parallel agents on one service would all edit that file.
+- Leave other services, `CLAUDE.md` files, `.claude/` and `.github/` untouched, except your notes under `.claude/agent-memory/provider-implementer/` (see *Memory*); when one of them needs a change, describe it under *Follow-ups*.
 - Do not run the tests that `CLAUDE.md` reserves for a dedicated test organization (OAuth-gated acceptance tests, live WIF probes).
 
 ## Done or blocked
@@ -55,7 +55,7 @@ Blocked means a check still fails after you fixed what is in scope, or the spec 
 
 ```
 ## anthropic_<name> (<resource | data source>): done | blocked
-- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <full sha from `git rev-parse HEAD`, or none>
+- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <short sha, or none>
 - Files: <paths>
 - make in this worktree: always `GOBIN=<path>/.gobin make ...` (`.dev.tfrc` points at `.gobin/`)
 - make: pass | fail (<target and error>)
