@@ -1,3 +1,13 @@
+# How a release is cut
+
+Every push to `main` runs `semantic-release.yml`:
+
+1. The acceptance tests (`testacc.yml`, called as a reusable workflow) run against the real API with the keys of the `acctest` environment. They run after the merge because a pull request from a fork cannot read those keys.
+2. Only if they pass, semantic-release reads the commits since the last tag. A `feat`, `fix`, `perf`, `refactor`, `build` or `docs` commit, or a `BREAKING CHANGE` footer, cuts a version: semantic-release pushes the `chore(release):` commit with `CHANGELOG.md`, the `v*` tag and the GitHub release. Other commit types (`chore`, `ci`, `test`, ...) cut nothing.
+3. The tag starts `goreleaser-release.yml`, which builds, signs and attaches the binaries once a maintainer approves it (see [Protect the release credentials](#protect-the-release-credentials)).
+
+A red acceptance run publishes nothing. Fix the cause, or re-run the failed jobs if the API itself was failing: the next successful run releases every commit still pending. `Actions > Acceptance Tests > Run workflow` still runs the tests alone, without releasing.
+
 # GPG Key Setup
 
 The release workflow signs the provider checksums with a GPG key. This is required by the [Terraform Registry](https://registry.terraform.io) to verify the authenticity of provider binaries.
