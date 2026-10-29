@@ -73,11 +73,11 @@ func (r result) count(s state) int {
 // rise; any other function, new or not, scores limit or less. A function is
 // matched across the trees by its package directory and name, so moving it
 // to another file of the package keeps it, while renaming it or moving it to
-// another package makes it new.
+// another package makes it new (see counterpart for same-named functions).
 func evaluate(base, head map[string]function, limit int) result {
 	r := result{limit: limit, checked: len(head)}
 	for _, h := range head {
-		b, inBase := base[h.key]
+		b, inBase := counterpart(h, base)
 		if s, ok := classify(h, b, inBase, limit); ok {
 			r.entries = append(r.entries, entry{key: h.key, file: h.file, line: h.line, score: h.score, baseScore: b.score, state: s})
 		}
@@ -87,7 +87,7 @@ func evaluate(base, head map[string]function, limit int) result {
 			continue
 		}
 		r.baseAbove++
-		if _, ok := head[b.key]; !ok {
+		if _, ok := counterpart(b, head); !ok {
 			r.entries = append(r.entries, entry{key: b.key, file: b.file, line: b.line, baseScore: b.score, state: removed})
 		}
 	}
@@ -95,6 +95,27 @@ func evaluate(base, head map[string]function, limit int) result {
 		return cmp.Or(cmp.Compare(a.state, b.state), cmp.Compare(b.score, a.score), cmp.Compare(b.baseScore, a.baseScore), strings.Compare(a.key, b.key))
 	})
 	return r
+}
+
+// counterpart returns the function of the other tree that fn is: the one
+// with the same key, or, when fn is alone of its name in one tree and has a
+// same-named sibling in the other, the first one of its file. Adding a second
+// init or a build-tagged twin then leaves the existing function matched
+// instead of making it read as new, and removing one leaves the other matched.
+func counterpart(fn function, other map[string]function) (function, bool) {
+	if o, ok := other[fn.key]; ok {
+		return o, true
+	}
+	switch fn.key {
+	case fn.name:
+		o, ok := other[inFile(fn.name, fn.file)]
+		return o, ok
+	case inFile(fn.name, fn.file):
+		if o, ok := other[fn.name]; ok && o.file == fn.file {
+			return o, true
+		}
+	}
+	return function{}, false
 }
 
 // classify returns the state of a function of the working tree, and false

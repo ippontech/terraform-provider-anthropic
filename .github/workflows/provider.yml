@@ -94,6 +94,11 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      # The ratchet's own tests: tools/ is a separate module, which the root
+      # `go test ./...` of the test job does not reach.
+      - name: Test the complexity ratchet
+        run: go test -C tools ./complexity
+
       # BASE_SHA is the base branch's commit of the pull request, or of the
       # merge queue entry; the ratchet compares with its merge base with HEAD.
       - name: Complexity ratchet

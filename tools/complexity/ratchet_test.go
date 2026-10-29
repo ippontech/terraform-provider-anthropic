@@ -192,6 +192,46 @@ func g(x int) int { return f(x - 1) }
 	}
 }
 
+func TestEvaluateSameNameSibling(t *testing.T) {
+	// A function above the cap and alone of its name at the merge base (an
+	// init here) keeps its identity when a change adds a second one in
+	// another file, or removes the second one: it reads neither as new nor
+	// as gone.
+	legacy := []byte(`package a
+
+var x int
+
+func init() {
+	if x > 0 {
+		if x > 1 {
+			if x > 2 {
+				x = 0
+			}
+		}
+	}
+}
+`)
+	small := []byte("package a\n\nfunc init() { x = 1 }\n")
+	big := []byte("package a\n\nfunc init() {\n\tif x > 0 {\n\t\tif x > 1 {\n\t\t\tx = 2\n\t\t}\n\t}\n}\n")
+	alone := mustScore(t, tree{"internal/a/a.go": legacy})
+	withSmall := mustScore(t, tree{"internal/a/a.go": legacy, "internal/a/b.go": small})
+	for name, tc := range map[string]struct{ base, head map[string]function }{
+		"sibling added":   {alone, withSmall},
+		"sibling removed": {withSmall, alone},
+	} {
+		r := evaluate(tc.base, tc.head, 2)
+		if !r.passed() || len(r.entries) != 1 || r.entries[0].state != unchanged || r.entries[0].file != "internal/a/a.go" {
+			t.Errorf("%s: entries %+v, want only the legacy init, unchanged", name, r.entries)
+		}
+	}
+
+	// A new sibling above the cap is still new.
+	r := evaluate(alone, mustScore(t, tree{"internal/a/a.go": legacy, "internal/a/b.go": big}), 2)
+	if r.failures() != 1 || r.count(added) != 1 || r.count(unchanged) != 1 {
+		t.Errorf("entries %+v, want the new init added and the legacy one unchanged", r.entries)
+	}
+}
+
 func mustScore(t *testing.T, tr tree) map[string]function {
 	t.Helper()
 	fns, err := scoreTree(tr)

@@ -53,8 +53,12 @@ type tree map[string][]byte
 type function struct {
 	// key identifies the function across the two trees: its package
 	// directory, then its name as gocognit prints it, e.g.
-	// "internal/services/agents.(*AgentResource).Update".
-	key   string
+	// "internal/services/agents.(*AgentResource).Update". Functions that
+	// share a name in a package (init functions, build-tagged twins) are
+	// told apart by file: "<name> in <file>".
+	key string
+	// name is the key before that: package directory and name only.
+	name  string
 	file  string
 	line  int
 	score int
@@ -89,7 +93,7 @@ func scoreTree(t tree) (map[string]function, error) {
 		rank := map[string]int{}
 		for _, fn := range fns {
 			rank[fn.file]++
-			fn.key = fmt.Sprintf("%s in %s", key, fn.file)
+			fn.key = inFile(key, fn.file)
 			if rank[fn.file] > 1 {
 				fn.key = fmt.Sprintf("%s#%d", fn.key, rank[fn.file])
 			}
@@ -97,6 +101,12 @@ func scoreTree(t tree) (map[string]function, error) {
 		}
 	}
 	return out, nil
+}
+
+// inFile is the key of a function that shares its name with another one of
+// its package.
+func inFile(name, file string) string {
+	return fmt.Sprintf("%s in %s", name, file)
 }
 
 func scoreFile(name string, src []byte) ([]function, error) {
@@ -116,8 +126,10 @@ func scoreFile(name string, src []byte) ([]function, error) {
 			continue
 		}
 		start, end := fset.Position(fd.Pos()), fset.Position(fd.End())
+		key := path.Dir(name) + "." + funcName(fd)
 		fns = append(fns, function{
-			key:   path.Dir(name) + "." + funcName(fd),
+			key:   key,
+			name:  key,
 			file:  name,
 			line:  start.Line,
 			score: gocognit.ScanComplexityWithRecursion(fd, recursive[fd], false).Complexity,
