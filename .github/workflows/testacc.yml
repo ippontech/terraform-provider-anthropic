@@ -4,15 +4,17 @@ on:
   # Called by semantic-release.yml on every push to main, which releases only when these jobs pass
   # (RELEASE.md, "How a release is cut"). An environment secret reaches a called workflow only if
   # the caller passes it by name; the jobs below then receive the value of their acctest
-  # environment (GitHub docs, "Reuse workflows").
+  # environment (GitHub docs, "Reuse workflows"). Not `required`: the caller has no environment,
+  # so the values it passes are empty, and GitHub refuses the call when a required secret is empty.
+  # A missing key still fails the tests (acctest.PreCheck stops on an empty key).
   workflow_call:
     secrets:
       ANTHROPIC_API_KEY:
-        required: true
+        required: false
       ANTHROPIC_ADMIN_API_KEY:
-        required: true
+        required: false
       ANTHROPIC_MULTI_WORKSPACE_API_KEY:
-        required: true
+        required: false
   workflow_dispatch:
 
 permissions: {}
