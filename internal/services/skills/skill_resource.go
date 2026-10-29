@@ -95,13 +95,17 @@ func (r *SkillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "ISO 8601 timestamp of when the skill was created.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
+			// updated_at and latest_version keep their stored value on an in-place
+			// plan: Update sends nothing, since force_destroy is the only in-place change.
 			"updated_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "ISO 8601 timestamp of when the skill was last updated.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"latest_version": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "The latest version identifier for the skill.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"source": schema.StringAttribute{
 				Computed:            true,
