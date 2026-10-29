@@ -71,6 +71,7 @@ pre-commit run -a  # repository hooks
 ```
 
 - Both can modify files (formatting, regenerated `docs/`): review those changes and include them in the commit.
+- When `pre-commit` changed an example or a template (`terraform_fmt`, `trailing-whitespace`, `end-of-file-fixer`), run `make generate` again: `docs/` embeds them as `make` generated it, and the CI `generate` job fails on stale docs.
 - `make` can be skipped when no Go, Terraform, template or example file changed (a change limited to `.claude/` or Markdown, for example); say so in the report.
 - If a check still fails after fixing what belongs to the change, stop and report the failing command with its error instead of committing, because a red branch costs the reviewer a round trip.
 
