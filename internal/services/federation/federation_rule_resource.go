@@ -592,19 +592,30 @@ func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.
 }
 
 // federationRuleAfterUpdate returns the rule Update maps into state: the
-// first read that reflects the write, or the write response when the wait
-// gave up. The update response (POST /v1/organizations/federation_rules/{id})
-// leaves target.service_account_name empty, while GET returns it; mapped as
-// is, the planned name (carried by UseStateForUnknown) becomes null and
-// Terraform reports an inconsistent result after apply. Same family as the
-// create response's issuer_name (#243), which completeFederationRuleIssuerName
-// handles.
+// write response, completed with target.service_account_name from the read
+// that confirms the write. The update response
+// (POST /v1/organizations/federation_rules/{id}) leaves that name empty,
+// while GET returns it; mapped as is, the planned name (carried by
+// UseStateForUnknown) becomes null and Terraform reports an inconsistent
+// result after apply. Same family as the create response's issuer_name
+// (#243), which completeFederationRuleIssuerName handles.
+//
+// Only the name is copied, never the whole read: the wait accepts any read
+// whose updated_at is not older than the write's, so a concurrent write by
+// another actor (the Console, another configuration) would pass too, and
+// mapping it would turn that edit into an inconsistent result instead of the
+// drift the next plan reports. The name is copied only when the read still
+// carries the written service account, for the same reason. When the wait
+// gives up, the write response is returned as is.
 func federationRuleAfterUpdate(ctx context.Context, client *providerdata.OAuthClient, written *anthropic.BetaFederationRule, timeout, interval time.Duration) *anthropic.BetaFederationRule {
-	if fresh := awaitFederationRuleUpdateVisible(ctx, client, written.ID, written.UpdatedAt, timeout, interval); fresh != nil {
-		return fresh
+	fresh := awaitFederationRuleUpdateVisible(ctx, client, written.ID, written.UpdatedAt, timeout, interval)
+	if fresh == nil || fresh.Target.ServiceAccountID != written.Target.ServiceAccountID {
+		return written
 	}
 
-	return written
+	completed := *written
+	completed.Target.ServiceAccountName = fresh.Target.ServiceAccountName
+	return &completed
 }
 
 func (r *FederationRuleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {

@@ -287,6 +287,7 @@ func TestFederationRuleAfterUpdate_MapsReadBack(t *testing.T) {
 
 	written := &anthropic.BetaFederationRule{
 		ID:        "fdrl_01ABC",
+		Name:      "written",
 		Target:    anthropic.BetaServiceAccountTarget{ServiceAccountID: "svac_01SVC"},
 		UpdatedAt: writtenAt,
 	}
@@ -298,6 +299,39 @@ func TestFederationRuleAfterUpdate_MapsReadBack(t *testing.T) {
 	}
 	if got.Target.ServiceAccountName != "ci-deploy" {
 		t.Errorf("Target.ServiceAccountName = %q, want %q", got.Target.ServiceAccountName, "ci-deploy")
+	}
+	if got.Name != "written" {
+		t.Errorf("Name = %q, want the write response's %q: only the name is copied from the read-back", got.Name, "written")
+	}
+}
+
+// TestFederationRuleAfterUpdate_KeepsWriteResponseWhenReadBackMovedTarget: a
+// read that passes the wait can carry a later write by another actor. When it
+// no longer carries the written service account, its name belongs to another
+// account and the write response is kept as is; the next plan reports the
+// edit as drift.
+func TestFederationRuleAfterUpdate_KeepsWriteResponseWhenReadBackMovedTarget(t *testing.T) {
+	writtenAt := time.Date(2026, 10, 21, 13, 0, 0, 0, time.UTC)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := fmt.Fprintf(w, `{"id":"fdrl_01ABC","type":"federation_rule","name":"other","target":{"type":"service_account","service_account_id":"svac_01OTHER","service_account_name":"other-deploy"},"updated_at":%q}`, writtenAt.Add(time.Second).Format(time.RFC3339Nano)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	written := &anthropic.BetaFederationRule{
+		ID:        "fdrl_01ABC",
+		Name:      "written",
+		Target:    anthropic.BetaServiceAccountTarget{ServiceAccountID: "svac_01SVC"},
+		UpdatedAt: writtenAt,
+	}
+
+	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv), written, 2*time.Second, time.Millisecond)
+
+	if got != written {
+		t.Errorf("expected the write response to be returned when the read-back carries another service account")
 	}
 }
 
