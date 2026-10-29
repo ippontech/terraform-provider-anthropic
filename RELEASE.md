@@ -8,7 +8,7 @@ Every push to `main` runs `semantic-release.yml`:
 
 A red acceptance run publishes nothing. Fix the cause, or, if the API itself was failing, re-run the failed jobs of the most recent run on `main` only: an older run would take the place of a newer pending run, whose commit would then go untested, and its release would publish nothing since `main` has moved on. The next successful run releases every commit still pending. `Actions > Acceptance Tests > Run workflow` still runs the tests alone, without releasing.
 
-The workflow runs one at a time on `main` (`concurrency` group, no cancellation): when several commits land while a run is testing, only the newest waiting one runs. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit.
+The workflow runs one at a time on `main` (`concurrency` group, no cancellation): when several commits land while a run is testing, only the newest waiting one runs. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit. The run that was testing publishes nothing, even when green, because semantic-release publishes only from the head of `main`; the newer run releases every pending commit once its own tests pass. A running test is never cancelled to make room: the objects it had created would stay in the test workspace, since nothing deletes them afterwards.
 
 # GPG Key Setup
 

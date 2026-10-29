@@ -2,11 +2,11 @@ name: Acceptance Tests
 
 on:
   # Called by semantic-release.yml on every push to main, which releases only when these jobs pass
-  # (RELEASE.md, "How a release is cut"). An environment secret reaches a called workflow only if
-  # the caller passes it by name; the jobs below then receive the value of their acctest
-  # environment (GitHub docs, "Reuse workflows"). Not `required`: the caller has no environment,
-  # so the values it passes are empty, and GitHub refuses the call when a required secret is empty.
-  # A missing key still fails the tests (acctest.PreCheck stops on an empty key).
+  # (RELEASE.md, "How a release is cut"). The caller must pass each secret by name, even one that
+  # exists only in the acctest environment of the jobs below, which then receive that environment's
+  # value (GitHub docs, "Reuse workflows"). Not `required`: that only checks that the caller passes
+  # the secret, not its value (same page), and a missing key already fails the tests
+  # (acctest.PreCheck stops on an empty key).
   workflow_call:
     secrets:
       ANTHROPIC_API_KEY:
