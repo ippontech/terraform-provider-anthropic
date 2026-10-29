@@ -20,7 +20,7 @@ Registers an OIDC identity provider that Anthropic trusts for Workload Identity 
 
 For `discovery` and `explicit_url` issuers, Anthropic fetches the signing keys in the background and pauses polling after repeated fetch failures.
 
-- **`poll_status`** (computed) reports the poller's state as of the last refresh: consecutive failures, last successful fetch, next scheduled fetch. It is null for `inline` issuers, which have nothing to fetch. It changes on every poll cycle, and a refresh records the new values without planning any change.
+- **`poll_status`** (computed) reports the poller's state as of the last refresh: consecutive failures, last successful fetch, next scheduled fetch. It is null for `inline` issuers, which have nothing to fetch. It changes on every poll cycle. A normal plan records the new values without planning any change, but a refresh-only plan (`terraform plan -refresh-only`, which drift detection such as HCP Terraform health assessments runs) reports them as changed outside of Terraform, and `-detailed-exitcode` then returns 2: such checks flag every `discovery` or `explicit_url` issuer on every run.
 - **`jwks_polling_disabled_at`** (computed) is set while polling is paused.
 - **`jwks_polling_disabled = false`** (optional) asks the provider to keep polling enabled: when a refresh finds it paused, the plan shows an in-place update that sends `jwks_polling_disabled: false` to the API, which re-enables it. Fix the upstream JWKS endpoint first, or polling pauses again. Only `false` is accepted (the API pauses polling on its own and rejects `true`). The toggle is never sent on create, while polling is active, or for an archived issuer.
 
@@ -74,7 +74,7 @@ output "federation_issuer_id" {
 - `created_by_actor_id` (String) Tagged ID (`user_...`/`svac_...`) of the actor that created this issuer.
 - `id` (String) Unique federation issuer identifier (e.g. `fdis_...`).
 - `jwks_polling_disabled_at` (String) Set when Anthropic's background JWKS poller has paused polling for this issuer after repeated fetch failures. Null while polling is active. Set `jwks_polling_disabled = false` to have the provider re-enable polling when it finds it paused.
-- `poll_status` (Attributes) Live state of Anthropic's background JWKS polling for this issuer, as of the last refresh. Null for inline-key issuers (nothing to fetch), and while the status is unavailable or polling has not started yet. It changes on every poll cycle; a refresh records the new values without planning any change. (see [below for nested schema](#nestedatt--poll_status))
+- `poll_status` (Attributes) Live state of Anthropic's background JWKS polling for this issuer, as of the last refresh. Null for inline-key issuers (nothing to fetch), and while the status is unavailable or polling has not started yet. It changes on every poll cycle: a normal plan records the new values without planning any change, but a refresh-only plan, as drift detection runs, reports them as changed outside of Terraform. (see [below for nested schema](#nestedatt--poll_status))
 - `updated_at` (String) Last update timestamp (RFC 3339).
 - `updated_by_actor_id` (String) Tagged ID (`user_...`/`svac_...`) of the actor that last updated this issuer.
 

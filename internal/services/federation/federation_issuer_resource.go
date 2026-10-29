@@ -223,8 +223,9 @@ func (r *FederationIssuerResource) Schema(_ context.Context, _ resource.SchemaRe
 			"poll_status": schema.SingleNestedAttribute{
 				Computed: true,
 				MarkdownDescription: "Live state of Anthropic's background JWKS polling for this issuer, as of the last refresh. Null for inline-key " +
-					"issuers (nothing to fetch), and while the status is unavailable or polling has not started yet. It changes on every poll cycle; " +
-					"a refresh records the new values without planning any change.",
+					"issuers (nothing to fetch), and while the status is unavailable or polling has not started yet. It changes on every poll cycle: " +
+					"a normal plan records the new values without planning any change, but a refresh-only plan, as drift detection runs, reports " +
+					"them as changed outside of Terraform.",
 				Attributes: map[string]schema.Attribute{
 					"consecutive_failures": schema.Int64Attribute{
 						Computed:            true,
