@@ -1,0 +1,22 @@
+---
+page_title: "anthropic_plugin_marketplace Data Source - anthropic"
+subcategory: "Claude Enterprise"
+description: |-
+  Fetches one plugin marketplace of a Claude Enterprise organization by ID.
+---
+
+# anthropic_plugin_marketplace (Data Source)
+
+Fetches one plugin marketplace of a Claude Enterprise organization by ID, through the [Plugins API](https://platform.claude.com/docs/en/manage-claude/plugins-api#plugin-marketplaces): one of the organization's, or a member's personal one. Marketplaces are created, connected to a repository and deleted in claude.ai; `anthropic_plugin_marketplace_settings` manages an organization marketplace's default installation setting.
+
+> **API**: `GET /v1/organizations/plugin_marketplaces/{marketplace_id}` (Plugins API).
+> **Auth**: Claude Enterprise Admin API key with the `read:plugins` scope (`read:org_audit` and `read:compliance_org_data` work too), in `admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`, created in claude.ai under Organization settings > API. A Claude Console Admin API key does not work.
+> **Beta header**: `ce-plugins-2026-09-01`, sent by the provider (the endpoints answer 404 without it).
+> **Availability**: beta, Claude Enterprise organizations only, and not organizations with HIPAA readiness enabled.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/plugin_marketplace/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

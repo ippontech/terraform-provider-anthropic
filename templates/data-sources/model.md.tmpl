@@ -14,8 +14,46 @@ Retrieves a specific Anthropic model by ID or alias.
 > **Beta header**: None.
 > **Cost**: Free.
 
+Use `lifecycle_stage` (the API's `lifecycle`, renamed because `lifecycle` is a Terraform meta-argument) as the
+retirement signal rather than `retires_at`, which can be revised and can be in the past on a model that is still
+`deprecated`.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/data-sources/model/data_source.tf" }}
+
+To be warned once the pinned model leaves `active`, add a check block. It warns on every plan and apply without stopping
+them. Under `terraform test`, though, a failed check fails the run unless the run lists it in `expect_failures`, so keep
+it out of a module that a test runs against the live API:
+
+{{ codefile "hcl" "examples/data-sources/model/lifecycle_check/data_source.tf" }}
+
+To fail the plan instead of warning, put the condition in a postcondition. Every resource that takes its model from
+the data source then waits for it:
+
+```hcl
+data "anthropic_model" "pinned" {
+  model_id = "claude-sonnet-4-5"
+
+  lifecycle {
+    postcondition {
+      condition     = self.lifecycle_stage == "active"
+      error_message = "${self.id} is ${self.lifecycle_stage}: move to a newer model before it retires (${coalesce(self.retires_at, "date not scheduled yet")})."
+    }
+  }
+}
+
+resource "anthropic_message" "example" {
+  model      = data.anthropic_model.pinned.id
+  max_tokens = 64
+
+  messages = [
+    {
+      role    = "user"
+      content = "Hello"
+    }
+  ]
+}
+```
 
 {{ .SchemaMarkdown | trimspace }}
