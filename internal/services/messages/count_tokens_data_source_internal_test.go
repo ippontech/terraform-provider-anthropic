@@ -131,6 +131,22 @@ func TestBuildCountTokensParams_OutputConfigAndCacheControl(t *testing.T) {
 	}
 }
 
+// An empty cache_control block (no ttl) must still be sent: a zero-valued
+// CacheControlEphemeralParam is dropped by the SDK's omitzero.
+func TestBuildCountTokensParams_EmptyCacheControlIsSent(t *testing.T) {
+	m := ctModel(t)
+	m.CacheControl = types.ObjectValueMust(ctCacheControlAttrTypes, map[string]attr.Value{"ttl": types.StringNull()})
+
+	cc, ok := ctMarshal(t, m)["cache_control"]
+	if !ok {
+		t.Fatal("cache_control was dropped from the request")
+	}
+	got, _ := json.Marshal(cc)
+	if string(got) != `{"type":"ephemeral"}` {
+		t.Errorf("cache_control = %s, want {\"type\":\"ephemeral\"}", got)
+	}
+}
+
 func TestBuildCountTokensParams_OmitsUnsetBlocks(t *testing.T) {
 	got := ctMarshal(t, ctModel(t))
 	for _, k := range []string{"thinking", "output_config", "cache_control"} {
