@@ -56,6 +56,23 @@ gpg --armor --export YOUR_KEY_ID
 Then paste it in your Terraform Registry namespace:
 `registry.terraform.io > Settings > GPG Keys > Add a GPG key`
 
+## Register the public key in the OpenTofu Registry
+
+The OpenTofu Registry also lists the provider (`registry.opentofu.org/ippontech/anthropic`) and serves the same GitHub release assets. It checks their signature only when it holds the signing key: without one, `tofu init` installs the provider without verifying it, and a user who enforces verification with `OPENTOFU_ENFORCE_GPG_VALIDATION=true` cannot install it ([OpenTofu: provider signing](https://opentofu.org/docs/cli/plugins/signing)).
+
+Submit the same public key with the [Submit new Provider Signing Key](https://github.com/opentofu/registry/issues/new?template=provider_key.yml) form of `opentofu/registry`:
+
+| Field | Value |
+|-------|-------|
+| Provider Namespace | `ippontech` |
+| Provider Name | empty, so the key covers every provider of the namespace |
+| Public Membership | the submitter must be a member of the `ippontech` GitHub organization, with the membership set to public |
+| Provider GPG Key | the output of `gpg --armor --export YOUR_KEY_ID` |
+
+Fill in the form in the GitHub web UI: the registry's automated validation reads the form's fields, and it rejects issues opened through the API or `gh`.
+
+When the key is rotated, update it in both registries.
+
 # GitHub App Setup (Semantic Release)
 
 The semantic-release workflow uses a GitHub App to push the `chore(release):` commit and tags directly to `main`, bypassing the branch ruleset (PR requirement, merge queue, and signed commits).
