@@ -2,7 +2,7 @@ module github.com/ippontech/terraform-provider-anthropic
 
 go 1.26.2
 
-toolchain go1.26.10
+toolchain go1.27.3
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.67.0

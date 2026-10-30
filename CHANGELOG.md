@@ -1,3 +1,9 @@
+## [1.63.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.3...v1.63.4) (2026-10-30)
+
+### 🐛 Bug Fixes
+
+* **deps:** update go toolchain directive to v1.27.3 ([#509](https://github.com/ippontech/terraform-provider-anthropic/issues/509)) ([f6f3b0b](https://github.com/ippontech/terraform-provider-anthropic/commit/f6f3b0bf24136736f6df7a1d7a56458c926ab4a5))
+
 ## [1.63.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.2...v1.63.3) (2026-10-29)
 
 ### 🐛 Bug Fixes
