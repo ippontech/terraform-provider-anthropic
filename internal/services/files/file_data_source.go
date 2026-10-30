@@ -145,7 +145,7 @@ func (d *FileDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	id := config.ID.ValueString()
-	file, err := d.client.Files.GetMetadata(ctx, id)
+	file, err := d.client.Files.GetMetadata(ctx, id, anthropic.FileGetMetadataParams{})
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {

@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -35,6 +36,7 @@ import (
 var _ resource.Resource = &VaultCredentialResource{}
 var _ resource.ResourceWithImportState = &VaultCredentialResource{}
 var _ resource.ResourceWithConfigValidators = &VaultCredentialResource{}
+var _ resource.ResourceWithModifyPlan = &VaultCredentialResource{}
 
 func NewVaultCredentialResource() resource.Resource {
 	return &VaultCredentialResource{}
@@ -74,9 +76,10 @@ type VaultCredentialResourceModel struct {
 	Refresh     types.Object `tfsdk:"refresh"`
 
 	// environment_variable fields
-	SecretName  types.String `tfsdk:"secret_name"`
-	SecretValue types.String `tfsdk:"secret_value"`
-	Networking  types.Object `tfsdk:"networking"`
+	SecretName        types.String `tfsdk:"secret_name"`
+	SecretValue       types.String `tfsdk:"secret_value"`
+	Networking        types.Object `tfsdk:"networking"`
+	InjectionLocation types.Object `tfsdk:"injection_location"`
 
 	// Rotation trigger (not a secret; stored in state)
 	TokenWoVersion types.Int64 `tfsdk:"token_wo_version"`
@@ -115,7 +118,19 @@ type credentialNetworkingModel struct {
 	AllowedHosts types.List   `tfsdk:"allowed_hosts"`
 }
 
+// credentialInjectionLocationModel holds the nested injection_location block for
+// environment_variable.
+type credentialInjectionLocationModel struct {
+	Header types.Bool `tfsdk:"header"`
+	Body   types.Bool `tfsdk:"body"`
+}
+
 // --- Attribute type maps for nested objects ---
+
+var credentialInjectionLocationAttrTypes = map[string]attr.Type{
+	"header": types.BoolType,
+	"body":   types.BoolType,
+}
 
 var credentialTokenEndpointAuthAttrTypes = map[string]attr.Type{
 	"type":          types.StringType,
@@ -245,7 +260,7 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 						Attributes: map[string]schema.Attribute{
 							"type": schema.StringAttribute{
 								Required:            true,
-								MarkdownDescription: "Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API cannot transition to or from `none`).",
+								MarkdownDescription: "Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API has no `none` variant and keeps the stored type when sent the other `client_secret_*` one).",
 								Validators:          []validator.String{stringvalidator.OneOf("none", "client_secret_basic", "client_secret_post")},
 								PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 							},
@@ -286,6 +301,38 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 						ElementType:         types.StringType,
 						MarkdownDescription: "Hosts on which the secret is substituted. Required when `mode` is `limited`. Each entry is a bare hostname (`api.example.com`), an IPv4 address, or a `*.`-prefixed wildcard. Maximum 16 entries.",
 						Validators:          []validator.List{listvalidator.SizeAtMost(16)},
+					},
+				},
+			},
+			"injection_location": schema.SingleNestedAttribute{
+				Optional: true,
+				Computed: true,
+				MarkdownDescription: "Where in an outbound request the secret is substituted. Applicable for `environment_variable`. " +
+					"Without the block, the API enables both locations on create; in the block, a field left out defaults to `false` " +
+					"and at least one of `header` and `body` must be `true`. Removing the block keeps the current value, " +
+					"until the credential is replaced or recreated: the new credential gets both locations again, so keep the block " +
+					"to hold a narrower value. " +
+					"Enabling only `header` is the narrower choice: request bodies are often built from content the agent works with.",
+				// UseNonNullStateForUnknown, not UseStateForUnknown: state written
+				// before this attribute existed holds null, and planning that null
+				// for an environment_variable credential would fail the apply once
+				// Update stores the location the API returns.
+				PlanModifiers: []planmodifier.Object{
+					objectplanmodifier.UseNonNullStateForUnknown(),
+					injectionLocationNullUnlessEnvVar(),
+				},
+				Attributes: map[string]schema.Attribute{
+					"header": schema.BoolAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             booldefault.StaticBool(false),
+						MarkdownDescription: "Substitute the secret when its placeholder appears in a request header value. Defaults to `false` when `injection_location` is set.",
+					},
+					"body": schema.BoolAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             booldefault.StaticBool(false),
+						MarkdownDescription: "Substitute the secret when its placeholder appears in the request body. Defaults to `false` when `injection_location` is set.",
 					},
 				},
 			},
@@ -383,19 +430,20 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 	rules := map[string]credentialFieldRules{
 		"static_bearer":        {required: []string{"token", "mcp_server_url"}},
 		"mcp_oauth":            {required: []string{"access_token", "mcp_server_url"}, optional: []string{"expires_at", "refresh"}},
-		"environment_variable": {required: []string{"secret_name", "secret_value", "networking"}},
+		"environment_variable": {required: []string{"secret_name", "secret_value", "networking"}, optional: []string{"injection_location"}},
 	}
 	// Stable order so emitted diagnostics are deterministic.
-	fieldOrder := []string{"token", "access_token", "expires_at", "refresh", "mcp_server_url", "secret_name", "secret_value", "networking"}
+	fieldOrder := []string{"token", "access_token", "expires_at", "refresh", "mcp_server_url", "secret_name", "secret_value", "networking", "injection_location"}
 	fieldValues := map[string]attr.Value{
-		"token":          data.Token,
-		"access_token":   data.AccessToken,
-		"expires_at":     data.ExpiresAt,
-		"refresh":        data.Refresh,
-		"mcp_server_url": data.MCPServerURL,
-		"secret_name":    data.SecretName,
-		"secret_value":   data.SecretValue,
-		"networking":     data.Networking,
+		"token":              data.Token,
+		"access_token":       data.AccessToken,
+		"expires_at":         data.ExpiresAt,
+		"refresh":            data.Refresh,
+		"mcp_server_url":     data.MCPServerURL,
+		"secret_name":        data.SecretName,
+		"secret_value":       data.SecretValue,
+		"networking":         data.Networking,
+		"injection_location": data.InjectionLocation,
 	}
 
 	rule, ok := rules[authType]
@@ -448,6 +496,23 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 		}
 	}
 
+	// injection_location must keep at least one location enabled (the API answers
+	// 400 otherwise). A field left out of a configured block defaults to false.
+	if authType == "environment_variable" && isSet(data.InjectionLocation) {
+		var loc credentialInjectionLocationModel
+		d := data.InjectionLocation.As(ctx, &loc, basetypes.ObjectAsOptions{})
+		resp.Diagnostics.Append(d...)
+		isFalse := func(v types.Bool) bool { return v.IsNull() || (!v.IsUnknown() && !v.ValueBool()) }
+		if !d.HasError() && isFalse(loc.Header) && isFalse(loc.Body) {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("injection_location"),
+				"Invalid injection location",
+				"At least one of \"injection_location.header\" and \"injection_location.body\" must be true: "+
+					"a credential needs one location to substitute the secret into. Fields left out default to false.",
+			)
+		}
+	}
+
 	// A write-only secret cannot be diffed by Terraform, so rotation relies on
 	// token_wo_version: bumping it is what triggers the secret to be re-pushed
 	// on the next apply. Require it whenever a secret is configured, otherwise
@@ -484,6 +549,58 @@ func (r *VaultCredentialResource) Configure(_ context.Context, req resource.Conf
 	}
 
 	r.client = pd.Client
+}
+
+// --- ModifyPlan ---
+
+// ModifyPlan keeps updated_at when the plan changes nothing else. The header
+// and body fields of injection_location have a default, which the framework
+// applies even when the block is not configured: it then sees a change and
+// plans updated_at as unknown, and UseNonNullStateForUnknown restores the
+// stored injection_location. Without this, every credential configured without
+// an injection_location block (or after the block was removed) would plan an
+// in-place update that changes nothing, on every plan.
+//
+// State written before injection_location existed holds null, which stays
+// unknown in the plan (see the attribute's plan modifiers) until a refresh
+// reads it. With nothing else changed, that unknown changes nothing either, so
+// the stored null is kept rather than an update planned.
+func (r *VaultCredentialResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+
+	var updatedAt types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("updated_at"), &updatedAt)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	unchanged := resp.Plan
+	resp.Diagnostics.Append(unchanged.SetAttribute(ctx, path.Root("updated_at"), updatedAt)...)
+	resp.Diagnostics.Append(keepUnreadInjectionLocation(ctx, req, &unchanged)...)
+	if !resp.Diagnostics.HasError() && unchanged.Raw.Equal(req.State.Raw) {
+		resp.Plan = unchanged
+	}
+}
+
+// keepUnreadInjectionLocation sets plan's injection_location back to the
+// stored null when the plan left it unknown only because state has none and
+// the block is not configured.
+func keepUnreadInjectionLocation(ctx context.Context, req resource.ModifyPlanRequest, plan *tfsdk.Plan) diag.Diagnostics {
+	var planned, stored types.Object
+	diags := plan.GetAttribute(ctx, path.Root("injection_location"), &planned)
+	diags.Append(req.State.GetAttribute(ctx, path.Root("injection_location"), &stored)...)
+	if diags.HasError() || !planned.IsUnknown() || !stored.IsNull() {
+		return diags
+	}
+	var configured types.Object
+	diags.Append(req.Config.GetAttribute(ctx, path.Root("injection_location"), &configured)...)
+	if diags.HasError() || !configured.IsNull() {
+		return diags
+	}
+	diags.Append(plan.SetAttribute(ctx, path.Root("injection_location"), stored)...)
+	return diags
 }
 
 // --- Create ---
@@ -611,24 +728,7 @@ func (r *VaultCredentialResource) Update(ctx context.Context, req resource.Updat
 		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
-	// Re-push auth on any change to a mutable auth field. token_wo_version covers
-	// write-only secret rotation (token / access_token / refresh_token / client_secret /
-	// secret_value, which Terraform cannot diff). The remaining mutable, non-secret
-	// auth fields are networking (environment_variable) and expires_at / refresh
-	// (mcp_oauth); immutable auth fields are RequiresReplace and never reach Update.
-	needsAuthUpdate := !plan.TokenWoVersion.Equal(state.TokenWoVersion)
-	switch plan.Type.ValueString() {
-	case "environment_variable":
-		if !plan.Networking.Equal(state.Networking) {
-			needsAuthUpdate = true
-		}
-	case "mcp_oauth":
-		if !plan.ExpiresAt.Equal(state.ExpiresAt) || !plan.Refresh.Equal(state.Refresh) {
-			needsAuthUpdate = true
-		}
-	}
-
-	if needsAuthUpdate {
+	if authUpdateNeeded(plan, state) {
 		authUpdate, d := buildUpdateAuthUnion(ctx, req.Config, &plan)
 		resp.Diagnostics.Append(d...)
 		if resp.Diagnostics.HasError() {
@@ -664,16 +764,18 @@ func (r *VaultCredentialResource) Delete(ctx context.Context, req resource.Delet
 		_, err := r.client.Beta.Vaults.Credentials.Archive(ctx, data.ID.ValueString(), anthropic.BetaVaultCredentialArchiveParams{
 			VaultID: data.VaultID.ValueString(),
 		})
-		if err != nil {
+		if err != nil && !providerrors.IsNotFound(err) {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive vault credential: %s", err))
 		}
 		return
 	}
 
+	// A 404 means the credential (or its vault) is already gone, which is
+	// what destroy wants.
 	_, err := r.client.Beta.Vaults.Credentials.Delete(ctx, data.ID.ValueString(), anthropic.BetaVaultCredentialDeleteParams{
 		VaultID: data.VaultID.ValueString(),
 	})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete vault credential: %s", err))
 	}
 }
@@ -698,6 +800,28 @@ func (r *VaultCredentialResource) ImportState(ctx context.Context, req resource.
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// authUpdateNeeded reports whether Update must re-push the auth object: on any
+// change to a mutable auth field. token_wo_version covers write-only secret
+// rotation (token / access_token / refresh_token / client_secret / secret_value,
+// which Terraform cannot diff). The remaining mutable, non-secret auth fields are
+// networking / injection_location (environment_variable) and expires_at /
+// refresh (mcp_oauth); immutable auth fields are RequiresReplace and never reach
+// Update. An unknown injection_location (state without one, not refreshed yet)
+// sends nothing, so it is not a change.
+func authUpdateNeeded(plan, state VaultCredentialResourceModel) bool {
+	if !plan.TokenWoVersion.Equal(state.TokenWoVersion) {
+		return true
+	}
+	switch plan.Type.ValueString() {
+	case "environment_variable":
+		locationChanged := !plan.InjectionLocation.IsUnknown() && !plan.InjectionLocation.Equal(state.InjectionLocation)
+		return !plan.Networking.Equal(state.Networking) || locationChanged
+	case "mcp_oauth":
+		return !plan.ExpiresAt.Equal(state.ExpiresAt) || !plan.Refresh.Equal(state.Refresh)
+	}
+	return false
+}
 
 // buildCreateAuthUnion builds the BetaVaultCredentialNewParamsAuthUnion from plan + config (write-only).
 // Write-only values are read from cfg (tfsdk.Config) because they are absent from plan/state.
@@ -765,14 +889,27 @@ func buildCreateAuthUnion(ctx context.Context, cfg tfsdk.Config, data *VaultCred
 			return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
 		}
 
-		return anthropic.BetaVaultCredentialNewParamsAuthUnion{
-			OfEnvironmentVariable: &anthropic.BetaManagedAgentsEnvironmentVariableCreateParams{
-				SecretName:  data.SecretName.ValueString(),
-				SecretValue: secretValue.ValueString(),
-				Networking:  networking,
-				Type:        "environment_variable",
-			},
-		}, diags
+		envParams := &anthropic.BetaManagedAgentsEnvironmentVariableCreateParams{
+			SecretName:  data.SecretName.ValueString(),
+			SecretValue: secretValue.ValueString(),
+			Networking:  networking,
+			Type:        "environment_variable",
+		}
+		// Omitted when unknown (no block in config): the API then enables both
+		// locations, and the response fills the Computed value.
+		header, body, ok, d := injectionLocationFromPlan(ctx, data.InjectionLocation)
+		diags.Append(d...)
+		if diags.HasError() {
+			return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
+		}
+		if ok {
+			envParams.InjectionLocation = anthropic.BetaManagedAgentsInjectionLocationParams{
+				Header: param.NewOpt(header),
+				Body:   param.NewOpt(body),
+			}
+		}
+
+		return anthropic.BetaVaultCredentialNewParamsAuthUnion{OfEnvironmentVariable: envParams}, diags
 	}
 
 	diags.AddError("Internal Error", fmt.Sprintf("Unknown credential type: %s", data.Type.ValueString()))
@@ -853,6 +990,20 @@ func buildUpdateAuthUnion(ctx context.Context, cfg tfsdk.Config, data *VaultCred
 				return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
 			}
 			envUpdate.Networking = networking
+		}
+
+		// The update merges injection_location per field; both are sent so the
+		// stored value converges on the plan whatever it was before.
+		header, body, ok, d := injectionLocationFromPlan(ctx, data.InjectionLocation)
+		diags.Append(d...)
+		if diags.HasError() {
+			return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+		}
+		if ok {
+			envUpdate.InjectionLocation = anthropic.BetaManagedAgentsInjectionLocationUpdateParams{
+				Header: param.NewOpt(header),
+				Body:   param.NewOpt(body),
+			}
 		}
 
 		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{OfEnvironmentVariable: envUpdate}, diags
@@ -1052,6 +1203,39 @@ func buildNetworkingUnion(ctx context.Context, networkingObj types.Object) (anth
 	}, diags
 }
 
+// injectionLocationFromPlan returns the planned injection_location fields, with
+// ok false when the object or one of its fields is null or unknown (nothing to
+// send: the API keeps or resolves the value and the response fills it in).
+func injectionLocationFromPlan(ctx context.Context, obj types.Object) (header, body, ok bool, diags diag.Diagnostics) {
+	if obj.IsNull() || obj.IsUnknown() {
+		return false, false, false, diags
+	}
+	var loc credentialInjectionLocationModel
+	diags.Append(obj.As(ctx, &loc, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return false, false, false, diags
+	}
+	for _, v := range []types.Bool{loc.Header, loc.Body} {
+		if v.IsNull() || v.IsUnknown() {
+			return false, false, false, diags
+		}
+	}
+	return loc.Header.ValueBool(), loc.Body.ValueBool(), true, diags
+}
+
+// mapInjectionLocationResponseToObject maps the resolved injection_location of
+// an environment_variable credential. The API always returns both fields; an
+// absent object maps to null.
+func mapInjectionLocationResponseToObject(auth anthropic.BetaManagedAgentsCredentialAuthUnion) (types.Object, diag.Diagnostics) {
+	if !auth.JSON.InjectionLocation.Valid() {
+		return types.ObjectNull(credentialInjectionLocationAttrTypes), nil
+	}
+	return types.ObjectValue(credentialInjectionLocationAttrTypes, map[string]attr.Value{
+		"header": types.BoolValue(auth.InjectionLocation.Header),
+		"body":   types.BoolValue(auth.InjectionLocation.Body),
+	})
+}
+
 // mcpServerURLForState returns the user-provided URL when it is equivalent to
 // the API value modulo a trailing slash. The API normalizes a bare host by
 // appending "/" (e.g. "https://mcp.example.com" -> "https://mcp.example.com/").
@@ -1123,6 +1307,7 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 		data.Refresh = types.ObjectNull(credentialRefreshAttrTypes)
 		data.SecretName = types.StringNull()
 		data.Networking = types.ObjectNull(credentialNetworkingAttrTypes)
+		data.InjectionLocation = types.ObjectNull(credentialInjectionLocationAttrTypes)
 
 	case "mcp_oauth":
 		data.MCPServerURL = mcpServerURLForState(data.MCPServerURL, cred.Auth.MCPServerURL)
@@ -1142,6 +1327,7 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 		// Clear env-var fields
 		data.SecretName = types.StringNull()
 		data.Networking = types.ObjectNull(credentialNetworkingAttrTypes)
+		data.InjectionLocation = types.ObjectNull(credentialInjectionLocationAttrTypes)
 
 	case "environment_variable":
 		// SecretName and Networking are flat fields on the union struct.
@@ -1150,6 +1336,9 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 		networkingObj, d := mapNetworkingResponseToObject(ctx, cred.Auth.Networking)
 		diags.Append(d...)
 		data.Networking = networkingObj
+		injectionLocationObj, d := mapInjectionLocationResponseToObject(cred.Auth)
+		diags.Append(d...)
+		data.InjectionLocation = injectionLocationObj
 		// Clear oauth/bearer fields
 		data.MCPServerURL = types.StringNull()
 		data.ExpiresAt = types.StringNull()

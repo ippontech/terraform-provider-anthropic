@@ -84,7 +84,7 @@ func (d *OrganizationMembersDataSource) Schema(_ context.Context, _ datasource.S
 						},
 						"role": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Organization role of the user (e.g. `user`, `developer`, `billing`, `admin`, `claude_code_user`).",
+							MarkdownDescription: memberRoleReadDescription,
 						},
 						"added_at": schema.StringAttribute{
 							Computed:            true,
@@ -173,7 +173,12 @@ func (d *OrganizationMembersDataSource) Read(ctx context.Context, req datasource
 		if !page.HasMore {
 			break
 		}
-		afterID = page.LastID
+		next, err := admin.NextAfterID(afterID, page.LastID)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list organization members: %s.", err))
+			return
+		}
+		afterID = next
 	}
 
 	memberObjs := make([]attr.Value, len(allMembers))
