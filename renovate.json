@@ -9,6 +9,7 @@
   "labels": ["dependencies"],
   "platformAutomerge": true,
   "osvVulnerabilityAlerts": true,
+  "postUpdateOptions": ["gomodTidy"],
   "vulnerabilityAlerts": {
     "automerge": false,
     "minimumReleaseAge": "3 days"
