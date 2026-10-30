@@ -18,6 +18,62 @@ Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are
 
 {{ codefile "hcl" "examples/resources/agent/resource.tf" }}
 
+## Permission policies
+
+`default_permission_policy` (on `agent_toolset` and on each `mcp_toolsets` entry) and the per-tool `permission_policy` overrides take one of three values ([Permission policies](https://platform.claude.com/docs/en/managed-agents/permission-policies)):
+
+- `always_allow`: the tool runs with no confirmation. The agent toolset uses it when no default is set.
+- `always_ask`: the session pauses until your client approves or denies the call. MCP toolsets use it when no default is set, so tools added to an MCP server later do not run without approval.
+- `auto`: the server evaluates each call from the tool, its input and the session so far, then runs it, denies it (the agent gets an error tool result) or pauses for approval when it reaches no determination. No toolset uses it by default.
+
+Those defaults are what the API applies to a toolset sent without `default_permission_policy`. Removing the attribute from an existing toolset does not plan a change on its own, since the attribute is computed: to change the policy, set the value you want, `always_ask` for instance.
+
+`auto` is not a human checkpoint: a call the server judges safe runs before anyone sees it, and its effects might not be reversible. Keep `always_ask` on the tools whose calls a person must review. The server reads what your client posts in `user.message` events as your intent, so relaying untrusted end-user input there can get a call allowed. Permission policies do not apply to `custom_tools`, which your application runs.
+
+## Multiagent orchestration
+
+`multiagent` takes one of two types ([Multiagent orchestration](https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration)):
+
+- `coordinator`: the agent delegates to the agents listed in `agents`, which can also hold `self` (copies of the agent) and one `advisor` model.
+- `multiagent_20261001`: three settings, each turned on or off on its own. `subagents` lets the agent delegate to subagents in their own session threads, `workflows` lets it write dynamic workflows that the server runs in the background with many agents, and `advisor` gives the session's primary thread a model to consult mid-turn. `subagents` and `workflows` are on by default, each with inline agents (agents defined on the fly, never saved) besides the agents listed in its own `predefined_agents`; the advisor is off by default. To allow only the agents you list, set `inline_agents_enabled = false` under both settings and list at least one agent in each. Every agent in a run uses tokens, so set a session budget when you create sessions for an agent with workflows on.
+
+The provider sends the whole `multiagent_20261001` object on every create and update, defaults included, so the API's level-by-level merge of an update into the stored configuration always leaves exactly what the configuration says. A setting left out of the configuration stays null in state while the API holds its default, and shows as a change when it was modified outside Terraform. To move an agent from `coordinator` to `multiagent_20261001`, list its agents in `subagents.predefined_agents` and its advisor in `advisor`: the API replaces the whole object when the type changes.
+
+## Execution identity
+
+`execution_identity` names the principal the agent's runs act as. By default they use the Anthropic-managed service account (`type = "service_account"`), which carries no identifier. The API returns that default for every agent, and the provider keeps the attribute null while it is unset; removing the attribute from the configuration restores the default on the next update.
+
+On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws), each run of a scheduled deployment creates its session as an IAM role in your AWS account, so the agent needs an `aws_role` identity before an `anthropic_deployment` can use it: creating a deployment for an agent without one returns a 400 error ([Scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)).
+
+```terraform
+resource "anthropic_agent" "scheduled" {
+  model = "claude-sonnet-4-6"
+  name  = "Weekly compliance scan"
+
+  execution_identity = {
+    type     = "aws_role"
+    role_arn = "arn:aws:iam::123456789012:role/agent-runner"
+  }
+}
+```
+
+The role must be in the same AWS account and needs:
+
+- **Trust policy:** allow the `aws-external-anthropic.amazonaws.com` service principal to call `sts:AssumeRole` and `sts:SetSourceIdentity`.
+- **Role permissions:** allow `aws-external-anthropic:CreateSession`, `sts:GetWebIdentityToken` and `sts:TagGetWebIdentityToken`.
+- **Caller permissions:** the IAM principal that sets the role on the agent, the one Terraform applies with, needs `iam:PassRole` on that role. No managed policy grants `iam:PassRole`.
+
+## Web tool restrictions
+
+The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `url_sources`, and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
+
+`web_fetch` only fetches a URL that appeared earlier in the session: in a user message, in a custom tool's result, or in a `web_search` or `web_fetch` result. `url_sources` narrows each of these sources, so a URL that a tool result plants (prompt injection) is not fetched: `user_input` takes `all` or `none`, and `client_tool_results` and `server_tool_results` take a `type` of `all`, `none`, `only` or `except`, the last two with a `tools` list (names of `custom_tools` entries for `client_tool_results`, `web_search` or `web_fetch` for `server_tool_results`). Under `except` a custom tool added later counts as a source, under `only` it does not. A fetch of a URL that only an excluded source showed fails with `url_not_in_prior_context`. See [URL sources](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool#url-sources).
+
+These lists are not the only restrictions applied to the two tools:
+
+- In a cloud environment with `limited` networking, the environment's `allowed_hosts` also applies to `web_search` and `web_fetch`. Creating a session fails with a 400 error when an enabled web tool's `allowed_domains` has an entry that is not within `allowed_hosts`. An `allowed_hosts` entry matches one exact host unless it starts with `*.`, so `docs.example.com` is not within `["example.com"]`, while an `allowed_domains` entry also covers its subdomains. The environment is chosen per session, so Terraform cannot check this when it applies the agent.
+- The organization's web search and web fetch settings on the **Capabilities** page of the Claude Console apply on top of the agent's lists: a URL or search result must pass both the organization's domain restrictions and the agent's.
+
 {{ .SchemaMarkdown | trimspace }}
 
 ## Import
