@@ -5,8 +5,8 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -26,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -387,9 +388,11 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							MarkdownDescription: "Description shown to the agent. 1-1024 characters.",
 						},
 						"input_schema": schema.StringAttribute{
-							Optional:            true,
-							CustomType:          jsontypes.NormalizedType{},
-							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.",
+							Optional:   true,
+							CustomType: jsontypes.NormalizedType{},
+							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
+								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted. " +
+								"When `input_schema` itself is omitted, `{\"type\": \"object\"}` is sent (a tool without parameters), since the API requires an input schema.",
 						},
 					},
 				},
@@ -589,6 +592,11 @@ func (r *AgentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	agent, err := r.client.Beta.Agents.Get(ctx, data.ID.ValueString(), anthropic.BetaAgentGetParams{})
 	if err != nil {
+		// Deleted out of band: drop it from state so the next plan re-creates it.
+		if providerrors.IsNotFound(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read agent: %s", err))
 		return
 	}
@@ -646,16 +654,18 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		params.System = param.NewOpt("")
 	}
 
-	// Metadata
-	if !data.Metadata.IsNull() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
-	} else {
-		params.Metadata = map[string]string{}
+	// Metadata is a patch on update: an omitted key is kept and a null one is
+	// deleted (https://platform.claude.com/docs/en/api/beta/agents/update), so
+	// keys removed from the configuration are sent as null. The typed
+	// map[string]string cannot carry a null, hence the extra field.
+	extraFields := map[string]any{}
+	metaPatch, diags := tfvalue.MetadataPatch(ctx, data.Metadata, state.Metadata)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(metaPatch) > 0 {
+		extraFields["metadata"] = metaPatch
 	}
 
 	// MCP servers
@@ -711,7 +721,11 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	params.Multiagent = multiagent
 	if data.Multiagent.IsNull() && !state.Multiagent.IsNull() {
-		params.SetExtraFields(multiagentClearField())
+		maps.Copy(extraFields, multiagentClearField())
+	}
+	// SetExtraFields replaces the extra fields, so it is called once.
+	if len(extraFields) > 0 {
+		params.SetExtraFields(extraFields)
 	}
 
 	agent, err := r.client.Beta.Agents.Update(ctx, state.ID.ValueString(), params)
@@ -739,6 +753,9 @@ func (r *AgentResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	_, err := r.client.Beta.Agents.Archive(ctx, data.ID.ValueString(), anthropic.BetaAgentArchiveParams{})
 	if err != nil {
+		if providerrors.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive agent: %s", err))
 		return
 	}
@@ -954,14 +971,20 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 				Description: t.Description.ValueString(),
 				Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
 			}
+			// The schema reaches the API as configured, root-level keywords such
+			// as additionalProperties and $defs included, with "type": "object"
+			// added when it has no type. The API requires one, so a tool
+			// configured without it is sent as a tool without parameters.
+			configured := customToolNoParameters
 			if !t.InputSchema.IsNull() && !t.InputSchema.IsUnknown() {
-				var schema anthropic.BetaManagedAgentsCustomToolInputSchemaParam
-				if err := json.Unmarshal([]byte(t.InputSchema.ValueString()), &schema); err != nil {
-					diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
-					return nil, diags
-				}
-				p.InputSchema = schema
+				configured = t.InputSchema.ValueString()
 			}
+			schema, err := customToolInputSchemaParam(configured)
+			if err != nil {
+				diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
+				return nil, diags
+			}
+			p.InputSchema = schema
 			tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfCustom: &p})
 		}
 	}
@@ -1042,8 +1065,8 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		metaMap, d := types.MapValue(types.StringType, elements)
 		diags.Append(d...)
 		data.Metadata = metaMap
-	} else if !data.Metadata.IsNull() {
-		data.Metadata = types.MapNull(types.StringType)
+	} else {
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(data.Metadata)
 	}
 
 	// MCP servers
@@ -1121,16 +1144,13 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 
 	// Custom tools
 	if len(apiCustomTools) > 0 {
+		currentSchemas := customToolInputSchemas(ctx, data.CustomTools)
 		toolObjs := make([]attr.Value, len(apiCustomTools))
 		for i, t := range apiCustomTools {
-			inputSchema := jsontypes.NewNormalizedNull()
-			if raw := t.InputSchema.RawJSON(); raw != "" && raw != "null" {
-				inputSchema = jsontypes.NewNormalizedValue(raw)
-			}
 			obj, d := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
 				"name":         types.StringValue(t.Name),
 				"description":  types.StringValue(t.Description),
-				"input_schema": inputSchema,
+				"input_schema": customToolInputSchemaState(currentSchemas, t.Name, t.InputSchema.RawJSON()),
 			})
 			diags.Append(d...)
 			toolObjs[i] = obj

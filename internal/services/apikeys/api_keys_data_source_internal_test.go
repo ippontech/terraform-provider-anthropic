@@ -192,3 +192,24 @@ func TestMapAPIKeyToListObject_nullWorkspaceID(t *testing.T) {
 		t.Errorf("workspace_id should be null, got %q", wsIDStr.ValueString())
 	}
 }
+
+func TestBuildAPIKeysQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		afterID             string
+		status, workspaceID types.String
+		want                url.Values
+	}{
+		{"first page, no filter", "", types.StringNull(), types.StringNull(), url.Values{"limit": {"1000"}}},
+		{"unknown filters are omitted", "", types.StringUnknown(), types.StringUnknown(), url.Values{"limit": {"1000"}}},
+		{"next page with both filters", "apikey_01A", types.StringValue("active"), types.StringValue("wrkspc_01"), url.Values{
+			"limit": {"1000"}, "after_id": {"apikey_01A"}, "status": {"active"}, "workspace_id": {"wrkspc_01"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildAPIKeysQuery(tc.afterID, tc.status, tc.workspaceID); got.Encode() != tc.want.Encode() {
+				t.Errorf("buildAPIKeysQuery() = %q, want %q", got.Encode(), tc.want.Encode())
+			}
+		})
+	}
+}

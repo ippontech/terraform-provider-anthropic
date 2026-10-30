@@ -216,7 +216,7 @@ Required:
 
 Optional:
 
-- `input_schema` (String) JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.
+- `input_schema` (String) JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted. When `input_schema` itself is omitted, `{"type": "object"}` is sent (a tool without parameters), since the API requires an input schema.
 
 
 <a id="nestedatt--mcp_servers"></a>
