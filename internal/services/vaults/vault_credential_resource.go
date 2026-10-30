@@ -664,16 +664,18 @@ func (r *VaultCredentialResource) Delete(ctx context.Context, req resource.Delet
 		_, err := r.client.Beta.Vaults.Credentials.Archive(ctx, data.ID.ValueString(), anthropic.BetaVaultCredentialArchiveParams{
 			VaultID: data.VaultID.ValueString(),
 		})
-		if err != nil {
+		if err != nil && !providerrors.IsNotFound(err) {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive vault credential: %s", err))
 		}
 		return
 	}
 
+	// A 404 means the credential (or its vault) is already gone, which is
+	// what destroy wants.
 	_, err := r.client.Beta.Vaults.Credentials.Delete(ctx, data.ID.ValueString(), anthropic.BetaVaultCredentialDeleteParams{
 		VaultID: data.VaultID.ValueString(),
 	})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete vault credential: %s", err))
 	}
 }

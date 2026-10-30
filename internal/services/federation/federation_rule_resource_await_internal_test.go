@@ -13,6 +13,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
@@ -292,7 +294,7 @@ func TestFederationRuleAfterUpdate_MapsReadBack(t *testing.T) {
 		UpdatedAt: writtenAt,
 	}
 
-	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv), written, 2*time.Second, time.Millisecond)
+	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv), written, types.ObjectNull(federationRuleTargetAttrTypes), 2*time.Second, time.Millisecond)
 
 	if gets != 1 {
 		t.Errorf("gets = %d, want 1", gets)
@@ -328,7 +330,7 @@ func TestFederationRuleAfterUpdate_KeepsWriteResponseWhenReadBackMovedTarget(t *
 		UpdatedAt: writtenAt,
 	}
 
-	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv), written, 2*time.Second, time.Millisecond)
+	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv), written, types.ObjectNull(federationRuleTargetAttrTypes), 2*time.Second, time.Millisecond)
 
 	if got != written {
 		t.Errorf("expected the write response to be returned when the read-back carries another service account")
@@ -341,7 +343,7 @@ func TestFederationRuleAfterUpdate_KeepsWriteResponseWhenWaitGivesUp(t *testing.
 	srv, _ := newFailingRuleServer(t, http.StatusNotFound)
 
 	written := &anthropic.BetaFederationRule{ID: "fdrl_01ABC", UpdatedAt: time.Now()}
-	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv, option.WithMaxRetries(0)), written, 2*time.Second, time.Millisecond)
+	got := federationRuleAfterUpdate(context.Background(), oauthtest.NewClient(t, srv, option.WithMaxRetries(0)), written, types.ObjectNull(federationRuleTargetAttrTypes), 2*time.Second, time.Millisecond)
 
 	if got != written {
 		t.Errorf("expected the write response to be returned when the wait gives up")

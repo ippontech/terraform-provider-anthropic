@@ -98,6 +98,14 @@
       "semanticCommitType": "chore"
     },
     {
+      "description": "gitleaks is installed in gitleaks.yml from a pinned release archive whose sha256 is hardcoded next to the version, like tflint above: Renovate bumps the version but not the hash, so never automerge it. mise.toml pins the same version for the pre-commit hook: both bumps go in one PR, so the hook never runs a newer gitleaks than CI.",
+      "matchManagers": ["custom.regex", "mise"],
+      "matchPackageNames": ["gitleaks/gitleaks"],
+      "groupName": "gitleaks",
+      "groupSlug": "gitleaks",
+      "automerge": false
+    },
+    {
       "description": "Hold anthropic-sdk-go below v1.68.0 until #192 is done: v1.68.0 renames skill fields the deployed API still returns under their old names. Patch releases within 1.67.x stay allowed. Remove this rule as part of #192, not on its own.",
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
@@ -123,6 +131,12 @@
       "matchManagers": ["npm"],
       "matchDepNames": ["conventional-changelog-conventionalcommits"],
       "allowedVersions": "<9.0.0"
+    },
+    {
+      "description": "poutine is installed in security.yml from a pinned release archive whose sha256 is hardcoded next to the version, exactly like tflint above: Renovate bumps the version but not the hash, so never automerge it.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["boostsecurityio/poutine"],
+      "automerge": false
     }
   ]
 }

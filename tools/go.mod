@@ -2,7 +2,10 @@ module tools
 
 go 1.26.2
 
-require github.com/hashicorp/terraform-plugin-docs v0.25.0
+require (
+	github.com/hashicorp/terraform-plugin-docs v0.25.0
+	github.com/uudashr/gocognit v1.3.0
+)
 
 require (
 	github.com/BurntSushi/toml v1.2.1 // indirect
@@ -48,6 +51,7 @@ require (
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/tools v0.43.0 // indirect
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
