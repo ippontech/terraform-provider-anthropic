@@ -32,6 +32,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/tunnels"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/workspaces"
@@ -78,8 +79,9 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 			"auth_token": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
-				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
-					"such as the Workload Identity Federation admin endpoints. " +
+				Description: "An OAuth bearer token for endpoints that reject API keys: an org:admin token (`sk-ant-oat01-...`) " +
+					"for the Workload Identity Federation admin endpoints, or a workspace:manage_tunnels token for MCP tunnels " +
+					"(configure each in its own, aliased provider block). " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
 			"federation": federationSchema(),
@@ -262,6 +264,8 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		serviceaccounts.NewServiceAccountWorkspaceResource,
 		skills.NewSkillResource,
 		skills.NewSkillVersionResource,
+		tunnels.NewTunnelResource,
+		tunnels.NewTunnelCertificateResource,
 		userprofiles.NewUserProfileResource,
 		vaults.NewVaultResource,
 		vaults.NewVaultCredentialResource,
@@ -305,6 +309,8 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		skills.NewSkillVersionDataSource,
 		skills.NewSkillVersionsDataSource,
 		skills.NewSkillsDataSource,
+		tunnels.NewTunnelDataSource,
+		tunnels.NewTunnelsDataSource,
 		userprofiles.NewUserProfileDataSource,
 		userprofiles.NewUserProfilesDataSource,
 		workspaces.NewWorkspaceDataSource,

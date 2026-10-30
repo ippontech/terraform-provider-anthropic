@@ -94,7 +94,9 @@ provider "anthropic" {
 
 ~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` block below when it needs to.
 
-The `auth_token` is optional — you only need it for federation resources.
+The `auth_token` is optional — you only need it for federation resources and MCP tunnels.
+
+MCP tunnels (`anthropic_tunnel`, `anthropic_tunnel_certificate`, and the `anthropic_tunnel` / `anthropic_tunnels` data sources) reject API keys too, but need a bearer token with the `workspace:manage_tunnels` scope instead of `org:admin`. One provider block carries one bearer token, so give the tunnel resources their own aliased provider block; see [`anthropic_tunnel`](resources/tunnel).
 
 For the end-to-end setup (the one Console-only bootstrap rule, a complete GitHub Actions example, how the workload consumes the rule, importing wizard-created objects), see the [Workload Identity Federation guide](guides/workload_identity_federation).
 
