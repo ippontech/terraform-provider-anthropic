@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
@@ -28,14 +29,15 @@ type InviteDataSource struct {
 
 // InviteDataSourceModel maps the data source schema to Go types.
 type InviteDataSourceModel struct {
-	ID         types.String `tfsdk:"id"`
-	Email      types.String `tfsdk:"email"`
-	Role       types.String `tfsdk:"role"`
-	Status     types.String `tfsdk:"status"`
-	InvitedAt  types.String `tfsdk:"invited_at"`
-	ExpiresAt  types.String `tfsdk:"expires_at"`
-	AcceptedAt types.String `tfsdk:"accepted_at"`
-	Type       types.String `tfsdk:"type"`
+	ID           types.String `tfsdk:"id"`
+	Email        types.String `tfsdk:"email"`
+	Role         types.String `tfsdk:"role"`
+	RBACGroupIDs types.Set    `tfsdk:"rbac_group_ids"`
+	Status       types.String `tfsdk:"status"`
+	InvitedAt    types.String `tfsdk:"invited_at"`
+	ExpiresAt    types.String `tfsdk:"expires_at"`
+	AcceptedAt   types.String `tfsdk:"accepted_at"`
+	Type         types.String `tfsdk:"type"`
 }
 
 func (d *InviteDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -58,6 +60,11 @@ func (d *InviteDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			"role": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Organization role the user will hold once the invite is accepted.",
+			},
+			"rbac_group_ids": schema.SetAttribute{
+				Computed:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: inviteRBACGroupIDsDataSourceDescription,
 			},
 			"status": schema.StringAttribute{
 				Computed:            true,
@@ -124,22 +131,35 @@ func (d *InviteDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, mapInviteToDataSourceState(invite))...)
+	data, diags := mapInviteToDataSourceState(invite)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, data)...)
 }
 
 // mapInviteToDataSourceState copies the API Invite object into the Terraform
 // data source state model. Named distinctly from invite_resource.go's
 // mapInviteToState (same inviteAPIResponse input, but a different target
 // model: InviteDataSourceModel here vs InviteResourceModel there).
-func mapInviteToDataSourceState(invite inviteAPIResponse) InviteDataSourceModel {
+func mapInviteToDataSourceState(invite inviteAPIResponse) (InviteDataSourceModel, diag.Diagnostics) {
+	rbacGroupIDs, diags := inviteRBACGroupIDsValue(invite.RBACGroupIDs)
 	return InviteDataSourceModel{
-		ID:         types.StringValue(invite.ID),
-		Email:      types.StringValue(invite.Email),
-		Role:       types.StringValue(invite.Role),
-		Status:     types.StringValue(invite.Status),
-		InvitedAt:  types.StringValue(invite.InvitedAt),
-		ExpiresAt:  types.StringValue(invite.ExpiresAt),
-		AcceptedAt: types.StringValue(invite.AcceptedAt),
-		Type:       types.StringValue(invite.Type),
-	}
+		ID:           types.StringValue(invite.ID),
+		Email:        types.StringValue(invite.Email),
+		Role:         types.StringValue(invite.Role),
+		RBACGroupIDs: rbacGroupIDs,
+		Status:       types.StringValue(invite.Status),
+		InvitedAt:    types.StringValue(invite.InvitedAt),
+		ExpiresAt:    types.StringValue(invite.ExpiresAt),
+		AcceptedAt:   types.StringValue(invite.AcceptedAt),
+		Type:         types.StringValue(invite.Type),
+	}, diags
 }
+
+// inviteRBACGroupIDsDataSourceDescription documents rbac_group_ids on both
+// invite data sources.
+const inviteRBACGroupIDsDataSourceDescription = "IDs of the RBAC groups (`rbac_group_...`) the person joins when they accept the invite. " +
+	"Empty when the invite carries none; RBAC groups exist only in Claude Enterprise organizations."
