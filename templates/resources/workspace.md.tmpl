@@ -10,7 +10,7 @@ description: |-
 Creates and manages an Anthropic Workspace via the Admin API.
 
 > **API**: `POST/GET/POST/POST /v1/organizations/workspaces[/{id}][/archive]` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

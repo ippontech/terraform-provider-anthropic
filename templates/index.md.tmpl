@@ -13,11 +13,26 @@ It allows you to manage and query Anthropic resources such as models.
 
 The provider accepts three distinct credentials, depending on which resources you manage. At least one must be configured; they are independent, and configuring one never substitutes for another.
 
+Anthropic issues several kinds of keys, and each endpoint accepts only some of them ([Admin API authentication](https://platform.claude.com/docs/en/manage-claude/admin-api#authentication), [Admin API keys](https://platform.claude.com/docs/en/manage-claude/admin-api-keys), [API key types](https://platform.claude.com/docs/en/manage-claude/authentication#key-types)). This table says which one to put in which provider argument:
+
+| Provider argument | Key | Prefix | Created in | Use it for |
+|---|---|---|---|---|
+| `api_key` | Claude API key (personal, service account or legacy workspace key) **scoped to one workspace** | `sk-ant-api03-` | Claude Console, [API keys](https://platform.claude.com/settings/keys) | Every resource outside the organization APIs: messages, agents, environments, skills, files, vaults, memory stores, models, etc. |
+| `admin_api_key` | Claude Console Admin API key | `sk-ant-admin01-` | Claude Console, [Admin keys](https://platform.claude.com/settings/admin-keys), by a member with the admin role | Workspaces and their members, workspace rate limits, API keys, the organization, organization members and invites |
+| `admin_api_key` | Personal or service account key **not** scoped to a workspace | `sk-ant-api03-` | Claude Console, [API keys](https://platform.claude.com/settings/keys) | The same resources as a Console Admin API key, with the permissions of the user or service account the key belongs to |
+| `admin_api_key` | Claude Enterprise Admin API key, with scopes | `sk-ant-api01-` | claude.ai, [Organization settings > API](https://claude.ai/admin-settings/api-access), by the primary owner | Organization members and invites only, according to its [scopes](https://platform.claude.com/docs/en/manage-claude/admin-api-keys#choose-scopes-for-a-claude-enterprise-key): `read:members` (or `read:org_audit`) to read them, `write:members` to change a member's role, remove a member, create or withdraw an invite |
+| `auth_token`, or the `federation` block | OAuth bearer token with the `org:admin` scope | `sk-ant-oat01-` | `ant auth login`, or a Workload Identity Federation token exchange | Service accounts, federation issuers and federation rules, which accept no API key |
+
+- `admin_api_key` is sent in the `x-api-key` header whichever kind of key it holds, so the provider needs no setting to tell them apart.
+- Of the Admin API endpoints this provider calls, a Claude Enterprise organization can use only the member and invite ones; workspaces, API keys and rate limits are Claude Console only ([which endpoints each organization can use](https://platform.claude.com/docs/en/manage-claude/user-management#which-endpoints-can-your-organization-use)). Assigning the `managed` role, on an invite or a member, also needs the `write:rbac_groups` scope, which only a key created for all linked organizations can carry. A call outside the key's scopes returns `403` with the scopes the key has and the scopes the endpoint needs.
+- A key manages only the organization it was created in. If your company uses both Claude Console and Claude Enterprise, create a key in each and configure one [provider alias](https://developer.hashicorp.com/terraform/language/providers/configuration#alias-multiple-provider-configurations) per organization.
+- The Admin API accepts the `org:admin` OAuth token on its other endpoints too, but the provider sends `auth_token` only to the service account and federation endpoints: the other organization resources need `admin_api_key`.
+
 ### API Key (`api_key` / `ANTHROPIC_API_KEY`)
 
 Required for all inference resources: `anthropic_message`, `anthropic_agent`, `anthropic_skill`, models, token counting, etc.
 
-Generate one in the [Anthropic Console → API Keys](https://platform.claude.com/settings/keys).
+Generate one in the [Anthropic Console → API Keys](https://platform.claude.com/settings/keys). Scope it to the workspace the resources belong to: the provider sends no `anthropic-workspace-id` header, and the API rejects (`400`) a request from a key that is not scoped to a workspace when that header is missing ([Select a workspace](https://platform.claude.com/docs/en/manage-claude/authentication#select-a-workspace)).
 
 **Environment variable** (recommended):
 
@@ -53,25 +68,25 @@ Leave it unset with a single-workspace key: the API answers `404 Workspace not f
 
 ### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
 
-Required for organization-management resources: `anthropic_workspace`, workspace members, and workspace rate limits. This is a separate credential scoped to your whole organization rather than a single workspace.
+Required for the organization resources and data sources built on the Admin API: workspaces and their members, workspace rate limits, API keys, the organization, organization members and invites. This is a separate credential scoped to your whole organization rather than a single workspace.
 
-Generate one in the [Anthropic Console → Admin API Keys](https://platform.claude.com/settings/admin-keys).
+For a Claude Console organization, generate one in the [Claude Console → Admin keys](https://platform.claude.com/settings/admin-keys) page. For a Claude Enterprise organization, the primary owner creates a key with the scopes you need in [claude.ai → Organization settings → API](https://claude.ai/admin-settings/api-access); it reaches the organization members and invites only. A personal or service account key that is not scoped to a workspace is accepted too. See the table above.
 
 **Environment variable** (recommended):
 
 ```bash
-export ANTHROPIC_ADMIN_API_KEY="sk-ant-admin03-..."
+export ANTHROPIC_ADMIN_API_KEY="sk-ant-admin01-..."
 ```
 
 **Provider argument**:
 
 ```hcl
 provider "anthropic" {
-  admin_api_key = "sk-ant-admin03-..."
+  admin_api_key = "sk-ant-admin01-..."
 }
 ```
 
-The `admin_api_key` is optional — you only need it when using workspace-related resources.
+The `admin_api_key` is optional — you only need it for the organization resources listed above.
 
 ### OAuth Bearer Token (`auth_token` / `ANTHROPIC_AUTH_TOKEN`)
 
