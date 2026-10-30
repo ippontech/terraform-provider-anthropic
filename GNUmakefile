@@ -22,8 +22,17 @@ tidy-check:
 	@go mod tidy -diff || \
 		(echo; echo "go.mod/go.sum are not tidy. Run 'go mod tidy' and commit the result."; exit 1)
 
+# COVERPROFILE=<file> also writes a coverage profile (the CI test job does).
 test:
-	go test -v -cover -timeout=120s -parallel=10 ./...
+	go test -v -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=120s -parallel=10 ./...
+
+# Unit tests, then the coverage of each resource and data source file, as the
+# CI job summary shows it (tools/coversummary).
+cover: COVERPROFILE := coverage.out
+cover: test
+	go run -C tools ./coversummary $(abspath $(COVERPROFILE))
+
+.PHONY: cover
 
 testacc:
 	TF_ACC=1 go test -v -cover -timeout 120m ./...
