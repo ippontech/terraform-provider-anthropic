@@ -135,7 +135,7 @@ func (d *SkillsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	params := anthropic.BetaSkillListParams{}
+	params := anthropic.BetaSkillListParams{Betas: skillsBetas()}
 	if !data.SourceFilter.IsNull() && !data.SourceFilter.IsUnknown() {
 		params.Source = anthropic.String(data.SourceFilter.ValueString())
 	}
@@ -143,7 +143,7 @@ func (d *SkillsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	pager := d.client.Beta.Skills.ListAutoPaging(ctx, params)
 	skillObjs := make([]attr.Value, 0)
 	for pager.Next() {
-		s := pager.Current()
+		s := decodeBetaSkill(pager.Current().RawJSON())
 		displayTitle := types.StringNull()
 		if s.DisplayTitle != "" {
 			displayTitle = types.StringValue(s.DisplayTitle)

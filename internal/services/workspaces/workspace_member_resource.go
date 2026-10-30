@@ -284,6 +284,9 @@ func (r *WorkspaceMemberResource) Delete(ctx context.Context, req resource.Delet
 
 	_, err := r.adminClient.DoRequest(ctx, "DELETE", url, nil)
 	if err != nil {
+		if admin.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete workspace member: %s", err))
 		return
 	}
