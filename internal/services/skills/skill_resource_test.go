@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -39,10 +40,15 @@ func testAccCheckSkillDestroyed(s *terraform.State) error {
 		if rs.Type != "anthropic_skill" {
 			continue
 		}
-		_, err := client.Beta.Skills.Get(context.Background(), rs.Primary.ID, anthropic.BetaSkillGetParams{})
-		if err != nil {
+		_, err := client.Beta.Skills.Get(context.Background(), rs.Primary.ID, anthropic.BetaSkillGetParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaSkills2025_10_02},
+		})
+		if providerrors.IsNotFound(err) {
 			// Resource not found — destroyed successfully.
-			return nil
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("checking skill %s after destroy: %w", rs.Primary.ID, err)
 		}
 		return fmt.Errorf("skill %s still exists", rs.Primary.ID)
 	}

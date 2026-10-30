@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -91,11 +92,13 @@ func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.Schema
 			},
 			"role": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Organization role of the user. The valid set depends on the organization's type: " +
-					"Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise " +
-					"organizations use `user`, `managed`, `owner`, `membership_admin`, `primary_owner` (though the API " +
-					"currently only assigns `user`/`managed` via this endpoint). Not validated against a fixed list here " +
-					"since the valid set is organization-type-dependent; an invalid value is rejected by the API at apply time.",
+				MarkdownDescription: "Organization role of the user. " + assignableRolesDescription + " " +
+					"A member holding `admin` cannot be removed through the API, and one holding a Claude Enterprise administrative role can be neither changed nor removed through it. " +
+					"Not checked against a list, since the accepted set depends on the organization type and a member can hold a role the API cannot assign; " +
+					"the API rejects an invalid change at apply time.",
+				// No OneOf: a member, imported or adopted on create, can hold admin
+				// or an Enterprise administrative role, and the configuration must be
+				// able to match it; only changing to such a role is impossible.
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
 				},

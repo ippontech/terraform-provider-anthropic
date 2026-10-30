@@ -10,6 +10,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
 

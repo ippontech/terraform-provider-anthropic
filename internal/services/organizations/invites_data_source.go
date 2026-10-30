@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -203,7 +204,12 @@ func (d *InvitesDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		if !page.HasMore {
 			break
 		}
-		afterID = page.LastID
+		next, err := admin.NextAfterID(afterID, page.LastID)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list invites: %s.", err))
+			return
+		}
+		afterID = next
 	}
 
 	inviteObjs := make([]attr.Value, len(allInvites))

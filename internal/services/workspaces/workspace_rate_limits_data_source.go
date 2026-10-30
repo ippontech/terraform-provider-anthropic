@@ -5,7 +5,6 @@ package workspaces
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 
@@ -14,9 +13,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 var _ datasource.DataSource = &WorkspaceRateLimitsDataSource{}
@@ -32,46 +33,57 @@ type WorkspaceRateLimitsDataSource struct {
 // --- Terraform data models ---
 
 type WorkspaceRateLimitsDataSourceModel struct {
-	WorkspaceID types.String `tfsdk:"workspace_id"`
-	GroupType   types.String `tfsdk:"group_type"`
-	RateLimits  types.List   `tfsdk:"rate_limits"`
+	WorkspaceID      types.String `tfsdk:"workspace_id"`
+	GroupType        types.String `tfsdk:"group_type"`
+	IncludeInherited types.Bool   `tfsdk:"include_inherited"`
+	RateLimits       types.List   `tfsdk:"rate_limits"`
 }
 
 // --- API response types ---
 
-type workspaceRateLimitsPage struct {
-	Data    []workspaceRateLimitAPIItem `json:"data"`
-	HasMore bool                        `json:"has_more"`
-	FirstID string                      `json:"first_id"`
-	LastID  string                      `json:"last_id"`
-}
-
+// workspaceRateLimitAPIItem is one entry of the list (paginated with
+// listRateLimitPages), in the shape the set-overrides endpoint returns too.
 type workspaceRateLimitAPIItem struct {
-	Type      string                    `json:"type"`
-	GroupType string                    `json:"group_type"`
-	Models    []string                  `json:"models"`
-	Limits    []workspaceRateLimitEntry `json:"limits"`
+	Type        string                    `json:"type"`
+	RateLimitID string                    `json:"rate_limit_id"`
+	WorkspaceID string                    `json:"workspace_id"`
+	Group       *rateLimitGroupAPI        `json:"group"`
+	GroupType   string                    `json:"group_type"`
+	Models      []string                  `json:"models"`
+	Limits      []workspaceRateLimitEntry `json:"limits"`
 }
 
 type workspaceRateLimitEntry struct {
-	Type     string `json:"type"`
-	Value    int64  `json:"value"`
-	OrgLimit *int64 `json:"org_limit"`
+	Type     string                    `json:"type"`
+	Value    int64                     `json:"value"`
+	OrgLimit *int64                    `json:"org_limit"`
+	Source   *workspaceRateLimitSource `json:"source"`
+}
+
+type workspaceRateLimitSource struct {
+	Type string `json:"type"`
 }
 
 // --- attr.Type maps ---
+
+var rateLimitSourceAttrTypes = map[string]attr.Type{
+	"type": types.StringType,
+}
 
 var rateLimitEntryAttrTypes = map[string]attr.Type{
 	"type":      types.StringType,
 	"value":     types.Int64Type,
 	"org_limit": types.Int64Type,
+	"source":    types.ObjectType{AttrTypes: rateLimitSourceAttrTypes},
 }
 
 var rateLimitAttrTypes = map[string]attr.Type{
-	"type":       types.StringType,
-	"group_type": types.StringType,
-	"models":     types.ListType{ElemType: types.StringType},
-	"limits":     types.ListType{ElemType: types.ObjectType{AttrTypes: rateLimitEntryAttrTypes}},
+	"type":          types.StringType,
+	"rate_limit_id": types.StringType,
+	"group":         types.ObjectType{AttrTypes: rateLimitGroupAttrTypes},
+	"group_type":    types.StringType,
+	"models":        types.ListType{ElemType: types.StringType},
+	"limits":        types.ListType{ElemType: types.ObjectType{AttrTypes: rateLimitEntryAttrTypes}},
 }
 
 // --- Metadata ---
@@ -84,39 +96,51 @@ func (d *WorkspaceRateLimitsDataSource) Metadata(_ context.Context, req datasour
 
 func (d *WorkspaceRateLimitsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Lists workspace-level rate-limit overrides for a given workspace. " +
-			"Only entries that have at least one override are returned; groups inheriting org-level limits are omitted. " +
+		MarkdownDescription: "Lists a workspace's rate limits. By default only the groups and limiter types with a workspace-level override are returned; " +
+			"with `include_inherited = true`, every group with organization-level limits is listed, with the values the workspace inherits as well as its overrides. " +
 			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) on the provider.",
 		Attributes: map[string]schema.Attribute{
 			"workspace_id": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "The ID of the workspace to list rate-limit overrides for.",
+				MarkdownDescription: "The ID of the workspace to list rate limits for.",
 			},
 			"group_type": schema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Filter results to a specific group type (`model_group`, `batch`, `token_count`, `files`, `skills`, `web_search`).",
+				MarkdownDescription: "Filter results to a specific group type (" + rateLimitGroupTypes + ").",
+			},
+			"include_inherited": schema.BoolAttribute{
+				Optional: true,
+				MarkdownDescription: "Also list the limiter values the workspace inherits from the organization, " +
+					"including groups with no workspace-level override; each value's `source.type` tells them apart. Default: `false`.",
 			},
 			"rate_limits": schema.ListNestedAttribute{
 				Computed:            true,
-				MarkdownDescription: "Rate-limit overrides set for this workspace.",
+				MarkdownDescription: "Rate-limit entries for this workspace, one per group.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"type": schema.StringAttribute{
 							Computed:            true,
 							MarkdownDescription: "Object type. Always `workspace_rate_limit`.",
 						},
+						"rate_limit_id": schema.StringAttribute{
+							Computed: true,
+							MarkdownDescription: "The `id` of the organization's rate-limit entry this entry applies to: " +
+								"the ID that setting a workspace override for this group takes.",
+						},
+						"group": rateLimitGroupDataSourceAttribute(),
 						"group_type": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Rate-limit group type.",
+							MarkdownDescription: rateLimitGroupTypeDescription,
+							DeprecationMessage:  rateLimitGroupTypeDeprecation,
 						},
 						"models": schema.ListAttribute{
 							Computed:            true,
 							ElementType:         types.StringType,
-							MarkdownDescription: "Models included in this limit group. Null when `group_type` is not `model_group`.",
+							MarkdownDescription: "Models included in this limit group (the ones this workspace has access to). Null when `group.type` is not `model_group`.",
 						},
 						"limits": schema.ListNestedAttribute{
 							Computed:            true,
-							MarkdownDescription: "Individual rate-limit entries.",
+							MarkdownDescription: "The workspace's limiter values for this group.",
 							NestedObject: schema.NestedAttributeObject{
 								Attributes: map[string]schema.Attribute{
 									"type": schema.StringAttribute{
@@ -124,12 +148,24 @@ func (d *WorkspaceRateLimitsDataSource) Schema(_ context.Context, _ datasource.S
 										MarkdownDescription: "Limit type (e.g. `requests_per_minute`).",
 									},
 									"value": schema.Int64Attribute{
-										Computed:            true,
-										MarkdownDescription: "Override value applied to this workspace.",
+										Computed: true,
+										MarkdownDescription: "The workspace's value for this limiter type: its override when `source.type` is `workspace`, " +
+											"otherwise the organization's value.",
 									},
 									"org_limit": schema.Int64Attribute{
 										Computed:            true,
 										MarkdownDescription: "Organization-level limit, or null if no org limit is configured.",
+									},
+									"source": schema.SingleNestedAttribute{
+										Computed:            true,
+										MarkdownDescription: "Where `value` comes from.",
+										Attributes: map[string]schema.Attribute{
+											"type": schema.StringAttribute{
+												Computed: true,
+												MarkdownDescription: "`workspace` (a workspace-level override is stored) or `organization` " +
+													"(inherited; listed only with `include_inherited = true`).",
+											},
+										},
 									},
 								},
 							},
@@ -174,46 +210,18 @@ func (d *WorkspaceRateLimitsDataSource) Read(ctx context.Context, req datasource
 		return
 	}
 
-	workspaceID := data.WorkspaceID.ValueString()
 	groupType := ""
 	if !data.GroupType.IsNull() && !data.GroupType.IsUnknown() {
 		groupType = data.GroupType.ValueString()
 	}
-	basePath := "/v1/organizations/workspaces/" + workspaceID + "/rate_limits"
+	includeInherited := !data.IncludeInherited.IsNull() && !data.IncludeInherited.IsUnknown() && data.IncludeInherited.ValueBool()
 
-	var allItems []workspaceRateLimitAPIItem
-	afterID := ""
-
-	for {
-		query := url.Values{}
-		query.Set("limit", "1000")
-		if groupType != "" {
-			query.Set("group_type", groupType)
-		}
-		if afterID != "" {
-			query.Set("after_id", afterID)
-		}
-
-		apiPath := basePath + "?" + query.Encode()
-
-		respBytes, err := d.adminClient.DoRequest(ctx, "GET", apiPath, nil)
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspace rate limits: %s", err))
-			return
-		}
-
-		var page workspaceRateLimitsPage
-		if err := json.Unmarshal(respBytes, &page); err != nil {
-			resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse workspace rate limits response: %s", err))
-			return
-		}
-
-		allItems = append(allItems, page.Data...)
-
-		if !page.HasMore {
-			break
-		}
-		afterID = page.LastID
+	// Every entry is kept as returned: with include_inherited the API lists
+	// groups that have no override at all, and those must not be filtered out.
+	allItems, err := listWorkspaceRateLimits(ctx, d.adminClient, data.WorkspaceID.ValueString(), groupType, includeInherited)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspace rate limits: %s", err))
+		return
 	}
 
 	rateLimitObjs := make([]attr.Value, 0, len(allItems))
@@ -236,18 +244,35 @@ func (d *WorkspaceRateLimitsDataSource) Read(ctx context.Context, req datasource
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// workspaceRateLimitsPath is the list endpoint, and the prefix of the
+// set-overrides endpoint.
+func workspaceRateLimitsPath(workspaceID string) string {
+	return "/v1/organizations/workspaces/" + url.PathEscape(workspaceID) + "/rate_limits"
+}
+
+// workspaceRateLimitsFilters builds the list filters; include_inherited is
+// sent only when true, which is also the API's default when omitted.
+func workspaceRateLimitsFilters(groupType string, includeInherited bool) url.Values {
+	filters := url.Values{}
+	if groupType != "" {
+		filters.Set("group_type", groupType)
+	}
+	if includeInherited {
+		filters.Set("include_inherited", "true")
+	}
+	return filters
+}
+
+// listWorkspaceRateLimits fetches every page of
+// GET /v1/organizations/workspaces/{workspace_id}/rate_limits.
+func listWorkspaceRateLimits(ctx context.Context, client *admin.Client, workspaceID, groupType string, includeInherited bool) ([]workspaceRateLimitAPIItem, error) {
+	return listRateLimitPages[workspaceRateLimitAPIItem](ctx, client,
+		workspaceRateLimitsPath(workspaceID), workspaceRateLimitsFilters(groupType, includeInherited))
+}
+
 // mapRateLimitToObject converts an API rate limit item to a Terraform object value.
 func mapRateLimitToObject(ctx context.Context, item workspaceRateLimitAPIItem) (attr.Value, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	var modelsList types.List
-	if len(item.Models) == 0 {
-		modelsList = types.ListNull(types.StringType)
-	} else {
-		var d diag.Diagnostics
-		modelsList, d = types.ListValueFrom(ctx, types.StringType, item.Models)
-		diags.Append(d...)
-	}
+	modelsList, diags := rateLimitModelsValue(ctx, item.Models)
 
 	limitObjs := make([]attr.Value, 0, len(item.Limits))
 	for _, entry := range item.Limits {
@@ -255,10 +280,19 @@ func mapRateLimitToObject(ctx context.Context, item workspaceRateLimitAPIItem) (
 		if entry.OrgLimit != nil {
 			orgLimit = types.Int64Value(*entry.OrgLimit)
 		}
+		source := types.ObjectNull(rateLimitSourceAttrTypes)
+		if entry.Source != nil {
+			var d diag.Diagnostics
+			source, d = types.ObjectValue(rateLimitSourceAttrTypes, map[string]attr.Value{
+				"type": tfvalue.StringOrNull(entry.Source.Type),
+			})
+			diags.Append(d...)
+		}
 		entryObj, d := types.ObjectValue(rateLimitEntryAttrTypes, map[string]attr.Value{
 			"type":      types.StringValue(entry.Type),
 			"value":     types.Int64Value(entry.Value),
 			"org_limit": orgLimit,
+			"source":    source,
 		})
 		diags.Append(d...)
 		limitObjs = append(limitObjs, entryObj)
@@ -267,11 +301,16 @@ func mapRateLimitToObject(ctx context.Context, item workspaceRateLimitAPIItem) (
 	limitsList, d := types.ListValue(types.ObjectType{AttrTypes: rateLimitEntryAttrTypes}, limitObjs)
 	diags.Append(d...)
 
+	group, d := rateLimitGroupValue(item.Group)
+	diags.Append(d...)
+
 	obj, d := types.ObjectValue(rateLimitAttrTypes, map[string]attr.Value{
-		"type":       types.StringValue(item.Type),
-		"group_type": types.StringValue(item.GroupType),
-		"models":     modelsList,
-		"limits":     limitsList,
+		"type":          types.StringValue(item.Type),
+		"rate_limit_id": tfvalue.StringOrNull(item.RateLimitID),
+		"group":         group,
+		"group_type":    tfvalue.StringOrNull(item.GroupType),
+		"models":        modelsList,
+		"limits":        limitsList,
 	})
 	diags.Append(d...)
 

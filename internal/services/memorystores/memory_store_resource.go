@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -20,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -184,7 +186,7 @@ func (r *MemoryStoreResource) Read(ctx context.Context, req resource.ReadRequest
 		// The store was deleted out-of-band: drop it from state so the next plan
 		// recreates it instead of erroring forever.
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -299,15 +301,16 @@ func (r *MemoryStoreResource) Delete(ctx context.Context, req resource.DeleteReq
 	if data.ArchiveOnDestroy.ValueBool() {
 		if data.ArchivedAt.IsNull() || data.ArchivedAt.ValueString() == "" {
 			_, err := r.client.Beta.MemoryStores.Archive(ctx, data.ID.ValueString(), anthropic.BetaMemoryStoreArchiveParams{})
-			if err != nil {
+			if err != nil && !providerrors.IsNotFound(err) {
 				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive memory store: %s", err))
 			}
 		}
 		return
 	}
 
+	// A 404 means the store is already gone, which is what destroy wants.
 	_, err := r.client.Beta.MemoryStores.Delete(ctx, data.ID.ValueString(), anthropic.BetaMemoryStoreDeleteParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete memory store: %s", err))
 	}
 }

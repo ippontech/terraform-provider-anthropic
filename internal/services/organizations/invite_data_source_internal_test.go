@@ -28,7 +28,7 @@ const inviteDataSourceFixture = `{
 
 func TestInviteDataSource_read(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" || r.URL.Path != "/v1/organizations/invites/invite_015gWxCN9Hfg2QhZwTK7" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/invites/invite_015gWxCN9Hfg2QhZwTK7" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}

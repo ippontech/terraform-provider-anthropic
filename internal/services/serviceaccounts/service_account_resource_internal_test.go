@@ -16,6 +16,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
@@ -36,10 +37,7 @@ func TestMapServiceAccountToState_basicFields(t *testing.T) {
 	}
 
 	var data ServiceAccountResourceModel
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if got := data.ID.ValueString(); got != "svac_01ABC" {
 		t.Errorf("ID = %q, want svac_01ABC", got)
@@ -81,10 +79,7 @@ func TestMapServiceAccountToState_emptyDescriptionMapsToNull(t *testing.T) {
 	}
 
 	var data ServiceAccountResourceModel
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if !data.Description.IsNull() {
 		t.Errorf("expected Description to be null for an empty API string, got %q", data.Description.ValueString())
@@ -111,10 +106,7 @@ func TestMapServiceAccountToState_explicitEmptyDescriptionRoundTrips(t *testing.
 	data := ServiceAccountResourceModel{
 		Description: types.StringValue(""),
 	}
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if data.Description.IsNull() {
 		t.Error("expected an explicitly-configured empty Description to round-trip as \"\", got null")
@@ -138,10 +130,7 @@ func TestMapServiceAccountToState_archivedFields(t *testing.T) {
 	}
 
 	var data ServiceAccountResourceModel
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if data.ArchivedAt.IsNull() {
 		t.Fatal("expected ArchivedAt to be non-null for an archived service account")
@@ -326,13 +315,14 @@ func TestServiceAccountResource_archiveOnDelete(t *testing.T) {
 	}
 }
 
-// newStaleThenFreshServiceAccountServer serves the service account as it was
-// before the write for the first staleReads Get calls, then as it is after.
+// newStaleThenFreshServiceAccountServer serves the service account svac_01ABC
+// as it was before the write for the first staleReads Get calls, then as it is after.
 // Mirrors newStaleThenFreshVaultServer (internal/services/vaults), reproducing
 // the read-after-write window measured against the live vaults API in case
 // this Beta endpoint shares it.
-func newStaleThenFreshServiceAccountServer(t *testing.T, id string, before, after time.Time, staleReads int) (*httptest.Server, *int) {
+func newStaleThenFreshServiceAccountServer(t *testing.T, before, after time.Time, staleReads int) (*httptest.Server, *int) {
 	t.Helper()
+	const id = "svac_01ABC"
 
 	gets := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +384,7 @@ func TestAwaitServiceAccountUpdateVisible_pollsUntilFresh(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 3)
+	srv, gets := newStaleThenFreshServiceAccountServer(t, before, after, 3)
 	client := oauthtest.NewClient(t, srv)
 
 	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 2*time.Second, time.Millisecond)
@@ -409,7 +399,7 @@ func TestAwaitServiceAccountUpdateVisible_returnsImmediatelyWhenFresh(t *testing
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 0)
+	srv, gets := newStaleThenFreshServiceAccountServer(t, before, after, 0)
 	client := oauthtest.NewClient(t, srv)
 
 	awaitServiceAccountUpdateVisible(context.Background(), client, "svac_01ABC", after, 2*time.Second, time.Millisecond)
@@ -426,7 +416,7 @@ func TestAwaitServiceAccountUpdateVisible_givesUpAtTimeout(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 1_000_000)
+	srv, gets := newStaleThenFreshServiceAccountServer(t, before, after, 1_000_000)
 	client := oauthtest.NewClient(t, srv)
 
 	start := time.Now()
@@ -471,7 +461,7 @@ func TestAwaitServiceAccountUpdateVisible_honoursContextCancellation(t *testing.
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, _ := newStaleThenFreshServiceAccountServer(t, "svac_01ABC", before, after, 1_000_000)
+	srv, _ := newStaleThenFreshServiceAccountServer(t, before, after, 1_000_000)
 	client := oauthtest.NewClient(t, srv)
 
 	ctx, cancel := context.WithCancel(context.Background())
