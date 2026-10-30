@@ -22,6 +22,10 @@ Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable)
 
 > **Note on deletion:** Deleting this resource **deactivates** the API key (sets `status` to `inactive`) and removes it from state. The key is not permanently deleted, because the Anthropic API does not expose a delete operation for API keys.
 
+> **Expiring keys:** a key created with an expiration reports `expires_at`, and its `status` becomes `expired` once that time has passed. `expired` is read-only and cannot be set, so a configuration that pins `status = "active"` keeps planning a change back to `active` after the key expires. Leave `status` unset on a key that can expire.
+
+> **`workspace_id` is deprecated:** it is null both for organization-scoped keys and for keys in the Default Workspace, and Admin API version 2026-10-21 removes it. Use `scope.workspace_id`, which carries the real workspace ID in both cases.
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/api_key/resource.tf" }}
