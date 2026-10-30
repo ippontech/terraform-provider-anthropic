@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -348,14 +349,15 @@ func (r *VaultResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	if data.ArchiveOnDestroy.ValueBool() {
 		_, err := r.client.Beta.Vaults.Archive(ctx, data.ID.ValueString(), anthropic.BetaVaultArchiveParams{})
-		if err != nil {
+		if err != nil && !providerrors.IsNotFound(err) {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive vault: %s", err))
 		}
 		return
 	}
 
+	// A 404 means the vault is already gone, which is what destroy wants.
 	_, err := r.client.Beta.Vaults.Delete(ctx, data.ID.ValueString(), anthropic.BetaVaultDeleteParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete vault: %s", err))
 	}
 }
@@ -370,23 +372,35 @@ func (r *VaultResource) ImportState(ctx context.Context, req resource.ImportStat
 // Helper functions
 // ============================================================================
 
-// mapVaultResponseToState maps the API response to the Terraform state model.
-func mapVaultResponseToState(vault *anthropic.BetaManagedAgentsVault, data *VaultResourceModel) diag.Diagnostics {
+// vaultModel holds the API-derived attributes of a vault. It is the whole
+// model of the anthropic_vault data source and one element of the
+// anthropic_vaults list; the resource adds archive_on_destroy on top.
+type vaultModel struct {
+	ID          types.String `tfsdk:"id"`
+	DisplayName types.String `tfsdk:"display_name"`
+	Metadata    types.Map    `tfsdk:"metadata"`
+	Type        types.String `tfsdk:"type"`
+	CreatedAt   types.String `tfsdk:"created_at"`
+	UpdatedAt   types.String `tfsdk:"updated_at"`
+	ArchivedAt  types.String `tfsdk:"archived_at"`
+}
+
+// mapVaultCommon maps an API vault to the attributes the resource and both
+// data sources share, so the archived_at and empty-metadata handling lives in
+// one place.
+func mapVaultCommon(vault *anthropic.BetaManagedAgentsVault) (vaultModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	data.ID = types.StringValue(vault.ID)
-	data.DisplayName = types.StringValue(vault.DisplayName)
-	data.Type = types.StringValue(string(vault.Type))
-	data.CreatedAt = types.StringValue(vault.CreatedAt.Format(time.RFC3339))
-	data.UpdatedAt = types.StringValue(vault.UpdatedAt.Format(time.RFC3339))
-
-	if vault.ArchivedAt.IsZero() {
-		data.ArchivedAt = types.StringNull()
-	} else {
-		data.ArchivedAt = types.StringValue(vault.ArchivedAt.Format(time.RFC3339))
+	m := vaultModel{
+		ID:          types.StringValue(vault.ID),
+		DisplayName: types.StringValue(vault.DisplayName),
+		Type:        types.StringValue(string(vault.Type)),
+		CreatedAt:   types.StringValue(vault.CreatedAt.Format(time.RFC3339)),
+		UpdatedAt:   types.StringValue(vault.UpdatedAt.Format(time.RFC3339)),
+		ArchivedAt:  tfvalue.TimeOrNull(vault.ArchivedAt),
+		Metadata:    types.MapNull(types.StringType),
 	}
 
-	// Metadata
 	if len(vault.Metadata) > 0 {
 		elements := make(map[string]attr.Value, len(vault.Metadata))
 		for k, v := range vault.Metadata {
@@ -394,9 +408,29 @@ func mapVaultResponseToState(vault *anthropic.BetaManagedAgentsVault, data *Vaul
 		}
 		metaMap, d := types.MapValue(types.StringType, elements)
 		diags.Append(d...)
-		data.Metadata = metaMap
-	} else {
-		data.Metadata = types.MapNull(types.StringType)
+		m.Metadata = metaMap
+	}
+
+	return m, diags
+}
+
+// mapVaultResponseToState maps the API response to the Terraform state model,
+// leaving archive_on_destroy (local-only) untouched.
+func mapVaultResponseToState(vault *anthropic.BetaManagedAgentsVault, data *VaultResourceModel) diag.Diagnostics {
+	common, diags := mapVaultCommon(vault)
+	current := data.Metadata
+
+	data.ID = common.ID
+	data.DisplayName = common.DisplayName
+	data.Type = common.Type
+	data.CreatedAt = common.CreatedAt
+	data.UpdatedAt = common.UpdatedAt
+	data.ArchivedAt = common.ArchivedAt
+	// The API answers {} both without metadata and after metadata = {}: keep
+	// a known empty map, or metadata = {} fails with an inconsistent result.
+	data.Metadata = common.Metadata
+	if data.Metadata.IsNull() {
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(current)
 	}
 
 	return diags

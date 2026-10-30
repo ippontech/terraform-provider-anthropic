@@ -1,0 +1,118 @@
+# golangci-lint v2 configuration. Run it with `make lint` (the version CI uses
+# is pinned in .github/workflows/provider.yml, the local one in mise.toml).
+#
+# Only code that differs from origin/main is reported (issues.new-from-merge-base):
+# the existing code has about 440 findings under this configuration (none from
+# gocognit since the refactoring lot), and a pull request must not fail on lines
+# it never touched. Remove that setting once the existing code has been brought
+# up to date in one mechanical pull request.
+#
+# The setting filters every linter, so `make lint` and the CI lint job also run
+# `golangci-lint run --no-config`: the standard linters on the whole tree, as
+# before this file existed. The tree has no finding there, and a change that
+# causes one on a line it does not edit (a helper left unused, an error return
+# ignored by an existing caller) still fails.
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - gocognit
+    - godot
+    - gosec
+    - importas
+    - intrange
+    - misspell
+    - modernize
+    - nilerr
+    - nolintlint
+    - thelper
+    - unconvert
+    - unparam
+    - usestdlibvars
+  settings:
+    gocognit:
+      # Cognitive complexity of at most 20 for production code. Tests and the
+      # test-helper packages are left out (exclusions below): table-driven tests
+      # read better long. In new-code mode a finding counts when the change adds
+      # or edits its line, the `func` line, so this reports new functions above
+      # 20 (and an existing one whose signature a change edits). The complexity
+      # ratchet (`make complexity`, CI job `complexity`) checks every function,
+      # whichever lines the change edits, against the merge base; since the
+      # refactoring lot no function on main scores above 20, so it is an
+      # absolute cap of 20.
+      min-complexity: 20
+    exhaustive:
+      default-signifies-exhaustive: true
+    importas:
+      no-unaliased: true
+      alias:
+        - pkg: github.com/ippontech/terraform-provider-anthropic/internal/errors
+          alias: providerrors
+        - pkg: github.com/ippontech/terraform-provider-anthropic/internal/retry
+          alias: provretry
+    depguard:
+      rules:
+        # Test helpers must never be compiled into the provider binary.
+        test-helpers-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/acctest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/admintest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/oauthtest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/providertest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/schematest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/sdktest
+              desc: test helper, import it from _test.go files only
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/wifprobetest
+              desc: test helper, import it from _test.go files only
+            - pkg: net/http/httptest
+              desc: test-only package, import it from _test.go files only
+        # internal/acctest imports internal/provider, which imports every service:
+        # a service importing the provider package would create an import cycle in
+        # its acceptance tests.
+        services-do-not-import-provider:
+          files:
+            - "**/internal/services/**"
+          deny:
+            - pkg: github.com/ippontech/terraform-provider-anthropic/internal/provider$
+              desc: import cycle with internal/acctest
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errchkjson
+          - gocognit
+          - gosec
+      # These packages are test helpers themselves: they may import httptest,
+      # and, being test code, they are out of the complexity cap.
+      - path: internal/(acctest|wifprobetest|admintest|oauthtest|providertest|schematest|sdktest)/
+        linters:
+          - depguard
+          - gocognit
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new-from-merge-base: origin/main
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ippontech/terraform-provider-anthropic

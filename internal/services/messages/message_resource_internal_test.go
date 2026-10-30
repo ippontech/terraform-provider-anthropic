@@ -6,13 +6,20 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -75,9 +82,66 @@ func obj(t *testing.T, m map[string]any, key string) map[string]any {
 
 func TestBuildMessageParams_Minimal(t *testing.T) {
 	out := marshalParams(t, newTestModel(t))
-	for _, k := range []string{"thinking", "output_config", "cache_control", "metadata", "stop_sequences", "service_tier", "inference_geo", "system"} {
+	for _, k := range []string{"thinking", "output_config", "cache_control", "metadata", "stop_sequences", "service_tier", "inference_geo", "system", "temperature"} {
 		if _, ok := out[k]; ok {
 			t.Errorf("unexpected key %q in minimal params: %#v", k, out)
+		}
+	}
+}
+
+// temperature is deprecated: an unset value must never reach the API (not even
+// as 0), while a value the configuration still sets is sent as is, 0 included.
+func TestBuildMessageParams_Temperature(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    types.Float64
+		wantSent bool
+		want     float64
+	}{
+		{name: "null is omitted", value: types.Float64Null()},
+		{name: "unknown is omitted", value: types.Float64Unknown()},
+		{name: "zero is sent", value: types.Float64Value(0), wantSent: true, want: 0},
+		{name: "non-default is sent", value: types.Float64Value(0.5), wantSent: true, want: 0.5},
+		{name: "default is sent", value: types.Float64Value(1), wantSent: true, want: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := newTestModel(t)
+			data.Temperature = tc.value
+			got, sent := marshalParams(t, data)["temperature"]
+			if sent != tc.wantSent {
+				t.Fatalf("temperature sent = %v, want %v (value %#v)", sent, tc.wantSent, got)
+			}
+			if sent && got != tc.want {
+				t.Errorf("temperature = %#v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The deprecation warns without rejecting: under API version 2023-06-01 models
+// older than Claude 4.7 still accept values other than 1.0, so the attribute
+// keeps its 0.0-1.0 range and gains no "only 1.0" validator.
+func TestMessageSchema_TemperatureDeprecated(t *testing.T) {
+	var sresp resource.SchemaResponse
+	NewMessageResource().Schema(context.Background(), resource.SchemaRequest{}, &sresp)
+	temperature, ok := sresp.Schema.Attributes["temperature"].(schema.Float64Attribute)
+	if !ok {
+		t.Fatalf("temperature is %T, want schema.Float64Attribute", sresp.Schema.Attributes["temperature"])
+	}
+	for _, want := range []string{"next major version", "2026-10-21", "1.0 included"} {
+		if !strings.Contains(temperature.DeprecationMessage, want) {
+			t.Errorf("DeprecationMessage %q does not mention %q", temperature.DeprecationMessage, want)
+		}
+	}
+	for _, v := range []float64{0, 0.5, 1} {
+		for _, val := range temperature.Validators {
+			req := validator.Float64Request{Path: path.Root("temperature"), ConfigValue: types.Float64Value(v)}
+			var resp validator.Float64Response
+			val.ValidateFloat64(context.Background(), req, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Errorf("temperature = %v rejected: %v", v, resp.Diagnostics)
+			}
 		}
 	}
 }
@@ -141,6 +205,12 @@ func TestBuildMessageParams_Thinking(t *testing.T) {
 			name:    "disabled",
 			model:   ThinkingModel{Type: types.StringValue("disabled"), BudgetTokens: types.Int64Null(), Display: types.StringNull()},
 			want:    map[string]any{"type": "disabled"},
+			wantNot: []string{"budget_tokens", "display"},
+		},
+		{
+			name:    "between_tools",
+			model:   ThinkingModel{Type: types.StringValue("between_tools"), BudgetTokens: types.Int64Null(), Display: types.StringNull()},
+			want:    map[string]any{"type": "between_tools"},
 			wantNot: []string{"budget_tokens", "display"},
 		},
 	}
@@ -360,6 +430,9 @@ func TestConfigValidator_Thinking(t *testing.T) {
 		{"disabled plain", "disabled", nil, nil, false},
 		{"disabled with display", "disabled", nil, "omitted", true},
 		{"disabled with budget", "disabled", 1024, nil, true},
+		{"between_tools plain", "between_tools", nil, nil, false},
+		{"between_tools with display", "between_tools", nil, "summarized", true},
+		{"between_tools with budget", "between_tools", 1024, nil, true},
 		{"unknown type", unknown, nil, nil, false},
 	}
 	for _, tc := range tests {
@@ -367,6 +440,239 @@ func TestConfigValidator_Thinking(t *testing.T) {
 			diags := validateConfig(t, thinkingValue(t, tc.typ, tc.budget, tc.display))
 			if diags.HasError() != tc.wantErr {
 				t.Errorf("wantErr=%v, diags=%v", tc.wantErr, diags)
+			}
+		})
+	}
+}
+
+// speed and diagnostics are omitted from the request unless configured.
+func TestBuildMessageParams_SpeedAndDiagnosticsOmittedWhenUnset(t *testing.T) {
+	out := marshalParams(t, newTestModel(t))
+	for _, k := range []string{"speed", "diagnostics"} {
+		if _, ok := out[k]; ok {
+			t.Errorf("unexpected key %q in minimal params: %#v", k, out)
+		}
+	}
+}
+
+func TestBuildMessageParams_Speed(t *testing.T) {
+	for _, speed := range []string{"standard", "fast"} {
+		data := newTestModel(t)
+		data.Speed = types.StringValue(speed)
+		if got := marshalParams(t, data)["speed"]; got != speed {
+			t.Errorf("speed = %#v, want %q", got, speed)
+		}
+	}
+}
+
+// Without previous_message_id the request carries an explicit
+// "previous_message_id": null, the documented first-turn opt-in; with it, the
+// ID. cache_miss_reason (Computed) never reaches the request.
+func TestBuildMessageParams_Diagnostics(t *testing.T) {
+	data := newTestModel(t)
+	data.Diagnostics = &DiagnosticsModel{
+		PreviousMessageID: types.StringNull(),
+		CacheMissReason:   types.ObjectUnknown(cacheMissReasonAttrTypes),
+	}
+	first := obj(t, marshalParams(t, data), "diagnostics")
+	if v, ok := first["previous_message_id"]; !ok || v != nil {
+		t.Errorf("first turn diagnostics = %#v, want {\"previous_message_id\": null}", first)
+	}
+	if len(first) != 1 {
+		t.Errorf("diagnostics must only carry previous_message_id: %#v", first)
+	}
+
+	data.Diagnostics.PreviousMessageID = types.StringValue("msg_01ABC")
+	next := obj(t, marshalParams(t, data), "diagnostics")
+	if next["previous_message_id"] != "msg_01ABC" || len(next) != 1 {
+		t.Errorf("next turn diagnostics = %#v", next)
+	}
+}
+
+func TestMapMessageToState_SpeedAndCacheMissReason(t *testing.T) {
+	const usage = `"usage": {"input_tokens": 1, "output_tokens": 2, "speed": "fast"}`
+	for _, tc := range []struct {
+		name        string
+		diagnostics string
+		wantType    string // "" means a null cache_miss_reason
+		wantMissed  *int64
+	}{
+		{name: "changed", diagnostics: `{"cache_miss_reason": {"type": "system_changed", "cache_missed_input_tokens": 41850}}`,
+			wantType: "system_changed", wantMissed: func() *int64 { v := int64(41850); return &v }()},
+		{name: "no token estimate", diagnostics: `{"cache_miss_reason": {"type": "previous_message_not_found"}}`,
+			wantType: "previous_message_not_found"},
+		{name: "pending", diagnostics: `{"cache_miss_reason": null}`},
+		{name: "no divergence", diagnostics: `null`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := decodeMessage(t, `{"id": "msg_3", "type": "message", "role": "assistant", "model": "m",
+			  "content": [{"type":"text","text":"hi"}], "stop_reason": "end_turn",
+			  "diagnostics": `+tc.diagnostics+`, `+usage+`}`)
+			data := MessageResourceModel{Diagnostics: &DiagnosticsModel{
+				PreviousMessageID: types.StringValue("msg_2"),
+				CacheMissReason:   types.ObjectUnknown(cacheMissReasonAttrTypes),
+			}}
+			mapMessageToState(msg, &data)
+
+			if data.UsageSpeed.ValueString() != "fast" {
+				t.Errorf("usage_speed = %v", data.UsageSpeed)
+			}
+			if data.Diagnostics.PreviousMessageID.ValueString() != "msg_2" {
+				t.Errorf("previous_message_id must keep its planned value, got %v", data.Diagnostics.PreviousMessageID)
+			}
+			reason := data.Diagnostics.CacheMissReason
+			if tc.wantType == "" {
+				if !reason.IsNull() {
+					t.Errorf("cache_miss_reason = %v, want null", reason)
+				}
+				return
+			}
+			attrs := reason.Attributes()
+			if attrs["type"] != types.StringValue(tc.wantType) {
+				t.Errorf("type = %v, want %s", attrs["type"], tc.wantType)
+			}
+			wantMissed := types.Int64Null()
+			if tc.wantMissed != nil {
+				wantMissed = types.Int64Value(*tc.wantMissed)
+			}
+			if !attrs["cache_missed_input_tokens"].Equal(wantMissed) {
+				t.Errorf("cache_missed_input_tokens = %v, want %v", attrs["cache_missed_input_tokens"], wantMissed)
+			}
+		})
+	}
+}
+
+// outputConfigValue is an output_config attribute value holding format (a
+// JSON string, nil for no format, or tftypes.UnknownValue).
+func outputConfigValue(t *testing.T, format any) map[string]tftypes.Value {
+	t.Helper()
+	ot := messageType(t).AttributeTypes["output_config"].(tftypes.Object)
+	return map[string]tftypes.Value{"output_config": tftypes.NewValue(ot, map[string]tftypes.Value{
+		"effort": tftypes.NewValue(tftypes.String, nil),
+		"format": tftypes.NewValue(tftypes.String, format),
+	})}
+}
+
+func messageSchema(t *testing.T) resource.SchemaResponse {
+	t.Helper()
+	var sresp resource.SchemaResponse
+	NewMessageResource().Schema(context.Background(), resource.SchemaRequest{}, &sresp)
+	return sresp
+}
+
+func messageType(t *testing.T) tftypes.Object {
+	t.Helper()
+	return messageSchema(t).Schema.Type().TerraformType(context.Background()).(tftypes.Object)
+}
+
+// messageValue is a resource value with every attribute null but attrs.
+func messageValue(t *testing.T, attrs map[string]tftypes.Value) tftypes.Value {
+	t.Helper()
+	typ := messageType(t)
+	vals := map[string]tftypes.Value{}
+	for name, at := range typ.AttributeTypes {
+		vals[name] = tftypes.NewValue(at, nil)
+	}
+	maps.Copy(vals, attrs)
+	return tftypes.NewValue(typ, vals)
+}
+
+// TestConfigValidator_OutputFormatLeftToPlan: the config validator runs on
+// every validate and plan, also for a message already in state, so it does
+// not check output_config.format. A message created while a null format was
+// still dropped from the request must keep planning; ModifyPlan checks the
+// format of a create instead.
+func TestConfigValidator_OutputFormatLeftToPlan(t *testing.T) {
+	for name, format := range map[string]string{"null": `null`, "array": `[1]`, "object": `{"type":"object"}`} {
+		t.Run(name, func(t *testing.T) {
+			if diags := validateConfig(t, outputConfigValue(t, format)); len(diags) != 0 {
+				t.Errorf("diagnostics = %v, want none", diags)
+			}
+		})
+	}
+}
+
+// Without a diagnostics block nothing is mapped (the block stays null), and a
+// response without usage.speed leaves usage_speed null.
+func TestMapMessageToState_NoDiagnosticsNoSpeed(t *testing.T) {
+	msg := decodeMessage(t, `{"id": "msg_4", "type": "message", "role": "assistant", "model": "m",
+	  "content": [], "stop_reason": "end_turn", "diagnostics": null, "usage": {"input_tokens": 1, "output_tokens": 2}}`)
+	var data MessageResourceModel
+	mapMessageToState(msg, &data)
+	if data.Diagnostics != nil {
+		t.Errorf("diagnostics = %+v, want nil", data.Diagnostics)
+	}
+	if !data.UsageSpeed.IsNull() {
+		t.Errorf("usage_speed = %v, want null", data.UsageSpeed)
+	}
+}
+
+// Like every other input, speed and diagnostics replace the message when they
+// change; diagnostics.cache_miss_reason is the response side of the block.
+func TestMessageSchema_SpeedAndDiagnostics(t *testing.T) {
+	var sresp resource.SchemaResponse
+	NewMessageResource().Schema(context.Background(), resource.SchemaRequest{}, &sresp)
+	if diags := sresp.Schema.ValidateImplementation(context.Background()); diags.HasError() {
+		t.Fatalf("schema: %v", diags)
+	}
+
+	speed, ok := sresp.Schema.Attributes["speed"].(schema.StringAttribute)
+	if !ok || !speed.Optional || speed.Computed || len(speed.PlanModifiers) != 1 ||
+		speed.PlanModifiers[0].Description(context.Background()) != stringplanmodifier.RequiresReplace().Description(context.Background()) {
+		t.Errorf("speed must be Optional with RequiresReplace: %#v", sresp.Schema.Attributes["speed"])
+	}
+	diagnostics, ok := sresp.Schema.Attributes["diagnostics"].(schema.SingleNestedAttribute)
+	if !ok || !diagnostics.Optional || diagnostics.Computed || len(diagnostics.PlanModifiers) != 1 ||
+		diagnostics.PlanModifiers[0].Description(context.Background()) != objectplanmodifier.RequiresReplace().Description(context.Background()) {
+		t.Fatalf("diagnostics must be Optional with RequiresReplace: %#v", sresp.Schema.Attributes["diagnostics"])
+	}
+	if a := diagnostics.Attributes["previous_message_id"]; !a.IsOptional() || a.IsComputed() {
+		t.Error("diagnostics.previous_message_id must be Optional")
+	}
+	if a := diagnostics.Attributes["cache_miss_reason"]; a.IsOptional() || !a.IsComputed() {
+		t.Error("diagnostics.cache_miss_reason must be Computed only")
+	}
+	if !sresp.Schema.Attributes["usage_speed"].IsComputed() {
+		t.Error("usage_speed must be Computed")
+	}
+}
+
+// TestMessageResource_ModifyPlanFormat: a create, which is also how Terraform
+// plans the new object of a replacement, rejects a format that is valid JSON
+// but not an object, with the error Create gives. A message already in state
+// and a destroy plan without a diagnostic, and an unknown format is left to
+// Create.
+func TestMessageResource_ModifyPlanFormat(t *testing.T) {
+	sch := messageSchema(t).Schema
+	none := tftypes.NewValue(messageType(t), nil)
+	withFormat := func(format any) tftypes.Value { return messageValue(t, outputConfigValue(t, format)) }
+	tests := []struct {
+		name        string
+		state, plan tftypes.Value
+		wantErr     bool
+	}{
+		{"create with a null format", none, withFormat(`null`), true},
+		{"create with an array", none, withFormat(`[1]`), true},
+		{"create with an object", none, withFormat(`{"type":"object"}`), false},
+		{"create with an unknown format", none, withFormat(tftypes.UnknownValue), false},
+		{"create without output_config", none, messageValue(t, nil), false},
+		{"message in state with a null format", withFormat(`null`), withFormat(`null`), false},
+		{"destroy", withFormat(`null`), none, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := resource.ModifyPlanRequest{
+				Config: tfsdk.Config{Schema: sch, Raw: tc.plan},
+				State:  tfsdk.State{Schema: sch, Raw: tc.state},
+				Plan:   tfsdk.Plan{Schema: sch, Raw: tc.plan},
+			}
+			resp := resource.ModifyPlanResponse{Plan: req.Plan}
+			NewMessageResource().(resource.ResourceWithModifyPlan).ModifyPlan(context.Background(), req, &resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("wantErr=%v, diags=%v", tc.wantErr, resp.Diagnostics)
+			}
+			if tc.wantErr && resp.Diagnostics[0].Summary() != "Invalid JSON Schema" {
+				t.Errorf("summary = %q, want Invalid JSON Schema", resp.Diagnostics[0].Summary())
 			}
 		})
 	}

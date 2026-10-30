@@ -11,6 +11,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
@@ -174,6 +176,23 @@ func TestMapMultiagentToState_explicitOwnerReferenceIsNotSelf(t *testing.T) {
 	}
 }
 
+// A self entry is correlated after the explicit references, whatever the
+// order: listed first, it still does not take the entry an explicit
+// reference to the owner's own ID names.
+func TestMapMultiagentToState_selfAfterExplicitReferences(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":"agent_owner","version":2}]}`)
+	prior := multiagentObj(t,
+		multiagentEntryObj(t, "self", types.StringNull(), types.Int64Null(), types.StringNull()),
+		multiagentEntryObj(t, "agent", types.StringValue("agent_owner"), types.Int64Unknown(), types.StringNull()))
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	want := multiagentObj(t, multiagentEntryObj(t, "agent", types.StringValue("agent_owner"), types.Int64Value(2), types.StringNull()))
+	requireMultiagentEqual(t, got, want)
+}
+
 func TestMapMultiagentToState_driftAndRemoval(t *testing.T) {
 	t.Parallel()
 	agent := apiAgentWithMultiagent(t, multiagentAPIRoster)
@@ -331,6 +350,9 @@ func TestValidateMultiagentConfig_unknownElement(t *testing.T) {
 	}
 	obj, d := types.ObjectValue(agentMultiagentAttrTypes, map[string]attr.Value{
 		"type": types.StringValue("coordinator"), "agents": list,
+		"subagents": types.ObjectNull(agentMultiagentMemberAttrTypes),
+		"workflows": types.ObjectNull(agentMultiagentMemberAttrTypes),
+		"advisor":   types.ObjectNull(agentMultiagentAdvisorAttrTypes),
 	})
 	if d.HasError() {
 		t.Fatalf("obj: %+v", d)
@@ -338,4 +360,409 @@ func TestValidateMultiagentConfig_unknownElement(t *testing.T) {
 	if d := validateMultiagentConfig(context.Background(), obj); d.HasError() {
 		t.Fatalf("unknown element must be accepted: %+v", d)
 	}
+}
+
+// multiagent_20261001 configurations, shape from the GET /v1/agents/{id}
+// reference example.
+const multiagent20261001Roster = `,"multiagent":{
+	"type":"multiagent_20261001",
+	"advisor":{"type":"enabled","model":"claude-opus-4-6"},
+	"subagents":{"type":"enabled","inline_agents":{"type":"enabled"},
+		"predefined_agents":[{"type":"agent","id":"agent_a","version":3},{"type":"agent","id":"agent_owner","version":2}]},
+	"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},
+		"predefined_agents":[{"type":"agent","id":"agent_w","version":1}]}}`
+
+// Import (no configuration): settings holding only defaults stay null, the
+// rest is mapped as returned, a `self` entry reading back as the owner's ID.
+func TestMapMultiagentToState_multiagent20261001Import(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, multiagent20261001Obj(t,
+		memberObj(t, boolNull, boolNull,
+			predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(3)),
+			predefinedObj(t, "agent", types.StringValue("agent_owner"), types.Int64Value(2))),
+		memberObj(t, boolNull, boolNull, predefinedObj(t, "agent", types.StringValue("agent_w"), types.Int64Value(1))),
+		"claude-opus-4-6"))
+
+	// Only defaults: every setting null.
+	agent = apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001","advisor":{"type":"disabled"},
+		"subagents":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]},
+		"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]}}`)
+	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, multiagent20261001Obj(t, noMember, noMember, ""))
+}
+
+// The data sources map every setting as returned, defaults included.
+func TestMapAgentResponseToDataSource_multiagent20261001(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
+	want := multiagent20261001Obj(t,
+		memberObj(t, types.BoolValue(true), types.BoolValue(true),
+			predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(3)),
+			predefinedObj(t, "agent", types.StringValue("agent_owner"), types.Int64Value(2))),
+		memberObj(t, types.BoolValue(true), types.BoolValue(true), predefinedObj(t, "agent", types.StringValue("agent_w"), types.Int64Value(1))),
+		"claude-opus-4-6")
+
+	var data AgentDataSourceModel
+	if d := mapAgentResponseToDataSource(agent, &data); len(d) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", d)
+	}
+	requireMultiagentEqual(t, data.Multiagent, want)
+
+	obj, d := mapAgentToDataSourceObject(agent)
+	if len(d) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", d)
+	}
+	listMultiagent, ok := obj.(types.Object).Attributes()["multiagent"].(types.Object)
+	if !ok {
+		t.Fatal("agents data source: multiagent is not an object")
+	}
+	requireMultiagentEqual(t, listMultiagent, want)
+}
+
+// Disabled settings read back as enabled = false (no inline agents or list),
+// and a disabled advisor as null, in the data sources and on import.
+func TestMapMultiagentToObject_multiagent20261001Disabled(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001",
+		"advisor":{"type":"disabled"},"subagents":{"type":"disabled"},"workflows":{"type":"disabled"}}`)
+	want := multiagent20261001Obj(t, memberObj(t, types.BoolValue(false), boolNull), memberObj(t, types.BoolValue(false), boolNull), "")
+
+	got, diags := mapMultiagentToObject(agent.Multiagent, agent.ID)
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, want)
+
+	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, want)
+}
+
+// The coordinator branch maps exactly as before, without any warning.
+func TestMapMultiagentToObject_coordinatorHasNoWarning(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagentAPIRoster)
+	got, diags := mapMultiagentToObject(agent.Multiagent, agent.ID)
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", diags)
+	}
+	if e := decodeEntries(t, got); len(e) != 4 {
+		t.Fatalf("roster = %+v", e)
+	}
+}
+
+func predefinedObj(t *testing.T, typ string, id types.String, version types.Int64) attr.Value {
+	t.Helper()
+	v, d := predefinedAgentValue(typ, id, version)
+	if d.HasError() {
+		t.Fatalf("predefined entry: %+v", d)
+	}
+	return v
+}
+
+// memberObj builds a subagents/workflows setting; no entries leaves
+// predefined_agents null.
+func memberObj(t *testing.T, enabled, inline types.Bool, entries ...attr.Value) types.Object {
+	t.Helper()
+	elemType := types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes}
+	list := types.ListNull(elemType)
+	if len(entries) > 0 {
+		var d diag.Diagnostics
+		list, d = types.ListValue(elemType, entries)
+		if d.HasError() {
+			t.Fatalf("predefined list: %+v", d)
+		}
+	}
+	obj, d := types.ObjectValue(agentMultiagentMemberAttrTypes, map[string]attr.Value{
+		"enabled": enabled, "inline_agents_enabled": inline, "predefined_agents": list,
+	})
+	if d.HasError() {
+		t.Fatalf("member: %+v", d)
+	}
+	return obj
+}
+
+var noMember = types.ObjectNull(agentMultiagentMemberAttrTypes)
+
+func multiagent20261001Obj(t *testing.T, subagents, workflows types.Object, advisorModel string) types.Object {
+	t.Helper()
+	advisor := types.ObjectNull(agentMultiagentAdvisorAttrTypes)
+	if advisorModel != "" {
+		advisor = types.ObjectValueMust(agentMultiagentAdvisorAttrTypes, map[string]attr.Value{"model": types.StringValue(advisorModel)})
+	}
+	obj, d := types.ObjectValue(agentMultiagentAttrTypes, map[string]attr.Value{
+		"type":      types.StringValue("multiagent_20261001"),
+		"agents":    types.ListNull(types.ObjectType{AttrTypes: agentMultiagentEntryAttrTypes}),
+		"subagents": subagents,
+		"workflows": workflows,
+		"advisor":   advisor,
+	})
+	if d.HasError() {
+		t.Fatalf("multiagent: %+v", d)
+	}
+	return obj
+}
+
+func requireMultiagentEqual(t *testing.T, got, want types.Object) {
+	t.Helper()
+	if !got.Equal(want) {
+		t.Fatalf("multiagent =\n  %v\nwant\n  %v", got, want)
+	}
+}
+
+var (
+	boolNull  = types.BoolNull()
+	int64Null = types.Int64Null()
+	strNull   = types.StringNull()
+)
+
+// predefined_agents correlate with the configuration by key like the
+// coordinator roster (self kept as configured, config order kept), an echoed
+// default stays null and the advisor maps back.
+func TestMapAgentResponseToState_multiagent20261001Correlation(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001",
+		"advisor":{"type":"enabled","model":"claude-opus-4-6"},
+		"subagents":{"type":"enabled","inline_agents":{"type":"disabled"},
+			"predefined_agents":[{"type":"agent","id":"agent_a","version":3},{"type":"agent","id":"agent_owner","version":2}]},
+		"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]}}`)
+	data := AgentResourceModel{Multiagent: multiagent20261001Obj(t,
+		memberObj(t, boolNull, types.BoolValue(false),
+			predefinedObj(t, "self", strNull, int64Null),
+			predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Unknown())),
+		noMember, "claude-opus-4-6")}
+	if d := mapAgentResponseToState(context.Background(), agent, &data, readMapping); len(d) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", d)
+	}
+	requireMultiagentEqual(t, data.Multiagent, multiagent20261001Obj(t,
+		memberObj(t, boolNull, types.BoolValue(false),
+			predefinedObj(t, "self", strNull, int64Null),
+			predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(3))),
+		noMember, "claude-opus-4-6"))
+}
+
+// A setting changed out of band surfaces as drift: an unset setting that no
+// longer holds the defaults, an explicit value the API no longer has, and an
+// advisor added out of band.
+func TestMapMultiagentToState_multiagent20261001Drift(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001",
+		"advisor":{"type":"enabled","model":"claude-opus-4-6"},
+		"subagents":{"type":"disabled"},
+		"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[{"type":"agent","id":"agent_w","version":1}]}}`)
+	prior := multiagent20261001Obj(t, noMember, memberObj(t, types.BoolValue(false), boolNull), "")
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, multiagent20261001Obj(t,
+		memberObj(t, types.BoolValue(false), boolNull),
+		memberObj(t, types.BoolValue(true), boolNull, predefinedObj(t, "agent", types.StringValue("agent_w"), types.Int64Value(1))),
+		"claude-opus-4-6"))
+}
+
+// A type switched out of band reads as the API type: a coordinator
+// configuration reading a multiagent_20261001 agent shows its settings, and
+// the reverse maps the roster verbatim.
+func TestMapMultiagentToState_typeSwitch(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
+	prior := multiagentObj(t, multiagentEntryObj(t, "self", types.StringNull(), types.Int64Null(), types.StringNull()))
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	var ma agentMultiagentModel
+	if d := got.As(context.Background(), &ma, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatalf("as: %+v", d)
+	}
+	if ma.Type.ValueString() != "multiagent_20261001" || !ma.Agents.IsNull() || ma.Subagents.IsNull() {
+		t.Fatalf("got %v, want the API's multiagent_20261001 settings", got)
+	}
+
+	agent = apiAgentWithMultiagent(t, multiagentAPIRoster)
+	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, multiagent20261001Obj(t, noMember, noMember, ""))
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	if e := decodeEntries(t, got); len(e) != 4 || e[1].ID.ValueString() != "agent_owner" {
+		t.Fatalf("roster = %+v, want the API roster verbatim", e)
+	}
+}
+
+// A type this provider version does not know still reads without an error,
+// with a warning naming the agent.
+func TestMapMultiagentToObject_unknownTypeWarns(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20270101"}`)
+	got, d := mapMultiagentToObject(agent.Multiagent, agent.ID)
+	if d.HasError() {
+		t.Fatalf("unexpected error: %+v", d)
+	}
+	w := d.Warnings()
+	if len(w) != 1 || w[0].Summary() != "Unsupported multiagent type" ||
+		!strings.Contains(w[0].Detail(), `"agent_owner"`) || !strings.Contains(w[0].Detail(), `"multiagent_20270101"`) {
+		t.Fatalf("expected one unsupported-type warning naming the agent, got %+v", d)
+	}
+	var ma agentMultiagentModel
+	if d := got.As(context.Background(), &ma, basetypes.ObjectAsOptions{}); d.HasError() || ma.Type.ValueString() != "multiagent_20270101" {
+		t.Fatalf("got %v, want the API type kept", got)
+	}
+}
+
+// Every key is sent, defaults included, so that the API's level-by-level merge
+// on update always leaves exactly the planned configuration; an unset version
+// reuses the one prior state pins in the same list only.
+func TestBuildMultiagentParams_multiagent20261001(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("defaults", func(t *testing.T) {
+		t.Parallel()
+		p, diags := buildMultiagentParams(ctx, multiagent20261001Obj(t, noMember, noMember, ""), types.ObjectNull(agentMultiagentAttrTypes))
+		if diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertJSONEqual(t, string(b), `{"type":"multiagent_20261001","advisor":{"type":"disabled"},
+			"subagents":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]},
+			"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]}}`)
+	})
+
+	t.Run("configured", func(t *testing.T) {
+		t.Parallel()
+		planned := multiagent20261001Obj(t,
+			memberObj(t, boolNull, types.BoolValue(false),
+				predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Unknown()),
+				predefinedObj(t, "self", strNull, types.Int64Unknown()),
+				predefinedObj(t, "agent", types.StringValue("agent_b"), types.Int64Value(7))),
+			memberObj(t, types.BoolValue(false), boolNull),
+			"claude-opus-4-6")
+		prior := multiagent20261001Obj(t,
+			memberObj(t, boolNull, types.BoolValue(false), predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(3))),
+			memberObj(t, boolNull, boolNull, predefinedObj(t, "agent", types.StringValue("agent_b"), types.Int64Value(5))),
+			"")
+		p, diags := buildMultiagentParams(ctx, planned, prior)
+		if diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertJSONEqual(t, string(b), `{"type":"multiagent_20261001","advisor":{"type":"enabled","model":"claude-opus-4-6"},
+			"subagents":{"type":"enabled","inline_agents":{"type":"disabled"},"predefined_agents":[
+				{"type":"agent","id":"agent_a","version":3},{"type":"self"},{"type":"agent","id":"agent_b","version":7}]},
+			"workflows":{"type":"disabled"}}`)
+	})
+
+	t.Run("versions are not reused across types", func(t *testing.T) {
+		t.Parallel()
+		planned := multiagent20261001Obj(t,
+			memberObj(t, boolNull, boolNull, predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Unknown())),
+			noMember, "")
+		prior := multiagentObj(t, multiagentEntryObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(5), types.StringNull()))
+		p, diags := buildMultiagentParams(ctx, planned, prior)
+		if diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		b, _ := json.Marshal(p.OfMultiagent20261001.Subagents)
+		assertJSONEqual(t, string(b), `{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[{"type":"agent","id":"agent_a"}]}`)
+	})
+}
+
+func TestValidateMultiagentConfig_multiagent20261001(t *testing.T) {
+	t.Parallel()
+	id := types.StringValue
+	agentA := predefinedObj(t, "agent", id("a"), int64Null)
+	self := predefinedObj(t, "self", strNull, int64Null)
+	withSubagents := func(m types.Object) types.Object { return multiagent20261001Obj(t, m, noMember, "") }
+
+	tests := []struct {
+		name     string
+		obj      types.Object
+		wantPath string // empty: valid
+	}{
+		{"defaults", multiagent20261001Obj(t, noMember, noMember, ""), ""},
+		{"full", multiagent20261001Obj(t,
+			memberObj(t, types.BoolValue(true), types.BoolValue(false), agentA, self),
+			memberObj(t, types.BoolValue(false), boolNull), "m"), ""},
+		{"with a coordinator roster", func() types.Object {
+			attrs := multiagent20261001Obj(t, noMember, noMember, "").Attributes()
+			attrs["agents"] = multiagentObj(t, multiagentEntryObj(t, "self", strNull, int64Null, strNull)).Attributes()["agents"]
+			return types.ObjectValueMust(agentMultiagentAttrTypes, attrs)
+		}(), "multiagent.agents"},
+		{"disabled with inline agents", withSubagents(memberObj(t, types.BoolValue(false), types.BoolValue(true))),
+			"multiagent.subagents.inline_agents_enabled"},
+		{"disabled with predefined agents", withSubagents(memberObj(t, types.BoolValue(false), boolNull, agentA)),
+			"multiagent.subagents.predefined_agents"},
+		{"inline off without predefined agents", multiagent20261001Obj(t, noMember, memberObj(t, boolNull, types.BoolValue(false)), ""),
+			"multiagent.workflows.predefined_agents"},
+		{"inline off with unknown predefined agents", withSubagents(types.ObjectValueMust(agentMultiagentMemberAttrTypes, map[string]attr.Value{
+			"enabled": boolNull, "inline_agents_enabled": types.BoolValue(false),
+			"predefined_agents": types.ListUnknown(types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes}),
+		})), ""},
+		{"agent without id", withSubagents(memberObj(t, boolNull, boolNull, predefinedObj(t, "agent", strNull, int64Null))),
+			"multiagent.subagents.predefined_agents[0].id"},
+		{"agent with unknown id", withSubagents(memberObj(t, boolNull, boolNull, predefinedObj(t, "agent", types.StringUnknown(), int64Null))), ""},
+		{"self with id", withSubagents(memberObj(t, boolNull, boolNull, predefinedObj(t, "self", id("a"), int64Null))),
+			"multiagent.subagents.predefined_agents[0].id"},
+		{"self with version", withSubagents(memberObj(t, boolNull, boolNull, predefinedObj(t, "self", strNull, types.Int64Value(1)))),
+			"multiagent.subagents.predefined_agents[0].version"},
+		{"duplicate agents", withSubagents(memberObj(t, boolNull, boolNull, agentA, agentA)), "multiagent.subagents.predefined_agents"},
+		{"two selfs", withSubagents(memberObj(t, boolNull, boolNull, self, self)), "multiagent.subagents.predefined_agents"},
+		{"same agent in both lists", multiagent20261001Obj(t,
+			memberObj(t, boolNull, boolNull, agentA), memberObj(t, boolNull, boolNull, agentA), ""), ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := validateMultiagentConfig(context.Background(), tc.obj)
+			if tc.wantPath == "" {
+				if d.HasError() {
+					t.Fatalf("unexpected diags: %+v", d)
+				}
+				return
+			}
+			if d.ErrorsCount() != 1 {
+				t.Fatalf("got %d errors, want 1: %+v", d.ErrorsCount(), d)
+			}
+			withPath, ok := d.Errors()[0].(interface{ Path() path.Path })
+			if !ok || withPath.Path().String() != tc.wantPath {
+				t.Errorf("error = %+v, want it on %s", d.Errors()[0], tc.wantPath)
+			}
+		})
+	}
+
+	// The coordinator type requires its roster and rejects the settings of the
+	// other type.
+	t.Run("coordinator", func(t *testing.T) {
+		t.Parallel()
+		attrs := multiagentObj(t, multiagentEntryObj(t, "self", strNull, int64Null, strNull)).Attributes()
+		attrs["agents"] = types.ListNull(types.ObjectType{AttrTypes: agentMultiagentEntryAttrTypes})
+		attrs["advisor"] = types.ObjectValueMust(agentMultiagentAdvisorAttrTypes, map[string]attr.Value{"model": types.StringValue("m")})
+		d := validateMultiagentConfig(context.Background(), types.ObjectValueMust(agentMultiagentAttrTypes, attrs))
+		var paths []string
+		for _, e := range d.Errors() {
+			if withPath, ok := e.(interface{ Path() path.Path }); ok {
+				paths = append(paths, withPath.Path().String())
+			}
+		}
+		if strings.Join(paths, ",") != "multiagent.agents,multiagent.advisor" {
+			t.Errorf("error paths = %v, want multiagent.agents and multiagent.advisor", paths)
+		}
+	})
 }

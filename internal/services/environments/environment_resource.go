@@ -17,7 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -26,6 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -120,20 +120,21 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				MarkdownDescription: "Human-readable name for the environment.",
 			},
 
-			// --- Optional+Computed ---
+			// --- Optional ---
+			// Not Computed: removing description or metadata from the
+			// configuration must plan their removal, which UseStateForUnknown
+			// on an Optional+Computed attribute silently prevented.
 			"description": schema.StringAttribute{
 				Optional:            true,
-				Computed:            true,
-				MarkdownDescription: "Optional description of the environment.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				MarkdownDescription: "Optional description of the environment. Removing it from the configuration clears it.",
 			},
 			"metadata": schema.MapAttribute{
 				Optional:            true,
-				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "User-provided metadata key-value pairs.",
-				PlanModifiers:       []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
+				MarkdownDescription: "User-provided metadata key-value pairs. Keys removed from the configuration are deleted; removing the attribute deletes every key.",
 			},
+
+			// --- Optional+Computed ---
 			"config": schema.SingleNestedAttribute{
 				Optional:            true,
 				Computed:            true,
@@ -296,10 +297,7 @@ func (r *EnvironmentResource) ModifyPlan(ctx context.Context, req resource.Modif
 		return
 	}
 
-	if !plan.Name.Equal(state.Name) ||
-		!plan.Description.Equal(state.Description) ||
-		!plan.Metadata.Equal(state.Metadata) ||
-		!plan.Config.Equal(state.Config) {
+	if environmentChanged(plan, state) {
 		// Resource is being updated; updated_at will change.
 		plan.UpdatedAt = types.StringUnknown()
 	} else {
@@ -307,6 +305,16 @@ func (r *EnvironmentResource) ModifyPlan(ctx context.Context, req resource.Modif
 		plan.UpdatedAt = state.UpdatedAt
 	}
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
+}
+
+// environmentChanged reports whether plan changes an attribute the API
+// holds. archive_on_destroy, the only other configurable attribute, is
+// local-only.
+func environmentChanged(plan, state EnvironmentResourceModel) bool {
+	return !plan.Name.Equal(state.Name) ||
+		!plan.Description.Equal(state.Description) ||
+		!plan.Metadata.Equal(state.Metadata) ||
+		!plan.Config.Equal(state.Config)
 }
 
 // --- Create ---
@@ -369,6 +377,11 @@ func (r *EnvironmentResource) Read(ctx context.Context, req resource.ReadRequest
 
 	env, err := r.client.Beta.Environments.Get(ctx, data.ID.ValueString(), anthropic.BetaEnvironmentGetParams{})
 	if err != nil {
+		// Deleted out of band: drop it from state so the next plan re-creates it.
+		if providerrors.IsNotFound(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read environment: %s", err))
 		return
 	}
@@ -401,21 +414,35 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
+	// Only archive_on_destroy changes: nothing to send, and an API write
+	// would move updated_at, which ModifyPlan planned unchanged.
+	if !environmentChanged(data, state) {
+		state.ArchiveOnDestroy = data.ArchiveOnDestroy
+		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+		return
+	}
+
 	params := anthropic.BetaEnvironmentUpdateParams{
 		Name: param.NewOpt(data.Name.ValueString()),
 	}
 
+	// The update endpoint keeps an omitted description and clears a null one
+	// (https://platform.claude.com/docs/en/api/beta/environments/update), so
+	// a description removed from the configuration is sent as null.
 	if !data.Description.IsNull() && !data.Description.IsUnknown() {
 		params.Description = param.NewOpt(data.Description.ValueString())
+	} else if data.Description.IsNull() && !state.Description.IsNull() {
+		params.Description = param.Null[string]()
 	}
 
-	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
+	// metadata is a patch: keys removed from the configuration are sent as null.
+	metaPatch, diags := tfvalue.MetadataPatch(ctx, data.Metadata, state.Metadata)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(metaPatch) > 0 {
+		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
 	if !data.Config.IsNull() && !data.Config.IsUnknown() {
@@ -450,16 +477,17 @@ func (r *EnvironmentResource) Delete(ctx context.Context, req resource.DeleteReq
 		return
 	}
 
+	// A 404 means the environment is already gone, which is what destroy wants.
 	if data.ArchiveOnDestroy.ValueBool() {
 		_, err := r.client.Beta.Environments.Archive(ctx, data.ID.ValueString(), anthropic.BetaEnvironmentArchiveParams{})
-		if err != nil {
+		if err != nil && !providerrors.IsNotFound(err) {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive environment: %s", err))
 		}
 		return
 	}
 
 	_, err := r.client.Beta.Environments.Delete(ctx, data.ID.ValueString(), anthropic.BetaEnvironmentDeleteParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete environment: %s", err))
 	}
 }
@@ -486,99 +514,101 @@ func buildEnvironmentConfigParams(ctx context.Context, configObj types.Object) (
 
 	configParams := anthropic.BetaCloudConfigParams{}
 
-	if !configModel.Networking.IsNull() && !configModel.Networking.IsUnknown() {
-		var networkingModel environmentNetworkingModel
-		diags.Append(configModel.Networking.As(ctx, &networkingModel, basetypes.ObjectAsOptions{})...)
+	if isKnown(configModel.Networking) {
+		networking, d := buildNetworkingParams(ctx, configModel.Networking)
+		diags.Append(d...)
 		if diags.HasError() {
 			return anthropic.BetaCloudConfigParams{}, diags
 		}
-
-		if networkingModel.Type.ValueString() == "unrestricted" {
-			configParams.Networking = anthropic.BetaCloudConfigParamsNetworkingUnion{
-				OfUnrestricted: &anthropic.BetaUnrestrictedNetworkParam{Type: "unrestricted"},
-			}
-		} else {
-			limited := &anthropic.BetaLimitedNetworkParams{}
-			if !networkingModel.AllowMCPServers.IsNull() && !networkingModel.AllowMCPServers.IsUnknown() {
-				limited.AllowMCPServers = param.NewOpt(networkingModel.AllowMCPServers.ValueBool())
-			}
-			if !networkingModel.AllowPackageManagers.IsNull() && !networkingModel.AllowPackageManagers.IsUnknown() {
-				limited.AllowPackageManagers = param.NewOpt(networkingModel.AllowPackageManagers.ValueBool())
-			}
-			if !networkingModel.AllowedHosts.IsNull() && !networkingModel.AllowedHosts.IsUnknown() && len(networkingModel.AllowedHosts.Elements()) > 0 {
-				var hosts []string
-				diags.Append(networkingModel.AllowedHosts.ElementsAs(ctx, &hosts, false)...)
-				if diags.HasError() {
-					return anthropic.BetaCloudConfigParams{}, diags
-				}
-				limited.AllowedHosts = hosts
-			}
-			configParams.Networking = anthropic.BetaCloudConfigParamsNetworkingUnion{OfLimited: limited}
-		}
+		configParams.Networking = networking
 	}
 
-	if !configModel.Packages.IsNull() && !configModel.Packages.IsUnknown() {
-		var packagesModel environmentPackagesModel
-		diags.Append(configModel.Packages.As(ctx, &packagesModel, basetypes.ObjectAsOptions{})...)
+	if isKnown(configModel.Packages) {
+		packages, d := buildPackagesParams(ctx, configModel.Packages)
+		diags.Append(d...)
 		if diags.HasError() {
 			return anthropic.BetaCloudConfigParams{}, diags
 		}
-
-		packagesParams := anthropic.BetaPackagesParams{}
-
-		if !packagesModel.Apt.IsNull() && !packagesModel.Apt.IsUnknown() {
-			var apt []string
-			diags.Append(packagesModel.Apt.ElementsAs(ctx, &apt, false)...)
-			if diags.HasError() {
-				return anthropic.BetaCloudConfigParams{}, diags
-			}
-			packagesParams.Apt = apt
-		}
-		if !packagesModel.Cargo.IsNull() && !packagesModel.Cargo.IsUnknown() {
-			var cargo []string
-			diags.Append(packagesModel.Cargo.ElementsAs(ctx, &cargo, false)...)
-			if diags.HasError() {
-				return anthropic.BetaCloudConfigParams{}, diags
-			}
-			packagesParams.Cargo = cargo
-		}
-		if !packagesModel.Gem.IsNull() && !packagesModel.Gem.IsUnknown() {
-			var gem []string
-			diags.Append(packagesModel.Gem.ElementsAs(ctx, &gem, false)...)
-			if diags.HasError() {
-				return anthropic.BetaCloudConfigParams{}, diags
-			}
-			packagesParams.Gem = gem
-		}
-		if !packagesModel.Go.IsNull() && !packagesModel.Go.IsUnknown() {
-			var goPkgs []string
-			diags.Append(packagesModel.Go.ElementsAs(ctx, &goPkgs, false)...)
-			if diags.HasError() {
-				return anthropic.BetaCloudConfigParams{}, diags
-			}
-			packagesParams.Go = goPkgs
-		}
-		if !packagesModel.Npm.IsNull() && !packagesModel.Npm.IsUnknown() {
-			var npm []string
-			diags.Append(packagesModel.Npm.ElementsAs(ctx, &npm, false)...)
-			if diags.HasError() {
-				return anthropic.BetaCloudConfigParams{}, diags
-			}
-			packagesParams.Npm = npm
-		}
-		if !packagesModel.Pip.IsNull() && !packagesModel.Pip.IsUnknown() {
-			var pip []string
-			diags.Append(packagesModel.Pip.ElementsAs(ctx, &pip, false)...)
-			if diags.HasError() {
-				return anthropic.BetaCloudConfigParams{}, diags
-			}
-			packagesParams.Pip = pip
-		}
-
-		configParams.Packages = packagesParams
+		configParams.Packages = packages
 	}
 
 	return configParams, diags
+}
+
+// isKnown reports whether v is neither null nor unknown: only known values
+// are sent, so the API keeps (update) or defaults (create) the others.
+func isKnown(v attr.Value) bool {
+	return !v.IsNull() && !v.IsUnknown()
+}
+
+// buildNetworkingParams converts a known networking object to SDK params:
+// "unrestricted" sends its type alone, any other type a limited network with
+// its known fields (an empty allowed_hosts is left out).
+func buildNetworkingParams(ctx context.Context, obj types.Object) (anthropic.BetaCloudConfigParamsNetworkingUnion, diag.Diagnostics) {
+	var model environmentNetworkingModel
+	diags := obj.As(ctx, &model, basetypes.ObjectAsOptions{})
+	if diags.HasError() {
+		return anthropic.BetaCloudConfigParamsNetworkingUnion{}, diags
+	}
+
+	if model.Type.ValueString() == "unrestricted" {
+		return anthropic.BetaCloudConfigParamsNetworkingUnion{
+			OfUnrestricted: &anthropic.BetaUnrestrictedNetworkParam{Type: "unrestricted"},
+		}, diags
+	}
+
+	limited := &anthropic.BetaLimitedNetworkParams{}
+	if isKnown(model.AllowMCPServers) {
+		limited.AllowMCPServers = param.NewOpt(model.AllowMCPServers.ValueBool())
+	}
+	if isKnown(model.AllowPackageManagers) {
+		limited.AllowPackageManagers = param.NewOpt(model.AllowPackageManagers.ValueBool())
+	}
+	// An empty list is sent as []: the update endpoint keeps an omitted
+	// allowed_hosts, so leaving it out cannot clear the hosts.
+	diags.Append(knownStrings(ctx, model.AllowedHosts, &limited.AllowedHosts)...)
+	if diags.HasError() {
+		return anthropic.BetaCloudConfigParamsNetworkingUnion{}, diags
+	}
+	return anthropic.BetaCloudConfigParamsNetworkingUnion{OfLimited: limited}, diags
+}
+
+// buildPackagesParams converts a known packages object to SDK params: each
+// known list is sent, an empty one as [].
+func buildPackagesParams(ctx context.Context, obj types.Object) (anthropic.BetaPackagesParams, diag.Diagnostics) {
+	var model environmentPackagesModel
+	diags := obj.As(ctx, &model, basetypes.ObjectAsOptions{})
+	if diags.HasError() {
+		return anthropic.BetaPackagesParams{}, diags
+	}
+
+	var params anthropic.BetaPackagesParams
+	for _, pkg := range []struct {
+		list   types.List
+		target *[]string
+	}{
+		{model.Apt, &params.Apt},
+		{model.Cargo, &params.Cargo},
+		{model.Gem, &params.Gem},
+		{model.Go, &params.Go},
+		{model.Npm, &params.Npm},
+		{model.Pip, &params.Pip},
+	} {
+		diags.Append(knownStrings(ctx, pkg.list, pkg.target)...)
+		if diags.HasError() {
+			return anthropic.BetaPackagesParams{}, diags
+		}
+	}
+	return params, diags
+}
+
+// knownStrings reads list into target when it is known and leaves target
+// alone otherwise.
+func knownStrings(ctx context.Context, list types.List, target *[]string) diag.Diagnostics {
+	if !isKnown(list) {
+		return nil
+	}
+	return list.ElementsAs(ctx, target, false)
 }
 
 // mapEnvironmentResponseToState maps the API response to the Terraform state model.
@@ -612,8 +642,8 @@ func mapEnvironmentResponseToState(ctx context.Context, env *anthropic.BetaEnvir
 		metaMap, d := types.MapValue(types.StringType, elements)
 		diags.Append(d...)
 		data.Metadata = metaMap
-	} else if !data.Metadata.IsNull() {
-		data.Metadata = types.MapNull(types.StringType)
+	} else {
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(data.Metadata)
 	}
 
 	// Config — always set since API always returns it

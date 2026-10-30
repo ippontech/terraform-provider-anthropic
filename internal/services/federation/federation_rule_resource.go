@@ -182,7 +182,7 @@ func (r *FederationRuleResource) Schema(_ context.Context, _ resource.SchemaRequ
 					"service_account_name": schema.StringAttribute{
 						Computed:            true,
 						MarkdownDescription: "Service account's display name at read time. Ignored on writes; never set this, it is populated from the API response.",
-						PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+						PlanModifiers:       []planmodifier.String{serviceAccountNameFollowsID()},
 					},
 				},
 			},
@@ -544,9 +544,10 @@ func isTerminalFederationRuleReadError(err error) bool {
 // as new as writtenAt, the updated_at returned by the write itself. Mirrors
 // awaitVaultUpdateVisible (vault_resource.go): probed on 2026-09-08, GET
 // /v1/organizations/federation_rules/{id} returned the pre-update rule in 1 of
-// 9 trials, converging 556ms after the write (see the read-after-write section
-// of CLAUDE.md). Left alone, Terraform's post-apply refresh lands inside that
-// window and the next plan shows a phantom in-place update.
+// 9 trials, converging 556ms after the write (see
+// internal/services/federation/CLAUDE.md). Left alone, Terraform's post-apply
+// refresh lands inside that window and the next plan shows a phantom in-place
+// update.
 //
 // It is deliberately best-effort: on a read error, a timeout, or a cancelled
 // context it returns without reporting a diagnostic. The write has already
@@ -555,8 +556,8 @@ func isTerminalFederationRuleReadError(err error) bool {
 // trying to avoid. The timestamp comparison is non-strict: an updated_at equal
 // to the write's counts as visible, or the loop would always time out.
 //
-// It returns the first read that reflects the write, or nil when it gave up
-// (see federationRuleAfterUpdate for why Update maps that read).
+// It returns the first read that reflects the write, which Update maps into
+// state (see federationRuleAfterUpdate), or nil when it gave up.
 func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.OAuthClient, id string, writtenAt time.Time, timeout, interval time.Duration) *anthropic.BetaFederationRule {
 	deadline := time.Now().Add(timeout)
 
@@ -592,29 +593,43 @@ func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.
 }
 
 // federationRuleAfterUpdate returns the rule Update maps into state: the
-// write response, completed with target.service_account_name from the read
-// that confirms the write. The update response
-// (POST /v1/organizations/federation_rules/{id}) leaves that name empty,
-// while GET returns it; mapped as is, the planned name (carried by
-// UseStateForUnknown) becomes null and Terraform reports an inconsistent
-// result after apply. Same family as the create response's issuer_name
-// (#243), which completeFederationRuleIssuerName handles.
+// write response, completed with target.service_account_name. The update
+// response (POST /v1/organizations/federation_rules/{id}) can leave that name
+// empty, which the reference allows ("optional string or null",
+// https://platform.claude.com/docs/en/api/beta/organization/federation/rules/update),
+// while GET returns it (#349); mapped as is, the name kept in the plan becomes
+// null and Terraform reports an inconsistent result after apply. Same family
+// as the create response's issuer_name (#243), which
+// completeFederationRuleIssuerName handles.
 //
-// Only the name is copied, never the whole read: the wait accepts any read
-// whose updated_at is not older than the write's, so a concurrent write by
-// another actor (the Console, another configuration) would pass too, and
-// mapping it would turn that edit into an inconsistent result instead of the
-// drift the next plan reports. The name is copied only when the read still
-// carries the written service account, for the same reason. When the wait
-// gives up, the write response is returned as is.
-func federationRuleAfterUpdate(ctx context.Context, client *providerdata.OAuthClient, written *anthropic.BetaFederationRule, timeout, interval time.Duration) *anthropic.BetaFederationRule {
+// The name comes from the read that confirms the write. Only the name is
+// copied, never the whole read: the wait accepts any read whose updated_at is
+// not older than the write's, so a concurrent write by another actor (the
+// Console, another configuration) would pass too, and mapping it would turn
+// that edit into an inconsistent result instead of the drift the next plan
+// reports. The name is copied only when the read still carries the written
+// service account, for the same reason. When the wait gives up, the write
+// response is kept, with the planned name if it has none for the same
+// service account.
+func federationRuleAfterUpdate(ctx context.Context, client *providerdata.OAuthClient, written *anthropic.BetaFederationRule, plannedTarget types.Object, timeout, interval time.Duration) *anthropic.BetaFederationRule {
 	fresh := awaitFederationRuleUpdateVisible(ctx, client, written.ID, written.UpdatedAt, timeout, interval)
-	if fresh == nil || fresh.Target.ServiceAccountID != written.Target.ServiceAccountID {
+	if fresh != nil && fresh.Target.ServiceAccountID == written.Target.ServiceAccountID {
+		completed := *written
+		completed.Target.ServiceAccountName = fresh.Target.ServiceAccountName
+		return &completed
+	}
+	if written.Target.ServiceAccountName != "" {
 		return written
 	}
 
+	var planned federationRuleTargetModel
+	if diags := plannedTarget.As(ctx, &planned, basetypes.ObjectAsOptions{}); diags.HasError() ||
+		planned.ServiceAccountName.IsNull() || planned.ServiceAccountName.IsUnknown() ||
+		planned.ServiceAccountID.ValueString() != written.Target.ServiceAccountID {
+		return written
+	}
 	completed := *written
-	completed.Target.ServiceAccountName = fresh.Target.ServiceAccountName
+	completed.Target.ServiceAccountName = planned.ServiceAccountName.ValueString()
 	return &completed
 }
 
@@ -631,16 +646,40 @@ func (r *FederationRuleResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	matchParam, diags := buildMatchParam(ctx, plan.Match)
+	params, diags := buildFederationRuleUpdateParams(ctx, plan, state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	targetParam, diags := buildTargetParam(ctx, plan.Target)
-	resp.Diagnostics.Append(diags...)
+	rule, err := r.client.Beta.Organization.Federation.Rules.Update(ctx, state.ID.ValueString(), params)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update federation rule: %s", err))
+		return
+	}
+
+	rule = federationRuleAfterUpdate(ctx, r.client, rule, plan.Target, federationRuleConsistencyTimeout, federationRuleConsistencyInterval)
+
+	resp.Diagnostics.Append(mapFederationRuleToState(ctx, rule, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// buildFederationRuleUpdateParams converts the plan into an update request,
+// with the prior state for applies_to_all_workspaces and attributes.
+func buildFederationRuleUpdateParams(ctx context.Context, plan, state FederationRuleResourceModel) (anthropic.BetaOrganizationFederationRuleUpdateParams, diag.Diagnostics) {
+	matchParam, diags := buildMatchParam(ctx, plan.Match)
+	if diags.HasError() {
+		return anthropic.BetaOrganizationFederationRuleUpdateParams{}, diags
+	}
+
+	targetParam, d := buildTargetParam(ctx, plan.Target)
+	diags.Append(d...)
+	if diags.HasError() {
+		return anthropic.BetaOrganizationFederationRuleUpdateParams{}, diags
 	}
 
 	// match and target are replaced as whole objects by the update API, and
@@ -654,67 +693,75 @@ func (r *FederationRuleResource) Update(ctx context.Context, req resource.Update
 	}
 
 	// description is nullable server-side: send the desired value, or an
-	// explicit null to clear it (omitting it would leave the old value).
-	if plan.Description.IsUnknown() {
-		// Not expected for a non-computed optional attribute; leave omitted.
-	} else if plan.Description.IsNull() {
+	// explicit null to clear it (omitting it would leave the old value). An
+	// unknown value, not expected for a non-computed optional attribute, is
+	// left out.
+	switch {
+	case plan.Description.IsNull():
 		params.Description = param.Null[string]()
-	} else {
+	case !plan.Description.IsUnknown():
 		params.Description = param.NewOpt(plan.Description.ValueString())
 	}
 
-	if !plan.TokenLifetimeSeconds.IsNull() && !plan.TokenLifetimeSeconds.IsUnknown() {
+	if isKnown(plan.TokenLifetimeSeconds) {
 		params.TokenLifetimeSeconds = param.NewOpt(plan.TokenLifetimeSeconds.ValueInt64())
 	}
 
-	if !plan.WorkspaceID.IsNull() && !plan.WorkspaceID.IsUnknown() {
+	if isKnown(plan.WorkspaceID) {
 		params.WorkspaceID = param.NewOpt(plan.WorkspaceID.ValueString())
 	}
 
-	// applies_to_all_workspaces is always resolved explicitly to true or
-	// false. The schema's static false default means an attribute removed
-	// from config plans as false (not null, and not the carried-forward
-	// prior state), so the first case sends the explicit false the API needs
-	// when a rule switches back from all-workspaces to a single workspace
-	// binding — omitting the field would leave the server's true in place.
-	// The second case is a safety net for an Unknown plan value (unresolved
-	// reference) when the prior state was true.
+	params.AppliesToAllWorkspaces = appliesToAllWorkspacesParam(plan.AppliesToAllWorkspaces, state.AppliesToAllWorkspaces)
+
+	diags.Append(setAttributesUpdate(ctx, &params, plan.Attributes, state.Attributes)...)
+	if diags.HasError() {
+		return anthropic.BetaOrganizationFederationRuleUpdateParams{}, diags
+	}
+
+	return params, diags
+}
+
+// isKnown reports whether v is neither null nor unknown.
+func isKnown(v attr.Value) bool {
+	return !v.IsNull() && !v.IsUnknown()
+}
+
+// appliesToAllWorkspacesParam resolves applies_to_all_workspaces explicitly
+// to true or false. The schema's static false default means an attribute
+// removed from config plans as false (not null, and not the carried-forward
+// prior state), so the first case sends the explicit false the API needs
+// when a rule switches back from all-workspaces to a single workspace
+// binding — omitting the field would leave the server's true in place. The
+// second case is a safety net for an Unknown plan value (unresolved
+// reference) when the prior state was true.
+func appliesToAllWorkspacesParam(plan, state types.Bool) param.Opt[bool] {
 	switch {
-	case !plan.AppliesToAllWorkspaces.IsNull() && !plan.AppliesToAllWorkspaces.IsUnknown():
-		params.AppliesToAllWorkspaces = param.NewOpt(plan.AppliesToAllWorkspaces.ValueBool())
-	case !state.AppliesToAllWorkspaces.IsNull() && state.AppliesToAllWorkspaces.ValueBool():
-		params.AppliesToAllWorkspaces = param.NewOpt(false)
+	case isKnown(plan):
+		return param.NewOpt(plan.ValueBool())
+	case !state.IsNull() && state.ValueBool():
+		return param.NewOpt(false)
 	}
+	return param.Opt[bool]{}
+}
 
-	// attributes: replace-whole-value semantics (send null to clear). Only
-	// sent when changed, since the API rejects any non-empty value today.
-	if !plan.Attributes.Equal(state.Attributes) {
-		if plan.Attributes.IsNull() || plan.Attributes.IsUnknown() {
-			params.SetExtraFields(map[string]any{"attributes": nil})
-		} else {
-			var attrsMap map[string]string
-			resp.Diagnostics.Append(plan.Attributes.ElementsAs(ctx, &attrsMap, false)...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-			params.Attributes = attrsMap
-		}
+// setAttributesUpdate sets attributes on an update when they changed:
+// replace-whole-value semantics, a null or unknown plan sent as null to
+// clear them. Only sent when changed, since the API rejects any non-empty
+// value today.
+func setAttributesUpdate(ctx context.Context, params *anthropic.BetaOrganizationFederationRuleUpdateParams, plan, state types.Map) diag.Diagnostics {
+	if plan.Equal(state) {
+		return nil
 	}
-
-	rule, err := r.client.Beta.Organization.Federation.Rules.Update(ctx, state.ID.ValueString(), params)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update federation rule: %s", err))
-		return
+	if !isKnown(plan) {
+		params.SetExtraFields(map[string]any{"attributes": nil})
+		return nil
 	}
-
-	rule = federationRuleAfterUpdate(ctx, r.client, rule, federationRuleConsistencyTimeout, federationRuleConsistencyInterval)
-
-	resp.Diagnostics.Append(mapFederationRuleToState(ctx, rule, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
+	var attrsMap map[string]string
+	diags := plan.ElementsAs(ctx, &attrsMap, false)
+	if !diags.HasError() {
+		params.Attributes = attrsMap
 	}
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	return diags
 }
 
 // --- Delete ---
@@ -894,7 +941,10 @@ func mapFederationRuleToState(ctx context.Context, rule *anthropic.BetaFederatio
 		diags.Append(d...)
 		data.Attributes = attrsMap
 	} else {
-		data.Attributes = types.MapNull(types.StringType)
+		// The API always answers null today ("Not yet supported; always
+		// null"): keep a configured attributes = {}, or it fails with an
+		// inconsistent result after apply.
+		data.Attributes = tfvalue.MetadataAfterEmptyResponse(data.Attributes)
 	}
 
 	// Timestamps + actor IDs: "" / zero-time -> null.
