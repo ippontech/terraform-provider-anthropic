@@ -76,9 +76,24 @@ Read-Only:
 
 Read-Only:
 
+- `allowed_domains` (Set of String) The only hosts the tool can reach (`web_fetch` and `web_search`), null when unrestricted.
+- `blocked_domains` (Set of String) Hosts the tool can never reach (`web_fetch` and `web_search`), null when none.
 - `enabled` (Boolean) Whether this tool is enabled.
+- `max_content_tokens` (Number) Maximum number of tokens of fetched text content included in the context per call (`web_fetch`), null when unset.
 - `name` (String) Built-in tool name.
-- `permission_policy` (String) Permission policy override.
+- `permission_policy` (String) Permission policy: `always_allow` or `always_ask`.
+- `user_location` (Attributes) Approximate user location used to localize search results (`web_search`), null when unset. (see [below for nested schema](#nestedatt--agent_toolset--configs--user_location))
+
+<a id="nestedatt--agent_toolset--configs--user_location"></a>
+### Nested Schema for `agent_toolset.configs.user_location`
+
+Read-Only:
+
+- `city` (String) City name.
+- `country` (String) Two-letter ISO 3166-1 country code.
+- `region` (String) Region or state name.
+- `timezone` (String) IANA timezone identifier.
+
 
 
 

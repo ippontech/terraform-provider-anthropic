@@ -187,20 +187,7 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 									Computed:            true,
 									MarkdownDescription: "Per-tool configuration overrides.",
 									NestedObject: schema.NestedAttributeObject{
-										Attributes: map[string]schema.Attribute{
-											"name": schema.StringAttribute{
-												Computed:            true,
-												MarkdownDescription: "Built-in tool name.",
-											},
-											"enabled": schema.BoolAttribute{
-												Computed:            true,
-												MarkdownDescription: "Whether this tool is enabled.",
-											},
-											"permission_policy": schema.StringAttribute{
-												Computed:            true,
-												MarkdownDescription: "Permission policy: `always_allow` or `always_ask`.",
-											},
-										},
+										Attributes: agentToolConfigDataSourceAttributes(),
 									},
 								},
 							},
@@ -489,7 +476,7 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 	// Agent toolset
 	agentToolsetObj := types.ObjectNull(agentToolsetAttrTypes)
 	if apiAgentToolset != nil {
-		obj, d := mapAgentToolsetToDataSourceObject(apiAgentToolset)
+		obj, d := mapAgentToolsetToDataSource(apiAgentToolset)
 		diags.Append(d...)
 		agentToolsetObj = obj
 	}
@@ -558,37 +545,6 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		"created_at":          types.StringValue(agent.CreatedAt.Format(time.RFC3339)),
 		"updated_at":          types.StringValue(agent.UpdatedAt.Format(time.RFC3339)),
 		"archived_at":         archivedAt,
-	})
-	diags.Append(d...)
-	return obj, diags
-}
-
-// mapAgentToolsetToDataSourceObject converts an API agent toolset to a Terraform
-// object. Emits ALL API configs (no state-based filtering).
-func mapAgentToolsetToDataSourceObject(apiToolset *anthropic.BetaManagedAgentsAgentToolset20260401) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	configsList := types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes})
-	if len(apiToolset.Configs) > 0 {
-		configObjs := make([]attr.Value, len(apiToolset.Configs))
-		for i, c := range apiToolset.Configs {
-			obj, d := types.ObjectValue(agentToolConfigAttrTypes, map[string]attr.Value{
-				"name":              types.StringValue(string(c.Name)),
-				"enabled":           types.BoolValue(c.Enabled),
-				"permission_policy": types.StringValue(c.PermissionPolicy.Type),
-			})
-			diags.Append(d...)
-			configObjs[i] = obj
-		}
-		list, d := types.ListValue(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}, configObjs)
-		diags.Append(d...)
-		configsList = list
-	}
-
-	obj, d := types.ObjectValue(agentToolsetAttrTypes, map[string]attr.Value{
-		"default_enabled":           types.BoolValue(apiToolset.DefaultConfig.Enabled),
-		"default_permission_policy": types.StringValue(apiToolset.DefaultConfig.PermissionPolicy.Type),
-		"configs":                   configsList,
 	})
 	diags.Append(d...)
 	return obj, diags

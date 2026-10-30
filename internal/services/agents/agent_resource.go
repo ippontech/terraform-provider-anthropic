@@ -7,12 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -77,7 +83,20 @@ type agentSkillModel struct {
 	Version types.String `tfsdk:"version"`
 }
 
+// agentToolConfigModel is an `agent_toolset.configs` entry. The web options
+// apply to web_fetch and web_search only (agent_web_tools.go).
 type agentToolConfigModel struct {
+	Name             types.String `tfsdk:"name"`
+	Enabled          types.Bool   `tfsdk:"enabled"`
+	PermissionPolicy types.String `tfsdk:"permission_policy"`
+	AllowedDomains   types.Set    `tfsdk:"allowed_domains"`
+	BlockedDomains   types.Set    `tfsdk:"blocked_domains"`
+	MaxContentTokens types.Int64  `tfsdk:"max_content_tokens"`
+	UserLocation     types.Object `tfsdk:"user_location"`
+}
+
+// agentMCPToolConfigModel is an `mcp_toolsets[*].configs` entry.
+type agentMCPToolConfigModel struct {
 	Name             types.String `tfsdk:"name"`
 	Enabled          types.Bool   `tfsdk:"enabled"`
 	PermissionPolicy types.String `tfsdk:"permission_policy"`
@@ -105,9 +124,13 @@ type agentCustomToolModel struct {
 // --- Attribute type maps for nested objects ---
 
 var agentToolConfigAttrTypes = map[string]attr.Type{
-	"name":              types.StringType,
-	"enabled":           types.BoolType,
-	"permission_policy": types.StringType,
+	"name":               types.StringType,
+	"enabled":            types.BoolType,
+	"permission_policy":  types.StringType,
+	"allowed_domains":    types.SetType{ElemType: types.StringType},
+	"blocked_domains":    types.SetType{ElemType: types.StringType},
+	"max_content_tokens": types.Int64Type,
+	"user_location":      types.ObjectType{AttrTypes: agentUserLocationAttrTypes},
 }
 
 var agentToolsetAttrTypes = map[string]attr.Type{
@@ -303,8 +326,10 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						Validators:          []validator.String{permissionPolicyValidator},
 					},
 					"configs": schema.ListNestedAttribute{
-						Optional:            true,
-						MarkdownDescription: "Per-tool configuration overrides.",
+						Optional: true,
+						MarkdownDescription: "Per-tool configuration overrides. The `web_fetch` and `web_search` entries also accept " +
+							"`allowed_domains` or `blocked_domains`, plus `max_content_tokens` (`web_fetch`) or `user_location` (`web_search`); " +
+							"setting one of these on another tool fails at plan time.",
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"name": schema.StringAttribute{
@@ -322,6 +347,63 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 									Optional:            true,
 									MarkdownDescription: "Permission policy override: `always_allow` or `always_ask`.",
 									Validators:          []validator.String{permissionPolicyValidator},
+								},
+								"allowed_domains": schema.SetAttribute{
+									Optional:    true,
+									ElementType: types.StringType,
+									MarkdownDescription: "`web_fetch` and `web_search` only. The only hosts the tool can reach. " +
+										"Each entry is a plain hostname such as `docs.example.com` (no scheme, port or wildcard) and also covers its subdomains; " +
+										"a `web_search` entry may carry a path suffix. 1-64 entries of 1-255 characters. Conflicts with `blocked_domains`. " +
+										"With `limited` environment networking, every entry must also be within the environment's `allowed_hosts`, or creating a session fails.",
+									Validators: []validator.Set{
+										setvalidator.SizeBetween(1, 64),
+										setvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 255)),
+									},
+								},
+								"blocked_domains": schema.SetAttribute{
+									Optional:    true,
+									ElementType: types.StringType,
+									MarkdownDescription: "`web_fetch` and `web_search` only. Hosts the tool can never reach, written like `allowed_domains`. " +
+										"1-64 entries of 1-255 characters. Conflicts with `allowed_domains`.",
+									Validators: []validator.Set{
+										setvalidator.SizeBetween(1, 64),
+										setvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 255)),
+									},
+								},
+								"max_content_tokens": schema.Int64Attribute{
+									Optional: true,
+									MarkdownDescription: "`web_fetch` only. Maximum number of tokens of fetched text content included in the context per call. " +
+										"Does not apply to binary content such as PDFs. Positive integer.",
+									Validators: []validator.Int64{int64validator.Between(1, math.MaxInt32)},
+								},
+								"user_location": schema.SingleNestedAttribute{
+									Optional: true,
+									MarkdownDescription: "`web_search` only. Approximate user location used to localize search results " +
+										"(sent with `type = \"approximate\"`, the only precision the API supports). At least one field must be set.",
+									Attributes: map[string]schema.Attribute{
+										"country": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "Two-letter ISO 3166-1 country code, uppercase (e.g. `US`). The API rejects a country its search provider does not support.",
+											Validators: []validator.String{stringvalidator.RegexMatches(
+												regexp.MustCompile(`^[A-Z]{2}$`), "must be a two-letter uppercase ISO 3166-1 country code",
+											)},
+										},
+										"city": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "City name. 1-255 characters.",
+											Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
+										},
+										"region": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "Region or state name. 1-255 characters.",
+											Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
+										},
+										"timezone": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "IANA timezone identifier (e.g. `America/Los_Angeles`). The API rejects a name that is not a valid IANA timezone.",
+											Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
+										},
+									},
 								},
 							},
 						},
@@ -469,7 +551,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 }
 
 func (r *AgentResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
-	return []resource.ConfigValidator{&multiagentConfigValidator{}}
+	return []resource.ConfigValidator{&multiagentConfigValidator{}, &agentToolConfigsValidator{}}
 }
 
 // --- Configure ---
@@ -880,8 +962,13 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 				if !c.PermissionPolicy.IsNull() && !c.PermissionPolicy.IsUnknown() {
 					policy = c.PermissionPolicy.ValueString()
 				}
+				web, d := webToolOptionsFromModel(ctx, c)
+				diags.Append(d...)
+				if diags.HasError() {
+					return nil, diags
+				}
 
-				cfg, d := buildAgentToolConfigParams(c.Name.ValueString(), enabled, policy)
+				cfg, d := buildAgentToolConfigParams(c.Name.ValueString(), enabled, policy, web)
 				diags.Append(d...)
 				if diags.HasError() {
 					return nil, diags
@@ -916,7 +1003,7 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 			}
 
 			if !t.Configs.IsNull() && len(t.Configs.Elements()) > 0 {
-				var configs []agentToolConfigModel
+				var configs []agentMCPToolConfigModel
 				diags.Append(t.Configs.ElementsAs(ctx, &configs, false)...)
 				if diags.HasError() {
 					return nil, diags
@@ -1151,11 +1238,58 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 }
 
 // apiToolConfig is the response-side shape shared by built-in and MCP per-tool
-// configs, so a single mapping serves both toolset kinds.
+// configs, so a single mapping serves both toolset kinds. extra holds the
+// attributes only one kind has, already mapped verbatim (the web options of a
+// built-in tool, see webToolOptionsFromResponse); it is nil for MCP tools.
 type apiToolConfig struct {
 	name             string
 	enabled          bool
 	permissionPolicy string
+	extra            map[string]attr.Value
+}
+
+// values returns the attribute values of the config object, with `enabled`
+// and `permission_policy` as resolved by the caller.
+func (c apiToolConfig) values(enabled types.Bool, permissionPolicy types.String) map[string]attr.Value {
+	values := map[string]attr.Value{
+		"name":              types.StringValue(c.name),
+		"enabled":           enabled,
+		"permission_policy": permissionPolicy,
+	}
+	maps.Copy(values, c.extra)
+	return values
+}
+
+// trackedToolConfig is what mapToolConfigsToState needs from a configured
+// entry. It is read attribute by attribute because built-in and MCP entries
+// have different object types; attrs keeps them all for the extra attributes
+// of a kind (webToolOptionsToState).
+type trackedToolConfig struct {
+	name         string
+	enabledUnset bool
+	policyUnset  bool
+	attrs        map[string]attr.Value
+}
+
+func trackedToolConfigs(current types.List) []trackedToolConfig {
+	var tracked []trackedToolConfig
+	for _, el := range current.Elements() {
+		obj, ok := el.(types.Object)
+		if !ok || obj.IsNull() || obj.IsUnknown() {
+			continue
+		}
+		attrs := obj.Attributes()
+		name, _ := attrs["name"].(types.String)
+		enabled, _ := attrs["enabled"].(types.Bool)
+		policy, _ := attrs["permission_policy"].(types.String)
+		tracked = append(tracked, trackedToolConfig{
+			name:         name.ValueString(),
+			enabledUnset: enabled.IsNull(),
+			policyUnset:  policy.IsNull(),
+			attrs:        attrs,
+		})
+	}
+	return tracked
 }
 
 // mapToolConfigsToState maps a toolset's per-tool configs from the API into
@@ -1172,7 +1306,10 @@ type apiToolConfig struct {
 //   - a field the configuration left unset stays null only while the API value
 //     equals the toolset default it inherits (the docs: per-tool configs
 //     override `default_config`), so an echoed default causes no perpetual diff
-//     and a diverging value does.
+//     and a diverging value does;
+//   - the extra attributes of a kind (the web options of built-in tools) have
+//     no inherited default; a tracked config resolves them against current
+//     with webToolOptionsToState.
 //
 // A null current (a toolset state holds without a configs block) maps every
 // other API config verbatim, and stays null when there is none.
@@ -1185,17 +1322,14 @@ type apiToolConfig struct {
 // With applyMapping (Create, Update) a null current stays null, configs for
 // other tools are not appended and a field the plan leaves null stays null:
 // what differs from the plan shows on the next Read.
-func mapToolConfigsToState(ctx context.Context, current types.List, apiConfigs []apiToolConfig, defaultEnabled bool, defaultPolicy string, attrTypes map[string]attr.Type, mode mappingMode) (types.List, diag.Diagnostics) {
+func mapToolConfigsToState(current types.List, apiConfigs []apiToolConfig, defaultEnabled bool, defaultPolicy string, attrTypes map[string]attr.Type, mode mappingMode) (types.List, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	elemType := types.ObjectType{AttrTypes: attrTypes}
 
-	var stateConfigs []agentToolConfigModel
+	var stateConfigs []trackedToolConfig
 	switch {
 	case !current.IsNull() && !current.IsUnknown():
-		diags.Append(current.ElementsAs(ctx, &stateConfigs, false)...)
-		if diags.HasError() {
-			return types.ListNull(elemType), diags
-		}
+		stateConfigs = trackedToolConfigs(current)
 	case len(apiConfigs) == 0, current.IsNull() && mode == applyMapping:
 		return types.ListNull(elemType), diags
 	}
@@ -1208,25 +1342,23 @@ func mapToolConfigsToState(ctx context.Context, current types.List, apiConfigs [
 	configObjs := make([]attr.Value, 0, len(apiConfigs))
 	tracked := make(map[string]bool, len(stateConfigs))
 	for _, sc := range stateConfigs {
-		name := sc.Name.ValueString()
-		tracked[name] = true
-		apiCfg, ok := apiByName[name]
+		tracked[sc.name] = true
+		apiCfg, ok := apiByName[sc.name]
 		if !ok {
 			continue
 		}
 		enabled := types.BoolValue(apiCfg.enabled)
-		if sc.Enabled.IsNull() && (mode == applyMapping || apiCfg.enabled == defaultEnabled) {
+		if sc.enabledUnset && (mode == applyMapping || apiCfg.enabled == defaultEnabled) {
 			enabled = types.BoolNull()
 		}
 		permPolicy := types.StringValue(apiCfg.permissionPolicy)
-		if sc.PermissionPolicy.IsNull() && (mode == applyMapping || apiCfg.permissionPolicy == defaultPolicy) {
+		if sc.policyUnset && (mode == applyMapping || apiCfg.permissionPolicy == defaultPolicy) {
 			permPolicy = types.StringNull()
 		}
-		obj, d := types.ObjectValue(attrTypes, map[string]attr.Value{
-			"name":              types.StringValue(name),
-			"enabled":           enabled,
-			"permission_policy": permPolicy,
-		})
+		if apiCfg.extra != nil {
+			apiCfg.extra = webToolOptionsToState(sc.attrs, apiCfg.extra, mode)
+		}
+		obj, d := types.ObjectValue(attrTypes, apiCfg.values(enabled, permPolicy))
 		diags.Append(d...)
 		configObjs = append(configObjs, obj)
 	}
@@ -1237,11 +1369,7 @@ func mapToolConfigsToState(ctx context.Context, current types.List, apiConfigs [
 			continue
 		}
 		tracked[c.name] = true
-		obj, d := types.ObjectValue(attrTypes, map[string]attr.Value{
-			"name":              types.StringValue(c.name),
-			"enabled":           types.BoolValue(c.enabled),
-			"permission_policy": types.StringValue(c.permissionPolicy),
-		})
+		obj, d := types.ObjectValue(attrTypes, c.values(types.BoolValue(c.enabled), types.StringValue(c.permissionPolicy)))
 		diags.Append(d...)
 		configObjs = append(configObjs, obj)
 	}
@@ -1277,14 +1405,15 @@ func mapAgentToolsetToState(ctx context.Context, apiToolset *anthropic.BetaManag
 
 	apiConfigs := make([]apiToolConfig, 0, len(apiToolset.Configs))
 	for _, c := range apiToolset.Configs {
-		apiConfigs = append(apiConfigs, apiToolConfig{
-			name:             string(c.Name),
-			enabled:          c.Enabled,
-			permissionPolicy: c.PermissionPolicy.Type,
-		})
+		cfg, d := apiAgentToolConfig(c)
+		diags.Append(d...)
+		apiConfigs = append(apiConfigs, cfg)
+	}
+	if diags.HasError() {
+		return types.ObjectNull(agentToolsetAttrTypes), diags
 	}
 
-	configsList, d := mapToolConfigsToState(ctx, currentConfigs, apiConfigs,
+	configsList, d := mapToolConfigsToState(currentConfigs, apiConfigs,
 		apiToolset.DefaultConfig.Enabled, apiToolset.DefaultConfig.PermissionPolicy.Type, agentToolConfigAttrTypes, mode)
 	diags.Append(d...)
 	if diags.HasError() {
@@ -1338,7 +1467,7 @@ func mapMCPToolsetsToState(ctx context.Context, apiToolsets []anthropic.BetaMana
 				permissionPolicy: c.PermissionPolicy.Type,
 			})
 		}
-		configsList, d := mapToolConfigsToState(ctx, currentConfigs, apiConfigs,
+		configsList, d := mapToolConfigsToState(currentConfigs, apiConfigs,
 			apiToolset.DefaultConfig.Enabled, apiToolset.DefaultConfig.PermissionPolicy.Type, agentMCPToolConfigAttrTypes, configsMode)
 		diags.Append(d...)
 
@@ -1398,10 +1527,17 @@ func alwaysAskPolicyParam() *anthropic.BetaManagedAgentsAlwaysAskPolicyParam {
 // `BetaManagedAgentsAgentToolConfigParams` (a `name` enum plus shared fields) is
 // split into one struct per built-in tool, so the Terraform `name` attribute now
 // selects the union branch instead of populating a field. The accepted names are
-// the same eight the schema validator enforces.
-func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType string) (anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, diag.Diagnostics) {
+// the same eight the schema validator enforces. The web options only exist on
+// the web_fetch and web_search branches; one set for a tool that does not take
+// it is an error rather than silently dropped.
+func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType string, web webToolOptions) (anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	var u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion
+
+	if rejected := web.rejectedFor(name); len(rejected) > 0 {
+		diags.AddError("Unsupported tool option", strings.Join(rejected, " "))
+		return u, diags
+	}
 
 	switch name {
 	case "bash":
@@ -1458,8 +1594,13 @@ func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType
 			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
 		}
 		u.OfGrep = cfg
-	case "web_fetch":
-		cfg := &anthropic.BetaManagedAgentsWebFetchToolConfigParams{Enabled: enabled}
+	case toolNameWebFetch:
+		cfg := &anthropic.BetaManagedAgentsWebFetchToolConfigParams{
+			Enabled:          enabled,
+			AllowedDomains:   web.allowedDomains,
+			BlockedDomains:   web.blockedDomains,
+			MaxContentTokens: web.maxContentTokens,
+		}
 		switch policyType {
 		case "always_allow":
 			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
@@ -1467,8 +1608,15 @@ func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType
 			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
 		}
 		u.OfWebFetch = cfg
-	case "web_search":
-		cfg := &anthropic.BetaManagedAgentsWebSearchToolConfigParams{Enabled: enabled}
+	case toolNameWebSearch:
+		cfg := &anthropic.BetaManagedAgentsWebSearchToolConfigParams{
+			Enabled:        enabled,
+			AllowedDomains: web.allowedDomains,
+			BlockedDomains: web.blockedDomains,
+		}
+		if web.userLocation != nil {
+			cfg.UserLocation = *web.userLocation
+		}
 		switch policyType {
 		case "always_allow":
 			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()

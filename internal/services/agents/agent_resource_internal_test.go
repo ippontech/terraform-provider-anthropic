@@ -182,7 +182,7 @@ func TestBuildAgentToolConfigParams(t *testing.T) {
 		t.Run(tc.name+"/always_allow", func(t *testing.T) {
 			t.Parallel()
 
-			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(true), "always_allow")
+			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(true), "always_allow", webToolOptions{})
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
@@ -201,7 +201,7 @@ func TestBuildAgentToolConfigParams(t *testing.T) {
 		t.Run(tc.name+"/always_ask", func(t *testing.T) {
 			t.Parallel()
 
-			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(false), "always_ask")
+			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(false), "always_ask", webToolOptions{})
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
@@ -222,7 +222,7 @@ func TestBuildAgentToolConfigParams(t *testing.T) {
 		t.Run(tc.name+"/no_policy", func(t *testing.T) {
 			t.Parallel()
 
-			u, diags := buildAgentToolConfigParams(tc.name, param.Opt[bool]{}, "")
+			u, diags := buildAgentToolConfigParams(tc.name, param.Opt[bool]{}, "", webToolOptions{})
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
@@ -246,7 +246,7 @@ func TestBuildAgentToolConfigParams(t *testing.T) {
 func TestBuildAgentToolConfigParams_unknownName(t *testing.T) {
 	t.Parallel()
 
-	_, diags := buildAgentToolConfigParams("not_a_tool", param.NewOpt(true), "always_allow")
+	_, diags := buildAgentToolConfigParams("not_a_tool", param.NewOpt(true), "always_allow", webToolOptions{})
 	if !diags.HasError() {
 		t.Fatal("expected an error diagnostic for an unsupported tool name, got none")
 	}
@@ -255,16 +255,30 @@ func TestBuildAgentToolConfigParams_unknownName(t *testing.T) {
 	}
 }
 
-// toolConfigsList builds a configs list in state shape from typed entries.
-func toolConfigsList(t *testing.T, attrTypes map[string]attr.Type, entries ...agentToolConfigModel) types.List {
+// toolConfigsList builds a configs list in state shape from typed entries. The
+// attributes attrTypes has beyond the shared three (the built-in web options)
+// are null.
+func toolConfigsList(t *testing.T, attrTypes map[string]attr.Type, entries ...agentMCPToolConfigModel) types.List {
 	t.Helper()
+	ctx := context.Background()
 	objs := make([]attr.Value, 0, len(entries))
 	for _, e := range entries {
-		obj, diags := types.ObjectValue(attrTypes, map[string]attr.Value{
+		values := map[string]attr.Value{
 			"name":              e.Name,
 			"enabled":           e.Enabled,
 			"permission_policy": e.PermissionPolicy,
-		})
+		}
+		for name, typ := range attrTypes {
+			if _, ok := values[name]; ok {
+				continue
+			}
+			null, err := typ.ValueFromTerraform(ctx, tftypes.NewValue(typ.TerraformType(ctx), nil))
+			if err != nil {
+				t.Fatalf("null %s: %s", name, err)
+			}
+			values[name] = null
+		}
+		obj, diags := types.ObjectValue(attrTypes, values)
 		if diags.HasError() {
 			t.Fatalf("build config object: %+v", diags)
 		}
@@ -318,14 +332,25 @@ func mcpToolsetsFromState(t *testing.T, data AgentResourceModel) []agentMCPTools
 	return toolsets
 }
 
-func toolConfigsFromList(t *testing.T, list types.List) []agentToolConfigModel {
+// toolConfigsFromList reads the three attributes built-in and MCP configs share
+// from a configs list of either shape.
+func toolConfigsFromList(t *testing.T, list types.List) []agentMCPToolConfigModel {
 	t.Helper()
 	if list.IsNull() {
 		return nil
 	}
-	var configs []agentToolConfigModel
-	if diags := list.ElementsAs(context.Background(), &configs, false); diags.HasError() {
-		t.Fatalf("read configs: %+v", diags)
+	configs := make([]agentMCPToolConfigModel, 0, len(list.Elements()))
+	for _, el := range list.Elements() {
+		obj, ok := el.(types.Object)
+		if !ok {
+			t.Fatalf("config element is %T, want types.Object", el)
+		}
+		attrs := obj.Attributes()
+		configs = append(configs, agentMCPToolConfigModel{
+			Name:             attrs["name"].(types.String),
+			Enabled:          attrs["enabled"].(types.Bool),
+			PermissionPolicy: attrs["permission_policy"].(types.String),
+		})
 	}
 	return configs
 }
@@ -399,15 +424,15 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 	t.Parallel()
 
 	current := toolConfigsList(t, agentMCPToolConfigAttrTypes,
-		agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
-		agentToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
+		agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
+		agentMCPToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
 	)
 
 	tests := []struct {
 		name       string
 		api        []apiToolConfig
-		wantSearch agentToolConfigModel
-		wantDelete agentToolConfigModel
+		wantSearch agentMCPToolConfigModel
+		wantDelete agentMCPToolConfigModel
 	}{
 		{
 			name: "echoed defaults stay null",
@@ -415,8 +440,8 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 				{name: "search", enabled: true, permissionPolicy: "always_allow"},
 				{name: "delete_record", enabled: false, permissionPolicy: "always_ask"},
 			},
-			wantSearch: agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
-			wantDelete: agentToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
+			wantSearch: agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
+			wantDelete: agentMCPToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
 		},
 		{
 			name: "diverging values surface",
@@ -424,14 +449,14 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 				{name: "search", enabled: false, permissionPolicy: "always_allow"},
 				{name: "delete_record", enabled: false, permissionPolicy: "always_allow"},
 			},
-			wantSearch: agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
-			wantDelete: agentToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
+			wantSearch: agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
+			wantDelete: agentMCPToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			list, diags := mapToolConfigsToState(context.Background(), current, tt.api, true, "always_ask", agentMCPToolConfigAttrTypes, readMapping)
+			list, diags := mapToolConfigsToState(current, tt.api, true, "always_ask", agentMCPToolConfigAttrTypes, readMapping)
 			if diags.HasError() {
 				t.Fatalf("diags: %+v", diags)
 			}
@@ -439,7 +464,7 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 			if len(got) != 2 {
 				t.Fatalf("got %d configs, want 2", len(got))
 			}
-			for i, want := range []agentToolConfigModel{tt.wantSearch, tt.wantDelete} {
+			for i, want := range []agentMCPToolConfigModel{tt.wantSearch, tt.wantDelete} {
 				if !got[i].Name.Equal(want.Name) || !got[i].Enabled.Equal(want.Enabled) || !got[i].PermissionPolicy.Equal(want.PermissionPolicy) {
 					t.Errorf("config %d = %+v, want %+v", i, got[i], want)
 				}
@@ -454,15 +479,15 @@ func TestMapToolConfigsToState_trackedAndExtra(t *testing.T) {
 	t.Parallel()
 
 	current := toolConfigsList(t, agentToolConfigAttrTypes,
-		agentToolConfigModel{Name: types.StringValue("bash"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
-		agentToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
+		agentMCPToolConfigModel{Name: types.StringValue("bash"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
+		agentMCPToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
 	)
 	api := []apiToolConfig{
-		{name: "web_fetch", enabled: true, permissionPolicy: "always_allow"},
-		{name: "bash", enabled: true, permissionPolicy: "always_ask"},
+		builtinAPIToolConfig(t, `{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_allow"}}`),
+		builtinAPIToolConfig(t, `{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}`),
 	}
 
-	list, diags := mapToolConfigsToState(context.Background(), current, api, true, "always_ask", agentToolConfigAttrTypes, readMapping)
+	list, diags := mapToolConfigsToState(current, api, true, "always_ask", agentToolConfigAttrTypes, readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -486,12 +511,12 @@ func TestMapToolConfigsToState_skipsUntrackedDefaults(t *testing.T) {
 	t.Parallel()
 
 	echoed := []apiToolConfig{
-		{name: "bash", enabled: true, permissionPolicy: "always_allow"},
-		{name: "read", enabled: true, permissionPolicy: "always_allow"},
+		builtinAPIToolConfig(t, `{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"always_allow"}}`),
+		builtinAPIToolConfig(t, `{"type":"read","name":"read","enabled":true,"permission_policy":{"type":"always_allow"}}`),
 	}
 	overrides := []apiToolConfig{
-		{name: "web_fetch", enabled: true, permissionPolicy: "always_ask"},
-		{name: "grep", enabled: false, permissionPolicy: "always_allow"},
+		builtinAPIToolConfig(t, `{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_ask"}}`),
+		builtinAPIToolConfig(t, `{"type":"grep","name":"grep","enabled":false,"permission_policy":{"type":"always_allow"}}`),
 	}
 	tests := []struct {
 		name    string
@@ -513,15 +538,15 @@ func TestMapToolConfigsToState_skipsUntrackedDefaults(t *testing.T) {
 		{
 			name: "tracked config, defaults listed for other tools",
 			current: toolConfigsList(t, agentToolConfigAttrTypes,
-				agentToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()}),
-			api:  append([]apiToolConfig{{name: "write", enabled: false, permissionPolicy: "always_allow"}}, echoed...),
+				agentMCPToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()}),
+			api:  append([]apiToolConfig{builtinAPIToolConfig(t, `{"type":"write","name":"write","enabled":false,"permission_policy":{"type":"always_allow"}}`)}, echoed...),
 			want: []string{"write"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			list, diags := mapToolConfigsToState(context.Background(), tt.current, tt.api, true, "always_allow", agentToolConfigAttrTypes, readMapping)
+			list, diags := mapToolConfigsToState(tt.current, tt.api, true, "always_allow", agentToolConfigAttrTypes, readMapping)
 			if diags.HasError() {
 				t.Fatalf("diags: %+v", diags)
 			}
@@ -607,7 +632,7 @@ func TestMapMCPToolsetsToState_import(t *testing.T) {
 // out: the tool mapping does not read it.
 const unplannedTools = `[
 	{"type":"agent_toolset_20260401","default_config":{"enabled":false,"permission_policy":{"type":"always_allow"}},
-		"configs":[{"name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}]},
+		"configs":[{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}]},
 	{"type":"mcp_toolset","mcp_server_name":"crm","default_config":{"enabled":false,"permission_policy":{"type":"always_allow"}},
 		"configs":[
 			{"name":"search","enabled":true,"permission_policy":{"type":"always_ask"}},
@@ -656,8 +681,8 @@ func unplannedToolsPlan(t *testing.T, agent *anthropic.BetaManagedAgentsAgent) A
 		DefaultEnabled:          types.BoolValue(false),
 		DefaultPermissionPolicy: types.StringValue("always_allow"),
 		Configs: toolConfigsList(t, agentMCPToolConfigAttrTypes,
-			agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(true), PermissionPolicy: types.StringNull()},
-			agentToolConfigModel{Name: types.StringValue("lookup"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
+			agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(true), PermissionPolicy: types.StringNull()},
+			agentMCPToolConfigModel{Name: types.StringValue("lookup"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
 		),
 	})
 	return plan
@@ -1051,4 +1076,89 @@ func TestMapAgentResponseToState_modelEffortAndGeo(t *testing.T) {
 			}
 		}
 	})
+}
+
+// builtinAPIToolConfig decodes one built-in tool config as the API returns it.
+func builtinAPIToolConfig(t *testing.T, raw string) apiToolConfig {
+	t.Helper()
+	var c anthropic.BetaManagedAgentsAgentToolConfigUnion
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatalf("unmarshal tool config: %s", err)
+	}
+	cfg, diags := apiAgentToolConfig(c)
+	if diags.HasError() {
+		t.Fatalf("apiAgentToolConfig: %+v", diags)
+	}
+	return cfg
+}
+
+// agentServer answers every request with agent, as the create, read and
+// update endpoints would.
+func agentServer(t *testing.T, agent *anthropic.BetaManagedAgentsAgent) *AgentResource {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, agent.RawJSON())
+	}))
+	t.Cleanup(srv.Close)
+	return &AgentResource{client: oauthtest.NewSDKClient(t, srv)}
+}
+
+// plannedAgent plans agent as it is, except for the toolsets.
+func plannedAgent(agent *anthropic.BetaManagedAgentsAgent, toolset types.Object, mcpToolsets types.List) AgentResourceModel {
+	return AgentResourceModel{
+		Model:        types.StringValue(string(agent.Model.ID)),
+		Name:         types.StringValue(agent.Name),
+		Metadata:     types.MapNull(types.StringType),
+		MCPServers:   types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
+		Skills:       types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
+		CustomTools:  types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
+		Multiagent:   types.ObjectNull(agentMultiagentAttrTypes),
+		AgentToolset: toolset,
+		MCPToolsets:  mcpToolsets,
+	}
+}
+
+// applyAndRead runs Create and Update with planned as the plan, and Read with
+// planned as the prior state, all against r, and returns the three states.
+func applyAndRead(t *testing.T, r *AgentResource, agent *anthropic.BetaManagedAgentsAgent, planned AgentResourceModel) (created, updated, read AgentResourceModel) {
+	t.Helper()
+	ctx := context.Background()
+	sch := schematest.ResourceSchema(t, r)
+
+	plan := tfsdk.Plan{Schema: sch}
+	if diags := plan.Set(ctx, &planned); diags.HasError() {
+		t.Fatalf("set plan: %+v", diags)
+	}
+	prior := planned
+	prior.ID = types.StringValue(agent.ID)
+	prior.Version = types.Int64Value(agent.Version)
+	state := tfsdk.State{Schema: sch}
+	if diags := state.Set(ctx, &prior); diags.HasError() {
+		t.Fatalf("set state: %+v", diags)
+	}
+	model := func(s tfsdk.State) AgentResourceModel {
+		var data AgentResourceModel
+		if diags := s.Get(ctx, &data); diags.HasError() {
+			t.Fatalf("get state: %+v", diags)
+		}
+		return data
+	}
+
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: sch}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create: %+v", createResp.Diagnostics)
+	}
+	updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: sch}}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update: %+v", updateResp.Diagnostics)
+	}
+	readResp := &resource.ReadResponse{State: state}
+	r.Read(ctx, resource.ReadRequest{State: state}, readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("read: %+v", readResp.Diagnostics)
+	}
+	return model(createResp.State), model(updateResp.State), model(readResp.State)
 }

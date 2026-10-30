@@ -213,6 +213,34 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.enabled"),
 				),
 			},
+			// Web options: the post-apply plan must be empty, i.e. the API echoes
+			// them verbatim and no default comes back for the unset ones.
+			{
+				Config: testAccAgentResourceWithWebOptionsConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.#", "2"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.name", "web_search"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.allowed_domains.*", "arxiv.org"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location.country", "US"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location.timezone", "America/Los_Angeles"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location.city"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.name", "web_fetch"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.blocked_domains.*", "ads.example.com"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens", "50000"),
+				),
+			},
+			// Swapping a list and dropping options: tools are replaced as a whole
+			// on update, so the removed values must not come back.
+			{
+				Config: testAccAgentResourceWithWebOptionsUpdatedConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.allowed_domains"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.blocked_domains.*", "ads.example.com"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.blocked_domains"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens", "10000"),
+				),
+			},
 		},
 	})
 }
@@ -315,6 +343,55 @@ resource "anthropic_agent" "test_toolset" {
       {
         name              = "bash"
         permission_policy = "always_ask"
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceWithWebOptionsConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "always_allow"
+    configs = [
+      {
+        name            = "web_search"
+        allowed_domains = ["docs.example.com", "arxiv.org"]
+        user_location = {
+          country  = "US"
+          timezone = "America/Los_Angeles"
+        }
+      },
+      {
+        name               = "web_fetch"
+        blocked_domains    = ["ads.example.com"]
+        max_content_tokens = 50000
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceWithWebOptionsUpdatedConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "always_allow"
+    configs = [
+      {
+        name            = "web_search"
+        blocked_domains = ["ads.example.com"]
+      },
+      {
+        name               = "web_fetch"
+        max_content_tokens = 10000
       }
     ]
   }
