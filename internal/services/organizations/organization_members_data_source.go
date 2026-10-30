@@ -84,7 +84,7 @@ func (d *OrganizationMembersDataSource) Schema(_ context.Context, _ datasource.S
 						},
 						"role": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Organization role of the user (e.g. `user`, `developer`, `billing`, `admin`, `claude_code_user`).",
+							MarkdownDescription: memberRoleReadDescription,
 						},
 						"added_at": schema.StringAttribute{
 							Computed:            true,
