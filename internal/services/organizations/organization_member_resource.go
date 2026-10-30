@@ -202,6 +202,24 @@ func (r *OrganizationMemberResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 
+	var state OrganizationMemberResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// remove_on_destroy is local-only and has no API counterpart. If it's the
+	// only thing that changed, there's nothing to send: skip the API call
+	// entirely (keeping server-derived fields from state) rather than
+	// resending unchanged role, which might cause issues for example
+	// if the role is `admin` which cannot be set via the API.
+	apiFieldsChanged := !plan.Role.Equal(state.Role)
+	if !apiFieldsChanged {
+		plan.ID = state.ID
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
+
 	body := organizationMemberUpdateRequest{Role: plan.Role.ValueString()}
 
 	respBytes, err := r.client.DoRequest(ctx, "POST", "/v1/organizations/users/"+plan.ID.ValueString(), body)
