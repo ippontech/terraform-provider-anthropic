@@ -77,6 +77,7 @@ Read-Only:
 - `expires_at` (String) RFC 3339 timestamp of when the invite expires.
 - `id` (String) The ID of the invite.
 - `invited_at` (String) RFC 3339 timestamp of when the invite was created.
+- `rbac_group_ids` (Set of String) IDs of the RBAC groups (`rbac_group_...`) the person joins when they accept the invite. Empty when the invite carries none; RBAC groups exist only in Claude Enterprise organizations.
 - `role` (String) Organization role the user will hold once the invite is accepted.
 - `status` (String) Status of the invite. One of `pending`, `accepted`, `expired`, `deleted`.
 - `type` (String) Object type. Always `invite`.

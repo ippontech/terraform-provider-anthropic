@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
@@ -53,7 +54,10 @@ func TestInviteDataSource_read(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	data := mapInviteToDataSourceState(invite)
+	data, diags := mapInviteToDataSourceState(invite)
+	if diags.HasError() {
+		t.Fatalf("map: %v", diags)
+	}
 
 	if got := data.ID.ValueString(); got != "invite_015gWxCN9Hfg2QhZwTK7" {
 		t.Errorf("ID = %q, want %q", got, "invite_015gWxCN9Hfg2QhZwTK7")
@@ -79,6 +83,9 @@ func TestInviteDataSource_read(t *testing.T) {
 	if got := data.Type.ValueString(); got != "invite" {
 		t.Errorf("Type = %q, want %q", got, "invite")
 	}
+	if !data.RBACGroupIDs.IsNull() {
+		t.Errorf("RBACGroupIDs = %v, want null when the API omits rbac_group_ids", data.RBACGroupIDs)
+	}
 }
 
 func TestInviteDataSource_notFound(t *testing.T) {
@@ -97,5 +104,49 @@ func TestInviteDataSource_notFound(t *testing.T) {
 	}
 	if !admin.IsNotFound(err) {
 		t.Fatalf("expected 404 not-found error, got: %v", err)
+	}
+}
+
+// TestInviteDataSource_readRBACGroupIDs drives Read end to end, so the schema
+// and the model must agree on rbac_group_ids.
+func TestInviteDataSource_readRBACGroupIDs(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		response string   // rbac_group_ids in the response; "" leaves it out
+		want     []string // nil: null
+	}{
+		{name: "groups", response: `["` + rbacGroupA + `", "` + rbacGroupB + `"]`, want: []string{rbacGroupB, rbacGroupA}},
+		{name: "no group", response: `[]`, want: []string{}},
+		{name: "field absent"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv, rec := stub(t, func(recordedRequest) (int, string) {
+				return http.StatusOK, inviteFixtureWithGroups(test.response)
+			})
+			d := &InviteDataSource{client: admintest.NewClient(t, srv)}
+
+			resp := readDataSource(t, d, map[string]any{"id": "invite_01ABC"})
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read: %v", resp.Diagnostics)
+			}
+			req := rec.all()[0]
+			if req.Method != http.MethodGet || req.Path != "/v1/organizations/invites/invite_01ABC" {
+				t.Errorf("request = %s %s", req.Method, req.Path)
+			}
+			assertBetaQuery(t, req)
+
+			var got InviteDataSourceModel
+			if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+				t.Fatalf("state: %v", diags)
+			}
+			ids := rbacGroupIDsOf(t, got.RBACGroupIDs)
+			if (ids == nil) != (test.want == nil) || strings.Join(ids, ",") != strings.Join(test.want, ",") {
+				t.Errorf("rbac_group_ids = %#v, want %#v", ids, test.want)
+			}
+		})
 	}
 }
