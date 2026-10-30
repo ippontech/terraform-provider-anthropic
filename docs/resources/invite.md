@@ -10,7 +10,7 @@ description: |-
 Creates and manages an invitation for a user to join the organization via the Admin API.
 
 > **API**: `POST/GET/DELETE /v1/organizations/invites[/{id}]` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` and `write:members` scopes (plus `write:rbac_groups` to invite with the `managed` role).
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -49,7 +49,7 @@ output "invite_status" {
 ### Required
 
 - `email` (String) Email address of the person to invite. Immutable after creation — changing this forces a new resource.
-- `role` (String) Organization role to grant once the invite is accepted. The valid set depends on the organization's type: Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise organizations use `user`, `managed`, `owner`, `membership_admin`, `primary_owner`. Not validated against a fixed list here since the valid set is organization-type-dependent; an invalid value is rejected by the API at apply time. Immutable after creation — changing this forces a new resource.
+- `role` (String) Organization role to grant once the invite is accepted. The API assigns `user`, `developer`, `billing` or `claude_code_user` in a Claude Console organization, and `user` or `managed` in a Claude Enterprise organization (`managed` needs the `write:rbac_groups` scope on the key, besides `write:members`). `admin` and the Claude Enterprise administrative roles (`owner`, `membership_admin`, `primary_owner`) cannot be assigned through the API: they are granted in the Claude Console or in claude.ai organization settings. Not checked against a list, since the accepted set depends on the organization type; the API rejects an invalid value at apply time. Immutable after creation — changing this forces a new resource.
 
 ### Read-Only
 
