@@ -213,6 +213,9 @@ func (r *ServiceAccountWorkspaceResource) Delete(ctx context.Context, req resour
 	// isolates the call so a unit test can assert the request path directly.
 	err := removeServiceAccountFromWorkspace(ctx, r.client, data.ServiceAccountID.ValueString(), data.WorkspaceID.ValueString())
 	if err != nil {
+		if providerrors.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to remove service account from workspace: %s", err))
 		return
 	}
