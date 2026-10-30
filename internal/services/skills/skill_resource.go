@@ -95,13 +95,17 @@ func (r *SkillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "ISO 8601 timestamp of when the skill was created.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
+			// updated_at and latest_version keep their stored value on an in-place
+			// plan: Update sends nothing, since force_destroy is the only in-place change.
 			"updated_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "ISO 8601 timestamp of when the skill was last updated.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"latest_version": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "The latest version identifier for the skill.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"source": schema.StringAttribute{
 				Computed:            true,
@@ -192,8 +196,19 @@ func (r *SkillResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-// Update is a no-op because all attributes are ForceNew.
-func (r *SkillResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+// Update applies the only in-place change the schema allows: force_destroy, which the
+// provider reads at destroy time and never sends to the API. Every other input
+// requires a replacement, so the stored API values are kept as they are.
+func (r *SkillResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state SkillResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	state.ForceDestroy = plan.ForceDestroy
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *SkillResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
