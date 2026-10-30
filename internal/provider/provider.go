@@ -30,6 +30,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/messages"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizationwebhooks"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
@@ -258,6 +259,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		messages.NewMessageResource,
 		organizations.NewInviteResource,
 		organizations.NewOrganizationMemberResource,
+		organizationwebhooks.NewOrganizationWebhookResource,
 		serviceaccounts.NewServiceAccountResource,
 		serviceaccounts.NewServiceAccountWorkspaceResource,
 		skills.NewSkillResource,
