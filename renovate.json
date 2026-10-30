@@ -123,6 +123,12 @@
       "matchManagers": ["npm"],
       "matchDepNames": ["conventional-changelog-conventionalcommits"],
       "allowedVersions": "<9.0.0"
+    },
+    {
+      "description": "poutine is installed in security.yml from a pinned release archive whose sha256 is hardcoded next to the version, exactly like tflint above: Renovate bumps the version but not the hash, so never automerge it.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["boostsecurityio/poutine"],
+      "automerge": false
     }
   ]
 }

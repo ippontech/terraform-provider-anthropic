@@ -1,3 +1,8 @@
+# `pre-commit install` installs both hook types; the existing hooks keep
+# running at the pre-commit stage only, and the commit-msg hook checks the
+# Conventional Commits format (CONTRIBUTING.md, Conventional Commits).
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -6,6 +11,12 @@ repos:
       exclude: ^\.gitlab
     - id: end-of-file-fixer
     - id: trailing-whitespace
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        # Same types as the pr-title check (.github/workflows/pr-title.yml).
+        args: [feat, fix, perf, revert, docs, style, chore, refactor, test, build, ci]
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.109.3
     hooks:
