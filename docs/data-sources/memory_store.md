@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_memory_store Data Source - anthropic"
-subcategory: "Memory Stores"
+subcategory: "Managed Agents"
 description: |-
   Retrieves a memory store by ID (beta).
 ---

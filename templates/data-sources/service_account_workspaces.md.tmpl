@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_service_account_workspaces Data Source - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Lists the workspace memberships (implicit and explicit) of a Workload Identity Federation service account.
 ---

@@ -1,13 +1,13 @@
 ---
 page_title: "anthropic_memory Resource - anthropic"
-subcategory: "Memory Stores"
+subcategory: "Managed Agents"
 description: |-
-  Creates and manages a memory: a single text document at a hierarchical path inside an anthropic_memory_store (beta).
+  Creates and manages a Managed Agents memory store document, which the API calls a memory: a single text document at a hierarchical path inside an anthropic_memory_store (beta).
 ---
 
 # anthropic_memory (Resource)
 
-Creates and manages a memory: a single text document at a hierarchical path inside an `anthropic_memory_store` (beta). Memories are addressed by a stable `mem_...` ID, independent of their `path`, so renaming a memory (changing `path`) preserves its `id` and version history.
+Creates and manages a Managed Agents memory store document, which the API calls a memory: a single text document at a hierarchical path inside an `anthropic_memory_store` (beta). Memories are addressed by a stable `mem_...` ID, independent of their `path`, so renaming a memory (changing `path`) preserves its `id` and version history.
 
 > **API**: `POST/GET/POST/DELETE /v1/memory_stores/{memory_store_id}/memories[/{id}]` (Managed Agents API).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).

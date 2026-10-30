@@ -1,13 +1,13 @@
 ---
 page_title: "anthropic_memory Data Source - anthropic"
-subcategory: "Memory Stores"
+subcategory: "Managed Agents"
 description: |-
-  Retrieves a memory by ID from a memory store (beta).
+  Retrieves a Managed Agents memory store document (a memory) by ID (beta).
 ---
 
 # anthropic_memory (Data Source)
 
-Retrieves a memory by ID from a memory store (beta). Always reads with `view=full`, so `content` is populated.
+Retrieves a Managed Agents memory store document (a memory) by ID (beta). Always reads with `view=full`, so `content` is populated.
 
 > **API**: `GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}` (Managed Agents API).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).

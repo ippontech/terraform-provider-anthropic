@@ -1,0 +1,22 @@
+---
+page_title: "anthropic_claude_tag_bundle Data Source - anthropic"
+subcategory: "Claude Enterprise: Claude Tag"
+description: |-
+  Reads one Claude Tag Access bundle of a Claude Enterprise organization by ID.
+---
+
+# anthropic_claude_tag_bundle (Data Source)
+
+Reads one Claude Tag Access bundle by ID, through the [Claude Tag API](https://platform.claude.com/docs/en/manage-claude/claude-tag-api#get-a-bundle): its name and description, never what it grants. A Bundle that does not exist, belongs to another organization or is managed by Claude Tag itself is an error.
+
+> **API**: `GET /v1/organizations/claude_tag/bundles/{bundle_id}` (Claude Tag API).
+> **Auth**: Claude Enterprise scoped Admin API key with the `read:claude_tag` scope (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`), created by the primary owner in claude.ai under Organization settings > API. A Claude Console Admin API key does not work.
+> **Beta header**: `experimental-claude-tag-2026-10-21`, sent by the provider (the endpoints answer 404 without it).
+> **Availability**: beta, Claude Enterprise organizations with Claude Tag set up and a Slack workspace or Enterprise Grid connected; not Claude Console organizations.
+> **Rate limits**: two budgets per organization, shared by all its keys: reads (every `GET`) and changes (every `POST` and `DELETE`). A `429` is retried after its `retry-after`.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/claude_tag_bundle/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

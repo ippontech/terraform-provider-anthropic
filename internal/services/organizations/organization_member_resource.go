@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -62,7 +63,7 @@ func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.Schema
 		MarkdownDescription: "Manages an existing organization member (User) via the Admin API. " +
 			"Creating this resource looks up the configured user ID and adopts that existing member; it does not create organization membership. " +
 			"Adoption requires the configured role to match the member's current role; otherwise, import the member first to review the role change as an update. " +
-			"Membership must first be created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept. " +
+			"Membership must first be created by inviting a user (via `anthropic_invite` or the Claude Console) and having them accept. " +
 			"This resource supports changing a member's organization role and removing them from the organization. " +
 			"Destroy is blocked unless `remove_on_destroy = true` has been applied. **Warning:** When enabled, removing this resource from configuration and applying, or running `terraform destroy`, irreversibly removes the user's organization membership. There is no archive or deactivate alternative. " +
 			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
@@ -91,11 +92,13 @@ func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.Schema
 			},
 			"role": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Organization role of the user. The valid set depends on the organization's type: " +
-					"Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise " +
-					"organizations use `user`, `managed`, `owner`, `membership_admin`, `primary_owner` (though the API " +
-					"currently only assigns `user`/`managed` via this endpoint). Not validated against a fixed list here " +
-					"since the valid set is organization-type-dependent; an invalid value is rejected by the API at apply time.",
+				MarkdownDescription: "Organization role of the user. " + assignableRolesDescription + " " +
+					"A member holding `admin` cannot be removed through the API, and one holding a Claude Enterprise administrative role can be neither changed nor removed through it. " +
+					"Not checked against a list, since the accepted set depends on the organization type and a member can hold a role the API cannot assign; " +
+					"the API rejects an invalid change at apply time.",
+				// No OneOf: a member, imported or adopted on create, can hold admin
+				// or an Enterprise administrative role, and the configuration must be
+				// able to match it; only changing to such a role is impossible.
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
 				},

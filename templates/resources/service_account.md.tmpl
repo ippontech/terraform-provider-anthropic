@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_service_account Resource - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Manages a Workload Identity Federation (WIF) service account.
 ---

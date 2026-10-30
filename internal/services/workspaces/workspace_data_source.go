@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -72,7 +73,7 @@ func (d *WorkspaceDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 			},
 			"display_color": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Hex color code representing the workspace in the Anthropic Console.",
+				MarkdownDescription: "Hex color code representing the workspace in the Claude Console.",
 			},
 			"type": schema.StringAttribute{
 				Computed:            true,
@@ -85,7 +86,7 @@ func (d *WorkspaceDataSource) Schema(_ context.Context, _ datasource.SchemaReque
 			},
 			"external_key_id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.",
+				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace (on Claude Platform on AWS, the AWS KMS key ARN), or null.",
 			},
 			"compartment_id": schema.StringAttribute{
 				Computed:            true,
@@ -150,7 +151,7 @@ func (d *WorkspaceDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
-	resp.Diagnostics.Append(mapWorkspaceToState(ctx, &ws, &data)...)
+	resp.Diagnostics.Append(mapWorkspaceToState(&ws, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}

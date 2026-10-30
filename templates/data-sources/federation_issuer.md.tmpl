@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_federation_issuer Data Source - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Fetches a Workload Identity Federation issuer by ID.
 ---

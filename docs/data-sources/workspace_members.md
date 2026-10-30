@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_workspace_members Data Source - anthropic"
-subcategory: "Workspaces"
+subcategory: "Claude Console: Workspaces and Rate Limits"
 description: |-
   Lists all members of an Anthropic Workspace via the Admin API. All pages are fetched automatically.
 ---
@@ -10,7 +10,7 @@ description: |-
 Lists all members of an Anthropic Workspace via the Admin API. All pages are fetched automatically.
 
 > **API**: `GET /v1/organizations/workspaces/{workspace_id}/members` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

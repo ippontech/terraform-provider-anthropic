@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -47,7 +48,7 @@ func (d *MemoryDataSource) Metadata(_ context.Context, req datasource.MetadataRe
 
 func (d *MemoryDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Retrieves a memory by ID from a memory store (beta).",
+		MarkdownDescription: "Retrieves a Managed Agents memory store document (a memory) by ID (beta).",
 		Attributes: map[string]schema.Attribute{
 			// --- Required ---
 			"memory_store_id": schema.StringAttribute{

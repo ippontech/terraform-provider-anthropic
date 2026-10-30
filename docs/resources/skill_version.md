@@ -79,8 +79,10 @@ output "created_at" {
 
 ## Import
 
-Import an existing skill version using its skill ID and version, separated by a slash:
+Import an existing skill version using its skill ID and version, separated by a colon, as the provider's other composite import IDs:
 
 ```shell
-terraform import anthropic_skill_version.example <skill_id>/<version>
+terraform import anthropic_skill_version.example <skill_id>:<version>
 ```
+
+A slash works too, as in earlier releases: `<skill_id>/<version>`.

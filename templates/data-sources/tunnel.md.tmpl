@@ -1,0 +1,20 @@
+---
+page_title: "anthropic_tunnel Data Source - anthropic"
+subcategory: "MCP Tunnels"
+description: |-
+  Retrieves an MCP tunnel by ID (research preview).
+---
+
+# anthropic_tunnel (Data Source)
+
+Retrieves an MCP tunnel by ID, archived or not (research preview). The tunnel token is not exposed: revealing it is recorded as a compliance event, so only the `anthropic_tunnel` resource does it, once.
+
+> **API**: `GET /v1/tunnels/{tunnel_id}` (Tunnels API).
+> **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`; see `anthropic_tunnel`). API keys are not accepted.
+> **Beta header**: `anthropic-beta: mcp-tunnels-2026-06-22`.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/tunnel/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

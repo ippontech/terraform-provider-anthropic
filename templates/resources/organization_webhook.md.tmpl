@@ -1,0 +1,51 @@
+---
+page_title: "anthropic_organization_webhook Resource - anthropic"
+subcategory: "Claude Console: Organization"
+description: |-
+  Manages an organization webhook endpoint that receives events about enforcement actions on the organization's user profiles, via the Admin API.
+---
+
+# anthropic_organization_webhook (Resource)
+
+Manages an [organization webhook endpoint](https://platform.claude.com/docs/en/manage-claude/organization-webhooks): an HTTPS URL that receives an event when Anthropic opens an enforcement action (a restriction or a ban) on one of the organization's [user profiles](https://platform.claude.com/docs/en/manage-claude/user-profiles), and when the action ends. The endpoint belongs to the organization, not to one of its workspaces.
+
+> **API**: `POST /v1/organizations/webhooks`, `GET/POST/DELETE /v1/organizations/webhooks/{id}`, `POST /v1/organizations/webhooks/{id}/regenerate_signing_secret` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: `webhooks-2026-10-07`, sent by the provider on every request.
+> **Cost**: Free.
+
+## Availability
+
+Organization webhooks are in beta and turned on per organization: ask your Anthropic account team for access. They are not available to organizations with [HIPAA readiness](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention#hipaa-readiness) enabled, nor to an organization whose default workspace uses a customer-managed encryption key. Until the feature is on, every request answers `404`, so creating this resource fails. An existing endpoint is removed from state only when its own read answers `404` while the list of endpoints still answers; if the list answers `404` too (the beta was turned off, or its version retired), the refresh fails and the endpoint stays in state with its signing secret.
+
+An organization can have at most **32** organization webhook endpoints, disabled ones included. Two enabled endpoints cannot share a URL.
+
+At the time of writing, Anthropic does not deliver the two events yet: an endpoint registered now receives nothing until delivery goes live.
+
+## Signing secret
+
+Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com/) specification and are signed with the endpoint's `whsec_` signing secret. The API returns the secret only when the endpoint is created and when the secret is regenerated, never on a read, so the provider stores it in Terraform state, as `aws_iam_access_key` does for its secret, and keeps it there across refreshes. `signing_secret` is marked sensitive, but anyone who can read the state can read it: protect the state accordingly, and pass the secret to your receiver from it (for example into a secrets manager).
+
+Change `signing_secret_version` to rotate the secret: the next apply regenerates it and stores the new value. The old secret stops working at once, and retries of earlier events are signed with the new one, so update the receiver in the same apply. Removing `signing_secret_version` from the configuration does not rotate anything.
+
+## Enabled state
+
+`enabled` maps the endpoint's `state`. Anthropic disables an endpoint on its own when it answers with a redirect, when its URL resolves to a non-public address, or when its deliveries keep failing; `disabled_reason` then says why, and the next apply turns the endpoint back on as long as `enabled` is `true`. Events that happen while an endpoint is disabled are never delivered.
+
+`name` and `description` are kept as they are when removed from the configuration.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/organization_webhook/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an organization webhook endpoint using its ID:
+
+```shell
+terraform import anthropic_organization_webhook.example wep_011CZkZDf8HnUq2mTxRbVn4s
+```
+
+No read returns the signing secret, so `signing_secret` is null after an import. To get one into state, set `signing_secret_version` (or change it) on the imported resource: the next apply regenerates the secret, which invalidates the previous one.

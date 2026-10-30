@@ -1,13 +1,13 @@
 ---
 page_title: "anthropic_environment Resource - anthropic"
-subcategory: "Environments"
+subcategory: "Managed Agents"
 description: |-
-  Creates and manages a cloud environment (container template) for Anthropic Managed Agent sessions (beta).
+  Creates and manages a Managed Agents environment: the cloud container template agent sessions run in (beta).
 ---
 
 # anthropic_environment (Resource)
 
-Creates and manages a cloud environment (container template) for Anthropic Managed Agent sessions (beta). Environments define the networking policy and pre-installed packages available to agent sessions.
+Creates and manages a Managed Agents environment: the cloud container template agent sessions run in (beta). Environments define the networking policy and pre-installed packages available to agent sessions.
 
 > **API**: `POST/GET/PATCH/DELETE /v1/environments[/{id}]` (Managed Agents API).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
@@ -88,8 +88,8 @@ output "environment_networking_type" {
 
 - `archive_on_destroy` (Boolean) If `true`, destroying this resource archives the environment instead of permanently deleting it. Default: `false`.
 - `config` (Attributes) Cloud environment configuration including networking and packages. (see [below for nested schema](#nestedatt--config))
-- `description` (String) Optional description of the environment.
-- `metadata` (Map of String) User-provided metadata key-value pairs.
+- `description` (String) Optional description of the environment. Removing it from the configuration clears it.
+- `metadata` (Map of String) User-provided metadata key-value pairs. Keys removed from the configuration are deleted; removing the attribute deletes every key.
 
 ### Read-Only
 

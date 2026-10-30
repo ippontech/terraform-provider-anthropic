@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_memories Data Source - anthropic"
-subcategory: "Memory Stores"
+subcategory: "Managed Agents"
 description: |-
   Lists memories in a memory store (beta).
 ---

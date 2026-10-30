@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -15,7 +16,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/anthropics/anthropic-sdk-go/packages/respjson"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -24,9 +24,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"golang.org/x/text/unicode/norm"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
-	"golang.org/x/text/unicode/norm"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -134,8 +135,8 @@ func (r *MemoryResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *MemoryResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Creates and manages a memory: a single text document at a hierarchical path inside an " +
-			"`anthropic_memory_store` (beta). Updates are guarded by an optimistic-concurrency precondition on " +
+		MarkdownDescription: "Creates and manages a Managed Agents memory store document, which the API calls a memory: a single text " +
+			"document at a hierarchical path inside an `anthropic_memory_store` (beta). Updates are guarded by an optimistic-concurrency precondition on " +
 			"`content_sha256`: if the memory was modified out-of-band since the last read, the API returns a " +
 			"`memory_precondition_failed_error` (HTTP 409) and this provider surfaces it as an error rather than " +
 			"clobbering the remote content — run `terraform plan`/`refresh` to pick up the new content, then re-apply.",
@@ -265,10 +266,7 @@ func (r *MemoryResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	resp.Diagnostics.Append(mapMemoryToState(memory, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	mapMemoryToState(memory, &data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -288,7 +286,7 @@ func (r *MemoryResource) Read(ctx context.Context, req resource.ReadRequest, res
 	})
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -298,10 +296,7 @@ func (r *MemoryResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	priorContent := data.Content
 
-	resp.Diagnostics.Append(mapMemoryToState(memory, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	mapMemoryToState(memory, &data)
 
 	// With View: full the API always populates content, but guard against a
 	// basic-view response (content explicitly null) clobbering state with an
@@ -347,7 +342,7 @@ func (r *MemoryResource) Update(ctx context.Context, req resource.UpdateRequest,
 	memory, err := r.client.Beta.MemoryStores.Memories.Update(ctx, state.ID.ValueString(), params)
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 409 && string(apierr.Type()) == memoryPreconditionFailedErrorType {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusConflict && string(apierr.Type()) == memoryPreconditionFailedErrorType {
 			resp.Diagnostics.AddError(
 				"Memory Modified Out-Of-Band",
 				fmt.Sprintf("Memory %q was modified since it was last read (content_sha256 precondition failed). "+
@@ -362,10 +357,7 @@ func (r *MemoryResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	awaitMemoryUpdateVisible(ctx, r.client, state.MemoryStoreID.ValueString(), state.ID.ValueString(), memory.UpdatedAt, memory.ContentSha256, memoryConsistencyTimeout, memoryConsistencyInterval)
 
-	resp.Diagnostics.Append(mapMemoryToState(memory, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	mapMemoryToState(memory, &data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -396,7 +388,7 @@ func isTerminalMemoryReadError(err error) bool {
 	}
 
 	switch apierr.StatusCode {
-	case 401, 403, 404:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
 		return true
 	default:
 		return false
@@ -467,7 +459,7 @@ func (r *MemoryResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	})
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			return
 		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete memory: %s", err))
@@ -509,7 +501,7 @@ func parseMemoryImportID(id string) (memoryStoreID, memoryID string, err error) 
 // BetaManagedAgentsMemory whose JSON.Content validity flag was never set by
 // an unmarshal). The one case where the API's response genuinely omits
 // content is handled by the caller (Read's priorContent fallback), not here.
-func mapMemoryToState(memory *anthropic.BetaManagedAgentsMemory, data *MemoryResourceModel) diag.Diagnostics {
+func mapMemoryToState(memory *anthropic.BetaManagedAgentsMemory, data *MemoryResourceModel) {
 	common := mapMemoryCommon(memory)
 
 	data.ID = common.ID
@@ -522,6 +514,4 @@ func mapMemoryToState(memory *anthropic.BetaManagedAgentsMemory, data *MemoryRes
 	data.Type = common.Type
 	data.CreatedAt = common.CreatedAt
 	data.UpdatedAt = common.UpdatedAt
-
-	return nil
 }

@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_federation_issuers Data Source - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Lists OIDC issuers registered for Workload Identity Federation in the organization (beta), with transparent pagination.
 ---

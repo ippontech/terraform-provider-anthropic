@@ -4,6 +4,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestMapAgentResponseToDataSource_modelEffortAndGeo(t *testing.T) {
 
 	var present AgentDataSourceModel
 	agent := parseAgentFixture(t, `{"id":"claude-sonnet-4-6","effort":{"type":"max"},"inference_geo":"global"}`)
-	if diags := mapAgentResponseToDataSource(agent, &present); diags.HasError() {
+	if diags := mapAgentResponseToDataSource(context.Background(), agent, &present); diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
 	if present.ModelEffort.ValueString() != "max" || present.ModelInferenceGeo.ValueString() != "global" {
@@ -35,7 +36,7 @@ func TestMapAgentResponseToDataSource_modelEffortAndGeo(t *testing.T) {
 	}
 
 	var absent AgentDataSourceModel
-	if diags := mapAgentResponseToDataSource(parseAgentFixture(t, `{"id":"claude-sonnet-4-6"}`), &absent); diags.HasError() {
+	if diags := mapAgentResponseToDataSource(context.Background(), parseAgentFixture(t, `{"id":"claude-sonnet-4-6"}`), &absent); diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
 	if !absent.ModelEffort.IsNull() || !absent.ModelInferenceGeo.IsNull() {
@@ -47,7 +48,7 @@ func TestMapAgentToDataSourceObject_modelEffortAndGeo(t *testing.T) {
 	t.Parallel()
 
 	obj := func(model string) map[string]attr.Value {
-		v, diags := mapAgentToDataSourceObject(parseAgentFixture(t, model))
+		v, diags := mapAgentToDataSourceObject(context.Background(), parseAgentFixture(t, model))
 		if diags.HasError() {
 			t.Fatalf("diags: %+v", diags)
 		}

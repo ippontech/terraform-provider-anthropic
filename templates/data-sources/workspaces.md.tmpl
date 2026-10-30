@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_workspaces Data Source - anthropic"
-subcategory: "Workspaces"
+subcategory: "Claude Console: Workspaces and Rate Limits"
 description: |-
   Lists all Anthropic Workspaces via the Admin API. All pages are fetched automatically.
 ---
@@ -10,12 +10,14 @@ description: |-
 Lists all Anthropic Workspaces via the Admin API. All pages are fetched automatically.
 
 > **API**: `GET /v1/organizations/workspaces` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 
 ## Example Usage
 
 {{ codefile "hcl" "examples/data-sources/workspaces/data_source.tf" }}
+
+On Claude Platform on AWS (the provider's `aws` block), workspaces are read through the gateway of the alias's region, and `external_key_id` is an AWS KMS key ARN. A workspace is reachable only through the region it is bound to; whether one region's gateway also returns the workspaces of other regions is not documented. On Claude Models on Google Cloud (`google_cloud`), this data source is not available: the gateway serves no workspace route, and workspace IDs are read in the Claude Console.
 
 {{ .SchemaMarkdown | trimspace }}

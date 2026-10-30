@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_federation_rules Data Source - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Lists Workload Identity Federation (WIF) rules in the organization (beta). All pages are fetched automatically.
 ---

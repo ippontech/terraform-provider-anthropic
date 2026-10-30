@@ -16,7 +16,7 @@ import (
 
 func TestWorkspaceMemberDataSource_Read_success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" || r.URL.Path != "/v1/organizations/workspaces/wrkspc_01ABC/members/user_01XYZ" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/workspaces/wrkspc_01ABC/members/user_01XYZ" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}

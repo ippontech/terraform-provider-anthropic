@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_organization_member Resource - anthropic"
-subcategory: "Organization"
+subcategory: "Members and Invites"
 description: |-
   Manages an existing organization member (User) via the Admin API. Terraform adopts the member by user ID; membership must already exist.
 ---
@@ -9,18 +9,20 @@ description: |-
 
 Manages an existing organization member (User) via the Admin API.
 
-Terraform `Create` looks up the configured user ID and adopts that existing member; it does not create organization membership. The user must first be invited (via `anthropic_invite` or the Anthropic Console) and accept the invite. Adoption requires the configured role to match the member's current role; a mismatch returns an error without modifying the member. To change an existing member's role, first run `terraform import anthropic_organization_member.example <user_id>`, then run `terraform plan` to review the role change as an update before applying. The resource also supports changing a member's role and removing them from the organization.
+Terraform `Create` looks up the configured user ID and adopts that existing member; it does not create organization membership. The user must first be invited (via `anthropic_invite` or the Claude Console) and accept the invite. Adoption requires the configured role to match the member's current role; a mismatch returns an error without modifying the member. To change an existing member's role, first run `terraform import anthropic_organization_member.example <user_id>`, then run `terraform plan` to review the role change as an update before applying. The resource also supports changing a member's role and removing them from the organization.
 
 Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
 
 > **API**: `GET/POST/DELETE /v1/organizations/users/{user_id}` (Admin API). The API has no endpoint to create organization membership; Terraform `Create` verifies and adopts an existing member.
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` and `write:members` scopes (plus `write:rbac_groups` to assign the `managed` role).
 > **Beta header**: None.
 > **Cost**: Free.
 
 > **Destroy protection:** `remove_on_destroy` defaults to `false`. Removing this resource from configuration and applying, or running `terraform destroy`, fails unless this setting has been enabled and applied. A blocked destroy does not remove the membership or the resource from Terraform state.
 
 > **Warning:** With `remove_on_destroy = true`, destroy removes the user's organization membership. This is **irreversible**; there is no archive or deactivate alternative. Apply the setting before removing the resource block or running `terraform destroy`: destroy uses the value stored in state, not unapplied configuration changes.
+
+> **Note on roles:** The API can set only `user`, `developer`, `billing` or `claude_code_user` in a Claude Console organization, and `user` or `managed` in a Claude Enterprise organization. A member can also hold `admin` or a Claude Enterprise administrative role (`owner`, `membership_admin`, `primary_owner`), granted outside the API; set `role` to the role they hold to manage them. The API cannot remove such a member: even with `remove_on_destroy = true`, destroying the resource fails and the membership stays. It cannot change the role of a member holding a Claude Enterprise administrative role either. See [Organization roles](https://platform.claude.com/docs/en/manage-claude/user-management#organization-roles).
 
 ## Example Usage
 
@@ -52,7 +54,7 @@ output "organization_member_email" {
 ### Required
 
 - `id` (String) The ID of the existing organization member to manage. Also used as the import ID.
-- `role` (String) Organization role of the user. The valid set depends on the organization's type: Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise organizations use `user`, `managed`, `owner`, `membership_admin`, `primary_owner` (though the API currently only assigns `user`/`managed` via this endpoint). Not validated against a fixed list here since the valid set is organization-type-dependent; an invalid value is rejected by the API at apply time.
+- `role` (String) Organization role of the user. The API assigns `user`, `developer`, `billing` or `claude_code_user` in a Claude Console organization, and `user` or `managed` in a Claude Enterprise organization (`managed` needs the `write:rbac_groups` scope on the key, besides `write:members`). `admin` and the Claude Enterprise administrative roles (`owner`, `membership_admin`, `primary_owner`) cannot be assigned through the API: they are granted in the Claude Console or in claude.ai organization settings. A member holding `admin` cannot be removed through the API, and one holding a Claude Enterprise administrative role can be neither changed nor removed through it. Not checked against a list, since the accepted set depends on the organization type and a member can hold a role the API cannot assign; the API rejects an invalid change at apply time.
 
 ### Optional
 

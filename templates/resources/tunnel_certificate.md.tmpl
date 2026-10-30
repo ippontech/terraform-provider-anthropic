@@ -1,0 +1,41 @@
+---
+page_title: "anthropic_tunnel_certificate Resource - anthropic"
+subcategory: "MCP Tunnels"
+description: |-
+  Registers a public CA certificate on an MCP tunnel (research preview).
+---
+
+# anthropic_tunnel_certificate (Resource)
+
+Registers a public CA certificate on an MCP tunnel (research preview). Anthropic terminates the inner TLS session at your proxy and verifies the proxy's server certificate against the tunnel's registered CAs; it does not connect to a tunnel until at least one is registered, so a tunnel without a certificate rejects all MCP traffic.
+
+Only the CA certificate is sent, never a private key. The API checks the [certificate requirements](https://platform.claude.com/docs/en/agents-and-tools/mcp-tunnels/reference#ca-certificate) (single PEM certificate up to 8 kB, critical `BasicConstraints` with `CA:TRUE`, `SubjectKeyIdentifier`, `keyCertSign` usage, current validity, RSA ≥ 2048-bit or ECDSA ≥ P-256 with SHA-256 or stronger); the provider checks the PEM shape and size at plan time.
+
+## Lifecycle
+
+- **No update endpoint**: a different certificate replaces this resource. The API never returns the PEM, so changes are compared by `fingerprint` (SHA-256 of the DER encoding): the same certificate with different line wrapping or line endings is applied in place without an API call, and so is the first plan after an import.
+- **Destroy archives the certificate**: the record is kept, the CA is no longer trusted. Archiving the last certificate is allowed and stops the tunnel's MCP traffic until a new one is added.
+- A tunnel holds **at most two** non-archived certificates, and the proxy presents a server certificate signed by one of them. For a zero-downtime CA rotation, add the new CA as a second `anthropic_tunnel_certificate`, switch the proxy to a server certificate it issued, then remove the old resource.
+- Replacing a certificate (a different `ca_certificate_pem`) archives the old CA first: a tunnel with no other certificate briefly rejects MCP traffic, and keeps rejecting it if the API then refuses the new certificate. `lifecycle { create_before_destroy = true }` reverses the order, but only on a tunnel that holds a single certificate: with two, the new registration would be a third and the API rejects it. Terraform also applies `create_before_destroy` to the `anthropic_tunnel` the certificate depends on, so replacing the tunnel (a `display_name` change) then needs a free slot among the organization's 10 active tunnels.
+- A certificate archived outside Terraform, or archived with its tunnel, is dropped from state on the next refresh and registered again on the next apply.
+
+Authentication works as for `anthropic_tunnel`: an OAuth bearer token with the `workspace:manage_tunnels` scope, usually from a dedicated, aliased provider block.
+
+> **API**: `POST /v1/tunnels/{tunnel_id}/certificates`, `GET /v1/tunnels/{tunnel_id}/certificates/{certificate_id}`, `POST /v1/tunnels/{tunnel_id}/certificates/{certificate_id}/archive` (Tunnels API).
+> **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`). API keys are not accepted.
+> **Beta header**: `anthropic-beta: mcp-tunnels-2026-06-22`.
+> **Cost**: none documented for the research preview.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/tunnel_certificate/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing certificate using the composite ID `<tunnel_id>:<certificate_id>`. Keep `ca_certificate_pem` in the configuration: the first plan after the import adopts it in place when it encodes the imported certificate.
+
+```shell
+terraform import anthropic_tunnel_certificate.example <tunnel_id>:<certificate_id>
+```

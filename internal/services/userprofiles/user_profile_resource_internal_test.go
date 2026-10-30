@@ -8,14 +8,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
@@ -563,5 +566,91 @@ func TestUserProfileResource_Update(t *testing.T) {
 	}
 	if nameVal != nil {
 		t.Errorf("expected name to be sent as JSON null to clear it, got %#v", nameVal)
+	}
+}
+
+// userProfileDeleteRequest drives Delete against a stub answering with status
+// and body, and returns the diagnostics plus the single request received.
+func userProfileDeleteRequest(t *testing.T, status int, body any) (*resource.DeleteResponse, *http.Request, int) {
+	t.Helper()
+	var got *http.Request
+	calls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls++
+		got = req.Clone(req.Context())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer srv.Close()
+
+	r := &UserProfileResource{client: oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0))}
+
+	objType := schematest.ResourceObjectType(t, r)
+	schema := schematest.ResourceSchema(t, r)
+	vals := schematest.NullValues(t, r)
+	vals["id"] = tftypes.NewValue(objType.AttributeTypes["id"], "uprof_01ABC")
+	vals["access_type"] = tftypes.NewValue(objType.AttributeTypes["access_type"], "application")
+	state := tfsdk.State{Raw: tftypes.NewValue(objType, vals), Schema: schema}
+
+	resp := &resource.DeleteResponse{State: state}
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
+	return resp, got, calls
+}
+
+func TestUserProfileResource_Delete(t *testing.T) {
+	resp, got, calls := userProfileDeleteRequest(t, http.StatusOK, map[string]any{
+		"id":   "uprof_01ABC",
+		"type": "user_profile_deleted",
+	})
+	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() > 0 {
+		t.Fatalf("expected no diagnostics, got %v", resp.Diagnostics)
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly one request, got %d", calls)
+	}
+	if got.Method != http.MethodDelete {
+		t.Errorf("expected DELETE, got %s", got.Method)
+	}
+	if got.URL.Path != "/v1/user_profiles/uprof_01ABC" {
+		t.Errorf("expected path /v1/user_profiles/uprof_01ABC, got %s", got.URL.Path)
+	}
+	if got.URL.Query().Get("beta") != "true" {
+		t.Errorf("expected ?beta=true, got query %q", got.URL.RawQuery)
+	}
+	// Same beta header as create/read/update/list, and only that one: the GA
+	// shape is for the 2.0.0 migration.
+	if betas := got.Header.Values("anthropic-beta"); len(betas) != 1 || betas[0] != "user-profiles-2026-08-18" {
+		t.Errorf("expected anthropic-beta: user-profiles-2026-08-18, got %q", betas)
+	}
+	if got.ContentLength > 0 {
+		t.Errorf("expected no request body, got %d bytes", got.ContentLength)
+	}
+}
+
+func TestUserProfileResource_Delete_NotFoundIsAlreadyGone(t *testing.T) {
+	resp, _, calls := userProfileDeleteRequest(t, http.StatusNotFound, map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": "not_found_error", "message": "user profile not found"},
+	})
+	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() > 0 {
+		t.Fatalf("expected a 404 to count as already deleted, got %v", resp.Diagnostics)
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly one request, got %d", calls)
+	}
+}
+
+func TestUserProfileResource_Delete_ErrorIsReported(t *testing.T) {
+	resp, _, _ := userProfileDeleteRequest(t, http.StatusForbidden, map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": "permission_error", "message": "forbidden"},
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error diagnostic for a 403")
+	}
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "Unable to delete user profile") {
+		t.Errorf("unexpected error detail: %s", detail)
 	}
 }

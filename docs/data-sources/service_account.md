@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_service_account Data Source - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Fetches a single Workload Identity Federation (WIF) service account by ID.
 ---

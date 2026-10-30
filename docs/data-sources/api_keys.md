@@ -1,18 +1,20 @@
 ---
 page_title: "anthropic_api_keys Data Source - anthropic"
-subcategory: "Organization"
+subcategory: "Claude Console: Organization"
 description: |-
-  Lists Anthropic API keys via the Admin API, with optional filtering by status and workspace.
+  Lists Anthropic API keys via the Admin API, with optional filtering by status, workspace and creator.
 ---
 
 # anthropic_api_keys (Data Source)
 
 Lists Anthropic API keys via the Admin API. All pages are fetched automatically.
 
-Results can optionally be filtered by `status` (`active` or `inactive`) and by `workspace_id`.
+Results can optionally be filtered by `status` (`active`, `inactive`, `archived` or `expired`), by `workspace_id` and by `created_by_user_id`.
+
+Each key's `workspace_id` is deprecated: it is null both for organization-scoped keys and for keys in the Default Workspace, and Admin API version 2026-10-21 removes it. Read `scope.workspace_id` instead, which carries the real workspace ID in both cases.
 
 > **API**: `GET /v1/organizations/api_keys` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -47,7 +49,8 @@ output "active_key_names" {
 
 ### Optional
 
-- `status` (String) Filter by key status. Valid values: `active`, `inactive`.
+- `created_by_user_id` (String) Filter by the ID of the user who created the key.
+- `status` (String) Filter by key status. Valid values: `active`, `inactive`, `archived`, `expired`.
 - `workspace_id` (String) Filter by workspace ID. Returns only keys scoped to the specified workspace.
 
 ### Read-Only
@@ -60,13 +63,16 @@ output "active_key_names" {
 Read-Only:
 
 - `created_at` (String) RFC 3339 timestamp of when the API key was created.
-- `created_by` (Attributes) Details about the actor who created this API key. (see [below for nested schema](#nestedatt--api_keys--created_by))
+- `created_by` (Attributes) The actor that created this API key. `id` and `type` are null when the creator is not recorded (legacy, workload-identity-federated or system-created keys). (see [below for nested schema](#nestedatt--api_keys--created_by))
+- `expires_at` (String) RFC 3339 timestamp at which the API key expires, or null if it never expires.
 - `id` (String) Unique API key identifier.
 - `name` (String) Human-readable name of the API key.
-- `partial_key_hint` (String) The last four visible characters of the API key, for identification.
-- `status` (String) Status of the API key (`active` or `inactive`).
+- `partial_key_hint` (String) Partially redacted hint of the API key, for identification. Null when the API returns none.
+- `principal` (Attributes) The principal the API key acts as: `type = "user_actor"` with `user_id`, or `type = "service_account_actor"` with `service_account_id`. Null when the key is not bound to a principal (legacy workspace keys). (see [below for nested schema](#nestedatt--api_keys--principal))
+- `scope` (Attributes) Where the API key belongs: `type = "workspace"` with the workspace's real `workspace_id` (the Default Workspace included), or `type = "organization"` (null `workspace_id`) for a principal-bound key that has no workspace. (see [below for nested schema](#nestedatt--api_keys--scope))
+- `status` (String) Status of the API key: `active`, `inactive`, `archived` or `expired`.
 - `type` (String) Object type. Always `api_key`.
-- `workspace_id` (String) The ID of the workspace this key is scoped to, or null for organization-level keys.
+- `workspace_id` (String, Deprecated) Use `scope.workspace_id` instead. ID of the workspace the key belongs to, or null both for organization-scoped keys and for keys in the Default Workspace. Admin API version 2026-10-21 removes this field.
 
 <a id="nestedatt--api_keys--created_by"></a>
 ### Nested Schema for `api_keys.created_by`
@@ -74,4 +80,23 @@ Read-Only:
 Read-Only:
 
 - `id` (String) Identifier of the creator.
-- `type` (String) Type of the creator (e.g. `user`).
+- `type` (String) Type of the creator: `user` or `service_account`.
+
+
+<a id="nestedatt--api_keys--principal"></a>
+### Nested Schema for `api_keys.principal`
+
+Read-Only:
+
+- `service_account_id` (String) ID of the service account the key acts as. Null unless `type` is `service_account_actor`.
+- `type` (String) Principal type: `user_actor` or `service_account_actor`.
+- `user_id` (String) ID of the user the key acts as. Null unless `type` is `user_actor`.
+
+
+<a id="nestedatt--api_keys--scope"></a>
+### Nested Schema for `api_keys.scope`
+
+Read-Only:
+
+- `type` (String) Scope type: `workspace` or `organization`.
+- `workspace_id` (String) ID of the workspace the key belongs to, the Default Workspace included. Null when `type` is `organization`.

@@ -1,26 +1,30 @@
 ---
 page_title: "anthropic_api_key Resource - anthropic"
-subcategory: "Organization"
+subcategory: "Claude Console: Organization"
 description: |-
-  Manages an existing Anthropic API key (rename, deactivate) via the Admin API. Import only — keys must be created in the Anthropic Console.
+  Manages an existing Anthropic API key (rename, deactivate) via the Admin API. Import only — keys must be created in the Claude Console.
 ---
 
 # anthropic_api_key (Resource)
 
 Manages an existing Anthropic API key via the Admin API.
 
-API keys must be created through the Anthropic Console — use `terraform import` to bring an existing key under Terraform management. This resource supports renaming and deactivating existing keys.
+API keys must be created through the Claude Console — use `terraform import` to bring an existing key under Terraform management. This resource supports renaming and deactivating existing keys.
 
 Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
 
 > **API**: `GET/POST /v1/organizations/api_keys/{id}` (Admin API). No create or delete endpoint.
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 
-> **Security note:** This resource manages API keys but never exposes the key material. The actual secret is only visible in the Anthropic Console at creation time. Use this resource for lifecycle management of existing keys (rename, deactivate) only.
+> **Security note:** This resource manages API keys but never exposes the key material. The actual secret is only visible in the Claude Console at creation time. Use this resource for lifecycle management of existing keys (rename, deactivate) only.
 
 > **Note on deletion:** Deleting this resource **deactivates** the API key (sets `status` to `inactive`) and removes it from state. The key is not permanently deleted, because the Anthropic API does not expose a delete operation for API keys.
+
+> **Expiring keys:** a key created with an expiration reports `expires_at`, and its `status` becomes `expired` once that time has passed. `expired` is read-only and cannot be set, so a configuration that pins `status = "active"` keeps planning a change back to `active` after the key expires. Leave `status` unset on a key that can expire.
+
+> **`workspace_id` is deprecated:** it is null both for organization-scoped keys and for keys in the Default Workspace, and Admin API version 2026-10-21 removes it. Use `scope.workspace_id`, which carries the real workspace ID in both cases.
 
 ## Example Usage
 
@@ -49,16 +53,19 @@ output "api_key_partial_hint" {
 ### Optional
 
 - `name` (String) Human-readable name of the API key. Can be changed after import.
-- `status` (String) Status of the API key. Valid values: `active`, `inactive`. Setting to `inactive` deactivates the key. Deleting this resource sets the status to `inactive` and removes it from state.
+- `status` (String) Status of the API key. Can be set to `active`, `inactive` or `archived`; setting `inactive` deactivates the key. The API reports `expired` once `expires_at` has passed: that value is read-only and cannot be set. Deleting this resource sets the status to `inactive` and removes it from state.
 
 ### Read-Only
 
 - `created_at` (String) RFC 3339 timestamp of when the API key was created.
-- `created_by` (Attributes) Details about the actor who created this API key. (see [below for nested schema](#nestedatt--created_by))
+- `created_by` (Attributes) The actor that created this API key. `id` and `type` are null when the creator is not recorded (legacy, workload-identity-federated or system-created keys). (see [below for nested schema](#nestedatt--created_by))
+- `expires_at` (String) RFC 3339 timestamp at which the API key expires, or null if it never expires.
 - `id` (String) Unique API key identifier. Set automatically on import.
-- `partial_key_hint` (String) The last four visible characters of the API key, for identification.
+- `partial_key_hint` (String) Partially redacted hint of the API key, for identification. Null when the API returns none.
+- `principal` (Attributes) The principal the API key acts as: `type = "user_actor"` with `user_id`, or `type = "service_account_actor"` with `service_account_id`. Null when the key is not bound to a principal (legacy workspace keys). (see [below for nested schema](#nestedatt--principal))
+- `scope` (Attributes) Where the API key belongs: `type = "workspace"` with the workspace's real `workspace_id` (the Default Workspace included), or `type = "organization"` (null `workspace_id`) for a principal-bound key that has no workspace. (see [below for nested schema](#nestedatt--scope))
 - `type` (String) Object type. Always `api_key`.
-- `workspace_id` (String) The ID of the workspace this key is scoped to, or null for organization-level keys.
+- `workspace_id` (String, Deprecated) Use `scope.workspace_id` instead. ID of the workspace the key belongs to, or null both for organization-scoped keys and for keys in the Default Workspace. Admin API version 2026-10-21 removes this field.
 
 <a id="nestedatt--created_by"></a>
 ### Nested Schema for `created_by`
@@ -66,7 +73,26 @@ output "api_key_partial_hint" {
 Read-Only:
 
 - `id` (String) Identifier of the creator.
-- `type` (String) Type of the creator (e.g. `user`).
+- `type` (String) Type of the creator: `user` or `service_account`.
+
+
+<a id="nestedatt--principal"></a>
+### Nested Schema for `principal`
+
+Read-Only:
+
+- `service_account_id` (String) ID of the service account the key acts as. Null unless `type` is `service_account_actor`.
+- `type` (String) Principal type: `user_actor` or `service_account_actor`.
+- `user_id` (String) ID of the user the key acts as. Null unless `type` is `user_actor`.
+
+
+<a id="nestedatt--scope"></a>
+### Nested Schema for `scope`
+
+Read-Only:
+
+- `type` (String) Scope type: `workspace` or `organization`.
+- `workspace_id` (String) ID of the workspace the key belongs to, the Default Workspace included. Null when `type` is `organization`.
 
 ## Import
 

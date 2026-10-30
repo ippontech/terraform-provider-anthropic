@@ -12,12 +12,14 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
 // The service-accounts Beta endpoint has not been probed for the same
-// read-after-write staleness measured on the vaults API (see CLAUDE.md and
-// #193/#199), but it shares the underlying Beta managed-agents infrastructure.
+// read-after-write staleness measured on the vaults API (see
+// internal/services/vaults/CLAUDE.md and #193/#199), but it shares the
+// underlying Beta managed-agents infrastructure.
 // CheckDestroy therefore polls rather than doing a single unpolled Get right
 // after destroy, mirroring internal/services/vaults/helpers_test.go's
 // awaitArchived so a stale read here doesn't fail the test the way it did for

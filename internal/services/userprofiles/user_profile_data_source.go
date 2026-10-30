@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -106,7 +107,7 @@ func (d *UserProfileDataSource) Metadata(_ context.Context, req datasource.Metad
 
 func (d *UserProfileDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Fetches a single user profile by ID (beta). This beta is not generally available; " +
+		MarkdownDescription: "Fetches a single end-user profile by ID (beta), not an organization member. This beta is not generally available; " +
 			"the endpoint may return 404 for organizations that have not been enrolled.",
 		Attributes: userProfileDSAttributes(true),
 	}

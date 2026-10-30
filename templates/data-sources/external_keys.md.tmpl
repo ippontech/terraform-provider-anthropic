@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_external_keys Data Source - anthropic"
+subcategory: "Claude Console: Organization"
+description: |-
+  Lists the customer-managed encryption keys (CMEK) registered with the organization via the Admin API.
+---
+
+# anthropic_external_keys (Data Source)
+
+Lists the customer-managed encryption keys (CMEK) registered with the organization via the Admin API, newest first. All pages are fetched automatically.
+
+> **API**: `GET /v1/organizations/external_keys` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/external_keys/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

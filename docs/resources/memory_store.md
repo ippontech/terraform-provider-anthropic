@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_memory_store Resource - anthropic"
-subcategory: "Memory Stores"
+subcategory: "Managed Agents"
 description: |-
   Creates and manages a memory store: a workspace-scoped collection of text documents that an agent reads and writes across sessions (beta).
 ---

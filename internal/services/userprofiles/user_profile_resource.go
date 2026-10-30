@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"net/http"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -21,7 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-log/tflog"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -61,11 +63,11 @@ func (r *UserProfileResource) Metadata(_ context.Context, req resource.MetadataR
 
 func (r *UserProfileResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Creates and manages a user profile (beta): an identity representing an end-user or resold-to " +
-			"company that a platform is acting on behalf of when calling the API. Not generally available for all " +
-			"organizations; the API returns `404` for organizations without this beta enabled. There is no delete " +
-			"endpoint: destroying this resource only removes it from Terraform state, it does not delete the profile " +
-			"at Anthropic.",
+		MarkdownDescription: "Creates and manages an end-user profile (beta), not an organization member: the identity of an end-user " +
+			"or resold-to company that a platform is acting on behalf of when calling the API. Not generally available for all " +
+			"organizations; the API returns `404` for organizations without this beta enabled. Destroying this " +
+			"resource deletes the profile at Anthropic (`DELETE /v1/user_profiles/{id}`); a profile that is " +
+			"already gone (`404`) is treated as deleted.",
 		Attributes: map[string]schema.Attribute{
 			// --- Required ---
 			"access_type": schema.StringAttribute{
@@ -211,7 +213,7 @@ func (r *UserProfileResource) Read(ctx context.Context, req resource.ReadRequest
 	profile, err := r.client.Beta.UserProfiles.Get(ctx, data.ID.ValueString(), anthropic.BetaUserProfileGetParams{})
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			// A 404 here is ambiguous: it means the profile really was deleted
 			// out-of-band, but it is also what this same endpoint returns for an
 			// organization where the user profiles beta is not (or is no longer)
@@ -219,9 +221,9 @@ func (r *UserProfileResource) Read(ctx context.Context, req resource.ReadRequest
 			// MarkdownDescription). In the latter cases every profile in state
 			// looks "gone" on the next refresh, which silently drops them from
 			// state; a subsequent apply would then try to recreate them, and
-			// since there is no delete endpoint, any duplicates created once the
-			// beta comes back can never be cleaned up automatically. There is no
-			// way to distinguish the two cases from the response alone, so warn
+			// the originals, no longer tracked, are never deleted by Terraform
+			// once the beta comes back, so duplicates pile up. There is no way
+			// to distinguish the two cases from the response alone, so warn
 			// instead of failing outright.
 			resp.Diagnostics.AddWarning(
 				"User Profile Not Found",
@@ -293,13 +295,22 @@ func (r *UserProfileResource) Delete(ctx context.Context, req resource.DeleteReq
 		return
 	}
 
-	// There is no delete endpoint for user profiles. Removing this resource from
-	// Terraform state is all that can be done; the profile continues to exist at
-	// Anthropic until removed some other way.
-	msg := fmt.Sprintf("User profile %q has no delete endpoint. It has been removed from Terraform state only; "+
-		"it still exists at Anthropic.", data.ID.ValueString())
-	resp.Diagnostics.AddWarning("User Profile Not Deleted", msg)
-	tflog.Warn(ctx, msg)
+	// DELETE /v1/user_profiles/{id} goes through the same beta service and
+	// header (user-profiles-2026-08-18, set by the SDK) as every other call
+	// here. The GA endpoint (client.UserProfiles) answers in a different shape
+	// and waits for the 2.0.0 migration.
+	_, err := r.client.Beta.UserProfiles.Delete(ctx, data.ID.ValueString(), anthropic.BetaUserProfileDeleteParams{})
+	if err != nil {
+		var apierr *anthropic.Error
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
+			// Already gone — treat as success. As in Read, a 404 is also what an
+			// organization without the beta gets; nothing more can be done for
+			// such a profile from here either.
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete user profile: %s", err))
+		return
+	}
 }
 
 // --- ImportState ---
@@ -440,9 +451,7 @@ func buildUserProfileMetadataUpdate(ctx context.Context, plan, state types.Map) 
 		if diags.HasError() {
 			return nil, diags
 		}
-		for k, v := range pm {
-			update[k] = v
-		}
+		maps.Copy(update, pm)
 	}
 
 	if !state.IsNull() && !state.IsUnknown() {

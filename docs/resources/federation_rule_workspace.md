@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_federation_rule_workspace Resource - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Enables a Workload Identity Federation rule for an additional workspace.
 ---

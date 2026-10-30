@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
@@ -354,6 +355,7 @@ func targetObject(t *testing.T, serviceAccountID string) types.Object {
 }
 
 func baseValidModel(t *testing.T) FederationRuleResourceModel {
+	t.Helper()
 	return FederationRuleResourceModel{
 		Name:        types.StringValue("gha-deploy"),
 		IssuerID:    types.StringValue("fdis_01XYZ"),

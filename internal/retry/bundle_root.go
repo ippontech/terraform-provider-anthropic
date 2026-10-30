@@ -53,10 +53,7 @@ func commonPathPrefix(a, b string) string {
 	sep := string(filepath.Separator)
 	aSegs := strings.Split(a, sep)
 	bSegs := strings.Split(b, sep)
-	n := len(aSegs)
-	if len(bSegs) < n {
-		n = len(bSegs)
-	}
+	n := min(len(aSegs), len(bSegs))
 	common := 0
 	for common < n && aSegs[common] == bSegs[common] {
 		common++

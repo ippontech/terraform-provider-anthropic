@@ -2,15 +2,15 @@
 page_title: "anthropic_user_profile Resource - anthropic"
 subcategory: "User Profiles"
 description: |-
-  Creates and manages a user profile: an identity representing an end-user or resold-to company that a platform acts on behalf of when calling the API (beta).
+  Creates and manages an end-user profile, not an organization member: the identity of an end-user or resold-to company that a platform acts on behalf of when calling the API (beta).
 ---
 
 # anthropic_user_profile (Resource)
 
-Creates and manages a user profile (beta): an identity representing an end-user of a platform's product, or a
-resold-to company, on whose behalf the platform's API key calls the API.
+Creates and manages an end-user profile (beta), not an organization member: the identity of an end-user of a
+platform's product, or of a resold-to company, on whose behalf the platform's API key calls the API.
 
-> **API**: `POST/GET/POST /v1/user_profiles[/{id}]` (beta, no `DELETE`).
+> **API**: `POST/GET/POST/DELETE /v1/user_profiles[/{id}]` (beta).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
 > **Beta header**: `user-profiles-2026-08-18`.
 
@@ -21,13 +21,12 @@ resold-to company, on whose behalf the platform's API key calls the API.
 > out-of-band — the two cases are indistinguishable from the response alone. `Read` treats either case as "gone" and drops the resource from
 > Terraform state (emitting a warning), so if the beta is disabled or the API key loses access, every managed
 > profile silently disappears from state on the next refresh; the next apply then tries to re-create it, which
-> either fails (beta still disabled) or, once the beta is enabled again, creates a duplicate — one that this
-> resource cannot delete, since there is no delete endpoint. Investigate a "not found" warning before assuming a
-> profile was actually deleted.
+> either fails (beta still disabled) or, once the beta is enabled again, creates a duplicate while the original,
+> no longer tracked, is never deleted by Terraform. Investigate a "not found" warning before assuming a profile
+> was actually deleted.
 
-> ⚠️ No delete endpoint: the Anthropic API does not currently expose a way to delete a user profile. Running
-> `terraform destroy` (or removing the resource from configuration) only forgets it in Terraform state — a warning
-> is emitted — the profile itself continues to exist at Anthropic.
+Destroying this resource (or removing it from configuration) deletes the profile at Anthropic with
+`DELETE /v1/user_profiles/{id}`. A profile that is already gone (`404`) counts as deleted.
 
 `metadata` uses merge semantics on update, not the null-based PATCH semantics used elsewhere in this provider
 (vaults, memory stores): a key present in config overwrites the stored value, a key omitted from config is left
@@ -38,6 +37,10 @@ provider.
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/user_profile/resource.tf" }}
+
+## Cloud platforms
+
+On Claude Platform on AWS the user profile routes are served (create, read, list, update), with the `aws` provider block; the platform reports no enforcement action on them. On Claude Models on Google Cloud (Anthropic managed) they are **unverified**: the platform's documentation does not mention them, and the SDK this provider uses sends them to the workspace endpoint, while later SDK versions send them to the organization endpoint. A gateway refusing the route fails the operation and leaves the state untouched.
 
 {{ .SchemaMarkdown | trimspace }}
 

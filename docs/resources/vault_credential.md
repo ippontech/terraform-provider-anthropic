@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_vault_credential Resource - anthropic"
-subcategory: "Vaults"
+subcategory: "Managed Agents"
 description: |-
   Creates and manages a vault credential for Anthropic Managed Agents (beta).
 ---
@@ -22,6 +22,15 @@ Creates and manages a vault credential for Anthropic Managed Agents (beta). A cr
 
 - Maximum 20 credentials per vault.
 - `networking.allowed_hosts` accepts bare hostnames (`api.example.com`), IPv4 addresses (`192.0.2.1`), or `*.`-prefixed wildcards (`*.example.com`). Maximum 16 entries. URLs, ports, paths, and IPv6 addresses are not accepted.
+
+## Injection location
+
+`injection_location` (`environment_variable` only) scopes which parts of an outbound request the secret is substituted into: request header values (`header`), the request body (`body`), or both. It is independent of `networking.allowed_hosts`, which scopes the hosts. See [Vaults](https://platform.claude.com/docs/en/managed-agents/vaults).
+
+- Without the block, the API enables both locations when the credential is created. In a block, a field left out defaults to `false`, and at least one of the two must be `true` (checked at plan time).
+- The provider always sends both fields, so the update API's per-field merge never mixes old and new values. Removing the block keeps the current value; set both fields to `true` to go back to the default.
+- A value kept without the block, or read back from an import, does not survive a replacement or a recreate after the credential was deleted outside Terraform: the new credential gets both locations. Keep the block in the configuration to hold a narrower value.
+- A placeholder in a disabled location is sent literally, and the third party then rejects it. Credentials created in the Claude Console enable `header` only, so importing one reads back `header = true` and `body = false`.
 
 ## Example Usage
 
@@ -96,6 +105,12 @@ resource "anthropic_vault_credential" "env_var" {
     mode          = "limited"
     allowed_hosts = ["api.example.com", "*.internal.example.com"]
   }
+
+  # Substitute the secret in request headers only (omit the block to enable
+  # both headers and body; a field left out of the block defaults to false).
+  injection_location = {
+    header = true
+  }
 }
 
 output "vault_credential_bearer_id" {
@@ -130,6 +145,7 @@ output "vault_credential_env_var_id" {
 - `archive_on_destroy` (Boolean) If `true`, destroying this resource archives the credential instead of permanently deleting it. Default: `false`.
 - `display_name` (String) Human-readable name for the credential (up to 255 characters).
 - `expires_at` (String) Optional expiry time of the access token (RFC 3339). Applicable for `mcp_oauth`.
+- `injection_location` (Attributes) Where in an outbound request the secret is substituted. Applicable for `environment_variable`. Without the block, the API enables both locations on create; in the block, a field left out defaults to `false` and at least one of `header` and `body` must be `true`. Removing the block keeps the current value, until the credential is replaced or recreated: the new credential gets both locations again, so keep the block to hold a narrower value. Enabling only `header` is the narrower choice: request bodies are often built from content the agent works with. (see [below for nested schema](#nestedatt--injection_location))
 - `mcp_server_url` (String) URL of the MCP server this credential authenticates against. Required for `static_bearer` and `mcp_oauth`; must be absent for `environment_variable`.
 - `metadata` (Map of String) Arbitrary key-value metadata. Maximum 16 pairs; keys up to 64 chars; values up to 512 chars.
 - `networking` (Attributes) Networking scope for the environment variable credential. Required for `environment_variable`. (see [below for nested schema](#nestedatt--networking))
@@ -146,6 +162,15 @@ output "vault_credential_env_var_id" {
 - `credential_type` (String) Object type returned by the API. Always `vault_credential`.
 - `id` (String) Unique credential identifier (e.g. `vcrd_...`).
 - `updated_at` (String) Last update timestamp (RFC 3339).
+
+<a id="nestedatt--injection_location"></a>
+### Nested Schema for `injection_location`
+
+Optional:
+
+- `body` (Boolean) Substitute the secret when its placeholder appears in the request body. Defaults to `false` when `injection_location` is set.
+- `header` (Boolean) Substitute the secret when its placeholder appears in a request header value. Defaults to `false` when `injection_location` is set.
+
 
 <a id="nestedatt--networking"></a>
 ### Nested Schema for `networking`
@@ -179,7 +204,7 @@ Optional:
 
 Required:
 
-- `type` (String) Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API cannot transition to or from `none`).
+- `type` (String) Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API has no `none` variant and keeps the stored type when sent the other `client_secret_*` one).
 
 Optional:
 

@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_federation_rule Resource - anthropic"
-subcategory: "Workload Identity Federation"
+subcategory: "Claude Console: Service Accounts and Federation"
 description: |-
   Manages a Workload Identity Federation rule, binding a federation issuer to a service account.
 ---

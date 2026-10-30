@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_vault Resource - anthropic"
-subcategory: "Vaults"
+subcategory: "Managed Agents"
 description: |-
   Creates and manages a vault that securely stores MCP credentials for use by Anthropic Managed Agent sessions (beta).
 ---

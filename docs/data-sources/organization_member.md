@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_organization_member Data Source - anthropic"
-subcategory: "Organization"
+subcategory: "Members and Invites"
 description: |-
   Fetches a single member (User) of the organization by user ID via the Admin API.
 ---
@@ -10,7 +10,7 @@ description: |-
 Fetches a single member (User) of the organization by user ID. Useful for resolving a user's email, name, or organization role from their ID.
 
 > **API**: `GET /v1/organizations/users/{user_id}` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` (or `read:org_audit`) scope.
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -56,5 +56,5 @@ output "member_role" {
 - `added_at` (String) RFC 3339 timestamp of when the user joined the organization.
 - `email` (String) Email of the user.
 - `name` (String) Name of the user.
-- `role` (String) Organization role of the user (e.g. `user`, `developer`, `billing`, `admin`, `claude_code_user`).
+- `role` (String) Organization role of the user: for example `user`, `developer`, `billing`, `claude_code_user` or `admin` in a Claude Console organization, and `user`, `managed`, `owner`, `membership_admin` or `primary_owner` in a Claude Enterprise organization.
 - `type` (String) Object type. Always `user`.

@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_environments Data Source - anthropic"
-subcategory: "Environments"
+subcategory: "Managed Agents"
 description: |-
   Lists all Anthropic cloud environments (beta). All pages are fetched automatically.
 ---

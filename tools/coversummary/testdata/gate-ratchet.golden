@@ -1,0 +1,36 @@
+## Coverage gate
+
+**The gate fails**: see the rules marked FAIL.
+
+| Rule | Measured | Required | Result |
+|---|---|---|---|
+| Diff: covered share of the statements the change touches | not measured (no diff given) | at least 75% | skipped |
+| Ratchet: total outside the exclusions | 66.67% (12 of 18) | at least 66.70% (baseline 67.20 minus 0.5) | **FAIL** |
+| Floor: the baseline never goes back under 75% once reached | 67.20 (base branch: 68.00) | not under 75 once the base reached it | pass |
+| Packages: coverage of each package | lowest 66.7% (`internal/a`); 1 of 1 under 75% | none yet: `package_min` is not set | monitored |
+
+The target is 75%: the baseline is 7.80 points away. Once the baseline reaches it, the total may never drop below 75%.
+
+This change lowers the baseline from 68.00 to 67.20: reviewers must agree.
+
+The total fell under the ratchet: add tests, or, when the drop is deliberate (removed code that was well tested), lower `baseline` in this pull request and say why.
+
+### Coverage per package
+
+Every package outside the exclusions, least covered first. Monitored, not enforced: `package_min` in `.coverage.json` is not set yet. Once it is set to 75, every package must stay at 75% or more.
+
+| Package | Statements | Covered | Coverage | Points to 75% |
+|---|---:|---:|---:|---:|
+| `internal/a` | 18 | 12 | 66.7% | 8.3 |
+
+Excluded from every rule: `main.go`, `internal/helper/`.
+
+## Unit test coverage
+
+**66.7%** of 18 statements across 3 files, outside the exclusions of `.coverage.json` (`go test` without `TF_ACC`: acceptance tests are skipped).
+
+### Files matching `_(resource|data_source)\.go$` (1), least covered first
+
+| File | Statements | Covered | Coverage |
+|---|---:|---:|---:|
+| `internal/a/a_resource.go` | 6 | 4 | 66.7% |

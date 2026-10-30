@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_workspace_member Resource - anthropic"
-subcategory: "Workspaces"
+subcategory: "Claude Console: Workspaces and Rate Limits"
 description: |-
   Assigns a user to an Anthropic Workspace with a given role via the Admin API.
 ---
@@ -10,7 +10,7 @@ description: |-
 Assigns a user to an Anthropic Workspace with a given role via the Admin API.
 
 > **API**: `POST/GET/POST/DELETE /v1/organizations/workspaces/{workspace_id}/members[/{user_id}]` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -49,5 +49,5 @@ resource "anthropic_workspace_member" "example" {
 Import an existing workspace member using the composite ID `<workspace_id>:<user_id>`:
 
 ```shell
-terraform import anthropic_workspace_member.example ws_01abc123:user_01xyz789
+terraform import anthropic_workspace_member.example wrkspc_01abc123:user_01xyz789
 ```

@@ -1,0 +1,34 @@
+---
+page_title: "anthropic_rbac_group Resource - anthropic"
+subcategory: "Claude Enterprise: Groups"
+description: |-
+  Manages an RBAC group of a Claude Enterprise organization via the Admin API.
+---
+
+# anthropic_rbac_group (Resource)
+
+Manages an RBAC group of a Claude Enterprise organization via the Admin API. Groups connect members to custom roles: add members with `anthropic_rbac_group_member`, and attach roles to the group in the [claude.ai admin settings](https://claude.ai/admin-settings), since role attachment is read-only through the API (`role_ids`).
+
+> **API**: `POST/GET/POST/DELETE /v1/organizations/rbac_groups[/{rbac_group_id}]` (Admin API, [reference](https://platform.claude.com/docs/en/api/beta/organization/rbac_groups/create)). Create and update accept only `name`.
+> **Availability**: Claude Enterprise organizations only.
+> **Auth**: a Claude Enterprise **scoped Admin API key** (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`), created by the primary owner for **all linked organizations** (groups are enterprise-wide), with the `read:rbac_groups` and `write:rbac_groups` scopes. A Claude Console Admin API key is rejected.
+> **Beta header**: None (`ce-user-management-2026-07-13` is no longer required).
+> **Cost**: Free.
+
+> **Note on identity-provider groups:** a group created by this resource always has `source_type = "direct"`. A group provisioned by your identity provider (`source_type = "scim"`) can be imported, but the API rejects renaming or deleting it while SCIM provisioning is on; the provider warns at plan time when a change would do either.
+
+> **Note on deletion:** deleting a group keeps its members in their organizations, but they lose the permissions of the group's roles, and a group spend limit, if any, stops applying to them.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/rbac_group/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing group using its ID:
+
+```shell
+terraform import anthropic_rbac_group.example rbac_group_01UvWxYzAbCdEfGhIjKlMn
+```

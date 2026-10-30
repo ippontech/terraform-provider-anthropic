@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -26,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -294,6 +296,9 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	plannedMetadata, plannedVaultIDs := data.Metadata, data.VaultIDs
+	// mapDeploymentToState overwrites paused with the created deployment's
+	// status, always active: read the planned value first.
+	plannedPaused := data.Paused.ValueBool()
 
 	deployment, err := r.client.Beta.Deployments.New(ctx, params)
 	if err != nil {
@@ -318,7 +323,7 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	if data.Paused.ValueBool() {
+	if plannedPaused {
 		deployment, err = r.client.Beta.Deployments.Pause(ctx, deployment.ID, anthropic.BetaDeploymentPauseParams{})
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to pause newly created deployment: %s", err))
@@ -349,7 +354,7 @@ func (r *DeploymentResource) Read(ctx context.Context, req resource.ReadRequest,
 	deployment, err := r.client.Beta.Deployments.Get(ctx, data.ID.ValueString(), anthropic.BetaDeploymentGetParams{})
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -390,7 +395,7 @@ func isTerminalDeploymentReadError(err error) bool {
 	}
 
 	switch apierr.StatusCode {
-	case 401, 403, 404:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
 		return true
 	default:
 		return false
@@ -518,7 +523,7 @@ func (r *DeploymentResource) Delete(ctx context.Context, req resource.DeleteRequ
 	_, err := r.client.Beta.Deployments.Archive(ctx, data.ID.ValueString(), anthropic.BetaDeploymentArchiveParams{})
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			// Already gone — nothing left to archive.
 			return
 		}
@@ -554,53 +559,24 @@ func buildDeploymentCreateParams(ctx context.Context, data *DeploymentResourceMo
 		Name:          data.Name.ValueString(),
 	}
 
-	if !data.Description.IsNull() && !data.Description.IsUnknown() {
+	if isKnown(data.Description) {
 		params.Description = param.NewOpt(data.Description.ValueString())
 	}
 
-	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
-		var md map[string]string
-		diags.Append(data.Metadata.ElementsAs(ctx, &md, false)...)
+	// The optional attributes, in order: the first error returns no params.
+	for _, fill := range []func() diag.Diagnostics{
+		func() diag.Diagnostics { return knownElements(ctx, data.Metadata, &params.Metadata) },
+		func() diag.Diagnostics {
+			return decodeKnown(data.Resources, "resources", unmarshalResourcesNew, &params.Resources)
+		},
+		func() diag.Diagnostics { return decodeKnown(data.Budget, "budget", unmarshalBudget, &params.Budget) },
+		func() diag.Diagnostics { return knownElements(ctx, data.VaultIDs, &params.VaultIDs) },
+		func() diag.Diagnostics { return knownSchedule(ctx, data.Schedule, &params.Schedule) },
+	} {
+		diags.Append(fill()...)
 		if diags.HasError() {
 			return anthropic.BetaDeploymentNewParams{}, diags
 		}
-		params.Metadata = md
-	}
-
-	if !data.Resources.IsNull() && !data.Resources.IsUnknown() {
-		resources, err := unmarshalResourcesNew(data.Resources)
-		if err != nil {
-			diags.AddError("Invalid resources", err.Error())
-			return anthropic.BetaDeploymentNewParams{}, diags
-		}
-		params.Resources = resources
-	}
-
-	if !data.Budget.IsNull() && !data.Budget.IsUnknown() {
-		budget, err := unmarshalBudget(data.Budget)
-		if err != nil {
-			diags.AddError("Invalid budget", err.Error())
-			return anthropic.BetaDeploymentNewParams{}, diags
-		}
-		params.Budget = budget
-	}
-
-	if !data.VaultIDs.IsNull() && !data.VaultIDs.IsUnknown() {
-		var vaultIDs []string
-		diags.Append(data.VaultIDs.ElementsAs(ctx, &vaultIDs, false)...)
-		if diags.HasError() {
-			return anthropic.BetaDeploymentNewParams{}, diags
-		}
-		params.VaultIDs = vaultIDs
-	}
-
-	if !data.Schedule.IsNull() && !data.Schedule.IsUnknown() {
-		sched, d := buildScheduleParams(ctx, data.Schedule)
-		diags.Append(d...)
-		if diags.HasError() {
-			return anthropic.BetaDeploymentNewParams{}, diags
-		}
-		params.Schedule = sched
 	}
 
 	return params, diags
@@ -627,73 +603,98 @@ func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentRes
 		params.Description = param.NewOpt(plan.Description.ValueString())
 	}
 
-	if !plan.EnvironmentID.IsNull() && !plan.EnvironmentID.IsUnknown() {
+	if isKnown(plan.EnvironmentID) {
 		params.EnvironmentID = param.NewOpt(plan.EnvironmentID.ValueString())
 	}
 
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+	if isKnown(plan.Name) {
 		params.Name = param.NewOpt(plan.Name.ValueString())
 	}
 
-	if !plan.AgentID.IsNull() && !plan.AgentID.IsUnknown() {
+	if isKnown(plan.AgentID) {
 		params.Agent = anthropic.BetaDeploymentUpdateParamsAgentUnion{OfString: param.NewOpt(plan.AgentID.ValueString())}
 	}
 
-	metaPatch, d := buildMetadataPatch(ctx, plan.Metadata, state.Metadata)
-	diags.Append(d...)
-	if diags.HasError() {
-		return anthropic.BetaDeploymentUpdateParams{}, diags
-	}
-	if len(metaPatch) > 0 {
-		params.SetExtraFields(map[string]any{"metadata": metaPatch})
-	}
-
-	if !plan.Resources.IsNull() && !plan.Resources.IsUnknown() {
-		resources, err := unmarshalResourcesUpdate(plan.Resources)
-		if err != nil {
-			diags.AddError("Invalid resources", err.Error())
-			return anthropic.BetaDeploymentUpdateParams{}, diags
-		}
-		params.Resources = resources
-	}
-
-	if !plan.Budget.IsNull() && !plan.Budget.IsUnknown() {
-		budget, err := unmarshalBudget(plan.Budget)
-		if err != nil {
-			diags.AddError("Invalid budget", err.Error())
-			return anthropic.BetaDeploymentUpdateParams{}, diags
-		}
-		params.Budget = budget
-	}
-
-	if !plan.InitialEvents.IsNull() && !plan.InitialEvents.IsUnknown() {
-		events, err := unmarshalInitialEvents(plan.InitialEvents)
-		if err != nil {
-			diags.AddError("Invalid initial_events", err.Error())
-			return anthropic.BetaDeploymentUpdateParams{}, diags
-		}
-		params.InitialEvents = events
-	}
-
-	if !plan.VaultIDs.IsNull() && !plan.VaultIDs.IsUnknown() {
-		var vaultIDs []string
-		diags.Append(plan.VaultIDs.ElementsAs(ctx, &vaultIDs, false)...)
+	// The other attributes, in order: the first error returns no params.
+	for _, fill := range []func() diag.Diagnostics{
+		func() diag.Diagnostics { return setMetadataPatch(ctx, plan.Metadata, state.Metadata, &params) },
+		func() diag.Diagnostics {
+			return decodeKnown(plan.Resources, "resources", unmarshalResourcesUpdate, &params.Resources)
+		},
+		func() diag.Diagnostics { return decodeKnown(plan.Budget, "budget", unmarshalBudget, &params.Budget) },
+		func() diag.Diagnostics {
+			return decodeKnown(plan.InitialEvents, "initial_events", unmarshalInitialEvents, &params.InitialEvents)
+		},
+		func() diag.Diagnostics { return knownElements(ctx, plan.VaultIDs, &params.VaultIDs) },
+		func() diag.Diagnostics { return knownSchedule(ctx, plan.Schedule, &params.Schedule) },
+	} {
+		diags.Append(fill()...)
 		if diags.HasError() {
 			return anthropic.BetaDeploymentUpdateParams{}, diags
 		}
-		params.VaultIDs = vaultIDs
-	}
-
-	if !plan.Schedule.IsNull() && !plan.Schedule.IsUnknown() {
-		sched, d := buildScheduleParams(ctx, plan.Schedule)
-		diags.Append(d...)
-		if diags.HasError() {
-			return anthropic.BetaDeploymentUpdateParams{}, diags
-		}
-		params.Schedule = sched
 	}
 
 	return params, diags
+}
+
+// isKnown reports whether v is neither null nor unknown.
+func isKnown(v attr.Value) bool {
+	return !v.IsNull() && !v.IsUnknown()
+}
+
+// elementsValue is a types.Map or a types.List.
+type elementsValue interface {
+	attr.Value
+	ElementsAs(ctx context.Context, target any, allowUnhandled bool) diag.Diagnostics
+}
+
+// knownElements reads a known map or list into target (an empty one as an
+// empty, non-nil value, which the request sends) and leaves target alone
+// when v is null or unknown.
+func knownElements(ctx context.Context, v elementsValue, target any) diag.Diagnostics {
+	if !isKnown(v) {
+		return nil
+	}
+	return v.ElementsAs(ctx, target, false)
+}
+
+// decodeKnown decodes the known JSON attribute v with decode into target; a
+// decoding error is an "Invalid <name>" diagnostic. A null or unknown v
+// leaves target alone.
+func decodeKnown[T any](v jsontypes.Normalized, name string, decode func(jsontypes.Normalized) (T, error), target *T) diag.Diagnostics {
+	if !isKnown(v) {
+		return nil
+	}
+	decoded, err := decode(v)
+	if err != nil {
+		var diags diag.Diagnostics
+		diags.AddError("Invalid "+name, err.Error())
+		return diags
+	}
+	*target = decoded
+	return nil
+}
+
+// knownSchedule converts a known schedule object into target.
+func knownSchedule(ctx context.Context, obj types.Object, target *anthropic.BetaManagedAgentsScheduleParams) diag.Diagnostics {
+	if !isKnown(obj) {
+		return nil
+	}
+	sched, diags := buildScheduleParams(ctx, obj)
+	if !diags.HasError() {
+		*target = sched
+	}
+	return diags
+}
+
+// setMetadataPatch sends the metadata patch of plan against state as an
+// extra field of params, unless it is empty.
+func setMetadataPatch(ctx context.Context, plan, state types.Map, params *anthropic.BetaDeploymentUpdateParams) diag.Diagnostics {
+	patch, diags := buildMetadataPatch(ctx, plan, state)
+	if len(patch) > 0 {
+		params.SetExtraFields(map[string]any{"metadata": patch})
+	}
+	return diags
 }
 
 // buildScheduleParams converts the nested "schedule" object attribute into
@@ -807,70 +808,80 @@ func mapDeploymentToState(ctx context.Context, deployment *anthropic.BetaManaged
 
 	data.Description = descriptionOrNull(deployment.Description, data.Description)
 
-	if events := deployment.InitialEvents; len(events) > 0 {
-		raw := make([]json.RawMessage, len(events))
-		for i, e := range events {
-			raw[i] = json.RawMessage(e.RawJSON())
-		}
-		b, err := json.Marshal(raw)
-		if err != nil {
-			diags.AddError("Unable to encode initial_events", err.Error())
-			return diags
-		}
-		data.InitialEvents = jsontypes.NewNormalizedValue(string(b))
-	} else {
-		data.InitialEvents = jsontypes.NewNormalizedNull()
+	events, err := rawJSONArray(deployment.InitialEvents)
+	if err != nil {
+		diags.AddError("Unable to encode initial_events", err.Error())
+		return diags
 	}
+	data.InitialEvents = events
 
-	if len(deployment.Metadata) > 0 {
-		mv, d := types.MapValueFrom(ctx, types.StringType, deployment.Metadata)
-		diags.Append(d...)
-		data.Metadata = mv
-	} else {
-		data.Metadata = types.MapNull(types.StringType)
+	var d diag.Diagnostics
+	data.Metadata, d = mapOrNull(ctx, deployment.Metadata)
+	diags.Append(d...)
+
+	resources, err := rawJSONArray(deployment.Resources)
+	if err != nil {
+		diags.AddError("Unable to encode resources", err.Error())
+		return diags
 	}
+	data.Resources = resources
 
-	if resources := deployment.Resources; len(resources) > 0 {
-		raw := make([]json.RawMessage, len(resources))
-		for i, res := range resources {
-			raw[i] = json.RawMessage(res.RawJSON())
-		}
-		b, err := json.Marshal(raw)
-		if err != nil {
-			diags.AddError("Unable to encode resources", err.Error())
-			return diags
-		}
-		data.Resources = jsontypes.NewNormalizedValue(string(b))
-	} else {
-		data.Resources = jsontypes.NewNormalizedNull()
-	}
-
+	data.Budget = jsontypes.NewNormalizedNull()
 	if budgetRaw := deployment.Budget.RawJSON(); budgetRaw != "" && budgetRaw != "null" {
 		data.Budget = jsontypes.NewNormalizedValue(budgetRaw)
-	} else {
-		data.Budget = jsontypes.NewNormalizedNull()
 	}
 
-	if len(deployment.VaultIDs) > 0 {
-		lv, d := types.ListValueFrom(ctx, types.StringType, deployment.VaultIDs)
-		diags.Append(d...)
-		data.VaultIDs = lv
-	} else {
-		data.VaultIDs = types.ListNull(types.StringType)
-	}
+	data.VaultIDs, d = listOrNull(ctx, deployment.VaultIDs)
+	diags.Append(d...)
 
-	if deployment.Schedule.Expression != "" {
-		sv, d := types.ObjectValue(deploymentScheduleAttrTypes, map[string]attr.Value{
-			"expression": types.StringValue(deployment.Schedule.Expression),
-			"timezone":   types.StringValue(deployment.Schedule.Timezone),
-		})
-		diags.Append(d...)
-		data.Schedule = sv
-	} else {
-		data.Schedule = types.ObjectNull(deploymentScheduleAttrTypes)
-	}
+	data.Schedule, d = scheduleOrNull(deployment.Schedule)
+	diags.Append(d...)
 
 	return diags
+}
+
+// rawJSONArray joins the raw JSON of each element of a response array into
+// one JSON array, or returns null for an empty one.
+func rawJSONArray[T interface{ RawJSON() string }](items []T) (jsontypes.Normalized, error) {
+	if len(items) == 0 {
+		return jsontypes.NewNormalizedNull(), nil
+	}
+	raw := make([]json.RawMessage, len(items))
+	for i, item := range items {
+		raw[i] = json.RawMessage(item.RawJSON())
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return jsontypes.NewNormalizedNull(), err
+	}
+	return jsontypes.NewNormalizedValue(string(b)), nil
+}
+
+// mapOrNull maps a response map, null when empty.
+func mapOrNull(ctx context.Context, m map[string]string) (types.Map, diag.Diagnostics) {
+	if len(m) == 0 {
+		return types.MapNull(types.StringType), nil
+	}
+	return types.MapValueFrom(ctx, types.StringType, m)
+}
+
+// listOrNull maps a response list, null when empty.
+func listOrNull(ctx context.Context, l []string) (types.List, diag.Diagnostics) {
+	if len(l) == 0 {
+		return types.ListNull(types.StringType), nil
+	}
+	return types.ListValueFrom(ctx, types.StringType, l)
+}
+
+// scheduleOrNull maps a response schedule, null without an expression.
+func scheduleOrNull(s anthropic.BetaManagedAgentsSchedule) (types.Object, diag.Diagnostics) {
+	if s.Expression == "" {
+		return types.ObjectNull(deploymentScheduleAttrTypes), nil
+	}
+	return types.ObjectValue(deploymentScheduleAttrTypes, map[string]attr.Value{
+		"expression": types.StringValue(s.Expression),
+		"timezone":   types.StringValue(s.Timezone),
+	})
 }
 
 // preserveEmptyMap keeps the caller's previously known metadata value (the

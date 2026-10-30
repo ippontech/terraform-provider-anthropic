@@ -156,11 +156,12 @@ func TestMapVaultResponseToState_MetadataEmpty(t *testing.T) {
 	}
 }
 
-// newStaleThenFreshVaultServer serves the vault as it was before the write for
-// the first staleReads Get calls, then as it is after. It reproduces the
-// read-after-write window measured against the live vaults API.
-func newStaleThenFreshVaultServer(t *testing.T, vaultID string, before, after time.Time, staleReads int) (*httptest.Server, *int) {
+// newStaleThenFreshVaultServer serves the vault vlt_01ABC as it was before the
+// write for the first staleReads Get calls, then as it is after. It reproduces
+// the read-after-write window measured against the live vaults API.
+func newStaleThenFreshVaultServer(t *testing.T, before, after time.Time, staleReads int) (*httptest.Server, *int) {
 	t.Helper()
+	const vaultID = "vlt_01ABC"
 
 	gets := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +207,7 @@ func TestAwaitVaultUpdateVisible_pollsUntilFresh(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 3)
+	srv, gets := newStaleThenFreshVaultServer(t, before, after, 3)
 	client := newTestVaultClient(t, srv)
 
 	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after, 2*time.Second, time.Millisecond)
@@ -221,7 +222,7 @@ func TestAwaitVaultUpdateVisible_returnsImmediatelyWhenFresh(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 0)
+	srv, gets := newStaleThenFreshVaultServer(t, before, after, 0)
 	client := newTestVaultClient(t, srv)
 
 	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", after, 2*time.Second, time.Millisecond)
@@ -236,7 +237,7 @@ func TestAwaitVaultUpdateVisible_returnsImmediatelyWhenFresh(t *testing.T) {
 func TestAwaitVaultUpdateVisible_equalTimestampCountsAsVisible(t *testing.T) {
 	writtenAt := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 
-	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", writtenAt, writtenAt, 0)
+	srv, gets := newStaleThenFreshVaultServer(t, writtenAt, writtenAt, 0)
 	client := newTestVaultClient(t, srv)
 
 	awaitVaultUpdateVisible(context.Background(), client, "vlt_01ABC", writtenAt, 200*time.Millisecond, time.Millisecond)
@@ -254,7 +255,7 @@ func TestAwaitVaultUpdateVisible_givesUpAtTimeout(t *testing.T) {
 	after := before.Add(time.Second)
 
 	// staleReads far beyond what the timeout allows: it never becomes visible.
-	srv, gets := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 1_000_000)
+	srv, gets := newStaleThenFreshVaultServer(t, before, after, 1_000_000)
 	client := newTestVaultClient(t, srv)
 
 	start := time.Now()
@@ -274,7 +275,7 @@ func TestAwaitVaultUpdateVisible_honoursContextCancellation(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, _ := newStaleThenFreshVaultServer(t, "vlt_01ABC", before, after, 1_000_000)
+	srv, _ := newStaleThenFreshVaultServer(t, before, after, 1_000_000)
 	client := newTestVaultClient(t, srv)
 
 	ctx, cancel := context.WithCancel(context.Background())

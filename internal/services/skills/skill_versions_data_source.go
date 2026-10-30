@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -130,11 +131,11 @@ func (d *SkillVersionsDataSource) Read(ctx context.Context, req datasource.ReadR
 		return
 	}
 
-	pager := d.client.Beta.Skills.Versions.ListAutoPaging(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionListParams{})
+	pager := d.client.Beta.Skills.Versions.ListAutoPaging(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionListParams{Betas: skillsBetas()})
 
 	versionObjs := make([]attr.Value, 0)
 	for pager.Next() {
-		item := pager.Current()
+		item := decodeBetaSkillVersion(pager.Current().RawJSON())
 		obj, diags := types.ObjectValue(skillVersionListItemAttrTypes, map[string]attr.Value{
 			"id":          types.StringValue(item.ID),
 			"version":     types.StringValue(item.Version),
