@@ -67,6 +67,11 @@ type APIError struct {
 	StatusCode int
 	ErrType    string
 	Message    string
+	// Details is the raw `error.details` object, when the API sends one. Some
+	// endpoints put a machine-readable cause there (the Plugins API's
+	// `error_code`, plus the ID of the plugin or version it involves), which a
+	// caller needs to tell apart causes that share a status code.
+	Details json.RawMessage
 }
 
 func (e *APIError) Error() string {
@@ -91,15 +96,64 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
+// RawBody is a request body sent as is, with its own content type, instead of
+// being marshalled to JSON: a multipart upload, for instance.
+type RawBody struct {
+	ContentType string
+	Data        []byte
+}
+
+// RequestOption adjusts a single request, after the client has set its own
+// headers, so an option can add to them or override them.
+type RequestOption func(*http.Request)
+
+// WithHeader sets a request header.
+func WithHeader(name, value string) RequestOption {
+	return func(req *http.Request) {
+		req.Header.Set(name, value)
+	}
+}
+
+// WithBeta adds the given values to the `anthropic-beta` header,
+// comma-separated, as the Admin API expects for endpoints in beta (plugins,
+// webhooks, telemetry destinations, ...). A request without the header gets a
+// 404 from them. Several WithBeta options on one request add up: each keeps
+// the values set before it.
+func WithBeta(betas ...string) RequestOption {
+	return func(req *http.Request) {
+		if len(betas) == 0 {
+			return
+		}
+		values := betas
+		if prior := req.Header.Get("anthropic-beta"); prior != "" {
+			values = append([]string{prior}, betas...)
+		}
+		req.Header.Set("anthropic-beta", strings.Join(values, ","))
+	}
+}
+
 // DoRequest executes an HTTP request against the Admin API and returns the raw response body.
-func (c *Client) DoRequest(ctx context.Context, method, path string, body any) ([]byte, error) {
+// body is marshalled to JSON unless it is a RawBody or a *RawBody; opts apply to this request only.
+func (c *Client) DoRequest(ctx context.Context, method, path string, body any, opts ...RequestOption) ([]byte, error) {
 	var reqBody []byte
-	if body != nil {
-		b, err := json.Marshal(body)
+	contentType := "application/json"
+	switch b := body.(type) {
+	case nil:
+	case RawBody:
+		reqBody = b.Data
+		contentType = b.ContentType
+	case *RawBody:
+		if b == nil {
+			return nil, errors.New("request body is a nil *RawBody")
+		}
+		reqBody = b.Data
+		contentType = b.ContentType
+	default:
+		encoded, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request body: %w", err)
 		}
-		reqBody = b
+		reqBody = encoded
 	}
 
 	// Built once: a malformed method or URL is a programmer error, not
@@ -111,7 +165,10 @@ func (c *Client) DoRequest(ctx context.Context, method, path string, body any) (
 	req.Header.Set("x-api-key", c.ApiKey)
 	req.Header.Set("anthropic-version", AnthropicVersion)
 	if reqBody != nil {
-		req.Header.Set("content-type", "application/json")
+		req.Header.Set("content-type", contentType)
+	}
+	for _, opt := range opts {
+		opt(req)
 	}
 
 	for attempt := 0; ; attempt++ {
@@ -176,8 +233,9 @@ func (c *Client) attempt(template *http.Request, reqBody []byte) ([]byte, *http.
 func newAPIError(statusCode int, respBody []byte) *APIError {
 	var envelope struct {
 		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
+			Type    string          `json:"type"`
+			Message string          `json:"message"`
+			Details json.RawMessage `json:"details"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(respBody, &envelope) == nil && envelope.Error.Message != "" {
@@ -185,6 +243,7 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 			StatusCode: statusCode,
 			ErrType:    envelope.Error.Type,
 			Message:    envelope.Error.Message,
+			Details:    envelope.Error.Details,
 		}
 	}
 	return &APIError{
