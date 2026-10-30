@@ -1,0 +1,68 @@
+---
+page_title: "anthropic_tunnel Resource - anthropic"
+subcategory: "Tunnels"
+description: |-
+  Creates and manages an MCP tunnel (research preview).
+---
+
+# anthropic_tunnel (Resource)
+
+Creates and manages an [MCP tunnel](https://platform.claude.com/docs/en/agents-and-tools/mcp-tunnels/overview): an Anthropic-assigned domain through which Managed Agents sessions and the Messages API reach MCP servers inside your private network, over an outbound-only connection run by `cloudflared` and Anthropic's proxy. Each MCP server behind the proxy is reached at `https://<route>.<domain>/`.
+
+~> **Research preview.** MCP tunnels require [access](https://claude.com/form/mcp-tunnels), are provided as-is, and the Tunnels API may change without a deprecation period. The organization can hold at most 10 active tunnels.
+
+A new tunnel rejects MCP traffic until at least one CA certificate is registered on it with `anthropic_tunnel_certificate`.
+
+## Lifecycle
+
+- **Creation is not idempotent**: each create allocates a fresh, globally unique domain. The provider never retries it, so one resource never creates two tunnels; but a create that failed after reaching the API (a timeout, a dropped connection) can leave a tunnel Terraform does not track. Check the Console's MCP tunnels list before re-running such an apply, and import or archive what you find.
+- **No update endpoint**: changing `display_name` replaces the tunnel, which allocates a new `domain` and `token`.
+- **Destroy archives the tunnel, irreversibly.** There is no delete endpoint. Archiving also archives every certificate on the tunnel, retires its domain for good and invalidates its token.
+- A tunnel **archived outside Terraform** (for example in response to a suspected compromise) can never carry traffic again: the next refresh drops it from state and the next apply creates a replacement, with a new domain.
+
+## Token
+
+`token` is the connector token `cloudflared` runs the tunnel with. The provider reveals it once, right after creation (or once after an import), and keeps it in the Terraform state, marked sensitive: protect the state like any other secret store. It is never revealed again on refresh, because each reveal is recorded as a `tunnel_token_revealed` compliance event and a plan would otherwise add one per run.
+
+To rotate the token, change `token_rotation` (any value, like the setup component's `--token-version`): the provider calls `rotate_token`, and `token` and `token_id` change in place. Established connections are not severed, but a restarted connector needs the new value. The first value you set, including on an existing or imported tunnel, is recorded without rotating. A rotation made outside Terraform is not detected; change `token_rotation` to bring the state back in line.
+
+## Authentication
+
+The Tunnels API rejects API keys: it takes an OAuth bearer token with the `workspace:manage_tunnels` scope, minted through [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) from a federation rule created in the Console (an OAuth caller, and so `anthropic_federation_rule`, can only create `workspace:developer` and `workspace:inference` rules). The tunnel is created in the workspace that token is scoped to. Since a provider block holds one bearer token, give the tunnel resources their own provider block:
+
+```terraform
+provider "anthropic" {
+  alias = "tunnels"
+
+  federation = {
+    organization_id     = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id  = "fdrl_..." # a rule scoped to workspace:manage_tunnels
+    service_account_id  = "svac_..."
+    identity_token_file = "/var/run/secrets/anthropic.com/token"
+  }
+}
+
+resource "anthropic_tunnel" "corp" {
+  provider     = anthropic.tunnels
+  display_name = "corp-mcp"
+}
+```
+
+> **API**: `POST /v1/tunnels`, `GET /v1/tunnels/{tunnel_id}`, `POST /v1/tunnels/{tunnel_id}/{archive,reveal_token,rotate_token}` (Tunnels API). The deprecated Admin API endpoints under `/v1/organizations/tunnels` are not used.
+> **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`). API keys are not accepted.
+> **Beta header**: `anthropic-beta: mcp-tunnels-2026-06-22`.
+> **Cost**: none documented for the research preview.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/tunnel/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing tunnel using its ID. The import reveals its current token once.
+
+```shell
+terraform import anthropic_tunnel.example <tunnel_id>
+```

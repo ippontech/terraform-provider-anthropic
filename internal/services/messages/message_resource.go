@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/float64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -58,9 +59,11 @@ type MessageResourceModel struct {
 	Metadata                 *MetadataModel     `tfsdk:"metadata"`
 	ServiceTier              types.String       `tfsdk:"service_tier"`
 	InferenceGeo             types.String       `tfsdk:"inference_geo"`
+	Speed                    types.String       `tfsdk:"speed"`
 	Thinking                 *ThinkingModel     `tfsdk:"thinking"`
 	OutputConfig             *OutputConfigModel `tfsdk:"output_config"`
 	CacheControl             *CacheControlModel `tfsdk:"cache_control"`
+	Diagnostics              *DiagnosticsModel  `tfsdk:"diagnostics"`
 	ID                       types.String       `tfsdk:"id"`
 	StopReason               types.String       `tfsdk:"stop_reason"`
 	StopSequence             types.String       `tfsdk:"stop_sequence"`
@@ -73,6 +76,7 @@ type MessageResourceModel struct {
 	CacheReadInputTokens     types.Int64        `tfsdk:"cache_read_input_tokens"`
 	UsageServiceTier         types.String       `tfsdk:"usage_service_tier"`
 	UsageInferenceGeo        types.String       `tfsdk:"usage_inference_geo"`
+	UsageSpeed               types.String       `tfsdk:"usage_speed"`
 }
 
 // MessageParamModel describes a single input message without prompt caching.
@@ -113,10 +117,35 @@ type OutputConfigModel struct {
 	Format jsontypes.Normalized `tfsdk:"format"`
 }
 
+// temperatureDeprecationMessage is the warning Terraform prints when a
+// configuration sets temperature. API version 2026-10-21 (Anthropic Go SDK v2)
+// rejects the parameter at any value, so it goes with that migration in the
+// next major version. There is deliberately no "only 1.0" validator: under
+// 2023-06-01, which SDK v1 sends, models older than Claude 4.7 still accept
+// other values, and rejecting them at plan time would break working configs.
+const temperatureDeprecationMessage = "temperature is deprecated and will be removed in the next major version of the provider, " +
+	"together with the move to Anthropic Go SDK v2 and API version 2026-10-21, which rejects temperature (HTTP 400) at any value, 1.0 included. " +
+	"Claude 4.7 and later models already reject any value other than 1.0. " +
+	"Remove the attribute: the request then omits it and the model samples at its default temperature of 1.0."
+
 // stopDetailsAttrTypes is the object type of the computed stop_details attribute.
 var stopDetailsAttrTypes = map[string]attr.Type{
 	"category":    types.StringType,
 	"explanation": types.StringType,
+}
+
+// DiagnosticsModel mirrors the API's cache diagnostics: previous_message_id
+// goes into the request's diagnostics object, cache_miss_reason comes from
+// the response's.
+type DiagnosticsModel struct {
+	PreviousMessageID types.String `tfsdk:"previous_message_id"`
+	CacheMissReason   types.Object `tfsdk:"cache_miss_reason"`
+}
+
+// cacheMissReasonAttrTypes is the object type of diagnostics.cache_miss_reason.
+var cacheMissReasonAttrTypes = map[string]attr.Type{
+	"type":                      types.StringType,
+	"cache_missed_input_tokens": types.Int64Type,
 }
 
 func (r *MessageResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -165,7 +194,8 @@ func (r *MessageResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			},
 			"temperature": schema.Float64Attribute{
 				Optional:            true,
-				MarkdownDescription: "Amount of randomness injected into the response (0.0–1.0). Lower values (closer to 0) produce more focused and deterministic responses; higher values produce more creative responses. If not specified, the model uses its default.",
+				MarkdownDescription: "Amount of randomness injected into the response (0.0–1.0). Will be removed in the next major version, together with the move to API version `2026-10-21`, which rejects `temperature` (HTTP 400) at any value, `1.0` included. Under the API version the provider sends today (`2023-06-01`), Claude 4.7 and later models already reject any value other than `1.0`. If not specified, the parameter is not sent and the model samples at its default (`1.0`).",
+				DeprecationMessage:  temperatureDeprecationMessage,
 				PlanModifiers:       []planmodifier.Float64{float64planmodifier.RequiresReplace()},
 				Validators:          []validator.Float64{float64validator.Between(0.0, 1.0)},
 			},
@@ -198,15 +228,21 @@ func (r *MessageResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 				Validators:          []validator.String{stringvalidator.OneOf("us", "global")},
 			},
+			"speed": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: speedDescription,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf("standard", "fast")},
+			},
 			"thinking": schema.SingleNestedAttribute{
 				Optional:            true,
-				MarkdownDescription: "Extended thinking configuration. If omitted, the model's default behaviour applies. Note: `{ type = \"disabled\" }` is rejected by the API (HTTP 400) on claude-fable-5-1, claude-opus-5-5, and claude-sonnet-5-5 (verified 2026-10-08); omit the block instead or use `type = \"adaptive\"` with `output_config.effort` to control thinking behavior.",
+				MarkdownDescription: "Extended thinking configuration. If omitted, the model's default behaviour applies. Note: `{ type = \"disabled\" }` is rejected by the API (HTTP 400) on claude-fable-5-1, claude-opus-5-5, and claude-sonnet-5-5 (verified 2026-10-08); omit the block instead, use `type = \"between_tools\"` to turn thinking off on a model that accepts it, or use `type = \"adaptive\"` with `output_config.effort` to control thinking behavior.",
 				PlanModifiers:       []planmodifier.Object{objectplanmodifier.RequiresReplace()},
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Thinking mode: `enabled` (requires `budget_tokens`), `adaptive` (the model decides) or `disabled`. `adaptive` is not supported by every model (`claude-haiku-4-5-20251001` rejects it). Thinking content is never exposed in `content`; `thinking_tokens` shows its cost.",
-						Validators:          []validator.String{stringvalidator.OneOf("enabled", "disabled", "adaptive")},
+						MarkdownDescription: "Thinking mode: `enabled` (requires `budget_tokens`), `adaptive` (the model decides), `disabled` or `between_tools` (thinking off, but short progress updates the model writes between tool calls come back as thinking blocks; some models that refuse `disabled` accept it). `adaptive` is not supported by every model (`claude-haiku-4-5-20251001` rejects it). Thinking content is never exposed in `content`; `thinking_tokens` shows its cost.",
+						Validators:          []validator.String{stringvalidator.OneOf("enabled", "disabled", "adaptive", "between_tools")},
 					},
 					"budget_tokens": schema.Int64Attribute{
 						Optional:            true,
@@ -215,7 +251,7 @@ func (r *MessageResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					},
 					"display": schema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "How thinking content is returned: `summarized` or `omitted`. Not allowed when `type` is `disabled`.",
+						MarkdownDescription: "How thinking content is returned: `summarized` or `omitted`. Only allowed when `type` is `enabled` or `adaptive`.",
 						Validators:          []validator.String{stringvalidator.OneOf("summarized", "omitted")},
 					},
 				},
@@ -238,6 +274,7 @@ func (r *MessageResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				},
 			},
 			"cache_control": cacheControlAttribute("Top-level prompt caching: automatically places a cache breakpoint on the last cacheable block of the request (the cached prefix includes the system prompt). A breakpoint on the `system` prompt alone is tracked in [#312](https://github.com/ippontech/terraform-provider-anthropic/issues/312). When a top-level and a message-level breakpoint land on the same block their `ttl` must match, and a `1h` breakpoint must come before any `5m` one. Prompts below the model's minimum cacheable length are accepted but not cached; check `cache_creation_input_tokens` and `cache_read_input_tokens`."),
+			"diagnostics":   diagnosticsAttribute(),
 			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Unique message identifier assigned by the API.",
@@ -308,6 +345,11 @@ func (r *MessageResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				MarkdownDescription: "The geographic region the request was actually processed in, when reported.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
+			"usage_speed": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The speed the request was actually served at (`standard` or `fast`), when reported.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
 		},
 	}
 }
@@ -323,6 +365,57 @@ func cacheControlAttribute(description string) schema.SingleNestedAttribute {
 				Optional:            true,
 				MarkdownDescription: "Cache lifetime: `5m` (default) or `1h`.",
 				Validators:          []validator.String{stringvalidator.OneOf("5m", "1h")},
+			},
+		},
+	}
+}
+
+// speedDescription documents `speed`, shared with anthropic_count_tokens.
+const speedDescription = "Inference speed: `standard` or `fast`. `fast` (fast mode) gives higher output tokens per second at " +
+	"premium pricing on supported models only; other models answer HTTP 400. Claude Opus 5.5 needs no beta header; models " +
+	"where fast mode is in research preview (Claude Opus 5, Claude Opus 4.8) require the `fast-mode-2026-02-01` beta header " +
+	"for any `speed` value, which this provider does not send, so they answer HTTP 400. Requests at different speeds do not " +
+	"share cached prompt prefixes. If omitted, the parameter is not sent."
+
+// diagnosticsAttribute builds the `diagnostics` block: the request's
+// previous_message_id and, Computed, the response's cache_miss_reason.
+func diagnosticsAttribute() schema.SingleNestedAttribute {
+	return schema.SingleNestedAttribute{
+		Optional: true,
+		MarkdownDescription: "Cache diagnostics: asks the API why the prompt cache could not reuse the prefix of a previous " +
+			"request. The block is the opt-in, and the API keeps a short-lived fingerprint only of requests that include " +
+			"it, so set it on every turn: `{}` on the first one, then `previous_message_id` set to the previous turn's `id`. " +
+			"See [cache diagnostics](https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics).",
+		PlanModifiers: []planmodifier.Object{objectplanmodifier.RequiresReplace()},
+		Attributes: map[string]schema.Attribute{
+			"previous_message_id": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "The `id` (`msg_...`) of the previous request to compare this one with, typically " +
+					"another `anthropic_message`'s `id`. Omit it on the first turn: the request then sends " +
+					"`previous_message_id: null`, which opts in without a comparison.",
+				Validators: []validator.String{stringvalidator.LengthBetween(1, 256)},
+			},
+			"cache_miss_reason": schema.SingleNestedAttribute{
+				Computed: true,
+				MarkdownDescription: "The first point where this request diverged from the previous one, as reported by " +
+					"the API. Null when it reported none: on the first turn, when no divergence was found, or when the " +
+					"comparison was still running when the response was sent (inconclusive).",
+				PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+				Attributes: map[string]schema.Attribute{
+					"type": schema.StringAttribute{
+						Computed: true,
+						MarkdownDescription: "`model_changed` (the `model` or `speed` differs), `system_changed`, " +
+							"`tools_changed`, `messages_changed` (an earlier message was changed instead of only appended " +
+							"to), `previous_message_not_found` (no stored record of `previous_message_id`; not evidence of a " +
+							"change) or `unavailable` (no diagnosis, for example because `thinking` or `output_config` differ).",
+					},
+					"cache_missed_input_tokens": schema.Int64Attribute{
+						Computed: true,
+						MarkdownDescription: "Approximate number of input tokens that would have been read from the cache " +
+							"had the prefix matched (the `*_changed` types only, null otherwise). A magnitude, not a " +
+							"billing number.",
+					},
+				},
 			},
 		},
 	}
@@ -456,6 +549,8 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 		params.System = []anthropic.TextBlockParam{{Text: data.System.ValueString()}}
 	}
 
+	// Deprecated (see temperatureDeprecationMessage): sent only when set, so an
+	// unset temperature never reaches the API, not even as 0.
 	if !data.Temperature.IsNull() && !data.Temperature.IsUnknown() {
 		params.Temperature = anthropic.Float(data.Temperature.ValueFloat64())
 	}
@@ -478,6 +573,10 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 		params.InferenceGeo = anthropic.String(data.InferenceGeo.ValueString())
 	}
 
+	if isKnownString(data.Speed) {
+		params.Speed = anthropic.MessageNewParamsSpeed(data.Speed.ValueString())
+	}
+
 	if data.Thinking != nil {
 		display := data.Thinking.Display.ValueString()
 		switch data.Thinking.Type.ValueString() {
@@ -492,6 +591,9 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 			}}
 		case "disabled":
 			params.Thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
+		case "between_tools":
+			betweenTools := anthropic.NewThinkingConfigBetweenToolsParam()
+			params.Thinking = anthropic.ThinkingConfigParamUnion{OfBetweenTools: &betweenTools}
 		default:
 			diags.AddAttributeError(path.Root("thinking").AtName("type"), "Invalid Thinking Type",
 				fmt.Sprintf("Unsupported thinking type %q.", data.Thinking.Type.ValueString()))
@@ -519,7 +621,22 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 		params.CacheControl = cacheControlParam(data.CacheControl)
 	}
 
+	if data.Diagnostics != nil {
+		params.Diagnostics = diagnosticsParam(data.Diagnostics)
+	}
+
 	return params, diags
+}
+
+// diagnosticsParam maps the diagnostics block to the request object. Without
+// previous_message_id it sends an explicit `"previous_message_id": null`, the
+// documented first-turn opt-in: an empty DiagnosticsParam would be dropped by
+// the SDK's omitzero, and with it the opt-in.
+func diagnosticsParam(m *DiagnosticsModel) anthropic.DiagnosticsParam {
+	if isKnownString(m.PreviousMessageID) {
+		return anthropic.DiagnosticsParam{PreviousMessageID: anthropic.String(m.PreviousMessageID.ValueString())}
+	}
+	return anthropic.DiagnosticsParam{PreviousMessageID: param.Null[string]()}
 }
 
 // mapMessageToState copies the API response into the computed attributes.
@@ -534,6 +651,10 @@ func mapMessageToState(message *anthropic.Message, data *MessageResourceModel) {
 	data.CacheReadInputTokens = types.Int64Value(message.Usage.CacheReadInputTokens)
 	data.UsageServiceTier = tfvalue.StringOrNull(string(message.Usage.ServiceTier))
 	data.UsageInferenceGeo = tfvalue.StringOrNull(message.Usage.InferenceGeo)
+	data.UsageSpeed = tfvalue.StringOrNull(string(message.Usage.Speed))
+	if data.Diagnostics != nil {
+		data.Diagnostics.CacheMissReason = cacheMissReasonValue(message)
+	}
 
 	data.StopDetails = types.ObjectNull(stopDetailsAttrTypes)
 	if message.JSON.StopDetails.Valid() && message.StopDetails.Category != "" {
@@ -550,6 +671,24 @@ func mapMessageToState(message *anthropic.Message, data *MessageResourceModel) {
 		}
 	}
 	data.Content = types.StringValue(strings.Join(parts, ""))
+}
+
+// cacheMissReasonValue maps the response's diagnostics.cache_miss_reason.
+// A null diagnostics (no divergence, or a first turn) and a null
+// cache_miss_reason (comparison still pending) both read as null.
+func cacheMissReasonValue(message *anthropic.Message) types.Object {
+	if !message.JSON.Diagnostics.Valid() || !message.Diagnostics.JSON.CacheMissReason.Valid() {
+		return types.ObjectNull(cacheMissReasonAttrTypes)
+	}
+	reason := message.Diagnostics.CacheMissReason
+	missed := types.Int64Null()
+	if reason.JSON.CacheMissedInputTokens.Valid() {
+		missed = types.Int64Value(reason.CacheMissedInputTokens)
+	}
+	return types.ObjectValueMust(cacheMissReasonAttrTypes, map[string]attr.Value{
+		"type":                      tfvalue.StringOrNull(reason.Type),
+		"cache_missed_input_tokens": missed,
+	})
 }
 
 // messageConfigValidator enforces cross-attribute rules that depend on
@@ -588,9 +727,9 @@ func (messageConfigValidator) ValidateResource(ctx context.Context, req resource
 						fmt.Sprintf("thinking.budget_tokens is only allowed when thinking.type is \"enabled\", got %q.", typ.ValueString()))
 				}
 			}
-			if typ.ValueString() == "disabled" && isKnownString(display) {
+			if (typ.ValueString() == "disabled" || typ.ValueString() == "between_tools") && isKnownString(display) {
 				resp.Diagnostics.AddAttributeError(base.AtName("display"), "Unexpected display",
-					`thinking.display is not allowed when thinking.type is "disabled".`)
+					fmt.Sprintf("thinking.display is not allowed when thinking.type is %q.", typ.ValueString()))
 			}
 		}
 	}

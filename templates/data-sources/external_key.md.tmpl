@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_external_key Data Source - anthropic"
+subcategory: "Organization"
+description: |-
+  Fetches a customer-managed encryption key (CMEK) registered with the organization, by ID, via the Admin API.
+---
+
+# anthropic_external_key (Data Source)
+
+Fetches a customer-managed encryption key (CMEK) registered with the organization, by ID, via the Admin API. The ID is `ekey_...`, or the AWS KMS key ARN for organizations on Claude Platform on AWS.
+
+> **API**: `GET /v1/organizations/external_keys/{id}` (Admin API).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Beta header**: None.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/external_key/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
