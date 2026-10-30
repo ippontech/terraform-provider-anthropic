@@ -48,8 +48,10 @@ func (d *OrganizationDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Fetches the organization associated with the authenticated Admin API key via the Admin API. " +
 			"Takes no input — it always returns the organization tied to the configured `admin_api_key` " +
-			"(or `ANTHROPIC_ADMIN_API_KEY`). Useful for validating the admin key before an apply, exposing the " +
-			"organization ID to other modules, and audit trails.",
+			"(or `ANTHROPIC_ADMIN_API_KEY`). Useful for exposing the organization ID to other modules, for audit trails, " +
+			"and for validating a Claude Console Admin API key, or a personal or service account key, before an apply. " +
+			"A Claude Enterprise organization cannot call this endpoint: to check a Claude Enterprise key, read " +
+			"the `anthropic_organization_members` data source instead.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

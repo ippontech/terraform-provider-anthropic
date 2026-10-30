@@ -55,12 +55,22 @@ func clearCredentialEnv(t *testing.T) {
 }
 
 // configureProvider runs Configure against a config holding attrs, with every
-// other provider attribute null.
-func configureProvider(t *testing.T, attrs map[string]tftypes.Value) *provider.ConfigureResponse {
+// other provider attribute null, on a provider built by New with opts.
+func configureProvider(t *testing.T, attrs map[string]tftypes.Value, opts ...Option) *provider.ConfigureResponse {
+	t.Helper()
+	p, ok := New("test", opts...)().(*AnthropicProvider)
+	if !ok {
+		t.Fatal("New does not build an *AnthropicProvider")
+	}
+	return configureProviderInstance(t, p, attrs)
+}
+
+// configureProviderInstance is configureProvider on a provider the test keeps,
+// to call its resource and data source factories afterwards.
+func configureProviderInstance(t *testing.T, p *AnthropicProvider, attrs map[string]tftypes.Value) *provider.ConfigureResponse {
 	t.Helper()
 
 	ctx := context.Background()
-	p := &AnthropicProvider{version: "test"}
 
 	schemaResp := &provider.SchemaResponse{}
 	p.Schema(ctx, provider.SchemaRequest{}, schemaResp)
