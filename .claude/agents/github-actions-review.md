@@ -21,7 +21,7 @@ Read `GNUmakefile` and all `.github/workflows/`. Produce a table mapping each qu
 | Critical | No attacker-controlled values (`github.event.pull_request.*`, `github.event.inputs.*`, branch names, commit messages) interpolated directly in `run:` |
 | Critical | Jobs using secrets not triggered by `pull_request`/`pull_request_target` from forks |
 | Critical | `permissions: {}` at workflow level; explicit `permissions:` block per job |
-| Critical | `step-security/harden-runner` as first step of every job, SHA-pinned, `egress-policy: audit` |
+| Critical | `step-security/harden-runner` as first step of every job, SHA-pinned, `egress-policy: block` with an `allowed-endpoints` list |
 | Warning | Secrets passed via `env:` not inlined as `${{ secrets.FOO }}` in `run:` |
 | Warning | `actions/checkout` uses `persist-credentials: false` where applicable |
 

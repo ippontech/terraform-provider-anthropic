@@ -1,3 +1,3 @@
 # Persistent Agent Memory
 
-- [CI/CD setup overview](project_ci_setup.md) — Five-workflow layout, trigger design, intentional omissions, and security posture as of April 2026
+- [CI design intent](project_ci_setup.md): intentional CI choices that are not gaps (checked 2026-10-25)

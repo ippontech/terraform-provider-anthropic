@@ -1,43 +1,14 @@
 ---
-name: CI/CD setup overview
-description: Key facts about this project's five-workflow CI/CD setup that are not derivable from reading files alone
+name: CI design intent
+description: Intentional CI choices that are not gaps, checked against the workflows on 2026-10-25
 type: project
 ---
 
-Five workflows exist as of April 2026:
-- `provider.yml` — PR + merge_group: lint (fmt + golangci-lint), unit tests (make test), generate (make generate + drift check)
-- `testacc.yml` — push to main + workflow_dispatch: acceptance tests (make testacc) and terraform-test (make terraform-test); both jobs use the `acctest` GitHub Environment, which gates secret access
-- `goreleaser-snapshot.yml` — merge_group: GoReleaser snapshot build; validates release config before merge
-- `goreleaser-release.yml` — push of semver tags: full GoReleaser release with GPG signing
-- `semantic-release.yml` — push to main: runs semantic-release to create tags and changelogs; uses a GitHub App token to bypass branch protection
+Checked on 2026-10-25 against `main` at b8e5621. The workflow list changes: re-read `.github/workflows/` rather than trusting a count (`ls .github/workflows/`).
 
-**Why:** Knowing these triggers avoids wasting time re-reading files every audit.
+Intentional choices, not to be reported as coverage gaps:
+- `make testacc` and `make terraform-test` run in `testacc.yml` on `push` to `main` and `workflow_dispatch` only, never on `pull_request`, so that fork PRs never run with the API keys. Re-check: `grep -n -A4 "^on:" .github/workflows/testacc.yml`.
+- `make install` has no CI job of its own: it is a local step, and `make terraform-test` depends on it. Re-check: `grep -n "^terraform-test:" GNUmakefile`.
+- semantic-release is an npm project under `.github/semantic-release/` (exact versions, lockfile, `.npmrc` with `ignore-scripts`), installed with `npm ci --ignore-scripts` before the App token is minted; checkout uses `persist-credentials: false` and the job token is `contents: read`. Re-check: `grep -n "npm ci\|persist-credentials" .github/workflows/semantic-release.yml`.
 
-**How to apply:** Use as a quick orientation; still re-read files to check for drift.
-
-Key intentional design decisions:
-- Acceptance tests run AFTER merge (on push to main), not on PRs — intentional to protect the API key from fork PRs
-- `acctest` GitHub Environment acts as the secret gate for ANTHROPIC_API_KEY
-- `make install` is called inside `make build` chain; no standalone install CI job — intentional (local dev only)
-- `terraform-test` (make terraform-test) IS covered by testacc.yml
-- semantic-release is an npm project under `.github/semantic-release/` (exact versions + lockfile + `.npmrc ignore-scripts`), installed with `npm ci --ignore-scripts` before the App token is minted; checkout uses `persist-credentials: false` and the job token is `contents: read`
-- All actions/checkout and actions/setup-go references are pinned to full SHA
-- Workflow-level `permissions: {}` is set on every workflow — good baseline
-
-`terraform-test` coverage pattern (as of April 2026):
-- `tests/` directory holds `.tftest.hcl` files that each point to `examples/data-sources/<name>/` via `module { source = ... }`
-- Every data source example needs: (a) a `data_source.tf` file under `examples/data-sources/<name>/`, (b) at least one output that the `.tftest.hcl` can assert against, (c) a corresponding `tests/<name>.tftest.hcl` file
-- When a new data source is added, both (b) and (c) must be created or the `terraform-test` job has no coverage of its example
-- As of April 2026, `anthropic_model` data source example (`examples/data-sources/model/data_source.tf`) has NO corresponding `tests/model.tftest.hcl` — gap confirmed
-
-Harden-runner status (updated April 2026):
-- `step-security/harden-runner` was absent from all 7 jobs across all 5 workflows; added in April 2026
-- Pinned to v2.17.0 @ SHA f808768d1510423e83855289c910610ca9b43176, with `egress-policy: audit` on every job
-- Placement: always the very first step, before actions/checkout
-- To update the SHA in future: `git ls-remote https://github.com/step-security/harden-runner.git 'refs/tags/v2.*' | grep -v '\^{}' | awk '{print $2,$1}' | sed 's|refs/tags/v||' | sort -V | tail -1`
-
-Known security finding (as of April 2026 audit):
-- `goreleaser-release.yml` job has `contents: write` but no `id-token: write` — acceptable, only needs to publish release artifacts
-- `semantic-release.yml` job has `contents: write`, `issues: write`, `pull-requests: write` — intentional, semantic-release needs all three to create releases, update changelogs, and comment on PRs/issues
-- `goreleaser-snapshot.yml` passes GITHUB_TOKEN env var to goreleaser snapshot — goreleaser only needs it to read repo metadata for snapshot; low risk but could be tightened
-- `semantic-release.yml` uses `actions/setup-node` rather than calling `make` — no Makefile target exists for semantic-release (it's a JS tool), so this is not drift
+The harden-runner settings, action SHAs and the per-job permissions are not recorded here: read them from the workflows and apply the `github-actions` skill.
