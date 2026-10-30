@@ -6,6 +6,7 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -367,6 +368,97 @@ func TestConfigValidator_Thinking(t *testing.T) {
 			diags := validateConfig(t, thinkingValue(t, tc.typ, tc.budget, tc.display))
 			if diags.HasError() != tc.wantErr {
 				t.Errorf("wantErr=%v, diags=%v", tc.wantErr, diags)
+			}
+		})
+	}
+}
+
+// outputConfigValue is an output_config attribute value holding format (a
+// JSON string, nil for no format, or tftypes.UnknownValue).
+func outputConfigValue(t *testing.T, format any) map[string]tftypes.Value {
+	t.Helper()
+	ot := messageType(t).AttributeTypes["output_config"].(tftypes.Object)
+	return map[string]tftypes.Value{"output_config": tftypes.NewValue(ot, map[string]tftypes.Value{
+		"effort": tftypes.NewValue(tftypes.String, nil),
+		"format": tftypes.NewValue(tftypes.String, format),
+	})}
+}
+
+func messageSchema(t *testing.T) resource.SchemaResponse {
+	t.Helper()
+	var sresp resource.SchemaResponse
+	NewMessageResource().Schema(context.Background(), resource.SchemaRequest{}, &sresp)
+	return sresp
+}
+
+func messageType(t *testing.T) tftypes.Object {
+	t.Helper()
+	return messageSchema(t).Schema.Type().TerraformType(context.Background()).(tftypes.Object)
+}
+
+// messageValue is a resource value with every attribute null but attrs.
+func messageValue(t *testing.T, attrs map[string]tftypes.Value) tftypes.Value {
+	t.Helper()
+	typ := messageType(t)
+	vals := map[string]tftypes.Value{}
+	for name, at := range typ.AttributeTypes {
+		vals[name] = tftypes.NewValue(at, nil)
+	}
+	maps.Copy(vals, attrs)
+	return tftypes.NewValue(typ, vals)
+}
+
+// TestConfigValidator_OutputFormatLeftToPlan: the config validator runs on
+// every validate and plan, also for a message already in state, so it does
+// not check output_config.format. A message created while a null format was
+// still dropped from the request must keep planning; ModifyPlan checks the
+// format of a create instead.
+func TestConfigValidator_OutputFormatLeftToPlan(t *testing.T) {
+	for name, format := range map[string]string{"null": `null`, "array": `[1]`, "object": `{"type":"object"}`} {
+		t.Run(name, func(t *testing.T) {
+			if diags := validateConfig(t, outputConfigValue(t, format)); len(diags) != 0 {
+				t.Errorf("diagnostics = %v, want none", diags)
+			}
+		})
+	}
+}
+
+// TestMessageResource_ModifyPlanFormat: a create, which is also how Terraform
+// plans the new object of a replacement, rejects a format that is valid JSON
+// but not an object, with the error Create gives. A message already in state
+// and a destroy plan without a diagnostic, and an unknown format is left to
+// Create.
+func TestMessageResource_ModifyPlanFormat(t *testing.T) {
+	sch := messageSchema(t).Schema
+	none := tftypes.NewValue(messageType(t), nil)
+	withFormat := func(format any) tftypes.Value { return messageValue(t, outputConfigValue(t, format)) }
+	tests := []struct {
+		name        string
+		state, plan tftypes.Value
+		wantErr     bool
+	}{
+		{"create with a null format", none, withFormat(`null`), true},
+		{"create with an array", none, withFormat(`[1]`), true},
+		{"create with an object", none, withFormat(`{"type":"object"}`), false},
+		{"create with an unknown format", none, withFormat(tftypes.UnknownValue), false},
+		{"create without output_config", none, messageValue(t, nil), false},
+		{"message in state with a null format", withFormat(`null`), withFormat(`null`), false},
+		{"destroy", withFormat(`null`), none, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := resource.ModifyPlanRequest{
+				Config: tfsdk.Config{Schema: sch, Raw: tc.plan},
+				State:  tfsdk.State{Schema: sch, Raw: tc.state},
+				Plan:   tfsdk.Plan{Schema: sch, Raw: tc.plan},
+			}
+			resp := resource.ModifyPlanResponse{Plan: req.Plan}
+			NewMessageResource().(resource.ResourceWithModifyPlan).ModifyPlan(context.Background(), req, &resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("wantErr=%v, diags=%v", tc.wantErr, resp.Diagnostics)
+			}
+			if tc.wantErr && resp.Diagnostics[0].Summary() != "Invalid JSON Schema" {
+				t.Errorf("summary = %q, want Invalid JSON Schema", resp.Diagnostics[0].Summary())
 			}
 		})
 	}
