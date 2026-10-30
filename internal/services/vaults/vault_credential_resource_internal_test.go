@@ -5,6 +5,8 @@ package vaults
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -697,5 +699,215 @@ func TestVaultCredentialImportState_InvalidID(t *testing.T) {
 	r.(*VaultCredentialResource).ImportState(ctx, req, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Error("expected error for invalid import ID format")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// injection_location (environment_variable)
+// ---------------------------------------------------------------------------
+
+func injectionLocationObj(header, body types.Bool) types.Object {
+	return types.ObjectValueMust(credentialInjectionLocationAttrTypes, map[string]attr.Value{
+		"header": header,
+		"body":   body,
+	})
+}
+
+// envVarConfigVals returns a valid environment_variable configuration with the
+// given injection_location raw value.
+func envVarConfigVals(t *testing.T, injectionLocation tftypes.Value) map[string]tftypes.Value {
+	t.Helper()
+	objType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	networkingType := objType.AttributeTypes["networking"].(tftypes.Object)
+	vals := schematest.NullValues(t, NewVaultCredentialResource())
+	vals["vault_id"] = tftypes.NewValue(tftypes.String, "vlt_x")
+	vals["type"] = tftypes.NewValue(tftypes.String, "environment_variable")
+	vals["secret_name"] = tftypes.NewValue(tftypes.String, "MY_KEY")
+	vals["secret_value"] = tftypes.NewValue(tftypes.String, "my-secret")
+	vals["token_wo_version"] = tftypes.NewValue(tftypes.Number, 1)
+	vals["networking"] = tftypes.NewValue(networkingType, map[string]tftypes.Value{
+		"mode":          tftypes.NewValue(tftypes.String, "unrestricted"),
+		"allowed_hosts": tftypes.NewValue(networkingType.AttributeTypes["allowed_hosts"], nil),
+	})
+	vals["injection_location"] = injectionLocation
+	return vals
+}
+
+func injectionLocationRaw(t *testing.T, header, body any) tftypes.Value {
+	t.Helper()
+	objType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	return tftypes.NewValue(objType.AttributeTypes["injection_location"], map[string]tftypes.Value{
+		"header": tftypes.NewValue(tftypes.Bool, header),
+		"body":   tftypes.NewValue(tftypes.Bool, body),
+	})
+}
+
+const invalidInjectionLocationDetail = "At least one of \"injection_location.header\" and \"injection_location.body\" must be true: " +
+	"a credential needs one location to substitute the secret into. Fields left out default to false."
+
+func TestVaultCredentialConfigValidator_InjectionLocation(t *testing.T) {
+	t.Parallel()
+	objType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	ilType := objType.AttributeTypes["injection_location"]
+
+	tests := []struct {
+		name    string
+		value   func(t *testing.T) tftypes.Value
+		wantErr bool
+	}{
+		{"omitted", func(*testing.T) tftypes.Value { return tftypes.NewValue(ilType, nil) }, false},
+		{"header only", func(t *testing.T) tftypes.Value { return injectionLocationRaw(t, true, nil) }, false},
+		{"body only", func(t *testing.T) tftypes.Value { return injectionLocationRaw(t, false, true) }, false},
+		{"both false", func(t *testing.T) tftypes.Value { return injectionLocationRaw(t, false, false) }, true},
+		{"empty block, both default to false", func(t *testing.T) tftypes.Value { return injectionLocationRaw(t, nil, nil) }, true},
+		{"false and unknown", func(t *testing.T) tftypes.Value { return injectionLocationRaw(t, false, tftypes.UnknownValue) }, false},
+		{"unknown block", func(*testing.T) tftypes.Value { return tftypes.NewValue(ilType, tftypes.UnknownValue) }, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			resp := validateConfig(t, envVarConfigVals(t, tc.value(t)))
+			if got := hasErrorDetail(resp.Diagnostics, invalidInjectionLocationDetail); got != tc.wantErr {
+				t.Errorf("injection location error = %v, want %v; diags: %v", got, tc.wantErr, resp.Diagnostics)
+			}
+			if !tc.wantErr && resp.Diagnostics.HasError() {
+				t.Errorf("unexpected diags: %v", resp.Diagnostics)
+			}
+		})
+	}
+
+	t.Run("rejected on another type", func(t *testing.T) {
+		t.Parallel()
+		vals := schematest.NullValues(t, NewVaultCredentialResource())
+		vals["type"] = tftypes.NewValue(tftypes.String, "static_bearer")
+		vals["mcp_server_url"] = tftypes.NewValue(tftypes.String, "https://mcp.example.com")
+		vals["token"] = tftypes.NewValue(tftypes.String, "secret-bearer")
+		vals["token_wo_version"] = tftypes.NewValue(tftypes.Number, 1)
+		vals["injection_location"] = injectionLocationRaw(t, true, nil)
+		resp := validateConfig(t, vals)
+		if !hasErrorDetail(resp.Diagnostics, "\"injection_location\" must not be set when type is \"static_bearer\".") {
+			t.Errorf("expected a conflict error; got: %v", resp.Diagnostics)
+		}
+	})
+}
+
+func envVarPlan(injectionLocation types.Object) VaultCredentialResourceModel {
+	return VaultCredentialResourceModel{
+		Type:       types.StringValue("environment_variable"),
+		SecretName: types.StringValue("MY_KEY"),
+		Networking: types.ObjectValueMust(credentialNetworkingAttrTypes, map[string]attr.Value{
+			"mode":          types.StringValue("unrestricted"),
+			"allowed_hosts": types.ListNull(types.StringType),
+		}),
+		InjectionLocation: injectionLocation,
+	}
+}
+
+func envVarConfig(t *testing.T) tfsdk.Config {
+	t.Helper()
+	objType := schematest.ResourceObjectType(t, NewVaultCredentialResource())
+	return makeTfsdkConfig(t, tftypes.NewValue(objType, envVarConfigVals(t, injectionLocationRaw(t, true, nil))))
+}
+
+func authJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %s", err)
+	}
+	return string(raw)
+}
+
+// Create sends both fields of a planned location, and omits the object while it
+// is unknown (no block in config) so the API enables both locations.
+func TestBuildCreateAuthUnion_InjectionLocation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	data := envVarPlan(injectionLocationObj(types.BoolValue(true), types.BoolValue(false)))
+	auth, diags := buildCreateAuthUnion(ctx, envVarConfig(t), &data)
+	if diags.HasError() {
+		t.Fatalf("diags: %v", diags)
+	}
+	if got := authJSON(t, auth); !strings.Contains(got, `"injection_location":{"body":false,"header":true}`) {
+		t.Errorf("planned location not sent: %s", got)
+	}
+
+	data = envVarPlan(types.ObjectUnknown(credentialInjectionLocationAttrTypes))
+	auth, diags = buildCreateAuthUnion(ctx, envVarConfig(t), &data)
+	if diags.HasError() {
+		t.Fatalf("diags: %v", diags)
+	}
+	if got := authJSON(t, auth); strings.Contains(got, "injection_location") {
+		t.Errorf("unknown location must be omitted: %s", got)
+	}
+}
+
+// Update sends both fields: the API merges them one by one, so sending only the
+// changed one would rely on the stored value matching the prior state.
+func TestBuildUpdateAuthUnion_InjectionLocation(t *testing.T) {
+	t.Parallel()
+
+	data := envVarPlan(injectionLocationObj(types.BoolValue(false), types.BoolValue(true)))
+	auth, diags := buildUpdateAuthUnion(context.Background(), envVarConfig(t), &data)
+	if diags.HasError() {
+		t.Fatalf("diags: %v", diags)
+	}
+	if got := authJSON(t, auth); !strings.Contains(got, `"injection_location":{"body":true,"header":false}`) {
+		t.Errorf("planned location not sent: %s", got)
+	}
+}
+
+func TestAuthUpdateNeeded_InjectionLocation(t *testing.T) {
+	t.Parallel()
+
+	both := envVarPlan(injectionLocationObj(types.BoolValue(true), types.BoolValue(true)))
+	headerOnly := envVarPlan(injectionLocationObj(types.BoolValue(true), types.BoolValue(false)))
+	if !authUpdateNeeded(headerOnly, both) {
+		t.Error("a changed injection_location must re-push the auth object")
+	}
+	if authUpdateNeeded(both, both) {
+		t.Error("an unchanged injection_location must not re-push the auth object")
+	}
+	// State written before the attribute existed: the plan leaves it unknown and
+	// nothing is sent for it.
+	if authUpdateNeeded(envVarPlan(types.ObjectUnknown(credentialInjectionLocationAttrTypes)), envVarPlan(types.ObjectNull(credentialInjectionLocationAttrTypes))) {
+		t.Error("an unknown injection_location must not re-push the auth object")
+	}
+}
+
+func parseCredential(t *testing.T, auth string) *anthropic.BetaManagedAgentsCredential {
+	t.Helper()
+	var cred anthropic.BetaManagedAgentsCredential
+	raw := `{"id":"vcrd_1","vault_id":"vlt_x","type":"vault_credential","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","auth":` + auth + `}`
+	if err := json.Unmarshal([]byte(raw), &cred); err != nil {
+		t.Fatalf("unmarshal: %s", err)
+	}
+	return &cred
+}
+
+// Read maps the resolved location of an environment_variable credential and
+// clears it for the other types.
+func TestMapCredentialResponseToState_InjectionLocation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cred := parseCredential(t, `{"type":"environment_variable","secret_name":"MY_KEY",
+		"networking":{"type":"unrestricted"},"injection_location":{"header":true,"body":false}}`)
+	data := VaultCredentialResourceModel{InjectionLocation: types.ObjectUnknown(credentialInjectionLocationAttrTypes)}
+	if diags := mapCredentialResponseToState(ctx, cred, &data); diags.HasError() {
+		t.Fatalf("diags: %v", diags)
+	}
+	if want := injectionLocationObj(types.BoolValue(true), types.BoolValue(false)); !data.InjectionLocation.Equal(want) {
+		t.Errorf("injection_location = %v, want %v", data.InjectionLocation, want)
+	}
+
+	cred = parseCredential(t, `{"type":"static_bearer","mcp_server_url":"https://mcp.example.com/"}`)
+	data = VaultCredentialResourceModel{InjectionLocation: types.ObjectUnknown(credentialInjectionLocationAttrTypes)}
+	if diags := mapCredentialResponseToState(ctx, cred, &data); diags.HasError() {
+		t.Fatalf("diags: %v", diags)
+	}
+	if !data.InjectionLocation.IsNull() {
+		t.Errorf("injection_location = %v, want null for static_bearer", data.InjectionLocation)
 	}
 }

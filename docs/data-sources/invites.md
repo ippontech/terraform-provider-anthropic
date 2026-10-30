@@ -12,7 +12,7 @@ Lists all organization invites via the Admin API. All pages are fetched automati
 Results can optionally be filtered by `email` and/or `statuses`.
 
 > **API**: `GET /v1/organizations/invites` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` (or `read:org_audit`) scope.
 > **Beta header**: None.
 > **Cost**: Free.
 

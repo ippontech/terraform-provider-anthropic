@@ -6,25 +6,16 @@ package retry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
-
-// noBackoff replaces the package-level backoff function with a no-op for the
-// duration of a test, so retry loops complete without real sleeps.
-func noBackoff(t *testing.T) {
-	t.Helper()
-	old := backoff
-	backoff = func(_ int) time.Duration { return 0 }
-	t.Cleanup(func() { backoff = old })
-}
 
 // apiErr builds a minimal *anthropic.Error with the given HTTP status code.
 func apiErr(statusCode int) *anthropic.Error {
@@ -92,51 +83,29 @@ func TestMultipartUpload_SuccessOnFirstAttempt(t *testing.T) {
 	}
 }
 
-func TestMultipartUpload_RetriesOn5xx(t *testing.T) {
-	noBackoff(t)
-	dir := t.TempDir()
-	p := writeFile(t, dir, "SKILL.md", "content")
+// MultipartUpload makes a single attempt whatever the error: the client's
+// retry middleware replays the buffered body on 429, and a second loop here
+// would multiply its attempts (nine POSTs for one 5xx before the fix).
+func TestMultipartUpload_DoesNotRetry(t *testing.T) {
+	for _, status := range []int{429, 500, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			dir := t.TempDir()
+			p := writeFile(t, dir, "SKILL.md", "content")
 
-	calls := 0
-	result, err := MultipartUpload(context.Background(), []string{p}, dir, "mydir", func(_ []io.Reader) (string, error) {
-		calls++
-		if calls < 2 {
-			return "", apiErr(500)
-		}
-		return "ok", nil
-	})
+			calls := 0
+			_, err := MultipartUpload(context.Background(), []string{p}, dir, "mydir", func(_ []io.Reader) (string, error) {
+				calls++
+				return "", apiErr(status)
+			})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "ok" {
-		t.Errorf("result = %q, want %q", result, "ok")
-	}
-	if calls != 2 {
-		t.Errorf("fn called %d times, want 2", calls)
-	}
-}
-
-func TestMultipartUpload_ExhaustsMaxAttempts(t *testing.T) {
-	noBackoff(t)
-	dir := t.TempDir()
-	p := writeFile(t, dir, "SKILL.md", "content")
-
-	calls := 0
-	_, err := MultipartUpload(context.Background(), []string{p}, dir, "mydir", func(_ []io.Reader) (string, error) {
-		calls++
-		return "", apiErr(503)
-	})
-
-	if err == nil {
-		t.Fatal("expected error after exhausting retries")
-	}
-	if calls != 3 {
-		t.Errorf("fn called %d times, want 3", calls)
-	}
-	var apierr *anthropic.Error
-	if !errors.As(err, &apierr) || apierr.StatusCode != 503 {
-		t.Errorf("expected 503 API error, got %v", err)
+			var apierr *anthropic.Error
+			if !errors.As(err, &apierr) || apierr.StatusCode != status {
+				t.Errorf("err = %v, want the %d API error", err, status)
+			}
+			if calls != 1 {
+				t.Errorf("fn called %d times, want 1", calls)
+			}
+		})
 	}
 }
 
@@ -194,24 +163,24 @@ func TestMultipartUpload_FileOpenError(t *testing.T) {
 	}
 }
 
-func TestMultipartUpload_ContextCancelledDuringBackoff(t *testing.T) {
+func TestMultipartUpload_ContextCancelled(t *testing.T) {
 	dir := t.TempDir()
 	p := writeFile(t, dir, "SKILL.md", "content")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancel so the backoff select fires immediately on attempt 1
+	cancel()
 
 	calls := 0
 	_, err := MultipartUpload(ctx, []string{p}, dir, "mydir", func(_ []io.Reader) (string, error) {
 		calls++
-		return "", apiErr(500) // triggers a retry attempt
+		return "ok", nil
 	})
 
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
-	if calls != 1 {
-		t.Errorf("fn called %d times, want 1 (cancelled before second attempt)", calls)
+	if calls != 0 {
+		t.Errorf("fn called %d times, want 0", calls)
 	}
 }
 
@@ -348,37 +317,5 @@ func TestMultipartUpload_RejectsBundleRootItselfAsFile(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Errorf("fn called %d times, want 0", calls)
-	}
-}
-
-func TestMultipartUpload_FilesReopenedOnRetry(t *testing.T) {
-	noBackoff(t)
-	dir := t.TempDir()
-	p := writeFile(t, dir, "SKILL.md", "data")
-
-	// Collect all file reads across attempts to confirm fresh opens on each retry.
-	var contents []string
-	_, err := MultipartUpload(context.Background(), []string{p}, dir, "mydir", func(files []io.Reader) (string, error) {
-		data, readErr := io.ReadAll(files[0])
-		if readErr != nil {
-			return "", readErr
-		}
-		contents = append(contents, string(data))
-		if len(contents) < 2 {
-			return "", apiErr(500)
-		}
-		return "ok", nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	for i, c := range contents {
-		if c != "data" {
-			t.Errorf("attempt %d: file content = %q, want %q", i+1, c, "data")
-		}
-	}
-	if len(contents) != 2 {
-		t.Errorf("got %d attempts, want 2", len(contents))
 	}
 }

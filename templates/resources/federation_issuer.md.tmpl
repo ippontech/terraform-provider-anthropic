@@ -16,12 +16,15 @@ Registers an OIDC identity provider that Anthropic trusts for Workload Identity 
 > **One issuer per URL**: an organization can register only one issuer for a given `issuer_url`; creating a second one is rejected by the API. If the Console wizard already registered the provider (for GitHub Actions, `https://token.actions.githubusercontent.com`), import that issuer instead of declaring a new one.
 > **Console-only updates**: updating an issuer that backs a rule with a scope outside `workspace:developer` or `workspace:inference` requires a Console session; an OAuth caller gets an API error.
 
-## Deliberate omissions
+## JWKS polling
 
-Two fields the API exposes on federation issuers are intentionally **not** in this resource's schema:
+For `discovery` and `explicit_url` issuers, Anthropic fetches the signing keys in the background and pauses polling after repeated fetch failures.
 
-- **`poll_status`** — a volatile summary of the background JWKS poller (consecutive failures, last/next fetch time) that changes on every poll cycle. Including it in this resource would churn the Terraform plan on every refresh; it belongs in a future `anthropic_federation_issuer` data source instead.
-- **`jwks_polling_disabled`** (the update-only toggle to re-enable polling after the system pauses it) — the create API has no equivalent field, so exposing it here would require a create-then-update dance on every apply. This resource only surfaces the resulting `jwks_polling_disabled_at` timestamp (computed); re-enabling polling requires calling the API directly for now.
+- **`poll_status`** (computed) reports the poller's state as of the last refresh: consecutive failures, last successful fetch, next scheduled fetch. It is null for `inline` issuers, which have nothing to fetch. It changes on every poll cycle. A normal plan records the new values without planning any change, but a refresh-only plan (`terraform plan -refresh-only`, which drift detection such as HCP Terraform health assessments runs) reports them as changed outside of Terraform, and `-detailed-exitcode` then returns 2: such checks flag every `discovery` or `explicit_url` issuer on every run.
+- **`jwks_polling_disabled_at`** (computed) is set while polling is paused.
+- **`jwks_polling_disabled = false`** (optional) asks the provider to keep polling enabled: when a refresh finds it paused, the plan shows an in-place update that sends `jwks_polling_disabled: false` to the API, which re-enables it. Fix the upstream JWKS endpoint first, or polling pauses again. Only `false` is accepted (the API pauses polling on its own and rejects `true`). The toggle is never sent on create, while polling is active, or for an archived issuer.
+
+> **OAuth restriction**: the API refuses `jwks_polling_disabled` from an OAuth caller, which is the credential this provider uses, when the issuer backs a federation rule whose scope is neither `workspace:developer` nor `workspace:inference`. For such an issuer, re-enable polling from a Console session and leave `jwks_polling_disabled` unset; otherwise every plan proposes the re-enable again for as long as polling stays paused, and every apply fails.
 
 ## Example Usage
 
