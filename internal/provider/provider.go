@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -50,11 +52,12 @@ type AnthropicProvider struct {
 
 // AnthropicProviderModel describes the provider data model.
 type AnthropicProviderModel struct {
-	ApiKey      types.String `tfsdk:"api_key"`
-	AdminApiKey types.String `tfsdk:"admin_api_key"`
-	AuthToken   types.String `tfsdk:"auth_token"`
-	Federation  types.Object `tfsdk:"federation"`
-	WorkspaceID types.String `tfsdk:"workspace_id"`
+	ApiKey        types.String `tfsdk:"api_key"`
+	AdminApiKey   types.String `tfsdk:"admin_api_key"`
+	AuthToken     types.String `tfsdk:"auth_token"`
+	Federation    types.Object `tfsdk:"federation"`
+	APIFederation types.Object `tfsdk:"api_federation"`
+	WorkspaceID   types.String `tfsdk:"workspace_id"`
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -82,16 +85,19 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"such as the Workload Identity Federation admin endpoints. " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
-			"federation": federationSchema(),
+			"federation":     federationSchema(),
+			"api_federation": apiFederationSchema(),
 			"workspace_id": schema.StringAttribute{
 				Optional:   true,
 				Validators: []validator.String{stringvalidator.RegexMatches(workspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits)")},
-				Description: "Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header " +
-					"on every request of the standard client. Required with a personal or service account key that is " +
-					"not scoped to a single workspace; must be left unset with a single-workspace key, which the API " +
-					"rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API " +
+				Description: "Workspace (`wrkspc_...`) the standard client acts in. With `api_key`, it is sent as the " +
+					"`anthropic-workspace-id` header on every request of the standard client: required with a personal or " +
+					"service account key that is not scoped to a single workspace; must be left unset with a single-workspace " +
+					"key, which the API rejects with a 404 when the header names any workspace, its own included. With " +
+					"`api_federation`, it scopes the token at exchange time instead (same as `api_federation.workspace_id`, " +
+					"which must agree with it when both are set), and no header is sent. Not sent on the Admin API " +
 					"or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: " +
-					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.",
+					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` and `api_federation.workspace_id` only.",
 			},
 		},
 	}
@@ -126,37 +132,46 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	// standard client on its own. Null reads as "".
 	workspaceID := data.WorkspaceID.ValueString()
 
-	federation, diags := resolveFederation(ctx, data.Federation)
+	// The org:admin block passes no workspace: its token is organization-wide
+	// and the provider-level workspace_id never reaches the OAuth client. The
+	// standard client's block takes it as its exchange-time workspace.
+	federation, diags := resolveFederation(ctx, "federation", data.Federation, "")
+	resp.Diagnostics.Append(diags...)
+	apiFederation, diags := resolveFederation(ctx, "api_federation", data.APIFederation, workspaceID)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Both would fill pd.OAuthClient, so configuring both is an error. The
-	// check reads the configuration, not the resolved string: an auth_token
-	// unknown at plan time is still set, and an exported ANTHROPIC_AUTH_TOKEN
-	// gives way to the federation block, as the environment does to every
-	// other provider argument.
+	// Each block replaces one credential (auth_token, api_key), and both
+	// would fill the same client: configuring both is an error, and the
+	// credential's environment variable gives way to the block.
 	if federation != nil {
-		if !data.AuthToken.IsNull() {
-			resp.Diagnostics.AddAttributeError(path.Root("federation"), "Conflicting OAuth Credentials",
-				"federation and auth_token both supply the org:admin bearer token. Configure one.")
-			return
-		}
-		// The SDKs give ANTHROPIC_AUTH_TOKEN precedence over their own
-		// federation, so an operator used to them would expect the reverse.
-		if authToken != "" {
-			resp.Diagnostics.AddAttributeWarning(path.Root("federation"), "ANTHROPIC_AUTH_TOKEN Ignored",
-				"ANTHROPIC_AUTH_TOKEN is set, but the federation block supplies the org:admin bearer token, so the variable is not used. "+
-					"Unset it to silence this warning.")
-			authToken = ""
-		}
+		oauthFederationCredential.rejectCredentialBeside(&resp.Diagnostics, data.AuthToken, authToken)
+		authToken = ""
+	}
+	if apiFederation != nil {
+		apiFederationCredential.rejectCredentialBeside(&resp.Diagnostics, data.ApiKey, apiKey)
+		apiKey = ""
+	}
+	// A rule carries a single scope, so one rule cannot back both clients:
+	// one of them would hold a token of the wrong scope and fail on its
+	// first request. Easy to hit with two empty blocks, since both fall back
+	// to the same ANTHROPIC_FEDERATION_RULE_ID.
+	if federation != nil && apiFederation != nil && federation.options.FederationRuleID == apiFederation.options.FederationRuleID {
+		resp.Diagnostics.AddAttributeError(path.Root("api_federation").AtName("federation_rule_id"), "Conflicting Federation Rules",
+			fmt.Sprintf("federation and api_federation both exchange against rule %s, but a rule grants a single scope: "+
+				"federation needs an org:admin rule and api_federation a workspace:developer or workspace:inference rule. "+
+				"Set a different federation_rule_id in one of them.", apiFederation.options.FederationRuleID))
+	}
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	if apiKey == "" && adminApiKey == "" && authToken == "" && federation == nil {
+	if apiKey == "" && adminApiKey == "" && authToken == "" && federation == nil && apiFederation == nil {
 		resp.Diagnostics.AddError(
 			"Missing Credentials",
-			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
+			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) or an api_federation block for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
 				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token.",
 		)
@@ -182,16 +197,63 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	if authToken != "" {
 		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken))}
 	}
+	// The SDK caches each exchanged token and exchanges again shortly before
+	// it expires, calling the identity source each time. The two blocks mint
+	// two tokens, one per rule, since a rule carries a single scope.
 	if federation != nil {
-		// The SDK caches the exchanged token and exchanges again shortly
-		// before it expires, calling the identity source each time.
 		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(
 			option.WithFederationTokenProvider(federation.identity, federation.options),
 		)}
 	}
+	if apiFederation != nil {
+		// No anthropic-workspace-id header: the minted token is already
+		// workspace-scoped, and the SDK states the header does not apply to
+		// federated tokens. The workspace was passed to the exchange above.
+		pd.Client = newSDKClient(option.WithFederationTokenProvider(apiFederation.identity, apiFederation.options))
+	}
 
 	resp.DataSourceData = pd
 	resp.ResourceData = pd
+}
+
+// federatedCredential names the credential a federation block replaces, for
+// the diagnostics of rejectCredentialBeside.
+type federatedCredential struct {
+	block, argument, envVar, conflictSummary, what string
+}
+
+var (
+	oauthFederationCredential = federatedCredential{
+		block: "federation", argument: "auth_token", envVar: "ANTHROPIC_AUTH_TOKEN",
+		conflictSummary: "Conflicting OAuth Credentials", what: "the org:admin bearer token",
+	}
+	apiFederationCredential = federatedCredential{
+		block: "api_federation", argument: "api_key", envVar: "ANTHROPIC_API_KEY",
+		conflictSummary: "Conflicting API Credentials", what: "the standard client's credential",
+	}
+)
+
+// rejectCredentialBeside applies the rule shared by the two federation blocks
+// to the credential the block replaces: both would fill the same client, so
+// configuring both is an error, and the credential's environment variable
+// gives way to the block, with a warning.
+//
+// The conflict check reads the configuration, not the resolved string: a
+// credential unknown at plan time is still set. The variable gives way as the
+// environment does to every other provider argument; the warning is there
+// because the SDKs rank the variable above their own federation, so an
+// operator used to them would expect the reverse.
+func (c federatedCredential) rejectCredentialBeside(diags *diag.Diagnostics, configured types.String, resolved string) {
+	if !configured.IsNull() {
+		diags.AddAttributeError(path.Root(c.block), c.conflictSummary,
+			fmt.Sprintf("%s and %s both supply %s. Configure one.", c.block, c.argument, c.what))
+		return
+	}
+	if resolved != "" {
+		diags.AddAttributeWarning(path.Root(c.block), c.envVar+" Ignored",
+			fmt.Sprintf("%s is set, but the %s block supplies %s, so the variable is not used. Unset it to silence this warning.",
+				c.envVar, c.block, c.what))
+	}
 }
 
 // workspaceIDPattern is the shape of a workspace ID. Checked at plan time so

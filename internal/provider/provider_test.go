@@ -46,6 +46,10 @@ func clearCredentialEnv(t *testing.T) {
 		"ANTHROPIC_WORKSPACE_ID",
 		"ANTHROPIC_IDENTITY_TOKEN",
 		"ANTHROPIC_IDENTITY_TOKEN_FILE",
+		// Set by GitHub Actions in a job granted id-token: write, which may
+		// run these tests.
+		"ACTIONS_ID_TOKEN_REQUEST_URL",
+		"ACTIONS_ID_TOKEN_REQUEST_TOKEN",
 	} {
 		t.Setenv(k, "")
 		if err := os.Unsetenv(k); err != nil {

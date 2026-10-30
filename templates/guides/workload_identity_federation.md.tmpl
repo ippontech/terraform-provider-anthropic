@@ -39,7 +39,7 @@ provider "anthropic" {
 Three things to know about this token:
 
 - **It is short-lived.** A long `terraform apply` can outlive it and start failing with `401`. Re-run the `export` line immediately before every run (the CLI refreshes the token on export); the provider cannot refresh a token it was handed.
-- **A workload doesn't need it.** Once the bootstrap rule exists, the provider's `federation` block exchanges the workload's own identity token and refreshes the result, see below.
+- **A workload doesn't need it.** Once the bootstrap rule exists, the provider's `federation` block exchanges the workload's own identity token and refreshes the result, see below. The standard credential has the same option: a workload that manages a workspace's resources (agents, skills, vaults...) rather than WIF itself mints it through `api_federation` ([section 4](#4-how-the-workload-consumes-the-rule)).
 - **`ant auth login --profile admin` also makes that profile active for the CLI.** The provider ignores profiles (every client is built from the resolved credential and nothing else), but the `ant` CLI and SDKs in the same shell do not. Switch back with `ant profile activate default` and unset the variable when you are done.
 
 ### Letting the provider mint the token in CI
@@ -53,10 +53,28 @@ provider "anthropic" {
     federation_rule_id = "fdrl_..."
     service_account_id = "svac_..."
     # The exchange accepts a token with a jti claim, as GitHub's are, only
-    # once, so one is requested per exchange.
-    # The command is run without a shell; this one needs a pipe and the
-    # runner's variables, so it names sh as the program. --max-time keeps a
-    # stalled request from outliving the provider's 30-second stop.
+    # once, so one is requested from GitHub per exchange. The audience
+    # defaults to https://api.anthropic.com, which a rule expects when its
+    # match.audience is unset.
+    github_actions = {}
+  }
+}
+```
+
+`github_actions` needs nothing on the runner: no shell, `curl` or `jq`. It reads the two variables GitHub sets in a job with `permissions: id-token: write`, `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`; without that permission the plan fails with a diagnostic that says so. If the rule sets `match.audience`, request that audience instead: `github_actions = { audience = "..." }`.
+
+The three IDs are those of the bootstrap rule, your organization and the rule's target service account; they can also come from `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID` and `ANTHROPIC_SERVICE_ACCOUNT_ID`, with `federation = { github_actions = {} }` in the configuration. Other platforms only change the identity token source: `identity_token_file` for a token the platform writes to disk (a Kubernetes projected service account token), or a command that prints one (`az account get-access-token --resource <app-client-id> --query accessToken -o tsv` for an Entra application, `gcloud auth print-identity-token --audiences=...` on Google Cloud).
+
+`identity_token_command` is the generic form, for any CLI or endpoint. It runs the program without a shell, so a pipe or the runner's variables need `sh` as the program. The same GitHub request written that way, for comparison:
+
+```hcl
+provider "anthropic" {
+  federation = {
+    organization_id    = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id = "fdrl_..."
+    service_account_id = "svac_..."
+    # --max-time keeps a stalled request from outliving the provider's
+    # 30-second stop.
     identity_token_command = [
       "sh", "-c",
       "curl -sSf --max-time 20 -H \"Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com\" | jq -r .value",
@@ -64,8 +82,6 @@ provider "anthropic" {
   }
 }
 ```
-
-The three IDs are those of the bootstrap rule, your organization and the rule's target service account; they can also come from `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID` and `ANTHROPIC_SERVICE_ACCOUNT_ID`, with `federation = {}` in the configuration. Other platforms only change the identity token source: `identity_token_file` for a token the platform writes to disk (a Kubernetes projected service account token), or a command that prints one (`az account get-access-token --resource <app-client-id> --query accessToken -o tsv` for an Entra application, `gcloud auth print-identity-token --audiences=...` on Google Cloud).
 
 ## 2. The once-per-organization bootstrap
 
@@ -317,6 +333,20 @@ jobs:
 Leave `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` unset in that job: both take precedence over federation in every SDK. The exact audience to request from GitHub, the flags equivalent to these variables and the `ant` CLI's federation profile (needed when one job runs several `ant` commands, since a GitHub token carrying `jti` is accepted once) are covered in the [GitHub Actions provider guide](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions) and the [WIF reference](https://platform.claude.com/docs/en/manage-claude/wif-reference#environment-variables).
 
 None of those three IDs is a secret: a token can only be minted by presenting a JWT from the trusted issuer whose claims match the rule. Store them as plain repository variables.
+
+**When the workload is Terraform.** A configuration that manages the workspace's resources (agents, skills, environments, vaults, memory stores, files, deployments) is a workload like any other: the `api_federation` block backs the standard client with the token the rule above mints, in place of `api_key`, and the same variables fill it, so the step `Run the workload` can be a `terraform apply` with:
+
+```hcl
+provider "anthropic" {
+  # ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_FEDERATION_RULE_ID and
+  # ANTHROPIC_SERVICE_ACCOUNT_ID fill the rest of the block.
+  api_federation = {
+    github_actions = {}
+  }
+}
+```
+
+The provider requests the identity token from GitHub itself, so that job needs no token step, and exchanges again, with a fresh GitHub token, before the access token expires. `api_federation = {}` reading `ANTHROPIC_IDENTITY_TOKEN_FILE` works too, but a GitHub token's `jti` is single-use, so a second exchange from the same file fails with `jti_reused`: `github_actions` ([section 1](#letting-the-provider-mint-the-token-in-ci)) presents a fresh assertion every time. Managing both WIF and the workspace from one configuration takes two rules, since a rule carries a single scope: `federation` against the `org:admin` bootstrap rule, `api_federation` against the workspace rule (the same rule in both is a plan-time error). The two blocks exchange separately, so with a single-use token each needs a source that fetches its own: `github_actions` in both blocks does (each block requests its own token), while a file shared by both presents the same assertion twice, and the second exchange fails with `jti_reused`. Leave `ANTHROPIC_API_KEY` unset too: the block ignores it, with a warning.
 
 **Other platforms.** Everything above transposes to any OIDC issuer: register its URL as an `anthropic_federation_issuer`, match its `sub` format in the rule, and give the workload its token in `ANTHROPIC_IDENTITY_TOKEN_FILE` (or `ANTHROPIC_IDENTITY_TOKEN`). On GitLab CI the job requests the token with
 

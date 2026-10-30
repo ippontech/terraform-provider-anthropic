@@ -33,6 +33,9 @@ type federationServer struct {
 	mu         sync.Mutex
 	exchanges  []map[string]string
 	authorized []string
+	// requests holds the headers of every request that was not an
+	// exchange, in order, so a test with two clients can check each.
+	requests []http.Header
 }
 
 func newFederationServer(t *testing.T, expiresIn int) *federationServer {
@@ -56,10 +59,19 @@ func newFederationServer(t *testing.T, expiresIn int) *federationServer {
 			return
 		}
 		fs.authorized = append(fs.authorized, r.Header.Get("Authorization"))
+		fs.requests = append(fs.requests, r.Header.Clone())
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(fs.Close)
 	return fs
+}
+
+// requestHeaders returns the headers of every request that was not an
+// exchange, in order.
+func (fs *federationServer) requestHeaders() []http.Header {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return append([]http.Header(nil), fs.requests...)
 }
 
 func (fs *federationServer) snapshot() ([]map[string]string, []string) {
@@ -72,12 +84,19 @@ func (fs *federationServer) snapshot() ([]map[string]string, []string) {
 // attribute null.
 func federationValue(t *testing.T, attrs map[string]tftypes.Value) tftypes.Value {
 	t.Helper()
+	return nestedValue(t, "federation", attrs)
+}
+
+// nestedValue builds the provider's nested attribute name from attrs, every
+// other attribute null.
+func nestedValue(t *testing.T, name string, attrs map[string]tftypes.Value) tftypes.Value {
+	t.Helper()
 
 	ctx := context.Background()
 	p := &AnthropicProvider{}
 	schemaResp := &provider.SchemaResponse{}
 	p.Schema(ctx, provider.SchemaRequest{}, schemaResp)
-	objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object).AttributeTypes["federation"].(tftypes.Object)
+	objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object).AttributeTypes[name].(tftypes.Object)
 
 	values := make(map[string]tftypes.Value, len(objType.AttributeTypes))
 	for name, attrType := range objType.AttributeTypes {
@@ -401,6 +420,8 @@ func TestConfigureFederationRejectsUnknownAttributes(t *testing.T) {
 		{"organization_id", "organization_id", unknown},
 		{"command list", "identity_token_command", tftypes.NewValue(listType, tftypes.UnknownValue)},
 		{"command element", "identity_token_command", tftypes.NewValue(listType, []tftypes.Value{unknown})},
+		{"github_actions", "github_actions", tftypes.NewValue(githubActionsValue(t, nil).Type(), tftypes.UnknownValue)},
+		{"github_actions audience", "github_actions", githubActionsValue(t, map[string]tftypes.Value{"audience": unknown})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.label, func(t *testing.T) {
