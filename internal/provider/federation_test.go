@@ -355,7 +355,7 @@ func TestConfigureFederationRequiresOrganizationAndRule(t *testing.T) {
 func TestIdentityTokenSourceRejectsTwoSources(t *testing.T) {
 	clearCredentialEnv(t)
 
-	_, err := identityTokenSource(context.Background(), federationModel{
+	_, _, err := identityTokenSource(context.Background(), federationModel{
 		IdentityToken:        types.StringValue("jwt"),
 		IdentityTokenFile:    types.StringValue("/tmp/token"),
 		IdentityTokenCommand: types.ListNull(types.StringType),
@@ -368,7 +368,7 @@ func TestIdentityTokenSourceRejectsTwoSources(t *testing.T) {
 func TestIdentityTokenSourceRequiresOne(t *testing.T) {
 	clearCredentialEnv(t)
 
-	_, err := identityTokenSource(context.Background(), federationModel{
+	_, _, err := identityTokenSource(context.Background(), federationModel{
 		IdentityTokenCommand: types.ListNull(types.StringType),
 	})
 	if err == nil || !strings.Contains(err.Error(), "no identity token") {
@@ -464,12 +464,15 @@ func TestIdentityTokenSourceConfigWinsOverEnvironment(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", "/does/not/exist")
 
-	fn, err := identityTokenSource(context.Background(), federationModel{
+	fn, source, err := identityTokenSource(context.Background(), federationModel{
 		IdentityToken:        types.StringValue("jwt-from-config"),
 		IdentityTokenCommand: types.ListNull(types.StringType),
 	})
 	if err != nil {
 		t.Fatalf("err = %v", err)
+	}
+	if source.kind != "literal" || source.value != "jwt-from-config" {
+		t.Errorf("source = %+v, want the configured literal", source)
 	}
 	if got, _ := fn(context.Background()); got != "jwt-from-config" {
 		t.Errorf("token = %q, want the configured literal", got)

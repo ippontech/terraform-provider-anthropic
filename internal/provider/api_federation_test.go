@@ -6,6 +6,8 @@ package provider
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,16 +91,21 @@ func TestConfigureBothFederationBlocks(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_BASE_URL", fs.URL)
 	t.Setenv("ANTHROPIC_ORGANIZATION_ID", "00000000-0000-0000-0000-000000000000")
-	t.Setenv("ANTHROPIC_IDENTITY_TOKEN", "jwt")
 
-	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
+	resp := configureProvider(t, map[string]tftypes.Value{
 		"federation": federationValue(t, map[string]tftypes.Value{
-			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_admin"),
+			"federation_rule_id":     tftypes.NewValue(tftypes.String, "fdrl_admin"),
+			"identity_token_command": stringList(countingTokenScript(t)),
 		}),
 		"api_federation": apiFederationValue(t, map[string]tftypes.Value{
-			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_developer"),
+			"federation_rule_id":     tftypes.NewValue(tftypes.String, "fdrl_developer"),
+			"identity_token_command": stringList(countingTokenScript(t)),
 		}),
-	}))
+	})
+	if w := resp.Diagnostics.Warnings(); len(w) != 0 {
+		t.Errorf("warnings = %v, want none with a command per block", w)
+	}
+	pd := providerDataFrom(t, resp)
 
 	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
 		t.Fatalf("oauth request failed: %v", err)
@@ -127,6 +134,87 @@ func TestConfigureBothFederationBlocks(t *testing.T) {
 		if headers.Get("X-Api-Key") != "" || headers.Get("anthropic-workspace-id") != "" {
 			t.Errorf("request %d sent x-api-key=%q anthropic-workspace-id=%q, want neither", i+1, headers.Get("X-Api-Key"), headers.Get("anthropic-workspace-id"))
 		}
+	}
+}
+
+// TestConfigureBothFederationBlocksWarnOnSharedIdentitySource: the two
+// blocks exchange separately, so one file or literal, typically
+// ANTHROPIC_IDENTITY_TOKEN_FILE filling both, presents the same assertion
+// twice and the second exchange fails with jti_reused when the token carries
+// a jti. A warning at plan time, since a token without jti is fine; a
+// command per block is never shared, it fetches a token per exchange.
+func TestConfigureBothFederationBlocksWarnOnSharedIdentitySource(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("jwt\n"), 0o600); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+	script := countingTokenScript(t)
+
+	tests := []struct {
+		name       string
+		env        map[string]string
+		federation map[string]tftypes.Value
+		api        map[string]tftypes.Value
+		warn       bool
+	}{
+		{
+			name: "same file from the environment",
+			env:  map[string]string{"ANTHROPIC_IDENTITY_TOKEN_FILE": tokenFile},
+			warn: true,
+		},
+		{
+			name: "same literal from the environment",
+			env:  map[string]string{"ANTHROPIC_IDENTITY_TOKEN": "jwt"},
+			warn: true,
+		},
+		{
+			name:       "same file in both blocks",
+			federation: map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, tokenFile)},
+			api:        map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, tokenFile)},
+			warn:       true,
+		},
+		{
+			name:       "different files",
+			federation: map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, tokenFile)},
+			api:        map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, tokenFile+".other")},
+		},
+		{
+			name:       "same command in both blocks",
+			federation: map[string]tftypes.Value{"identity_token_command": stringList(script)},
+			api:        map[string]tftypes.Value{"identity_token_command": stringList(script)},
+		},
+		{
+			name:       "command beside the environment file",
+			env:        map[string]string{"ANTHROPIC_IDENTITY_TOKEN_FILE": tokenFile},
+			federation: map[string]tftypes.Value{"identity_token_command": stringList(script)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearCredentialEnv(t)
+			t.Setenv("ANTHROPIC_ORGANIZATION_ID", "00000000-0000-0000-0000-000000000000")
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			federation := map[string]tftypes.Value{"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_admin")}
+			api := map[string]tftypes.Value{"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_developer")}
+			for k, v := range tt.federation {
+				federation[k] = v
+			}
+			for k, v := range tt.api {
+				api[k] = v
+			}
+
+			resp := configureProvider(t, map[string]tftypes.Value{
+				"federation":     federationValue(t, federation),
+				"api_federation": apiFederationValue(t, api),
+			})
+			providerDataFrom(t, resp)
+			w := resp.Diagnostics.Warnings()
+			if got := len(w) == 1 && w[0].Summary() == "Shared Identity Token Source"; got != tt.warn {
+				t.Errorf("warnings = %v, want shared-source warning = %v", w, tt.warn)
+			}
+		})
 	}
 }
 
@@ -383,7 +471,7 @@ func TestConfigureAPIFederationWorkspaceConflictIsNotAlone(t *testing.T) {
 // plan rather than every exchange, and is never read as a workspace different
 // from the provider-level ID it otherwise matches. The literal `default`,
 // which the exchange accepts for the organization's default workspace, is
-// valid.
+// valid, and so is the empty string, which has always read as unset.
 func TestFederationWorkspaceIDValidator(t *testing.T) {
 	ctx := context.Background()
 	for _, block := range []string{"federation", "api_federation"} {
@@ -404,7 +492,8 @@ func TestFederationWorkspaceIDValidator(t *testing.T) {
 				"default":                           true,
 				"wrkspc_01JwQvzr7rXLA5AGx3HKfFUJ\n": false,
 				"01JwQvzr7rXLA5AGx3HKfFUJ":          false,
-				"":                                  false,
+				"":                                  true,
+				" ":                                 false,
 			} {
 				resp := &validator.StringResponse{}
 				for _, v := range attr.Validators {

@@ -164,6 +164,18 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 				"federation needs an org:admin rule and api_federation a workspace:developer or workspace:inference rule. "+
 				"Set a different federation_rule_id in one of them.", apiFederation.options.FederationRuleID))
 	}
+	// Each block exchanges on its own, so one file (or one literal, often
+	// through ANTHROPIC_IDENTITY_TOKEN_FILE filling both) presents the same
+	// assertion twice. That fails with jti_reused when the token carries a
+	// jti, as GitHub, Kubernetes and Entra tokens do, but not otherwise, so
+	// this is a warning: the second exchange would fail mid-apply, and the
+	// fix is a command per block, which fetches a fresh token per exchange.
+	if federation != nil && apiFederation != nil && federation.source.sharedWith(apiFederation.source) {
+		resp.Diagnostics.AddAttributeWarning(path.Root("api_federation"), "Shared Identity Token Source",
+			fmt.Sprintf("federation and api_federation read the same identity token %s, so both exchanges present the same assertion. "+
+				"If the token carries a jti (GitHub Actions, Kubernetes and Entra tokens do), the second exchange fails with jti_reused. "+
+				"Give each block its own identity_token_command, which fetches a fresh token per exchange.", federation.source.kind))
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}

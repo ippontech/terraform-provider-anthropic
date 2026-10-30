@@ -107,7 +107,7 @@ func federationAttributes(workspaceDescription string) map[string]schema.Attribu
 		},
 		"workspace_id": schema.StringAttribute{
 			Optional:    true,
-			Validators:  []validator.String{stringvalidator.RegexMatches(federationWorkspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits) or `default`")},
+			Validators:  []validator.String{stringvalidator.RegexMatches(federationWorkspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits), `default`, or empty")},
 			Description: workspaceDescription,
 		},
 		"identity_token": schema.StringAttribute{
@@ -137,17 +137,36 @@ func federationAttributes(workspaceDescription string) map[string]schema.Attribu
 }
 
 // federationWorkspaceIDPattern is the shape of the workspace an exchange is
-// scoped to: a workspace ID, or the literal `default` the exchange accepts for
-// the organization's default workspace. Checked at plan time, as for the
-// provider-level workspace_id, so a stray newline fails the plan rather than
-// every exchange, and never reads as a workspace different from the
-// provider-level one it would otherwise match.
-var federationWorkspaceIDPattern = regexp.MustCompile(`^(wrkspc_[0-9A-Za-z]+|default)$`)
+// scoped to: a workspace ID, the literal `default` the exchange accepts for
+// the organization's default workspace, or empty, which has always meant
+// unset here (a variable with an empty default). Checked at plan time, as
+// for the provider-level workspace_id, so a stray newline fails the plan
+// rather than every exchange, and never reads as a workspace different from
+// the provider-level one it would otherwise match.
+var federationWorkspaceIDPattern = regexp.MustCompile(`^(wrkspc_[0-9A-Za-z]+|default|)$`)
 
 // federationSettings is the federation block after environment fallback.
 type federationSettings struct {
 	options  option.FederationOptions
 	identity option.IdentityTokenFunc
+	// source is where identity comes from, so Configure can tell when two
+	// blocks would present the same assertion.
+	source identitySource
+}
+
+// identitySource names an identity token source: a file path, a literal
+// token or a command. Two blocks sharing a file or a literal present the
+// same assertion to two exchanges, which fails when the token carries a
+// jti; a command is run per exchange, so it is never shared in that sense.
+type identitySource struct {
+	kind  string // "file", "literal" or "command"
+	value string
+}
+
+// sharedWith reports whether the two sources would present the same
+// assertion twice: the same file, or the same literal.
+func (s identitySource) sharedWith(o identitySource) bool {
+	return s.kind != "command" && s.kind == o.kind && s.value == o.value
 }
 
 // resolveFederation returns nil when the block named by name (`federation`
@@ -237,11 +256,11 @@ func resolveFederation(ctx context.Context, name string, obj types.Object, works
 			fmt.Sprintf("Set %s.federation_rule_id or the ANTHROPIC_FEDERATION_RULE_ID environment variable.", name))
 	}
 
-	identity, err := identityTokenSource(ctx, m)
+	identity, source, err := identityTokenSource(ctx, m)
 	if err != nil {
 		diags.AddAttributeError(root, "Invalid Identity Token Source", err.Error())
 	}
-	s.identity = identity
+	s.identity, s.source = identity, source
 
 	if diags.HasError() {
 		return nil, diags
@@ -255,14 +274,14 @@ func resolveFederation(ctx context.Context, name string, obj types.Object, works
 // The environment fills the source as a whole, not attribute by attribute
 // the way resolveCredential does: CI jobs export ANTHROPIC_IDENTITY_TOKEN_FILE
 // for other tools, and a configured command beside it is not a conflict.
-func identityTokenSource(ctx context.Context, m federationModel) (option.IdentityTokenFunc, error) {
+func identityTokenSource(ctx context.Context, m federationModel) (option.IdentityTokenFunc, identitySource, error) {
 	var argv []string
 	if !m.IdentityTokenCommand.IsNull() {
 		if d := m.IdentityTokenCommand.ElementsAs(ctx, &argv, false); d.HasError() {
-			return nil, errors.New("identity_token_command must be a list of strings")
+			return nil, identitySource{}, errors.New("identity_token_command must be a list of strings")
 		}
 		if len(argv) == 0 || argv[0] == "" {
-			return nil, errors.New("identity_token_command must name a program")
+			return nil, identitySource{}, errors.New("identity_token_command must name a program")
 		}
 	}
 	file, literal := m.IdentityTokenFile.ValueString(), m.IdentityToken.ValueString()
@@ -274,7 +293,7 @@ func identityTokenSource(ctx context.Context, m federationModel) (option.Identit
 		}
 	}
 	if configured > 1 {
-		return nil, errors.New("set at most one of identity_token, identity_token_file and identity_token_command")
+		return nil, identitySource{}, errors.New("set at most one of identity_token, identity_token_file and identity_token_command")
 	}
 	if configured == 0 {
 		// Same order as the SDKs below: the file, which can rotate, before the literal.
@@ -283,13 +302,13 @@ func identityTokenSource(ctx context.Context, m federationModel) (option.Identit
 
 	switch {
 	case argv != nil:
-		return commandIdentityToken(argv, identityTokenCommandTimeout), nil
+		return commandIdentityToken(argv, identityTokenCommandTimeout), identitySource{kind: "command", value: strings.Join(argv, "\x00")}, nil
 	case file != "":
-		return option.IdentityTokenFile(file), nil
+		return option.IdentityTokenFile(file), identitySource{kind: "file", value: file}, nil
 	case literal != "":
-		return staticIdentityToken(literal), nil
+		return staticIdentityToken(literal), identitySource{kind: "literal", value: strings.TrimSpace(literal)}, nil
 	}
-	return nil, errors.New("no identity token: set identity_token_file, identity_token_command or identity_token, " +
+	return nil, identitySource{}, errors.New("no identity token: set identity_token_file, identity_token_command or identity_token, " +
 		"or the ANTHROPIC_IDENTITY_TOKEN_FILE or ANTHROPIC_IDENTITY_TOKEN environment variable")
 }
 
