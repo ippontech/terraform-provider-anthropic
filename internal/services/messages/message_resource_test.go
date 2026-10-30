@@ -36,6 +36,9 @@ func TestAccMessageResource(t *testing.T) {
 	})
 }
 
+// temperature is deprecated (removed in the next major version) but still
+// works under API version 2023-06-01 on models older than Claude 4.7, which
+// this test uses; the deprecation warning does not fail the step.
 func TestAccMessageResourceWithSystemAndTemperature(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },

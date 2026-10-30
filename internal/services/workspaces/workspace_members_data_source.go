@@ -168,7 +168,12 @@ func (d *WorkspaceMembersDataSource) Read(ctx context.Context, req datasource.Re
 		if !page.HasMore {
 			break
 		}
-		afterID = page.LastID
+		next, err := admin.NextAfterID(afterID, page.LastID)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspace members: %s.", err))
+			return
+		}
+		afterID = next
 	}
 
 	memberObjs := make([]attr.Value, len(allMembers))
