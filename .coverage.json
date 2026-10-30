@@ -1,0 +1,18 @@
+{
+  "diff_min": 75,
+  "total_target": 80,
+  "ratchet_tolerance": 0.5,
+  "baseline_file": ".coverage-baseline",
+  "package_min": null,
+  "exclude": [
+    "main.go",
+    "tools/",
+    "internal/acctest/",
+    "internal/admintest/",
+    "internal/oauthtest/",
+    "internal/providertest/",
+    "internal/schematest/",
+    "internal/sdktest/",
+    "internal/wifprobetest/"
+  ]
+}
