@@ -434,6 +434,9 @@ func (r *WorkspaceResource) Delete(ctx context.Context, req resource.DeleteReque
 
 	_, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/workspaces/"+data.ID.ValueString()+"/archive", nil)
 	if err != nil {
+		if admin.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive workspace: %s", err))
 		return
 	}

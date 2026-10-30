@@ -6,12 +6,14 @@ package environments_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
@@ -235,6 +237,95 @@ func TestAccEnvironmentResource_archiveOnDestroy(t *testing.T) {
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"archive_on_destroy"},
+			},
+		},
+	})
+}
+
+const testAccEnvironmentResourceOneAllowedHostConfig = `
+resource "anthropic_environment" "test" {
+  name = "tf-acc-test-env-allowed-hosts-emptied"
+
+  config = {
+    networking = {
+      type          = "limited"
+      allowed_hosts = ["api.example.com"]
+    }
+  }
+}
+`
+
+const testAccEnvironmentResourceNoAllowedHostConfig = `
+resource "anthropic_environment" "test" {
+  name = "tf-acc-test-env-allowed-hosts-emptied"
+
+  config = {
+    networking = {
+      type          = "limited"
+      allowed_hosts = []
+    }
+  }
+}
+`
+
+// testAccCheckEnvironmentAllowedHosts reads anthropic_environment.test through
+// the SDK, outside the provider, and checks that the API stores a limited
+// network with exactly the hosts given.
+func testAccCheckEnvironmentAllowedHosts(want ...string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources["anthropic_environment.test"]
+		if !ok {
+			return fmt.Errorf("anthropic_environment.test not found in state")
+		}
+		client := acctest.NewAPIKeyClient()
+		env, err := client.Beta.Environments.Get(context.Background(), rs.Primary.ID, anthropic.BetaEnvironmentGetParams{})
+		if err != nil {
+			return fmt.Errorf("unable to read environment %s: %w", rs.Primary.ID, err)
+		}
+		networking := env.Config.Networking
+		if networking.Type != "limited" {
+			return fmt.Errorf("environment %s: networking type %q, want \"limited\"", rs.Primary.ID, networking.Type)
+		}
+		if !slices.Equal(networking.AllowedHosts, want) {
+			return fmt.Errorf("environment %s: allowed_hosts %q, want %q", rs.Primary.ID, networking.AllowedHosts, want)
+		}
+		return nil
+	}
+}
+
+// TestAccEnvironmentResource_allowedHostsEmptied empties allowed_hosts of a
+// limited network in place. The update endpoint keeps an omitted field, so the
+// provider sends "allowed_hosts": []; the API must accept it and clear the
+// hosts, which the out-of-band read checks.
+func TestAccEnvironmentResource_allowedHostsEmptied(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckEnvironmentDestroyed,
+		Steps: []resource.TestStep{
+			// Create with one allowed host
+			{
+				Config: testAccEnvironmentResourceOneAllowedHostConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_environment.test", "config.networking.type", "limited"),
+					resource.TestCheckResourceAttr("anthropic_environment.test", "config.networking.allowed_hosts.#", "1"),
+					resource.TestCheckResourceAttr("anthropic_environment.test", "config.networking.allowed_hosts.0", "api.example.com"),
+					testAccCheckEnvironmentAllowedHosts("api.example.com"),
+				),
+			},
+			// Empty allowed_hosts in place
+			{
+				Config: testAccEnvironmentResourceNoAllowedHostConfig,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("anthropic_environment.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_environment.test", "config.networking.type", "limited"),
+					resource.TestCheckResourceAttr("anthropic_environment.test", "config.networking.allowed_hosts.#", "0"),
+					testAccCheckEnvironmentAllowedHosts(),
+				),
 			},
 		},
 	})
