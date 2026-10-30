@@ -4,6 +4,7 @@ golangci-lint = "2.15.0"
 goreleaser = "2.19.0"
 terraform = "1.17.0"
 "github:boostsecurityio/poutine" = "1.1.6"
+gitleaks = "8.30.1"
 
 [env]
 _.file = ".env"
