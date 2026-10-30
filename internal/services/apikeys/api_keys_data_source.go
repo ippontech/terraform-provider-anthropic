@@ -172,19 +172,7 @@ func (d *APIKeysDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	afterID := ""
 
 	for {
-		params := url.Values{}
-		params.Set("limit", "1000")
-		if afterID != "" {
-			params.Set("after_id", afterID)
-		}
-		if !data.Status.IsNull() && !data.Status.IsUnknown() {
-			params.Set("status", data.Status.ValueString())
-		}
-		if !data.WorkspaceID.IsNull() && !data.WorkspaceID.IsUnknown() {
-			params.Set("workspace_id", data.WorkspaceID.ValueString())
-		}
-
-		apiPath := "/v1/organizations/api_keys?" + params.Encode()
+		apiPath := "/v1/organizations/api_keys?" + buildAPIKeysQuery(afterID, data.Status, data.WorkspaceID).Encode()
 
 		respBytes, err := d.adminClient.DoRequest(ctx, "GET", apiPath, nil)
 		if err != nil {
@@ -203,7 +191,12 @@ func (d *APIKeysDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		if !page.HasMore {
 			break
 		}
-		afterID = page.LastID
+		next, err := admin.NextAfterID(afterID, page.LastID)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list API keys: %s.", err))
+			return
+		}
+		afterID = next
 	}
 
 	keyObjs := make([]attr.Value, 0, len(allKeys))
@@ -229,6 +222,24 @@ func (d *APIKeysDataSource) Read(ctx context.Context, req datasource.ReadRequest
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// buildAPIKeysQuery returns the query of one page of the API key list: the
+// page size, the cursor and the optional status and workspace_id filters.
+// afterID and a null or unknown filter are omitted.
+func buildAPIKeysQuery(afterID string, status, workspaceID types.String) url.Values {
+	params := url.Values{}
+	params.Set("limit", "1000")
+	if afterID != "" {
+		params.Set("after_id", afterID)
+	}
+	if !status.IsNull() && !status.IsUnknown() {
+		params.Set("status", status.ValueString())
+	}
+	if !workspaceID.IsNull() && !workspaceID.IsUnknown() {
+		params.Set("workspace_id", workspaceID.ValueString())
+	}
+	return params
+}
 
 func mapAPIKeyToListObject(key *apiKeyAPIResponse) (attr.Value, diag.Diagnostics) {
 	var diags diag.Diagnostics

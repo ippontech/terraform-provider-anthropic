@@ -14,13 +14,13 @@ import (
 
 // TestAccWIFStalenessProbe measures read-after-write staleness on
 // GET /v1/organizations/service_accounts/{id} after POST …/{id}, the way the
-// vaults API was probed on 2026-09-01 (see the "Read-after-write consistency"
-// section of CLAUDE.md). anthropic_service_account's Update already applies
-// the vaults-style wait defensively; this probe is what turns that analogy
-// into a measurement. It is an instrument, not a regression test: it never
-// fails on a stale read, it only records when the endpoint converged. Its
-// sibling in internal/services/federation probes the issuer, rule and
-// rule-workspace endpoints.
+// vaults API was probed on 2026-09-01 (see
+// internal/services/vaults/CLAUDE.md). anthropic_service_account's Update
+// already applies the vaults-style wait defensively; this probe is what turns
+// that analogy into a measurement. It is an instrument, not a regression
+// test: it never fails on a stale read, it only records when the endpoint
+// converged. Its sibling in internal/services/federation probes the issuer,
+// rule and rule-workspace endpoints.
 //
 // It is doubly gated. acctest.PreCheckOAuth skips it without an org:admin
 // bearer token (the endpoint rejects API keys), and
