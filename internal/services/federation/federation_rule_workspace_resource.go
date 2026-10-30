@@ -266,7 +266,7 @@ func (r *FederationRuleWorkspaceResource) ImportState(ctx context.Context, req r
 // whole window has passed without a match. Probed on 2026-09-08: GET
 // /v1/organizations/federation_rules/{id}/workspaces did not yet list a
 // workspace just added by POST in 1 of 9 trials, converging 1.07s after the
-// Add (see the read-after-write section of CLAUDE.md). Read treats an absent
+// Add (see internal/services/federation/CLAUDE.md). Read treats an absent
 // entry as an authoritative out-of-band removal, so a single stale list right
 // after Create would drop the resource from state; the bounded wait turns
 // that into a sub-second delay. The cost is symmetric: a Read of an entry that
