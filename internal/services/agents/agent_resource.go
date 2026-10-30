@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -26,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -646,16 +648,18 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		params.System = param.NewOpt("")
 	}
 
-	// Metadata
-	if !data.Metadata.IsNull() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
-	} else {
-		params.Metadata = map[string]string{}
+	// Metadata is a patch on update: an omitted key is kept and a null one is
+	// deleted (https://platform.claude.com/docs/en/api/beta/agents/update), so
+	// keys removed from the configuration are sent as null. The typed
+	// map[string]string cannot carry a null, hence the extra field.
+	extraFields := map[string]any{}
+	metaPatch, diags := tfvalue.MetadataPatch(ctx, data.Metadata, state.Metadata)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(metaPatch) > 0 {
+		extraFields["metadata"] = metaPatch
 	}
 
 	// MCP servers
@@ -711,7 +715,11 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	params.Multiagent = multiagent
 	if data.Multiagent.IsNull() && !state.Multiagent.IsNull() {
-		params.SetExtraFields(multiagentClearField())
+		maps.Copy(extraFields, multiagentClearField())
+	}
+	// SetExtraFields replaces the extra fields, so it is called once.
+	if len(extraFields) > 0 {
+		params.SetExtraFields(extraFields)
 	}
 
 	agent, err := r.client.Beta.Agents.Update(ctx, state.ID.ValueString(), params)
@@ -1042,8 +1050,8 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 		metaMap, d := types.MapValue(types.StringType, elements)
 		diags.Append(d...)
 		data.Metadata = metaMap
-	} else if !data.Metadata.IsNull() {
-		data.Metadata = types.MapNull(types.StringType)
+	} else {
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(data.Metadata)
 	}
 
 	// MCP servers

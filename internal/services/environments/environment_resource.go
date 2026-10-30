@@ -17,7 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -26,6 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -120,20 +120,21 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				MarkdownDescription: "Human-readable name for the environment.",
 			},
 
-			// --- Optional+Computed ---
+			// --- Optional ---
+			// Not Computed: removing description or metadata from the
+			// configuration must plan their removal, which UseStateForUnknown
+			// on an Optional+Computed attribute silently prevented.
 			"description": schema.StringAttribute{
 				Optional:            true,
-				Computed:            true,
-				MarkdownDescription: "Optional description of the environment.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				MarkdownDescription: "Optional description of the environment. Removing it from the configuration clears it.",
 			},
 			"metadata": schema.MapAttribute{
 				Optional:            true,
-				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "User-provided metadata key-value pairs.",
-				PlanModifiers:       []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
+				MarkdownDescription: "User-provided metadata key-value pairs. Keys removed from the configuration are deleted; removing the attribute deletes every key.",
 			},
+
+			// --- Optional+Computed ---
 			"config": schema.SingleNestedAttribute{
 				Optional:            true,
 				Computed:            true,
@@ -405,17 +406,23 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 		Name: param.NewOpt(data.Name.ValueString()),
 	}
 
+	// The update endpoint keeps an omitted description and clears a null one
+	// (https://platform.claude.com/docs/en/api/beta/environments/update), so
+	// a description removed from the configuration is sent as null.
 	if !data.Description.IsNull() && !data.Description.IsUnknown() {
 		params.Description = param.NewOpt(data.Description.ValueString())
+	} else if data.Description.IsNull() && !state.Description.IsNull() {
+		params.Description = param.Null[string]()
 	}
 
-	if !data.Metadata.IsNull() && !data.Metadata.IsUnknown() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
+	// metadata is a patch: keys removed from the configuration are sent as null.
+	metaPatch, diags := tfvalue.MetadataPatch(ctx, data.Metadata, state.Metadata)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(metaPatch) > 0 {
+		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
 	if !data.Config.IsNull() && !data.Config.IsUnknown() {
@@ -612,8 +619,8 @@ func mapEnvironmentResponseToState(ctx context.Context, env *anthropic.BetaEnvir
 		metaMap, d := types.MapValue(types.StringType, elements)
 		diags.Append(d...)
 		data.Metadata = metaMap
-	} else if !data.Metadata.IsNull() {
-		data.Metadata = types.MapNull(types.StringType)
+	} else {
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(data.Metadata)
 	}
 
 	// Config — always set since API always returns it
