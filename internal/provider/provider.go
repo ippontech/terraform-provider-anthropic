@@ -7,6 +7,8 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"slices"
+	"sync/atomic"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -19,22 +21,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/federation"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/files"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/memorystores"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/messages"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/workspaces"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 )
 
 // Ensure AnthropicProvider satisfies various provider interfaces.
@@ -46,6 +35,34 @@ type AnthropicProvider struct {
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
 	version string
+
+	// platform holds the platform.Platform that Configure resolved. The
+	// resource and data source factories read it (see gate.go), on other
+	// RPCs' goroutines, hence the atomic.
+	platform atomic.Value
+	// workspaceless is set for a Google Cloud alias without a workspace,
+	// which serves organization routes only (gate.go).
+	workspaceless atomic.Bool
+
+	// baseURL, when set by WithBaseURL, replaces the API host of every
+	// client Configure builds. Empty in every binary users run.
+	baseURL string
+}
+
+// Option changes how New builds the provider. Options are for tests only:
+// main.go calls New without any, and none of them is reachable from a
+// Terraform configuration.
+type Option func(*AnthropicProvider)
+
+// WithBaseURL points every client the provider builds at baseURL: the
+// standard API key client, the Admin API client, the OAuth client and the
+// federation token exchange behind it. It wins over ANTHROPIC_BASE_URL, so a
+// test runs the provider against an httptest fake without t.Setenv and can
+// call t.Parallel (internal/providertest wraps it).
+func WithBaseURL(baseURL string) Option {
+	return func(p *AnthropicProvider) {
+		p.baseURL = baseURL
+	}
 }
 
 // AnthropicProviderModel describes the provider data model.
@@ -55,10 +72,12 @@ type AnthropicProviderModel struct {
 	AuthToken   types.String `tfsdk:"auth_token"`
 	Federation  types.Object `tfsdk:"federation"`
 	WorkspaceID types.String `tfsdk:"workspace_id"`
+	AWS         types.Object `tfsdk:"aws"`
+	GoogleCloud types.Object `tfsdk:"google_cloud"`
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "anthropic"
+	resp.TypeName = providerTypeName
 	resp.Version = p.version
 }
 
@@ -71,15 +90,20 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Description: "The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.",
 			},
 			"admin_api_key": schema.StringAttribute{
-				Optional:    true,
-				Sensitive:   true,
-				Description: "The Anthropic Admin API key for organization management endpoints (workspaces, members). Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
+				Optional:  true,
+				Sensitive: true,
+				Description: "The key for the Admin API's organization management endpoints (workspaces and their members, " +
+					"workspace rate limits, API keys, the organization, organization members and invites): " +
+					"a Claude Console Admin API key (`sk-ant-admin01-...`), a Claude Enterprise Admin API key with scopes (`sk-ant-api01-...`, members and invites only), " +
+					"or a personal or service account key not scoped to a workspace. Sent in the `x-api-key` header. " +
+					"Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
 			},
 			"auth_token": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
-				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
-					"such as the Workload Identity Federation admin endpoints. " +
+				Description: "An OAuth bearer token for endpoints that reject API keys: an org:admin token (`sk-ant-oat01-...`) " +
+					"for the Workload Identity Federation admin endpoints, or a workspace:manage_tunnels token for MCP tunnels " +
+					"(configure each in its own, aliased provider block). " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
 			"federation": federationSchema(),
@@ -91,8 +115,14 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"not scoped to a single workspace; must be left unset with a single-workspace key, which the API " +
 					"rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API " +
 					"or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: " +
-					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.",
+					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only. " +
+					"With the aws block: required, sent on every request except the Admin API ones, and read from " +
+					"ANTHROPIC_AWS_WORKSPACE_ID when unset. With the google_cloud block: part of " +
+					"the request URL, never a header, required except for an alias limited to organization routes, and " +
+					"read from ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID when unset.",
 			},
+			"aws":          awsSchema(),
+			"google_cloud": googleCloudSchema(),
 		},
 	}
 }
@@ -106,9 +136,6 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	apiKey := resolveCredential(data.ApiKey, "ANTHROPIC_API_KEY")
-	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
-	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
 	// Unknown is an error, not unset, as for the federation block: reading
 	// it as unset would send no header and route the plan's reads to the
 	// key's own workspace, and the workspace is routinely a reference to a
@@ -118,6 +145,52 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"workspace_id depends on a value that is not known until apply. Provider configuration must be known at plan time.")
 		return
 	}
+
+	// A platform block, and only the block, selects a cloud gateway: the
+	// variables that fill it are exported for other tools too. The alias then
+	// has one SDK client and none of the first-party ones below.
+	if !data.AWS.IsNull() && !data.GoogleCloud.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("google_cloud"), "Conflicting Platform Configuration",
+			"aws and google_cloud cannot both be set: each reaches a different organization. Use a separate provider alias for each.")
+		return
+	}
+	if !data.GoogleCloud.IsNull() {
+		settings, diags := resolveGoogleCloud(ctx, data)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		client, err := newGoogleCloudClient(ctx, settings.config)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("google_cloud"), "Unable to Configure Claude Models on Google Cloud", err.Error())
+			return
+		}
+		ignoredFirstPartyEnvironment(ctx, platform.GoogleCloud)
+		addPlatformBetaWarning(&resp.Diagnostics, platform.GoogleCloud)
+		p.workspaceless.Store(!settings.workspace)
+		p.serve(resp, providerdata.ForPlatform(platform.GoogleCloud, client))
+		return
+	}
+	if !data.AWS.IsNull() {
+		cfg, diags := resolveAWS(ctx, data)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		client, err := newAWSClient(ctx, *cfg)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("aws"), "Unable to Configure Claude Platform on AWS", err.Error())
+			return
+		}
+		ignoredFirstPartyEnvironment(ctx, platform.AWS)
+		addPlatformBetaWarning(&resp.Diagnostics, platform.AWS)
+		p.serve(resp, providerdata.ForPlatform(platform.AWS, client))
+		return
+	}
+
+	apiKey := resolveCredential(data.ApiKey, "ANTHROPIC_API_KEY")
+	adminApiKey := resolveCredential(data.AdminApiKey, "ANTHROPIC_ADMIN_API_KEY")
+	authToken := resolveCredential(data.AuthToken, "ANTHROPIC_AUTH_TOKEN")
 	// Configuration only, deliberately: ANTHROPIC_WORKSPACE_ID is the SDKs'
 	// federation variable, exported by other tools in the same job and by the
 	// WIF guide for federation.workspace_id. A single-workspace key answers
@@ -158,38 +231,54 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
-				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token.",
+				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token. "+
+				"For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or "+
+				"google_cloud block instead.",
 		)
 		return
 	}
 
 	// Each client carries exactly the credential resolved above and nothing
 	// the environment contributed on its own — see newSDKClient.
-	pd := &providerdata.ProviderData{}
+	pd := &providerdata.ProviderData{Platform: platform.FirstParty}
+	var override []option.RequestOption
+	if p.baseURL != "" {
+		override = append(override, option.WithBaseURL(p.baseURL))
+	}
 	if apiKey != "" {
 		// Only the standard client is workspace-scoped by header: the Admin
 		// API is organization-wide, and a federated bearer selects its
 		// workspace at exchange time.
-		opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+		standard := slices.Clone(override)
 		if workspaceID != "" {
-			opts = append(opts, option.WithHeader("anthropic-workspace-id", workspaceID))
+			standard = append(standard, option.WithHeader("anthropic-workspace-id", workspaceID))
 		}
-		pd.Client = newSDKClient(opts...)
+		pd.Client = newSDKClient(option.WithAPIKey(apiKey), standard...)
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
+		if p.baseURL != "" {
+			pd.AdminClient.BaseURL = p.baseURL
+		}
 	}
 	if authToken != "" {
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken))}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken), override...)}
 	}
 	if federation != nil {
 		// The SDK caches the exchanged token and exchanges again shortly
 		// before it expires, calling the identity source each time.
 		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(
-			option.WithFederationTokenProvider(federation.identity, federation.options),
+			option.WithFederationTokenProvider(federation.identity, federation.options), override...,
 		)}
 	}
 
+	p.serve(resp, pd)
+}
+
+// serve hands pd to every resource and data source, and records its platform
+// for the factory gate (gate.go).
+func (p *AnthropicProvider) serve(resp *provider.ConfigureResponse, pd *providerdata.ProviderData) {
+	p.platform.Store(pd.Platform)
 	resp.DataSourceData = pd
 	resp.ResourceData = pd
 }
@@ -232,93 +321,56 @@ func resolveCredential(configValue types.String, envVar string) string {
 // still worth honouring is ANTHROPIC_BASE_URL, which the marker option also
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
-func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
-	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
+//
+// Retries follow provretry.DefaultPolicy instead of the SDK's: a POST that
+// creates something, sends a message or updates with a precondition is
+// replayed only on 429, 529 or a connection error before it got a
+// connection, so another 5xx or a dropped connection after a write that
+// landed cannot create a duplicate.
+//
+// override is applied last, so the base URL of WithBaseURL wins over the
+// variable.
+func newSDKClient(credential option.RequestOption, override ...option.RequestOption) *anthropic.Client {
+	opts := []option.RequestOption{option.WithoutEnvironmentDefaults(), credential}
+	opts = append(opts, provretry.SDKOptions(provretry.DefaultPolicy)...)
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
+	opts = append(opts, override...)
 
 	client := anthropic.NewClient(opts...)
 
 	return &client
 }
 
+// Resources and DataSources serve the registrations in registry.go, each
+// factory gated by the platform Configure resolves (gate.go).
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {
-	return []func() resource.Resource{
-		agents.NewAgentResource,
-		apikeys.NewAPIKeyResource,
-		deployments.NewDeploymentResource,
-		environments.NewEnvironmentResource,
-		federation.NewFederationIssuerResource,
-		federation.NewFederationRuleResource,
-		federation.NewFederationRuleWorkspaceResource,
-		files.NewFileResource,
-		memorystores.NewMemoryResource,
-		memorystores.NewMemoryStoreResource,
-		messages.NewMessageResource,
-		organizations.NewInviteResource,
-		organizations.NewOrganizationMemberResource,
-		serviceaccounts.NewServiceAccountResource,
-		serviceaccounts.NewServiceAccountWorkspaceResource,
-		skills.NewSkillResource,
-		skills.NewSkillVersionResource,
-		userprofiles.NewUserProfileResource,
-		vaults.NewVaultResource,
-		vaults.NewVaultCredentialResource,
-		workspaces.NewWorkspaceResource,
-		workspaces.NewWorkspaceMemberResource,
+	regs := resourceRegistrations()
+	factories := make([]func() resource.Resource, 0, len(regs))
+	for _, reg := range regs {
+		factories = append(factories, p.gateResource(reg))
 	}
+	return factories
 }
 
 func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{
-		agents.NewAgentDataSource,
-		apikeys.NewAPIKeyDataSource,
-		apikeys.NewAPIKeysDataSource,
-		agents.NewAgentsDataSource,
-		messages.NewCountTokensDataSource,
-		deployments.NewDeploymentRunsDataSource,
-		environments.NewEnvironmentDataSource,
-		environments.NewEnvironmentsDataSource,
-		federation.NewFederationIssuersDataSource,
-		federation.NewFederationRulesDataSource,
-		federation.NewFederationIssuerDataSource,
-		federation.NewFederationRuleDataSource,
-		federation.NewFederationRuleWorkspacesDataSource,
-		files.NewFileDataSource,
-		files.NewFilesDataSource,
-		memorystores.NewMemoryDataSource,
-		memorystores.NewMemoriesDataSource,
-		memorystores.NewMemoryStoreDataSource,
-		memorystores.NewMemoryStoresDataSource,
-		models.NewModelDataSource,
-		models.NewModelsDataSource,
-		organizations.NewOrganizationDataSource,
-		organizations.NewOrganizationMemberDataSource,
-		organizations.NewOrganizationMembersDataSource,
-		organizations.NewInviteDataSource,
-		organizations.NewInvitesDataSource,
-		serviceaccounts.NewServiceAccountsDataSource,
-		serviceaccounts.NewServiceAccountDataSource,
-		serviceaccounts.NewServiceAccountWorkspacesDataSource,
-		skills.NewSkillDataSource,
-		skills.NewSkillVersionDataSource,
-		skills.NewSkillVersionsDataSource,
-		skills.NewSkillsDataSource,
-		userprofiles.NewUserProfileDataSource,
-		userprofiles.NewUserProfilesDataSource,
-		workspaces.NewWorkspaceDataSource,
-		workspaces.NewWorkspaceMemberDataSource,
-		workspaces.NewWorkspaceMembersDataSource,
-		workspaces.NewWorkspaceRateLimitsDataSource,
-		workspaces.NewWorkspacesDataSource,
+	regs := dataSourceRegistrations()
+	factories := make([]func() datasource.DataSource, 0, len(regs))
+	for _, reg := range regs {
+		factories = append(factories, p.gateDataSource(reg))
 	}
+	return factories
 }
 
-func New(version string) func() provider.Provider {
+func New(version string, opts ...Option) func() provider.Provider {
 	return func() provider.Provider {
-		return &AnthropicProvider{
+		p := &AnthropicProvider{
 			version: version,
 		}
+		for _, opt := range opts {
+			opt(p)
+		}
+		return p
 	}
 }
