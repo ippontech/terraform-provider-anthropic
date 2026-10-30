@@ -25,9 +25,13 @@ jobs:
             release-assets.githubusercontent.com:443
             storage.googleapis.com:443
 
+      # Full history: .golangci.yml reports only code that differs from
+      # origin/main (new-from-merge-base). Without that ref golangci-lint
+      # silently falls back to reporting every existing finding.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -43,6 +47,64 @@ jobs:
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # Keep in step with golangci-lint in mise.toml. golangci-lint refuses a
+          # module whose go.mod toolchain is a newer Go minor than the Go its
+          # binary was built with (v2.15.0: go1.27.0).
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
+          version: v2.15.0
+
+      # .golangci.yml reports only code that differs from origin/main, for
+      # every linter. The standard linters (errcheck, govet, ineffassign,
+      # staticcheck, unused) have no finding on the whole tree, so they keep
+      # running on every line, as before that file existed. The action above
+      # put golangci-lint on the PATH.
+      - name: Run the standard linters on the whole tree
+        run: golangci-lint run --no-config
+
+  # The complexity ratchet (tools/complexity, `make complexity`): every function
+  # in the non-test Go files under internal/ scores 20 or less in cognitive
+  # complexity, unless it already scored more at the merge base and its score
+  # did not rise. Nothing is committed: once no function on main scores above
+  # 20, the cap is absolute. A required check: it fails, it does not warn.
+  complexity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            proxy.golang.org:443
+            release-assets.githubusercontent.com:443
+            storage.googleapis.com:443
+
+      # The whole history, so that the merge base exists.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      # The ratchet's own tests: tools/ is a separate module, which the root
+      # `go test ./...` of the test job does not reach.
+      - name: Test the complexity ratchet
+        run: go test -C tools ./complexity
+
+      # BASE_SHA is the base branch's commit of the pull request, or of the
+      # merge queue entry; the ratchet compares with its merge base with HEAD.
+      - name: Complexity ratchet
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: make --no-print-directory complexity COMPLEXITY_BASE="${BASE_SHA}" >> "${GITHUB_STEP_SUMMARY}"
 
   test:
     runs-on: ubuntu-latest
