@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -35,6 +36,7 @@ import (
 var _ resource.Resource = &VaultCredentialResource{}
 var _ resource.ResourceWithImportState = &VaultCredentialResource{}
 var _ resource.ResourceWithConfigValidators = &VaultCredentialResource{}
+var _ resource.ResourceWithModifyPlan = &VaultCredentialResource{}
 
 func NewVaultCredentialResource() resource.Resource {
 	return &VaultCredentialResource{}
@@ -74,9 +76,10 @@ type VaultCredentialResourceModel struct {
 	Refresh     types.Object `tfsdk:"refresh"`
 
 	// environment_variable fields
-	SecretName  types.String `tfsdk:"secret_name"`
-	SecretValue types.String `tfsdk:"secret_value"`
-	Networking  types.Object `tfsdk:"networking"`
+	SecretName        types.String `tfsdk:"secret_name"`
+	SecretValue       types.String `tfsdk:"secret_value"`
+	Networking        types.Object `tfsdk:"networking"`
+	InjectionLocation types.Object `tfsdk:"injection_location"`
 
 	// Rotation trigger (not a secret; stored in state)
 	TokenWoVersion types.Int64 `tfsdk:"token_wo_version"`
@@ -115,7 +118,19 @@ type credentialNetworkingModel struct {
 	AllowedHosts types.List   `tfsdk:"allowed_hosts"`
 }
 
+// credentialInjectionLocationModel holds the nested injection_location block for
+// environment_variable.
+type credentialInjectionLocationModel struct {
+	Header types.Bool `tfsdk:"header"`
+	Body   types.Bool `tfsdk:"body"`
+}
+
 // --- Attribute type maps for nested objects ---
+
+var credentialInjectionLocationAttrTypes = map[string]attr.Type{
+	"header": types.BoolType,
+	"body":   types.BoolType,
+}
 
 var credentialTokenEndpointAuthAttrTypes = map[string]attr.Type{
 	"type":          types.StringType,
@@ -245,7 +260,7 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 						Attributes: map[string]schema.Attribute{
 							"type": schema.StringAttribute{
 								Required:            true,
-								MarkdownDescription: "Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API cannot transition to or from `none`).",
+								MarkdownDescription: "Authentication method type. One of `none`, `client_secret_basic`, `client_secret_post`. Immutable: changing it forces replacement of the credential (the update API has no `none` variant and keeps the stored type when sent the other `client_secret_*` one).",
 								Validators:          []validator.String{stringvalidator.OneOf("none", "client_secret_basic", "client_secret_post")},
 								PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 							},
@@ -286,6 +301,38 @@ func (r *VaultCredentialResource) Schema(_ context.Context, _ resource.SchemaReq
 						ElementType:         types.StringType,
 						MarkdownDescription: "Hosts on which the secret is substituted. Required when `mode` is `limited`. Each entry is a bare hostname (`api.example.com`), an IPv4 address, or a `*.`-prefixed wildcard. Maximum 16 entries.",
 						Validators:          []validator.List{listvalidator.SizeAtMost(16)},
+					},
+				},
+			},
+			"injection_location": schema.SingleNestedAttribute{
+				Optional: true,
+				Computed: true,
+				MarkdownDescription: "Where in an outbound request the secret is substituted. Applicable for `environment_variable`. " +
+					"Without the block, the API enables both locations on create; in the block, a field left out defaults to `false` " +
+					"and at least one of `header` and `body` must be `true`. Removing the block keeps the current value, " +
+					"until the credential is replaced or recreated: the new credential gets both locations again, so keep the block " +
+					"to hold a narrower value. " +
+					"Enabling only `header` is the narrower choice: request bodies are often built from content the agent works with.",
+				// UseNonNullStateForUnknown, not UseStateForUnknown: state written
+				// before this attribute existed holds null, and planning that null
+				// for an environment_variable credential would fail the apply once
+				// Update stores the location the API returns.
+				PlanModifiers: []planmodifier.Object{
+					objectplanmodifier.UseNonNullStateForUnknown(),
+					injectionLocationNullUnlessEnvVar(),
+				},
+				Attributes: map[string]schema.Attribute{
+					"header": schema.BoolAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             booldefault.StaticBool(false),
+						MarkdownDescription: "Substitute the secret when its placeholder appears in a request header value. Defaults to `false` when `injection_location` is set.",
+					},
+					"body": schema.BoolAttribute{
+						Optional:            true,
+						Computed:            true,
+						Default:             booldefault.StaticBool(false),
+						MarkdownDescription: "Substitute the secret when its placeholder appears in the request body. Defaults to `false` when `injection_location` is set.",
 					},
 				},
 			},
@@ -363,44 +410,77 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 	}
 	authType := data.Type.ValueString()
 
-	// isSet reports whether a write-only/optional attribute is definitively
-	// provided in config. An Unknown value (e.g. an unresolved var/output ref)
-	// is treated as neither set nor missing, so it never trips a required- or
-	// conflicting-attribute check.
-	isSet := func(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
-	// isMissing reports whether a required attribute is definitively absent.
-	// Unknown is not missing — it may resolve to a value at apply time.
-	isMissing := func(v attr.Value) bool { return v.IsNull() && !v.IsUnknown() }
-
-	// Per auth type: the attributes that are required, plus the additional ones
-	// that are merely allowed. Any type-specific attribute in neither set is
-	// forbidden for that type. Driving the checks from this table keeps the three
-	// cases in lockstep instead of ~20 hand-written conditionals.
-	type credentialFieldRules struct {
-		required []string
-		optional []string
-	}
-	rules := map[string]credentialFieldRules{
-		"static_bearer":        {required: []string{"token", "mcp_server_url"}},
-		"mcp_oauth":            {required: []string{"access_token", "mcp_server_url"}, optional: []string{"expires_at", "refresh"}},
-		"environment_variable": {required: []string{"secret_name", "secret_value", "networking"}},
-	}
-	// Stable order so emitted diagnostics are deterministic.
-	fieldOrder := []string{"token", "access_token", "expires_at", "refresh", "mcp_server_url", "secret_name", "secret_value", "networking"}
-	fieldValues := map[string]attr.Value{
-		"token":          data.Token,
-		"access_token":   data.AccessToken,
-		"expires_at":     data.ExpiresAt,
-		"refresh":        data.Refresh,
-		"mcp_server_url": data.MCPServerURL,
-		"secret_name":    data.SecretName,
-		"secret_value":   data.SecretValue,
-		"networking":     data.Networking,
-	}
-
-	rule, ok := rules[authType]
+	rule, ok := credentialFieldRulesByType[authType]
 	if !ok {
 		return // unknown type already rejected by the OneOf validator on `type`
+	}
+	resp.Diagnostics.Append(validateCredentialFields(authType, rule, data)...)
+
+	// environment_variable with networking.mode == "limited" requires non-empty
+	// allowed_hosts. Skipped when an earlier check already failed.
+	if authType == "environment_variable" && isSet(data.Networking) {
+		var net credentialNetworkingModel
+		resp.Diagnostics.Append(data.Networking.As(ctx, &net, basetypes.ObjectAsOptions{})...)
+		if !resp.Diagnostics.HasError() && net.Mode.ValueString() == "limited" && (!isSet(net.AllowedHosts) || len(net.AllowedHosts.Elements()) == 0) {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("networking").AtName("allowed_hosts"),
+				"Missing required attribute",
+				"\"networking.allowed_hosts\" must contain at least one entry when \"networking.mode\" is \"limited\".",
+			)
+		}
+	}
+
+	if authType == "environment_variable" && isSet(data.InjectionLocation) {
+		resp.Diagnostics.Append(validateInjectionLocation(ctx, data.InjectionLocation)...)
+	}
+
+	resp.Diagnostics.Append(validateTokenWoVersion(data)...)
+}
+
+// isSet reports whether a write-only/optional attribute is definitively
+// provided in config. An Unknown value (e.g. an unresolved var/output ref) is
+// treated as neither set nor missing, so it never trips a required- or
+// conflicting-attribute check.
+func isSet(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
+
+// isMissing reports whether a required attribute is definitively absent.
+// Unknown is not missing — it may resolve to a value at apply time.
+func isMissing(v attr.Value) bool { return v.IsNull() && !v.IsUnknown() }
+
+// credentialFieldRules lists, for one auth type, the attributes that are
+// required, plus the additional ones that are merely allowed. Any
+// type-specific attribute in neither set is forbidden for that type. Driving
+// the checks from this table keeps the three cases in lockstep instead of
+// ~20 hand-written conditionals.
+type credentialFieldRules struct {
+	required []string
+	optional []string
+}
+
+var credentialFieldRulesByType = map[string]credentialFieldRules{
+	"static_bearer":        {required: []string{"token", "mcp_server_url"}},
+	"mcp_oauth":            {required: []string{"access_token", "mcp_server_url"}, optional: []string{"expires_at", "refresh"}},
+	"environment_variable": {required: []string{"secret_name", "secret_value", "networking"}, optional: []string{"injection_location"}},
+}
+
+// credentialFieldOrder is the stable order of the type-specific attributes,
+// so emitted diagnostics are deterministic.
+var credentialFieldOrder = []string{"token", "access_token", "expires_at", "refresh", "mcp_server_url", "secret_name", "secret_value", "networking", "injection_location"}
+
+// validateCredentialFields reports each required attribute of rule that is
+// missing and each attribute of another auth type that is set.
+func validateCredentialFields(authType string, rule credentialFieldRules, data VaultCredentialResourceModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	fieldValues := map[string]attr.Value{
+		"token":              data.Token,
+		"access_token":       data.AccessToken,
+		"expires_at":         data.ExpiresAt,
+		"refresh":            data.Refresh,
+		"mcp_server_url":     data.MCPServerURL,
+		"secret_name":        data.SecretName,
+		"secret_value":       data.SecretValue,
+		"networking":         data.Networking,
+		"injection_location": data.InjectionLocation,
 	}
 	required := make(map[string]bool, len(rule.required))
 	allowed := make(map[string]bool, len(rule.required)+len(rule.optional))
@@ -412,11 +492,11 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 		allowed[n] = true
 	}
 
-	for _, name := range fieldOrder {
+	for _, name := range credentialFieldOrder {
 		switch {
 		case required[name]:
 			if isMissing(fieldValues[name]) {
-				resp.Diagnostics.AddAttributeError(
+				diags.AddAttributeError(
 					path.Root(name),
 					"Missing required attribute",
 					fmt.Sprintf("%q is required when type is %q.", name, authType),
@@ -424,7 +504,7 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 			}
 		case !allowed[name]:
 			if isSet(fieldValues[name]) {
-				resp.Diagnostics.AddAttributeError(
+				diags.AddAttributeError(
 					path.Root(name),
 					"Conflicting attribute",
 					fmt.Sprintf("%q must not be set when type is %q.", name, authType),
@@ -432,35 +512,44 @@ func (v *vaultCredentialConfigValidator) ValidateResource(ctx context.Context, r
 			}
 		}
 	}
+	return diags
+}
 
-	// environment_variable with networking.mode == "limited" requires non-empty allowed_hosts.
-	if authType == "environment_variable" && !data.Networking.IsNull() && !data.Networking.IsUnknown() {
-		var net credentialNetworkingModel
-		resp.Diagnostics.Append(data.Networking.As(ctx, &net, basetypes.ObjectAsOptions{})...)
-		if !resp.Diagnostics.HasError() && net.Mode.ValueString() == "limited" {
-			if net.AllowedHosts.IsNull() || net.AllowedHosts.IsUnknown() || len(net.AllowedHosts.Elements()) == 0 {
-				resp.Diagnostics.AddAttributeError(
-					path.Root("networking").AtName("allowed_hosts"),
-					"Missing required attribute",
-					"\"networking.allowed_hosts\" must contain at least one entry when \"networking.mode\" is \"limited\".",
-				)
-			}
-		}
+// validateInjectionLocation checks that a configured injection_location keeps
+// at least one location enabled (the API answers 400 otherwise). A field left
+// out of a configured block defaults to false.
+func validateInjectionLocation(ctx context.Context, obj types.Object) diag.Diagnostics {
+	var loc credentialInjectionLocationModel
+	diags := obj.As(ctx, &loc, basetypes.ObjectAsOptions{})
+	isFalse := func(v types.Bool) bool { return v.IsNull() || (!v.IsUnknown() && !v.ValueBool()) }
+	if !diags.HasError() && isFalse(loc.Header) && isFalse(loc.Body) {
+		diags.AddAttributeError(
+			path.Root("injection_location"),
+			"Invalid injection location",
+			"At least one of \"injection_location.header\" and \"injection_location.body\" must be true: "+
+				"a credential needs one location to substitute the secret into. Fields left out default to false.",
+		)
 	}
+	return diags
+}
 
-	// A write-only secret cannot be diffed by Terraform, so rotation relies on
-	// token_wo_version: bumping it is what triggers the secret to be re-pushed
-	// on the next apply. Require it whenever a secret is configured, otherwise
-	// changing the secret in config would be a silent no-op.
+// validateTokenWoVersion requires token_wo_version whenever a write-only
+// secret is configured. A write-only secret cannot be diffed by Terraform, so
+// rotation relies on token_wo_version: bumping it is what triggers the secret
+// to be re-pushed on the next apply; without it, changing the secret in
+// config would be a silent no-op.
+func validateTokenWoVersion(data VaultCredentialResourceModel) diag.Diagnostics {
+	var diags diag.Diagnostics
 	secretConfigured := isSet(data.Token) || isSet(data.AccessToken) || isSet(data.SecretValue)
 	if secretConfigured && isMissing(data.TokenWoVersion) {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("token_wo_version"),
 			"Missing required attribute",
 			"\"token_wo_version\" must be set when a write-only secret (token / access_token / secret_value) is configured. "+
 				"It is the rotation trigger: Terraform cannot diff write-only values, so increment it to re-push the secret. Set it to 1 on initial creation.",
 		)
 	}
+	return diags
 }
 
 // --- Configure ---
@@ -484,6 +573,58 @@ func (r *VaultCredentialResource) Configure(_ context.Context, req resource.Conf
 	}
 
 	r.client = pd.Client
+}
+
+// --- ModifyPlan ---
+
+// ModifyPlan keeps updated_at when the plan changes nothing else. The header
+// and body fields of injection_location have a default, which the framework
+// applies even when the block is not configured: it then sees a change and
+// plans updated_at as unknown, and UseNonNullStateForUnknown restores the
+// stored injection_location. Without this, every credential configured without
+// an injection_location block (or after the block was removed) would plan an
+// in-place update that changes nothing, on every plan.
+//
+// State written before injection_location existed holds null, which stays
+// unknown in the plan (see the attribute's plan modifiers) until a refresh
+// reads it. With nothing else changed, that unknown changes nothing either, so
+// the stored null is kept rather than an update planned.
+func (r *VaultCredentialResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+
+	var updatedAt types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("updated_at"), &updatedAt)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	unchanged := resp.Plan
+	resp.Diagnostics.Append(unchanged.SetAttribute(ctx, path.Root("updated_at"), updatedAt)...)
+	resp.Diagnostics.Append(keepUnreadInjectionLocation(ctx, req, &unchanged)...)
+	if !resp.Diagnostics.HasError() && unchanged.Raw.Equal(req.State.Raw) {
+		resp.Plan = unchanged
+	}
+}
+
+// keepUnreadInjectionLocation sets plan's injection_location back to the
+// stored null when the plan left it unknown only because state has none and
+// the block is not configured.
+func keepUnreadInjectionLocation(ctx context.Context, req resource.ModifyPlanRequest, plan *tfsdk.Plan) diag.Diagnostics {
+	var planned, stored types.Object
+	diags := plan.GetAttribute(ctx, path.Root("injection_location"), &planned)
+	diags.Append(req.State.GetAttribute(ctx, path.Root("injection_location"), &stored)...)
+	if diags.HasError() || !planned.IsUnknown() || !stored.IsNull() {
+		return diags
+	}
+	var configured types.Object
+	diags.Append(req.Config.GetAttribute(ctx, path.Root("injection_location"), &configured)...)
+	if diags.HasError() || !configured.IsNull() {
+		return diags
+	}
+	diags.Append(plan.SetAttribute(ctx, path.Root("injection_location"), stored)...)
+	return diags
 }
 
 // --- Create ---
@@ -611,24 +752,7 @@ func (r *VaultCredentialResource) Update(ctx context.Context, req resource.Updat
 		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
-	// Re-push auth on any change to a mutable auth field. token_wo_version covers
-	// write-only secret rotation (token / access_token / refresh_token / client_secret /
-	// secret_value, which Terraform cannot diff). The remaining mutable, non-secret
-	// auth fields are networking (environment_variable) and expires_at / refresh
-	// (mcp_oauth); immutable auth fields are RequiresReplace and never reach Update.
-	needsAuthUpdate := !plan.TokenWoVersion.Equal(state.TokenWoVersion)
-	switch plan.Type.ValueString() {
-	case "environment_variable":
-		if !plan.Networking.Equal(state.Networking) {
-			needsAuthUpdate = true
-		}
-	case "mcp_oauth":
-		if !plan.ExpiresAt.Equal(state.ExpiresAt) || !plan.Refresh.Equal(state.Refresh) {
-			needsAuthUpdate = true
-		}
-	}
-
-	if needsAuthUpdate {
+	if authUpdateNeeded(plan, state) {
 		authUpdate, d := buildUpdateAuthUnion(ctx, req.Config, &plan)
 		resp.Diagnostics.Append(d...)
 		if resp.Diagnostics.HasError() {
@@ -664,16 +788,18 @@ func (r *VaultCredentialResource) Delete(ctx context.Context, req resource.Delet
 		_, err := r.client.Beta.Vaults.Credentials.Archive(ctx, data.ID.ValueString(), anthropic.BetaVaultCredentialArchiveParams{
 			VaultID: data.VaultID.ValueString(),
 		})
-		if err != nil {
+		if err != nil && !providerrors.IsNotFound(err) {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive vault credential: %s", err))
 		}
 		return
 	}
 
+	// A 404 means the credential (or its vault) is already gone, which is
+	// what destroy wants.
 	_, err := r.client.Beta.Vaults.Credentials.Delete(ctx, data.ID.ValueString(), anthropic.BetaVaultCredentialDeleteParams{
 		VaultID: data.VaultID.ValueString(),
 	})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete vault credential: %s", err))
 	}
 }
@@ -699,167 +825,250 @@ func (r *VaultCredentialResource) ImportState(ctx context.Context, req resource.
 // Helper functions
 // ============================================================================
 
+// authUpdateNeeded reports whether Update must re-push the auth object: on any
+// change to a mutable auth field. token_wo_version covers write-only secret
+// rotation (token / access_token / refresh_token / client_secret / secret_value,
+// which Terraform cannot diff). The remaining mutable, non-secret auth fields are
+// networking / injection_location (environment_variable) and expires_at /
+// refresh (mcp_oauth); immutable auth fields are RequiresReplace and never reach
+// Update. An unknown injection_location (state without one, not refreshed yet)
+// sends nothing, so it is not a change.
+func authUpdateNeeded(plan, state VaultCredentialResourceModel) bool {
+	if !plan.TokenWoVersion.Equal(state.TokenWoVersion) {
+		return true
+	}
+	switch plan.Type.ValueString() {
+	case "environment_variable":
+		locationChanged := !plan.InjectionLocation.IsUnknown() && !plan.InjectionLocation.Equal(state.InjectionLocation)
+		return !plan.Networking.Equal(state.Networking) || locationChanged
+	case "mcp_oauth":
+		return !plan.ExpiresAt.Equal(state.ExpiresAt) || !plan.Refresh.Equal(state.Refresh)
+	}
+	return false
+}
+
 // buildCreateAuthUnion builds the BetaVaultCredentialNewParamsAuthUnion from plan + config (write-only).
 // Write-only values are read from cfg (tfsdk.Config) because they are absent from plan/state.
 func buildCreateAuthUnion(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialNewParamsAuthUnion, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
 	switch data.Type.ValueString() {
 	case "static_bearer":
-		var token types.String
-		diags.Append(cfg.GetAttribute(ctx, path.Root("token"), &token)...)
-		if diags.HasError() {
-			return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
-		}
-		return anthropic.BetaVaultCredentialNewParamsAuthUnion{
-			OfStaticBearer: &anthropic.BetaManagedAgentsStaticBearerCreateParams{
-				Token:        token.ValueString(),
-				MCPServerURL: data.MCPServerURL.ValueString(),
-				Type:         "static_bearer",
-			},
-		}, diags
-
+		return buildStaticBearerCreateAuth(ctx, cfg, data)
 	case "mcp_oauth":
-		var accessToken types.String
-		diags.Append(cfg.GetAttribute(ctx, path.Root("access_token"), &accessToken)...)
-		if diags.HasError() {
-			return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
-		}
-
-		oauthParams := &anthropic.BetaManagedAgentsMCPOAuthCreateParams{
-			AccessToken:  accessToken.ValueString(),
-			MCPServerURL: data.MCPServerURL.ValueString(),
-			Type:         "mcp_oauth",
-		}
-
-		if !data.ExpiresAt.IsNull() && !data.ExpiresAt.IsUnknown() {
-			t, err := time.Parse(time.RFC3339, data.ExpiresAt.ValueString())
-			if err != nil {
-				diags.AddAttributeError(path.Root("expires_at"), "Invalid timestamp", fmt.Sprintf("Cannot parse expires_at as RFC3339: %s", err))
-				return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
-			}
-			oauthParams.ExpiresAt = param.NewOpt(t)
-		}
-
-		if !data.Refresh.IsNull() && !data.Refresh.IsUnknown() {
-			refreshParams, d := buildRefreshParams(ctx, cfg, data.Refresh)
-			diags.Append(d...)
-			if diags.HasError() {
-				return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
-			}
-			oauthParams.Refresh = refreshParams
-		}
-
-		return anthropic.BetaVaultCredentialNewParamsAuthUnion{OfMCPOAuth: oauthParams}, diags
-
+		return buildMCPOAuthCreateAuth(ctx, cfg, data)
 	case "environment_variable":
-		var secretValue types.String
-		diags.Append(cfg.GetAttribute(ctx, path.Root("secret_value"), &secretValue)...)
-		if diags.HasError() {
-			return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
-		}
-
-		networking, d := buildNetworkingUnion(ctx, data.Networking)
-		diags.Append(d...)
-		if diags.HasError() {
-			return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
-		}
-
-		return anthropic.BetaVaultCredentialNewParamsAuthUnion{
-			OfEnvironmentVariable: &anthropic.BetaManagedAgentsEnvironmentVariableCreateParams{
-				SecretName:  data.SecretName.ValueString(),
-				SecretValue: secretValue.ValueString(),
-				Networking:  networking,
-				Type:        "environment_variable",
-			},
-		}, diags
+		return buildEnvironmentVariableCreateAuth(ctx, cfg, data)
 	}
 
+	var diags diag.Diagnostics
 	diags.AddError("Internal Error", fmt.Sprintf("Unknown credential type: %s", data.Type.ValueString()))
 	return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
 }
 
-// buildUpdateAuthUnion builds the BetaVaultCredentialUpdateParamsAuthUnion for updates.
-func buildUpdateAuthUnion(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialUpdateParamsAuthUnion, diag.Diagnostics) {
-	var diags diag.Diagnostics
+func buildStaticBearerCreateAuth(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialNewParamsAuthUnion, diag.Diagnostics) {
+	token, diags := readSecret(ctx, cfg, path.Root("token"))
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
+	}
+	return anthropic.BetaVaultCredentialNewParamsAuthUnion{
+		OfStaticBearer: &anthropic.BetaManagedAgentsStaticBearerCreateParams{
+			Token:        token.ValueString(),
+			MCPServerURL: data.MCPServerURL.ValueString(),
+			Type:         "static_bearer",
+		},
+	}, diags
+}
 
-	switch data.Type.ValueString() {
-	case "static_bearer":
-		var token types.String
-		diags.Append(cfg.GetAttribute(ctx, path.Root("token"), &token)...)
-		if diags.HasError() {
-			return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
-		}
-		updateParams := &anthropic.BetaManagedAgentsStaticBearerUpdateParams{
-			Type: "static_bearer",
-		}
-		if !token.IsNull() && !token.IsUnknown() && token.ValueString() != "" {
-			updateParams.Token = param.NewOpt(token.ValueString())
-		}
-		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{OfStaticBearer: updateParams}, diags
-
-	case "mcp_oauth":
-		var accessToken types.String
-		diags.Append(cfg.GetAttribute(ctx, path.Root("access_token"), &accessToken)...)
-		if diags.HasError() {
-			return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
-		}
-
-		oauthUpdate := &anthropic.BetaManagedAgentsMCPOAuthUpdateParams{
-			Type: "mcp_oauth",
-		}
-		if !accessToken.IsNull() && !accessToken.IsUnknown() && accessToken.ValueString() != "" {
-			oauthUpdate.AccessToken = param.NewOpt(accessToken.ValueString())
-		}
-
-		if !data.ExpiresAt.IsNull() && !data.ExpiresAt.IsUnknown() {
-			t, err := time.Parse(time.RFC3339, data.ExpiresAt.ValueString())
-			if err != nil {
-				diags.AddAttributeError(path.Root("expires_at"), "Invalid timestamp", fmt.Sprintf("Cannot parse expires_at as RFC3339: %s", err))
-				return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
-			}
-			oauthUpdate.ExpiresAt = param.NewOpt(t)
-		}
-
-		if !data.Refresh.IsNull() && !data.Refresh.IsUnknown() {
-			refreshUpdate, d := buildRefreshUpdateParams(ctx, cfg, data.Refresh)
-			diags.Append(d...)
-			if diags.HasError() {
-				return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
-			}
-			oauthUpdate.Refresh = refreshUpdate
-		}
-
-		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{OfMCPOAuth: oauthUpdate}, diags
-
-	case "environment_variable":
-		var secretValue types.String
-		diags.Append(cfg.GetAttribute(ctx, path.Root("secret_value"), &secretValue)...)
-		if diags.HasError() {
-			return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
-		}
-
-		envUpdate := &anthropic.BetaManagedAgentsEnvironmentVariableUpdateParams{
-			Type: "environment_variable",
-		}
-		if !secretValue.IsNull() && !secretValue.IsUnknown() && secretValue.ValueString() != "" {
-			envUpdate.SecretValue = param.NewOpt(secretValue.ValueString())
-		}
-
-		if !data.Networking.IsNull() && !data.Networking.IsUnknown() {
-			networking, d := buildNetworkingUnion(ctx, data.Networking)
-			diags.Append(d...)
-			if diags.HasError() {
-				return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
-			}
-			envUpdate.Networking = networking
-		}
-
-		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{OfEnvironmentVariable: envUpdate}, diags
+func buildMCPOAuthCreateAuth(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialNewParamsAuthUnion, diag.Diagnostics) {
+	accessToken, diags := readSecret(ctx, cfg, path.Root("access_token"))
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
 	}
 
+	oauthParams := &anthropic.BetaManagedAgentsMCPOAuthCreateParams{
+		AccessToken:  accessToken.ValueString(),
+		MCPServerURL: data.MCPServerURL.ValueString(),
+		Type:         "mcp_oauth",
+	}
+
+	expiresAt, d := parseExpiresAt(data.ExpiresAt)
+	diags.Append(d...)
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
+	}
+	oauthParams.ExpiresAt = expiresAt
+
+	if isSet(data.Refresh) {
+		refreshParams, d := buildRefreshParams(ctx, cfg, data.Refresh)
+		diags.Append(d...)
+		if diags.HasError() {
+			return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
+		}
+		oauthParams.Refresh = refreshParams
+	}
+
+	return anthropic.BetaVaultCredentialNewParamsAuthUnion{OfMCPOAuth: oauthParams}, diags
+}
+
+func buildEnvironmentVariableCreateAuth(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialNewParamsAuthUnion, diag.Diagnostics) {
+	secretValue, diags := readSecret(ctx, cfg, path.Root("secret_value"))
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
+	}
+
+	networking, d := buildNetworkingUnion(ctx, data.Networking)
+	diags.Append(d...)
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
+	}
+
+	envParams := &anthropic.BetaManagedAgentsEnvironmentVariableCreateParams{
+		SecretName:  data.SecretName.ValueString(),
+		SecretValue: secretValue.ValueString(),
+		Networking:  networking,
+		Type:        "environment_variable",
+	}
+	// Omitted when unknown (no block in config): the API then enables both
+	// locations, and the response fills the Computed value.
+	header, body, ok, d := injectionLocationFromPlan(ctx, data.InjectionLocation)
+	diags.Append(d...)
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialNewParamsAuthUnion{}, diags
+	}
+	if ok {
+		envParams.InjectionLocation = anthropic.BetaManagedAgentsInjectionLocationParams{
+			Header: param.NewOpt(header),
+			Body:   param.NewOpt(body),
+		}
+	}
+
+	return anthropic.BetaVaultCredentialNewParamsAuthUnion{OfEnvironmentVariable: envParams}, diags
+}
+
+// buildUpdateAuthUnion builds the BetaVaultCredentialUpdateParamsAuthUnion for updates.
+func buildUpdateAuthUnion(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialUpdateParamsAuthUnion, diag.Diagnostics) {
+	switch data.Type.ValueString() {
+	case "static_bearer":
+		return buildStaticBearerUpdateAuth(ctx, cfg)
+	case "mcp_oauth":
+		return buildMCPOAuthUpdateAuth(ctx, cfg, data)
+	case "environment_variable":
+		return buildEnvironmentVariableUpdateAuth(ctx, cfg, data)
+	}
+
+	var diags diag.Diagnostics
 	diags.AddError("Internal Error", fmt.Sprintf("Unknown credential type: %s", data.Type.ValueString()))
 	return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+}
+
+func buildStaticBearerUpdateAuth(ctx context.Context, cfg tfsdk.Config) (anthropic.BetaVaultCredentialUpdateParamsAuthUnion, diag.Diagnostics) {
+	token, diags := readSecret(ctx, cfg, path.Root("token"))
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+	}
+	return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{OfStaticBearer: &anthropic.BetaManagedAgentsStaticBearerUpdateParams{
+		Type:  "static_bearer",
+		Token: nonEmptySecret(token),
+	}}, diags
+}
+
+func buildMCPOAuthUpdateAuth(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialUpdateParamsAuthUnion, diag.Diagnostics) {
+	accessToken, diags := readSecret(ctx, cfg, path.Root("access_token"))
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+	}
+
+	oauthUpdate := &anthropic.BetaManagedAgentsMCPOAuthUpdateParams{
+		Type:        "mcp_oauth",
+		AccessToken: nonEmptySecret(accessToken),
+	}
+
+	expiresAt, d := parseExpiresAt(data.ExpiresAt)
+	diags.Append(d...)
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+	}
+	oauthUpdate.ExpiresAt = expiresAt
+
+	if isSet(data.Refresh) {
+		refreshUpdate, d := buildRefreshUpdateParams(ctx, cfg, data.Refresh)
+		diags.Append(d...)
+		if diags.HasError() {
+			return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+		}
+		oauthUpdate.Refresh = refreshUpdate
+	}
+
+	return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{OfMCPOAuth: oauthUpdate}, diags
+}
+
+func buildEnvironmentVariableUpdateAuth(ctx context.Context, cfg tfsdk.Config, data *VaultCredentialResourceModel) (anthropic.BetaVaultCredentialUpdateParamsAuthUnion, diag.Diagnostics) {
+	secretValue, diags := readSecret(ctx, cfg, path.Root("secret_value"))
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+	}
+
+	envUpdate := &anthropic.BetaManagedAgentsEnvironmentVariableUpdateParams{
+		Type:        "environment_variable",
+		SecretValue: nonEmptySecret(secretValue),
+	}
+
+	if isSet(data.Networking) {
+		networking, d := buildNetworkingUnion(ctx, data.Networking)
+		diags.Append(d...)
+		if diags.HasError() {
+			return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+		}
+		envUpdate.Networking = networking
+	}
+
+	// The update merges injection_location per field; both are sent so the
+	// stored value converges on the plan whatever it was before.
+	header, body, ok, d := injectionLocationFromPlan(ctx, data.InjectionLocation)
+	diags.Append(d...)
+	if diags.HasError() {
+		return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{}, diags
+	}
+	if ok {
+		envUpdate.InjectionLocation = anthropic.BetaManagedAgentsInjectionLocationUpdateParams{
+			Header: param.NewOpt(header),
+			Body:   param.NewOpt(body),
+		}
+	}
+
+	return anthropic.BetaVaultCredentialUpdateParamsAuthUnion{OfEnvironmentVariable: envUpdate}, diags
+}
+
+// readSecret reads the write-only attribute at p from the configuration, the
+// only place a write-only value is available.
+func readSecret(ctx context.Context, cfg tfsdk.Config, p path.Path) (types.String, diag.Diagnostics) {
+	var v types.String
+	diags := cfg.GetAttribute(ctx, p, &v)
+	return v, diags
+}
+
+// nonEmptySecret is the update value of a secret: a known, non-empty secret
+// replaces the stored one; an empty, null or unknown one is left out, which
+// keeps it.
+func nonEmptySecret(v types.String) param.Opt[string] {
+	if !isSet(v) || v.ValueString() == "" {
+		return param.Opt[string]{}
+	}
+	return param.NewOpt(v.ValueString())
+}
+
+// parseExpiresAt parses a known expires_at as RFC 3339; a null or unknown one
+// is left out.
+func parseExpiresAt(v types.String) (param.Opt[time.Time], diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if !isSet(v) {
+		return param.Opt[time.Time]{}, diags
+	}
+	t, err := time.Parse(time.RFC3339, v.ValueString())
+	if err != nil {
+		diags.AddAttributeError(path.Root("expires_at"), "Invalid timestamp", fmt.Sprintf("Cannot parse expires_at as RFC3339: %s", err))
+		return param.Opt[time.Time]{}, diags
+	}
+	return param.NewOpt(t), diags
 }
 
 // buildRefreshParams builds BetaManagedAgentsMCPOAuthRefreshParams reading write-only
@@ -918,65 +1127,68 @@ func buildRefreshUpdateParams(ctx context.Context, cfg tfsdk.Config, refreshObj 
 		return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParams{}, diags
 	}
 
-	var refreshToken types.String
-	diags.Append(cfg.GetAttribute(ctx, path.Root("refresh").AtName("refresh_token"), &refreshToken)...)
+	refreshToken, d := readSecret(ctx, cfg, path.Root("refresh").AtName("refresh_token"))
+	diags.Append(d...)
 	if diags.HasError() {
 		return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParams{}, diags
 	}
 
-	updateParams := anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParams{}
-
-	if !refreshToken.IsNull() && !refreshToken.IsUnknown() && refreshToken.ValueString() != "" {
-		updateParams.RefreshToken = param.NewOpt(refreshToken.ValueString())
+	updateParams := anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParams{
+		RefreshToken: nonEmptySecret(refreshToken),
 	}
-	if !refreshModel.Scope.IsNull() && !refreshModel.Scope.IsUnknown() {
+	if isSet(refreshModel.Scope) {
 		updateParams.Scope = param.NewOpt(refreshModel.Scope.ValueString())
 	}
 
-	if !refreshModel.TokenEndpointAuth.IsNull() && !refreshModel.TokenEndpointAuth.IsUnknown() {
-		var teaModel credentialTokenEndpointAuthModel
-		diags.Append(refreshModel.TokenEndpointAuth.As(ctx, &teaModel, basetypes.ObjectAsOptions{})...)
+	if isSet(refreshModel.TokenEndpointAuth) {
+		tea, d := buildTokenEndpointAuthUpdate(ctx, cfg, refreshModel.TokenEndpointAuth)
+		diags.Append(d...)
 		if diags.HasError() {
 			return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParams{}, diags
 		}
-
-		// Only client_secret_basic/client_secret_post are re-sent on update (e.g. to
-		// rotate the client secret). "none" has no update-union variant in the SDK
-		// and is never transmitted here; a change of token_endpoint_auth.type is
-		// RequiresReplace, so a transition to/from "none" recreates the resource
-		// rather than reaching this update path.
-		teaType := teaModel.Type.ValueString()
-		if teaType == "client_secret_basic" || teaType == "client_secret_post" {
-			var cs types.String
-			diags.Append(cfg.GetAttribute(ctx, path.Root("refresh").AtName("token_endpoint_auth").AtName("client_secret"), &cs)...)
-			if diags.HasError() {
-				return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParams{}, diags
-			}
-			if teaType == "client_secret_basic" {
-				tea := &anthropic.BetaManagedAgentsTokenEndpointAuthBasicUpdateParam{
-					Type: "client_secret_basic",
-				}
-				if !cs.IsNull() && !cs.IsUnknown() && cs.ValueString() != "" {
-					tea.ClientSecret = param.NewOpt(cs.ValueString())
-				}
-				updateParams.TokenEndpointAuth = anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion{
-					OfClientSecretBasic: tea,
-				}
-			} else {
-				tea := &anthropic.BetaManagedAgentsTokenEndpointAuthPostUpdateParam{
-					Type: "client_secret_post",
-				}
-				if !cs.IsNull() && !cs.IsUnknown() && cs.ValueString() != "" {
-					tea.ClientSecret = param.NewOpt(cs.ValueString())
-				}
-				updateParams.TokenEndpointAuth = anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion{
-					OfClientSecretPost: tea,
-				}
-			}
-		}
+		updateParams.TokenEndpointAuth = tea
 	}
 
 	return updateParams, diags
+}
+
+// buildTokenEndpointAuthUpdate builds the token endpoint auth union for
+// updates. Only client_secret_basic/client_secret_post are re-sent on update
+// (e.g. to rotate the client secret). "none" has no update-union variant in
+// the SDK and is never transmitted here; a change of token_endpoint_auth.type
+// is RequiresReplace, so a transition to/from "none" recreates the resource
+// rather than reaching this update path.
+func buildTokenEndpointAuthUpdate(ctx context.Context, cfg tfsdk.Config, obj types.Object) (anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion, diag.Diagnostics) {
+	var teaModel credentialTokenEndpointAuthModel
+	diags := obj.As(ctx, &teaModel, basetypes.ObjectAsOptions{})
+	if diags.HasError() {
+		return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion{}, diags
+	}
+
+	teaType := teaModel.Type.ValueString()
+	if teaType != "client_secret_basic" && teaType != "client_secret_post" {
+		return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion{}, diags
+	}
+
+	cs, d := readSecret(ctx, cfg, path.Root("refresh").AtName("token_endpoint_auth").AtName("client_secret"))
+	diags.Append(d...)
+	if diags.HasError() {
+		return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion{}, diags
+	}
+	if teaType == "client_secret_basic" {
+		return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion{
+			OfClientSecretBasic: &anthropic.BetaManagedAgentsTokenEndpointAuthBasicUpdateParam{
+				Type:         "client_secret_basic",
+				ClientSecret: nonEmptySecret(cs),
+			},
+		}, diags
+	}
+	return anthropic.BetaManagedAgentsMCPOAuthRefreshUpdateParamsTokenEndpointAuthUnion{
+		OfClientSecretPost: &anthropic.BetaManagedAgentsTokenEndpointAuthPostUpdateParam{
+			Type:         "client_secret_post",
+			ClientSecret: nonEmptySecret(cs),
+		},
+	}, diags
 }
 
 // buildTokenEndpointAuthUnion builds the token endpoint auth union for Create.
@@ -1052,6 +1264,39 @@ func buildNetworkingUnion(ctx context.Context, networkingObj types.Object) (anth
 	}, diags
 }
 
+// injectionLocationFromPlan returns the planned injection_location fields, with
+// ok false when the object or one of its fields is null or unknown (nothing to
+// send: the API keeps or resolves the value and the response fills it in).
+func injectionLocationFromPlan(ctx context.Context, obj types.Object) (header, body, ok bool, diags diag.Diagnostics) {
+	if obj.IsNull() || obj.IsUnknown() {
+		return false, false, false, diags
+	}
+	var loc credentialInjectionLocationModel
+	diags.Append(obj.As(ctx, &loc, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return false, false, false, diags
+	}
+	for _, v := range []types.Bool{loc.Header, loc.Body} {
+		if v.IsNull() || v.IsUnknown() {
+			return false, false, false, diags
+		}
+	}
+	return loc.Header.ValueBool(), loc.Body.ValueBool(), true, diags
+}
+
+// mapInjectionLocationResponseToObject maps the resolved injection_location of
+// an environment_variable credential. The API always returns both fields; an
+// absent object maps to null.
+func mapInjectionLocationResponseToObject(auth anthropic.BetaManagedAgentsCredentialAuthUnion) (types.Object, diag.Diagnostics) {
+	if !auth.JSON.InjectionLocation.Valid() {
+		return types.ObjectNull(credentialInjectionLocationAttrTypes), nil
+	}
+	return types.ObjectValue(credentialInjectionLocationAttrTypes, map[string]attr.Value{
+		"header": types.BoolValue(auth.InjectionLocation.Header),
+		"body":   types.BoolValue(auth.InjectionLocation.Body),
+	})
+}
+
 // mcpServerURLForState returns the user-provided URL when it is equivalent to
 // the API value modulo a trailing slash. The API normalizes a bare host by
 // appending "/" (e.g. "https://mcp.example.com" -> "https://mcp.example.com/").
@@ -1123,6 +1368,7 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 		data.Refresh = types.ObjectNull(credentialRefreshAttrTypes)
 		data.SecretName = types.StringNull()
 		data.Networking = types.ObjectNull(credentialNetworkingAttrTypes)
+		data.InjectionLocation = types.ObjectNull(credentialInjectionLocationAttrTypes)
 
 	case "mcp_oauth":
 		data.MCPServerURL = mcpServerURLForState(data.MCPServerURL, cred.Auth.MCPServerURL)
@@ -1142,6 +1388,7 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 		// Clear env-var fields
 		data.SecretName = types.StringNull()
 		data.Networking = types.ObjectNull(credentialNetworkingAttrTypes)
+		data.InjectionLocation = types.ObjectNull(credentialInjectionLocationAttrTypes)
 
 	case "environment_variable":
 		// SecretName and Networking are flat fields on the union struct.
@@ -1150,6 +1397,9 @@ func mapCredentialResponseToState(ctx context.Context, cred *anthropic.BetaManag
 		networkingObj, d := mapNetworkingResponseToObject(ctx, cred.Auth.Networking)
 		diags.Append(d...)
 		data.Networking = networkingObj
+		injectionLocationObj, d := mapInjectionLocationResponseToObject(cred.Auth)
+		diags.Append(d...)
+		data.InjectionLocation = injectionLocationObj
 		// Clear oauth/bearer fields
 		data.MCPServerURL = types.StringNull()
 		data.ExpiresAt = types.StringNull()

@@ -1,0 +1,22 @@
+---
+page_title: "anthropic_plugins Data Source - anthropic"
+subcategory: "Claude Enterprise"
+description: |-
+  Lists the plugins of a Claude Enterprise organization.
+---
+
+# anthropic_plugins (Data Source)
+
+Lists the plugins of a Claude Enterprise organization, through the [Plugins API](https://platform.claude.com/docs/en/manage-claude/plugins-api#list-plugins): in its marketplaces and in members' personal ones, newest first, with optional filters. Plugins Anthropic publishes and standalone skills are not listed. Each plugin's display fields describe its served version, and a change to `content_scan` alone does not move `updated_at`: a security inventory reads `reach` and `content_scan` on every run.
+
+> **API**: `GET /v1/organizations/plugins` (Plugins API).
+> **Auth**: Claude Enterprise Admin API key with the `read:plugins` scope (`read:org_audit` and `read:compliance_org_data` work too), in `admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`, created in claude.ai under Organization settings > API. A Claude Console Admin API key does not work.
+> **Beta header**: `ce-plugins-2026-09-01`, sent by the provider (the endpoints answer 404 without it).
+> **Availability**: beta, Claude Enterprise organizations only, and not organizations with HIPAA readiness enabled.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/plugins/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

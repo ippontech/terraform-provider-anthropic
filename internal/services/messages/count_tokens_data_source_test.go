@@ -126,3 +126,38 @@ data "anthropic_count_tokens" "test_thinking" {
   ]
 }
 `
+
+// claude-sonnet-5-5 rejects thinking.type = "disabled" on this endpoint and
+// asks for between_tools instead (probed 2026-10-08, see CLAUDE.md).
+func TestAccCountTokensDataSource_betweenTools(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCountTokensDataSourceBetweenToolsConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.anthropic_count_tokens.between_tools", "thinking.type", "between_tools"),
+					resource.TestCheckResourceAttrSet("data.anthropic_count_tokens.between_tools", "input_tokens"),
+				),
+			},
+		},
+	})
+}
+
+const testAccCountTokensDataSourceBetweenToolsConfig = `
+data "anthropic_count_tokens" "between_tools" {
+  model = "claude-sonnet-5-5"
+
+  thinking = {
+    type = "between_tools"
+  }
+
+  messages = [
+    {
+      role    = "user"
+      content = "Hello, Claude"
+    }
+  ]
+}
+`
