@@ -34,4 +34,9 @@ run "model_data_source_returns_model" {
     condition     = output.model.max_tokens > 0
     error_message = "Expected max_tokens to be greater than zero."
   }
+
+  assert {
+    condition     = contains(["active", "deprecated", "retired"], output.model.lifecycle_stage)
+    error_message = "Expected lifecycle_stage to be active, deprecated or retired."
+  }
 }

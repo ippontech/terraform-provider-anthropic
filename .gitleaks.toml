@@ -1,0 +1,28 @@
+# gitleaks configuration: the default rules, plus one for Claude Enterprise
+# scoped keys. Read by the gitleaks workflow (.github/workflows/gitleaks.yml)
+# and the pre-commit hook.
+#
+# A deliberate fake secret in a test (a truncated PEM block, for example)
+# takes an inline `gitleaks:allow` comment on its line, in the commit that
+# adds the line (the workflow scans every commit of a pull request), not an
+# allowlist here.
+title = "terraform-provider-anthropic"
+
+[extend]
+useDefault = true
+
+# The default rules cover Claude API keys (sk-ant-api03-) and Admin API keys
+# (sk-ant-admin01-), not the Claude Enterprise scoped keys (sk-ant-api01-,
+# created in claude.ai: Admin API keys with scopes, Compliance Access Keys),
+# which the provider takes as admin_api_key. Same shape as the two default
+# rules, but their length is not documented: 80 to 120 key characters
+# instead of exactly 93 plus "AA", ended by any character outside the key
+# alphabet (a quote, a space, `&` in a query string, `<` in XML, `,` in CSV)
+# or the end of the line. The entropy floor keeps placeholders such as
+# sk-ant-api01-xxxx... out.
+[[rules]]
+id = "anthropic-enterprise-scoped-key"
+description = "Identified a Claude Enterprise scoped key (sk-ant-api01-), which can reach an organization's members, invites or compliance records."
+regex = '''\b(sk-ant-api01-[a-zA-Z0-9_\-]{80,120})(?:[^a-zA-Z0-9_\-]|$)'''
+entropy = 3.5
+keywords = ["sk-ant-api01"]

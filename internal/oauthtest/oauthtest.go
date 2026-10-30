@@ -13,22 +13,18 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdktest"
 )
 
 // NewSDKClient returns a bare *anthropic.Client authenticated with a dummy
-// bearer token and pointed at srv. Use it when a test drives the SDK directly
-// (e.g. to reproduce a 404 or a paginated list) without going through a
-// resource or data source. Extra options are applied after the defaults, so
-// a test that counts requests can pass option.WithMaxRetries(0) to keep the
-// SDK's own retries out of the count.
+// bearer token (sdktest.TestAuthToken) and pointed at srv. Use it when a test
+// drives the SDK directly (e.g. to reproduce a 404 or a paginated list)
+// without going through a resource or data source. Extra options are applied
+// after the defaults, so a test that counts requests can pass
+// option.WithMaxRetries(0) to keep the SDK's own retries out of the count.
 func NewSDKClient(t *testing.T, srv *httptest.Server, opts ...option.RequestOption) *anthropic.Client {
 	t.Helper()
-	c := anthropic.NewClient(append([]option.RequestOption{
-		option.WithoutEnvironmentDefaults(),
-		option.WithBaseURL(srv.URL),
-		option.WithAuthToken("test"),
-	}, opts...)...)
-	return &c
+	return sdktest.NewAuthTokenClient(t, srv, opts...)
 }
 
 // NewClient wraps NewSDKClient in the *providerdata.OAuthClient the
