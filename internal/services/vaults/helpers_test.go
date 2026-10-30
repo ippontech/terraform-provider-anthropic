@@ -6,11 +6,11 @@ package vaults_test
 // Shared helpers for the vaults acceptance tests (vault + vault credential).
 //
 // The vaults API serves stale reads for up to ~1s after a write (see the
-// read-after-write note in CLAUDE.md and #193): a Get issued right after the
-// post-test destroy can still return the deleted — or not-yet-archived —
-// object, which made CheckDestroy flaky in CI. The destroy/archive checks
-// therefore poll until the API converges, reusing the ceiling and interval
-// of awaitVaultUpdateVisible in the resource itself.
+// read-after-write note in internal/services/vaults/CLAUDE.md and #193): a Get
+// issued right after the post-test destroy can still return the deleted — or
+// not-yet-archived — object, which made CheckDestroy flaky in CI. The
+// destroy/archive checks therefore poll until the API converges, reusing the
+// ceiling and interval of awaitVaultUpdateVisible in the resource itself.
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 

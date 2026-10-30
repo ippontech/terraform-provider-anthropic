@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
@@ -129,10 +130,12 @@ func TestAccServiceAccountWorkspaceResource_basic(t *testing.T) {
 	})
 }
 
-// TestAccServiceAccountWorkspaceResource_roleChangeReplaces verifies that
-// changing workspace_role forces replacement, since the API has no update
-// endpoint for this membership.
-func TestAccServiceAccountWorkspaceResource_roleChangeReplaces(t *testing.T) {
+// TestAccServiceAccountWorkspaceResource_roleChangeUpdatesInPlace verifies
+// that changing workspace_role is an in-place update through the
+// workspace-side update endpoint, not a remove and re-add. The step's own
+// post-apply plan (which must be empty) checks that the refresh sees the new
+// role.
+func TestAccServiceAccountWorkspaceResource_roleChangeUpdatesInPlace(t *testing.T) {
 	serviceAccountID := setupServiceAccountFixture(t)
 
 	resource.Test(t, resource.TestCase{
@@ -148,10 +151,13 @@ func TestAccServiceAccountWorkspaceResource_roleChangeReplaces(t *testing.T) {
 				Config: testAccServiceAccountWorkspaceConfig(serviceAccountID, acctest.TerraformTestsWorkspaceID, "workspace_admin"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("anthropic_service_account_workspace.test", plancheck.ResourceActionReplace),
+						plancheck.ExpectResourceAction("anthropic_service_account_workspace.test", plancheck.ResourceActionUpdate),
 					},
 				},
-				Check: resource.TestCheckResourceAttr("anthropic_service_account_workspace.test", "workspace_role", "workspace_admin"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_service_account_workspace.test", "workspace_role", "workspace_admin"),
+					resource.TestCheckResourceAttr("anthropic_service_account_workspace.test", "implicit", "false"),
+				),
 			},
 		},
 	})

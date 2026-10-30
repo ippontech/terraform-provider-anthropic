@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/provider"
 )
 
@@ -43,7 +44,7 @@ const TerraformTests2WorkspaceID = "wrkspc_01MdoKe74QuV4kFCC23VKZfY"
 // apart from ANTHROPIC_API_KEY on purpose: every other acceptance test relies
 // on that key being single-workspace so its objects land in terraform-tests
 // without any header.
-const MultiWorkspaceAPIKeyEnv = "ANTHROPIC_MULTI_WORKSPACE_API_KEY"
+const MultiWorkspaceAPIKeyEnv = "ANTHROPIC_MULTI_WORKSPACE_API_KEY" //nolint:gosec // G101: the name of an environment variable, not a credential
 
 // SkipUnlessAcc skips the test unless TF_ACC is set. resource.Test applies
 // the same gate, but fixture setup that runs before it (seeding objects

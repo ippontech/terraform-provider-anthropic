@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -19,6 +21,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -27,6 +31,15 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &ServiceAccountWorkspaceResource{}
 var _ resource.ResourceWithImportState = &ServiceAccountWorkspaceResource{}
+
+// The production bounds of awaitServiceAccountWorkspaceRoleVisible's wait.
+// Consts passed as arguments, not package-level vars, so unit tests can shrink
+// the loop to milliseconds without racing the tests that run the real Update
+// in the same binary. Same bounds as the other WIF waits.
+const (
+	serviceAccountWorkspaceConsistencyTimeout  = 5 * time.Second
+	serviceAccountWorkspaceConsistencyInterval = 200 * time.Millisecond
+)
 
 func NewServiceAccountWorkspaceResource() resource.Resource {
 	return &ServiceAccountWorkspaceResource{}
@@ -69,7 +82,7 @@ func (r *ServiceAccountWorkspaceResource) Schema(_ context.Context, _ resource.S
 			},
 			"service_account_id": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Tagged ID of the service account to assign to the workspace. Immutable: the API has no update endpoint for this membership, so changing it forces replacement.",
+				MarkdownDescription: "Tagged ID of the service account to assign to the workspace. Immutable: changing it forces replacement.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"workspace_id": schema.StringAttribute{
@@ -81,7 +94,7 @@ func (r *ServiceAccountWorkspaceResource) Schema(_ context.Context, _ resource.S
 				Required: true,
 				MarkdownDescription: "Role to assign to the service account in the workspace. Valid values: `workspace_admin`, `workspace_developer`, " +
 					"`workspace_restricted_developer`, `workspace_user` (service accounts cannot hold `workspace_billing`, so the API type already excludes it). " +
-					"Immutable: the API has no update endpoint for this membership, so changing the role forces replacement.",
+					"Changing it updates the membership in place: the new role replaces the current one, and the membership is never removed in between.",
 				Validators: []validator.String{
 					stringvalidator.OneOf(
 						"workspace_admin",
@@ -90,7 +103,6 @@ func (r *ServiceAccountWorkspaceResource) Schema(_ context.Context, _ resource.S
 						"workspace_user",
 					),
 				},
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"implicit": schema.BoolAttribute{
 				Computed:            true,
@@ -166,7 +178,7 @@ func (r *ServiceAccountWorkspaceResource) Read(ctx context.Context, req resource
 	member, err := findServiceAccountWorkspaceMembership(ctx, r.client, data.ServiceAccountID.ValueString(), data.WorkspaceID.ValueString())
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -185,11 +197,57 @@ func (r *ServiceAccountWorkspaceResource) Read(ctx context.Context, req resource
 
 // --- Update ---
 
-// Update is a no-op: every attribute is either RequiresReplace or Computed,
-// and the API has no update endpoint for this membership (workspace_role can
-// only be changed by re-adding the service account, which the framework
-// expresses as a replace, not an in-place update).
-func (r *ServiceAccountWorkspaceResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+// Update changes workspace_role in place, the only attribute that reaches it
+// (the two IDs are RequiresReplace, the rest is Computed). The API's update
+// endpoint lives under the workspace, not under the service account like Add,
+// List and Remove: POST
+// /v1/organizations/workspaces/{workspace_id}/service_accounts/{service_account_id}.
+// It only accepts explicit memberships, which is all this resource tracks.
+//
+// A 404 means the membership is gone since the plan (an apply with
+// -refresh=false, or a removal between plan and apply): it is added back with
+// the planned role, as the replace this attribute used to force did.
+//
+// The state is the plan: the write leaves the IDs alone, and implicit and
+// created_by_actor_id are pinned from state by UseStateForUnknown, so taking
+// them from a response nobody probed live could only turn a successful role
+// change into an inconsistent-result error. The next refresh reads them back.
+func (r *ServiceAccountWorkspaceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan ServiceAccountWorkspaceResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var state ServiceAccountWorkspaceResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	serviceAccountID := state.ServiceAccountID.ValueString()
+	workspaceID := state.WorkspaceID.ValueString()
+	role := plan.WorkspaceRole.ValueString()
+
+	_, err := updateServiceAccountWorkspaceRole(ctx, r.client, serviceAccountID, workspaceID, role)
+	var apierr *anthropic.Error
+	if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
+		tflog.Warn(ctx, "service account workspace membership not found on role update; adding it back with the planned role",
+			map[string]any{"service_account_id": serviceAccountID, "workspace_id": workspaceID})
+		if _, addErr := addServiceAccountToWorkspace(ctx, r.client, serviceAccountID, workspaceID, role); addErr != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to add service account %s back to workspace %s after the role update found no membership (%s): %s", serviceAccountID, workspaceID, err, addErr))
+			return
+		}
+		err = nil
+	}
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update the role of service account %s in workspace %s: %s", serviceAccountID, workspaceID, err))
+		return
+	}
+
+	awaitServiceAccountWorkspaceRoleVisible(ctx, r.client, serviceAccountID, workspaceID, role, serviceAccountWorkspaceConsistencyTimeout, serviceAccountWorkspaceConsistencyInterval)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 // --- Delete ---
@@ -213,6 +271,9 @@ func (r *ServiceAccountWorkspaceResource) Delete(ctx context.Context, req resour
 	// isolates the call so a unit test can assert the request path directly.
 	err := removeServiceAccountFromWorkspace(ctx, r.client, data.ServiceAccountID.ValueString(), data.WorkspaceID.ValueString())
 	if err != nil {
+		if providerrors.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to remove service account from workspace: %s", err))
 		return
 	}
@@ -247,6 +308,72 @@ func addServiceAccountToWorkspace(ctx context.Context, client *providerdata.OAut
 		WorkspaceRole: anthropic.BetaNoBillingWorkspaceRole(workspaceRole),
 	}
 	return client.Beta.Organization.ServiceAccounts.Workspaces.Add(ctx, serviceAccountID, params)
+}
+
+// updateServiceAccountWorkspaceRole wraps the workspace-side Update call. Like
+// removeServiceAccountFromWorkspace, it takes the natural (serviceAccountID,
+// workspaceID) order and keeps the SDK's own order to this one call site:
+// Workspaces.ServiceAccounts.Update takes the service account ID positionally
+// and the workspace ID inside params, the reverse of
+// ServiceAccounts.Workspaces.Remove. Both IDs are plausible tagged strings,
+// so a swap compiles and targets the wrong URL; a unit test pins the path.
+func updateServiceAccountWorkspaceRole(ctx context.Context, client *providerdata.OAuthClient, serviceAccountID, workspaceID, workspaceRole string) (*anthropic.BetaServiceAccountWorkspaceMember, error) {
+	return client.Beta.Organization.Workspaces.ServiceAccounts.Update(ctx, serviceAccountID, anthropic.BetaOrganizationWorkspaceServiceAccountUpdateParams{
+		WorkspaceID:   workspaceID,
+		WorkspaceRole: anthropic.BetaNoBillingWorkspaceRole(workspaceRole),
+	})
+}
+
+// awaitServiceAccountWorkspaceRoleVisible polls the membership list Read
+// uses until the tracked membership carries role, the value just written.
+// The write goes through the workspace-side endpoint and Read lists through
+// the service-account side; neither was probed for read-after-write
+// staleness, but the sibling WIF endpoints served a stale read after 1 in 9
+// writes on 2026-09-08 (CLAUDE.md, "WIF endpoints"), and a stale role here
+// would make the next plan propose the change again. Same shape as
+// awaitServiceAccountUpdateVisible, with a role comparison instead of an
+// updated_at one since memberships carry no timestamp: best-effort (never a
+// diagnostic, the write already succeeded), bounded by consts passed as
+// arguments, and stopped by a terminal read error or a membership no longer
+// listed (a stale list still holds a membership that existed before the
+// write, so its absence means it was removed, which Read reports as drift).
+// The polls run under a context bounded by timeout, so a slow or throttled
+// list (the SDK retries and honors retry-after) is cut off at the deadline
+// instead of running past it.
+func awaitServiceAccountWorkspaceRoleVisible(ctx context.Context, client *providerdata.OAuthClient, serviceAccountID, workspaceID, role string, timeout, interval time.Duration) {
+	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
+	for {
+		member, err := findServiceAccountWorkspaceMembership(ctx, client, serviceAccountID, workspaceID)
+		switch {
+		case err == nil && member == nil:
+			tflog.Warn(ctx, "service account workspace membership no longer listed while waiting for the role update to be visible; giving up on the consistency wait",
+				map[string]any{"service_account_id": serviceAccountID, "workspace_id": workspaceID})
+			return
+		case err == nil:
+			if string(member.WorkspaceRole) == role {
+				return
+			}
+		case isTerminalServiceAccountReadError(err):
+			tflog.Warn(ctx, "service account workspace memberships became unreadable while waiting for the role update to be visible; giving up on the consistency wait",
+				map[string]any{"service_account_id": serviceAccountID, "workspace_id": workspaceID, "error": err.Error()})
+			return
+		}
+
+		if time.Now().After(deadline) {
+			tflog.Warn(ctx, "service account workspace role update not visible before the consistency timeout; the next plan may show a transient diff",
+				map[string]any{"service_account_id": serviceAccountID, "workspace_id": workspaceID, "timeout": timeout.String()})
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
 }
 
 // removeServiceAccountFromWorkspace wraps the Remove call. Its signature is

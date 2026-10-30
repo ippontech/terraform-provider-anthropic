@@ -17,7 +17,7 @@ import (
 func TestAPIKeyDataSource_read(t *testing.T) {
 	wsID := "wrkspc_01WS"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" || r.URL.Path != "/v1/organizations/api_keys/apikey_01ABC" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/api_keys/apikey_01ABC" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}

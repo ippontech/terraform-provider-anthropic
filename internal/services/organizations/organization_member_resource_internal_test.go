@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
@@ -491,6 +492,17 @@ func TestOrganizationMemberResource_ImportState(t *testing.T) {
 	if id != "user_01WCz1FkmYMm4gnmykNKUu3Q" {
 		t.Errorf("expected imported id to be 'user_01WCz1FkmYMm4gnmykNKUu3Q', got %s", id)
 	}
+}
+
+// --- Schema ---
+
+// A member, imported or adopted on create, can hold admin or an Enterprise
+// administrative role, so the role attribute accepts every organization role
+// (assertRoleAttribute is shared with the invite resource test).
+func TestOrganizationMemberResource_roleAttribute(t *testing.T) {
+	t.Parallel()
+
+	assertRoleAttribute(t, schematest.ResourceSchema(t, &OrganizationMemberResource{}))
 }
 
 // --- mapOrganizationMemberToResourceState ---

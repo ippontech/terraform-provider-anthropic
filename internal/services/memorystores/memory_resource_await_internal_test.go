@@ -15,11 +15,13 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-// newStaleThenFreshMemoryServer serves the memory as it was before the write
-// (stale content_sha256/updated_at) for the first staleReads Get calls, then
-// as it is after. Mirrors newStaleThenFreshVaultServer in the vaults package.
-func newStaleThenFreshMemoryServer(t *testing.T, memoryID string, before, after time.Time, beforeSha, afterSha string, staleReads int) (*httptest.Server, *int) {
+// newStaleThenFreshMemoryServer serves the memory mem_01ABC as it was before
+// the write (stale content_sha256/updated_at) for the first staleReads Get
+// calls, then as it is after. Mirrors newStaleThenFreshVaultServer in the
+// vaults package.
+func newStaleThenFreshMemoryServer(t *testing.T, before, after time.Time, beforeSha, afterSha string, staleReads int) (*httptest.Server, *int) {
 	t.Helper()
+	const memoryID = "mem_01ABC"
 
 	gets := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +70,7 @@ func TestAwaitMemoryUpdateVisible_pollsUntilFresh(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshMemoryServer(t, "mem_01ABC", before, after, "shabefore", "shaafter", 3)
+	srv, gets := newStaleThenFreshMemoryServer(t, before, after, "shabefore", "shaafter", 3)
 	client := newTestMemoryClient(t, srv)
 
 	awaitMemoryUpdateVisible(context.Background(), client, "memstore_01ABC", "mem_01ABC", after, "shaafter", 2*time.Second, time.Millisecond)
@@ -83,7 +85,7 @@ func TestAwaitMemoryUpdateVisible_returnsImmediatelyWhenFresh(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshMemoryServer(t, "mem_01ABC", before, after, "shabefore", "shaafter", 0)
+	srv, gets := newStaleThenFreshMemoryServer(t, before, after, "shabefore", "shaafter", 0)
 	client := newTestMemoryClient(t, srv)
 
 	awaitMemoryUpdateVisible(context.Background(), client, "memstore_01ABC", "mem_01ABC", after, "shaafter", 2*time.Second, time.Millisecond)
@@ -101,7 +103,7 @@ func TestAwaitMemoryUpdateVisible_ShaMismatchKeepsPolling(t *testing.T) {
 
 	// The server always answers fresh on updated_at but with the wrong sha,
 	// so the wait must run to the timeout.
-	srv, gets := newStaleThenFreshMemoryServer(t, "mem_01ABC", writtenAt, writtenAt, "wrongsha", "wrongsha", 0)
+	srv, gets := newStaleThenFreshMemoryServer(t, writtenAt, writtenAt, "wrongsha", "wrongsha", 0)
 	client := newTestMemoryClient(t, srv)
 
 	start := time.Now()
@@ -122,7 +124,7 @@ func TestAwaitMemoryUpdateVisible_givesUpAtTimeout(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, gets := newStaleThenFreshMemoryServer(t, "mem_01ABC", before, after, "shabefore", "shaafter", 1_000_000)
+	srv, gets := newStaleThenFreshMemoryServer(t, before, after, "shabefore", "shaafter", 1_000_000)
 	client := newTestMemoryClient(t, srv)
 
 	start := time.Now()
@@ -142,7 +144,7 @@ func TestAwaitMemoryUpdateVisible_honoursContextCancellation(t *testing.T) {
 	before := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 	after := before.Add(time.Second)
 
-	srv, _ := newStaleThenFreshMemoryServer(t, "mem_01ABC", before, after, "shabefore", "shaafter", 1_000_000)
+	srv, _ := newStaleThenFreshMemoryServer(t, before, after, "shabefore", "shaafter", 1_000_000)
 	client := newTestMemoryClient(t, srv)
 
 	ctx, cancel := context.WithCancel(context.Background())

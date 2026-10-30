@@ -14,15 +14,20 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
 // newEmptyThenListedServer serves GET
-// /v1/organizations/federation_rules/{rule}/workspaces with an empty list for
-// the first emptyLists calls, then a single-entry list containing workspaceID
-// forever after. It returns a pointer to the List counter.
-func newEmptyThenListedServer(t *testing.T, ruleID, workspaceID string, emptyLists int) (*httptest.Server, *int) {
+// /v1/organizations/federation_rules/fdrl_01ABC/workspaces with an empty list
+// for the first emptyLists calls, then a single-entry list containing
+// wrkspc_01XYZ forever after. It returns a pointer to the List counter.
+func newEmptyThenListedServer(t *testing.T, emptyLists int) (*httptest.Server, *int) {
 	t.Helper()
+	const (
+		ruleID      = "fdrl_01ABC"
+		workspaceID = "wrkspc_01XYZ"
+	)
 
 	lists := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +54,7 @@ func newEmptyThenListedServer(t *testing.T, ruleID, workspaceID string, emptyLis
 }
 
 func TestAwaitFederationRuleWorkspaceListed_pollsUntilListed(t *testing.T) {
-	srv, lists := newEmptyThenListedServer(t, "fdrl_01ABC", "wrkspc_01XYZ", 3)
+	srv, lists := newEmptyThenListedServer(t, 3)
 
 	found, err := awaitFederationRuleWorkspaceListed(context.Background(), oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0)), "fdrl_01ABC", "wrkspc_01XYZ", 2*time.Second, time.Millisecond)
 	if err != nil {
@@ -65,7 +70,7 @@ func TestAwaitFederationRuleWorkspaceListed_pollsUntilListed(t *testing.T) {
 
 // An entry already present must not trigger a second List.
 func TestAwaitFederationRuleWorkspaceListed_returnsImmediatelyWhenListed(t *testing.T) {
-	srv, lists := newEmptyThenListedServer(t, "fdrl_01ABC", "wrkspc_01XYZ", 0)
+	srv, lists := newEmptyThenListedServer(t, 0)
 
 	found, err := awaitFederationRuleWorkspaceListed(context.Background(), oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0)), "fdrl_01ABC", "wrkspc_01XYZ", 2*time.Second, time.Millisecond)
 	if err != nil || found == nil {
@@ -80,7 +85,7 @@ func TestAwaitFederationRuleWorkspaceListed_returnsImmediatelyWhenListed(t *test
 // has elapsed: that is what lets Read tell out-of-band removal from a list
 // that has not caught up yet.
 func TestAwaitFederationRuleWorkspaceListed_reportsAbsentAtTimeout(t *testing.T) {
-	srv, lists := newEmptyThenListedServer(t, "fdrl_01ABC", "wrkspc_01XYZ", 1_000_000)
+	srv, lists := newEmptyThenListedServer(t, 1_000_000)
 
 	start := time.Now()
 	found, err := awaitFederationRuleWorkspaceListed(context.Background(), oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0)), "fdrl_01ABC", "wrkspc_01XYZ", 120*time.Millisecond, 10*time.Millisecond)
@@ -201,7 +206,7 @@ func TestAwaitFederationRuleWorkspaceListed_surfacesPersistentTransientErrorAtTi
 
 // A cancelled context must abort the wait promptly and surface ctx.Err().
 func TestAwaitFederationRuleWorkspaceListed_honoursContextCancellation(t *testing.T) {
-	srv, _ := newEmptyThenListedServer(t, "fdrl_01ABC", "wrkspc_01XYZ", 1_000_000)
+	srv, _ := newEmptyThenListedServer(t, 1_000_000)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

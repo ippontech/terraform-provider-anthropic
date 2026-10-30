@@ -1,0 +1,48 @@
+## Coverage gate
+
+**The gate fails**: see the rules marked FAIL.
+
+| Rule | Measured | Required | Result |
+|---|---|---|---|
+| Diff: covered share of the statements the change touches | 75.0% (9 of 12) | at least 75% | pass |
+| Ratchet: total outside the exclusions | 66.67% (12 of 18) | at least 63.50% (baseline 64.00 minus 0.5) | pass |
+| Floor: the baseline never goes back under 65% once reached | 64.00 (base branch: 65.00) | not under 65 once the base reached it | **FAIL** |
+| Packages: coverage of each package | lowest 66.7% (`internal/a`); 1 of 1 under 70% | at least 70% per package | **FAIL** |
+
+The target is 65%: the baseline is 1.00 points away. Once the baseline reaches it, the total may never drop below 65%.
+
+This change raises the total to 66.67% (12 of 18), above the baseline 64.00%: set `baseline` to `66.66` (the total, truncated) in this pull request to lock the gain in.
+
+`baseline` was lowered under 65% after the base branch reached it; restore it.
+
+### Statements the change touches
+
+A coverage block the diff touches counts with all its statements; blank lines and lines holding only a `//` comment do not touch it. Test files and the exclusions of `.coverage.json` are left out (2 changed Go files).
+
+| File | Changed statements | Covered | Not covered (lines) |
+|---|---:|---:|---|
+| `internal/a/a.go` | 4 | 2 | 7-9 |
+| `internal/a/a_resource.go` | 4 | 4 |  |
+| `internal/a/é.go` | 4 | 3 | 3 |
+
+### Coverage per package
+
+Every package outside the exclusions, least covered first. Enforced: every package must be at 70% or more (`package_min`).
+
+Under the 70% of `package_min`: 1 of 1 packages. Add tests to them; the table gives each package's distance.
+
+| Package | Statements | Covered | Coverage | Points to 70% |
+|---|---:|---:|---:|---:|
+| `internal/a` | 18 | 12 | 66.7% | 3.3 |
+
+Excluded from every rule: `main.go`, `internal/helper/`.
+
+## Unit test coverage
+
+**66.7%** of 18 statements across 3 files, outside the exclusions of `.coverage.json` (`go test` without `TF_ACC`: acceptance tests are skipped).
+
+### Files matching `_(resource|data_source)\.go$` (1), least covered first
+
+| File | Statements | Covered | Coverage |
+|---|---:|---:|---:|
+| `internal/a/a_resource.go` | 6 | 4 | 66.7% |

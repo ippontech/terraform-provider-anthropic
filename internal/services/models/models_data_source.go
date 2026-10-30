@@ -6,13 +6,17 @@ package models
 import (
 	"context"
 	"fmt"
-	"time"
+	"slices"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -31,41 +35,8 @@ type ModelsDataSource struct {
 
 // ModelsDataSourceModel describes the data source data model.
 type ModelsDataSourceModel struct {
-	Models []ModelModel `tfsdk:"models"`
-}
-
-type ModelModel struct {
-	ID             types.String `tfsdk:"id"`
-	DisplayName    types.String `tfsdk:"display_name"`
-	CreatedAt      types.String `tfsdk:"created_at"`
-	MaxInputTokens types.Int64  `tfsdk:"max_input_tokens"`
-	MaxTokens      types.Int64  `tfsdk:"max_tokens"`
-	Capabilities   types.Object `tfsdk:"capabilities"`
-}
-
-var capabilitiesAttrTypes = map[string]attr.Type{
-	"batch":              types.BoolType,
-	"citations":          types.BoolType,
-	"code_execution":     types.BoolType,
-	"context_management": types.ObjectType{AttrTypes: contextManagementAttrTypes},
-	"effort":             types.ObjectType{AttrTypes: effortAttrTypes},
-	"image_input":        types.BoolType,
-	"pdf_input":          types.BoolType,
-	"structured_outputs": types.BoolType,
-	"thinking":           types.BoolType,
-}
-
-var contextManagementAttrTypes = map[string]attr.Type{
-	"clear_thinking_20251015":  types.BoolType,
-	"clear_tool_uses_20250919": types.BoolType,
-	"compact_20260112":         types.BoolType,
-}
-
-var effortAttrTypes = map[string]attr.Type{
-	"high":   types.BoolType,
-	"low":    types.BoolType,
-	"max":    types.BoolType,
-	"medium": types.BoolType,
+	LifecycleStages types.Set    `tfsdk:"lifecycle_stages"`
+	Models          []ModelModel `tfsdk:"models"`
 }
 
 func (d *ModelsDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -76,106 +47,26 @@ func (d *ModelsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Retrieves the list of available Anthropic models.",
 		Attributes: map[string]schema.Attribute{
+			"lifecycle_stages": schema.SetAttribute{
+				Optional:    true,
+				ElementType: types.StringType,
+				MarkdownDescription: "Lifecycle stages to list (the API's `lifecycle` filter): any of `active`, " +
+					"`deprecated` and `retired`. When omitted, the API lists `active` and `deprecated` models; `retired` " +
+					"models are listed only when `retired` is requested.",
+				Validators: []validator.Set{
+					setvalidator.SizeAtLeast(1),
+					setvalidator.ValueStringsAre(stringvalidator.OneOf(
+						string(anthropic.ModelInfoLifecycleActive),
+						string(anthropic.ModelInfoLifecycleDeprecated),
+						string(anthropic.ModelInfoLifecycleRetired),
+					)),
+				},
+			},
 			"models": schema.ListNestedAttribute{
 				Computed:            true,
 				MarkdownDescription: "List of available models, ordered from most recently released to oldest.",
 				NestedObject: schema.NestedAttributeObject{
-					Attributes: map[string]schema.Attribute{
-						"id": schema.StringAttribute{
-							Computed:            true,
-							MarkdownDescription: "Unique model identifier.",
-						},
-						"display_name": schema.StringAttribute{
-							Computed:            true,
-							MarkdownDescription: "A human-readable name for the model.",
-						},
-						"created_at": schema.StringAttribute{
-							Computed:            true,
-							MarkdownDescription: "RFC 3339 datetime string representing when the model was released.",
-						},
-						"max_input_tokens": schema.Int64Attribute{
-							Computed:            true,
-							MarkdownDescription: "Maximum input context window size in tokens.",
-						},
-						"max_tokens": schema.Int64Attribute{
-							Computed:            true,
-							MarkdownDescription: "Maximum value for the max_tokens parameter when using this model.",
-						},
-						"capabilities": schema.SingleNestedAttribute{
-							Computed:            true,
-							MarkdownDescription: "Model capability flags.",
-							Attributes: map[string]schema.Attribute{
-								"batch": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether the model supports the Batch API.",
-								},
-								"citations": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether the model supports citation generation.",
-								},
-								"code_execution": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether the model supports code execution tools.",
-								},
-								"context_management": schema.SingleNestedAttribute{
-									Computed:            true,
-									MarkdownDescription: "Context management strategy support.",
-									Attributes: map[string]schema.Attribute{
-										"clear_thinking_20251015": schema.BoolAttribute{
-											Computed:            true,
-											MarkdownDescription: "Whether the model supports the `clear_thinking_20251015` context management strategy.",
-										},
-										"clear_tool_uses_20250919": schema.BoolAttribute{
-											Computed:            true,
-											MarkdownDescription: "Whether the model supports the `clear_tool_uses_20250919` context management strategy.",
-										},
-										"compact_20260112": schema.BoolAttribute{
-											Computed:            true,
-											MarkdownDescription: "Whether the model supports the `compact_20260112` context management strategy.",
-										},
-									},
-								},
-								"effort": schema.SingleNestedAttribute{
-									Computed:            true,
-									MarkdownDescription: "Reasoning effort (reasoning_effort) level support.",
-									Attributes: map[string]schema.Attribute{
-										"high": schema.BoolAttribute{
-											Computed:            true,
-											MarkdownDescription: "Whether the model supports `high` effort level.",
-										},
-										"low": schema.BoolAttribute{
-											Computed:            true,
-											MarkdownDescription: "Whether the model supports `low` effort level.",
-										},
-										"max": schema.BoolAttribute{
-											Computed:            true,
-											MarkdownDescription: "Whether the model supports `max` effort level.",
-										},
-										"medium": schema.BoolAttribute{
-											Computed:            true,
-											MarkdownDescription: "Whether the model supports `medium` effort level.",
-										},
-									},
-								},
-								"image_input": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether the model accepts image content blocks.",
-								},
-								"pdf_input": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether the model accepts PDF content blocks.",
-								},
-								"structured_outputs": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether the model supports structured output / JSON mode.",
-								},
-								"thinking": schema.BoolAttribute{
-									Computed:            true,
-									MarkdownDescription: "Whether the model supports extended thinking.",
-								},
-							},
-						},
-					},
+					Attributes: modelAttributes(),
 				},
 			},
 		},
@@ -211,59 +102,23 @@ func (d *ModelsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	pager := d.client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{
-		Limit: anthropic.Int(1000),
-	})
+	params, diags := buildModelsListParams(ctx, data)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	pager := d.client.Models.ListAutoPaging(ctx, params)
 
 	models := make([]ModelModel, 0)
 	for pager.Next() {
 		m := pager.Current()
-
-		ctxMgmt, diags := types.ObjectValue(contextManagementAttrTypes, map[string]attr.Value{
-			"clear_thinking_20251015":  types.BoolValue(m.Capabilities.ContextManagement.ClearThinking20251015.Supported),
-			"clear_tool_uses_20250919": types.BoolValue(m.Capabilities.ContextManagement.ClearToolUses20250919.Supported),
-			"compact_20260112":         types.BoolValue(m.Capabilities.ContextManagement.Compact20260112.Supported),
-		})
+		model, diags := mapModelInfo(&m)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-
-		effort, diags := types.ObjectValue(effortAttrTypes, map[string]attr.Value{
-			"high":   types.BoolValue(m.Capabilities.Effort.High.Supported),
-			"low":    types.BoolValue(m.Capabilities.Effort.Low.Supported),
-			"max":    types.BoolValue(m.Capabilities.Effort.Max.Supported),
-			"medium": types.BoolValue(m.Capabilities.Effort.Medium.Supported),
-		})
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-
-		caps, diags := types.ObjectValue(capabilitiesAttrTypes, map[string]attr.Value{
-			"batch":              types.BoolValue(m.Capabilities.Batch.Supported),
-			"citations":          types.BoolValue(m.Capabilities.Citations.Supported),
-			"code_execution":     types.BoolValue(m.Capabilities.CodeExecution.Supported),
-			"context_management": ctxMgmt,
-			"effort":             effort,
-			"image_input":        types.BoolValue(m.Capabilities.ImageInput.Supported),
-			"pdf_input":          types.BoolValue(m.Capabilities.PDFInput.Supported),
-			"structured_outputs": types.BoolValue(m.Capabilities.StructuredOutputs.Supported),
-			"thinking":           types.BoolValue(m.Capabilities.Thinking.Supported),
-		})
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-
-		models = append(models, ModelModel{
-			ID:             types.StringValue(m.ID),
-			DisplayName:    types.StringValue(m.DisplayName),
-			CreatedAt:      types.StringValue(m.CreatedAt.Format(time.RFC3339Nano)),
-			MaxInputTokens: types.Int64Value(m.MaxInputTokens),
-			MaxTokens:      types.Int64Value(m.MaxTokens),
-			Capabilities:   caps,
-		})
+		models = append(models, model)
 	}
 
 	if err := pager.Err(); err != nil {
@@ -273,4 +128,24 @@ func (d *ModelsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 
 	data.Models = models
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// buildModelsListParams builds the list request: the largest page size, and
+// lifecycle_stages when set, sent as the API's lifecycle[]=... filter (sorted
+// so the request does not depend on set order).
+func buildModelsListParams(ctx context.Context, data ModelsDataSourceModel) (anthropic.ModelListParams, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	params := anthropic.ModelListParams{
+		Limit: anthropic.Int(1000),
+	}
+	if !data.LifecycleStages.IsNull() && !data.LifecycleStages.IsUnknown() {
+		var stages []string
+		diags.Append(data.LifecycleStages.ElementsAs(ctx, &stages, false)...)
+		if diags.HasError() {
+			return params, diags
+		}
+		slices.Sort(stages)
+		params.Lifecycle = stages
+	}
+	return params, diags
 }

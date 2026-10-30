@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -193,7 +195,7 @@ func (r *FederationRuleWorkspaceResource) Read(ctx context.Context, req resource
 	found, err := awaitFederationRuleWorkspaceListed(ctx, r.client.Client, data.FederationRuleID.ValueString(), data.WorkspaceID.ValueString(), federationRuleWorkspaceConsistencyTimeout, federationRuleWorkspaceConsistencyInterval)
 	if err != nil {
 		var apiErr *anthropic.Error
-		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			// The federation rule itself was archived/deleted out-of-band.
 			resp.State.RemoveResource(ctx)
 			return
@@ -236,7 +238,8 @@ func (r *FederationRuleWorkspaceResource) Delete(ctx context.Context, req resour
 	_, err := r.client.Beta.Organization.Federation.Rules.Workspaces.Remove(ctx, data.WorkspaceID.ValueString(), anthropic.BetaOrganizationFederationRuleWorkspaceRemoveParams{
 		FederationRuleID: data.FederationRuleID.ValueString(),
 	})
-	if err != nil {
+	// A 404 means the rule or its workspace binding is already gone.
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to disable federation rule for workspace: %s", err))
 	}
 }
@@ -266,7 +269,7 @@ func (r *FederationRuleWorkspaceResource) ImportState(ctx context.Context, req r
 // whole window has passed without a match. Probed on 2026-09-08: GET
 // /v1/organizations/federation_rules/{id}/workspaces did not yet list a
 // workspace just added by POST in 1 of 9 trials, converging 1.07s after the
-// Add (see the read-after-write section of CLAUDE.md). Read treats an absent
+// Add (see internal/services/federation/CLAUDE.md). Read treats an absent
 // entry as an authoritative out-of-band removal, so a single stale list right
 // after Create would drop the resource from state; the bounded wait turns
 // that into a sub-second delay. The cost is symmetric: a Read of an entry that

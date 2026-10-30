@@ -83,7 +83,7 @@ func TestBuildAllowedInferenceGeos(t *testing.T) {
 
 func TestWorkspaceCreate_parsesResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/v1/organizations/workspaces" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/workspaces" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}

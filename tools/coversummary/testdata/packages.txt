@@ -1,0 +1,13 @@
+mode: set
+example.com/m/internal/a/a.go:3.10,5.2 2 1
+example.com/m/internal/a/x.go:7.10,9.2 4 0
+example.com/m/internal/a/x.go:9.10,10.2 0 0
+example.com/m/internal/b/b.go:1.1,2.2 3 0
+example.com/m/internal/b/b.go:3.1,4.2 1 1
+example.com/m/internal/c/d/d.go:1.1,2.2 3 0
+example.com/m/internal/e/e.go:1.1,2.2 1 1
+example.com/m/internal/e/e.go:3.1,4.2 3 0
+example.com/m/internal/f/f.go:1.1,2.2 2 1
+example.com/m/internal/g/types.go:1.1,1.2 0 0
+example.com/m/internal/helper/h.go:1.1,2.2 5 0
+example.com/m/main.go:3.1,4.2 3 0

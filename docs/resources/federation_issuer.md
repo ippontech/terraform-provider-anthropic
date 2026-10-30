@@ -16,12 +16,15 @@ Registers an OIDC identity provider that Anthropic trusts for Workload Identity 
 > **One issuer per URL**: an organization can register only one issuer for a given `issuer_url`; creating a second one is rejected by the API. If the Console wizard already registered the provider (for GitHub Actions, `https://token.actions.githubusercontent.com`), import that issuer instead of declaring a new one.
 > **Console-only updates**: updating an issuer that backs a rule with a scope outside `workspace:developer` or `workspace:inference` requires a Console session; an OAuth caller gets an API error.
 
-## Deliberate omissions
+## JWKS polling
 
-Two fields the API exposes on federation issuers are intentionally **not** in this resource's schema:
+For `discovery` and `explicit_url` issuers, Anthropic fetches the signing keys in the background and pauses polling after repeated fetch failures.
 
-- **`poll_status`** — a volatile summary of the background JWKS poller (consecutive failures, last/next fetch time) that changes on every poll cycle. Including it in this resource would churn the Terraform plan on every refresh; it belongs in a future `anthropic_federation_issuer` data source instead.
-- **`jwks_polling_disabled`** (the update-only toggle to re-enable polling after the system pauses it) — the create API has no equivalent field, so exposing it here would require a create-then-update dance on every apply. This resource only surfaces the resulting `jwks_polling_disabled_at` timestamp (computed); re-enabling polling requires calling the API directly for now.
+- **`poll_status`** (computed) reports the poller's state as of the last refresh: consecutive failures, last successful fetch, next scheduled fetch. It is null for `inline` issuers, which have nothing to fetch. It changes on every poll cycle. A normal plan records the new values without planning any change, but a refresh-only plan (`terraform plan -refresh-only`, which drift detection such as HCP Terraform health assessments runs) reports them as changed outside of Terraform, and `-detailed-exitcode` then returns 2: such checks flag every `discovery` or `explicit_url` issuer on every run.
+- **`jwks_polling_disabled_at`** (computed) is set while polling is paused.
+- **`jwks_polling_disabled = false`** (optional) asks the provider to keep polling enabled: when a refresh finds it paused, the plan shows an in-place update that sends `jwks_polling_disabled: false` to the API, which re-enables it. Fix the upstream JWKS endpoint first, or polling pauses again. Only `false` is accepted (the API pauses polling on its own and rejects `true`). The toggle is never sent on create, while polling is active, or for an archived issuer.
+
+> **OAuth restriction**: the API refuses `jwks_polling_disabled` from an OAuth caller, which is the credential this provider uses, when the issuer backs a federation rule whose scope is neither `workspace:developer` nor `workspace:inference`. For such an issuer, re-enable polling from a Console session and leave `jwks_polling_disabled` unset; otherwise every plan proposes the re-enable again for as long as polling stays paused, and every apply fails.
 
 ## Example Usage
 
@@ -60,6 +63,7 @@ output "federation_issuer_id" {
 
 - `check_jti` (Boolean) Whether the jwt-bearer exchange enforces JTI single-use (replay protection) for tokens from this issuer. Applies only to assertions carrying a `jti` claim. Default: `true`.
 - `jwks` (Attributes) How the issuer's signing keys are obtained. Defaults to `{type = "discovery"}`. One of three shapes selected by `type`: `discovery` (resolve keys through OIDC discovery), `explicit_url` (fetch keys from a fixed JWKS URL), or `inline` (a static key set). (see [below for nested schema](#nestedatt--jwks))
+- `jwks_polling_disabled` (Boolean) Set to `false` to keep Anthropic's background JWKS polling enabled for this issuer. The API pauses polling on its own after repeated fetch failures (see `jwks_polling_disabled_at`); while this attribute is `false`, a refresh that finds polling paused makes the next plan update the issuer with `jwks_polling_disabled: false`, which re-enables it. Only `false` is accepted: the API rejects `true`. Never sent on create, nor while polling is active or the issuer is archived. **OAuth restriction**: the API refuses this toggle from an OAuth caller, which is the only credential this resource uses, when the issuer backs a federation rule whose scope is neither `workspace:developer` nor `workspace:inference`. Re-enable polling from a Console session in that case and leave this attribute unset, or every plan proposes the re-enable again while polling stays paused.
 - `max_jwt_lifetime_seconds` (Number) Maximum allowed `iat`→`exp` spread for assertions from this issuer, in seconds (up to 49h). Assertions must carry both `iat` and `exp`; a missing `iat` is rejected. Default: `3600` (1h).
 
 ### Read-Only
@@ -69,7 +73,8 @@ output "federation_issuer_id" {
 - `created_at` (String) Creation timestamp (RFC 3339).
 - `created_by_actor_id` (String) Tagged ID (`user_...`/`svac_...`) of the actor that created this issuer.
 - `id` (String) Unique federation issuer identifier (e.g. `fdis_...`).
-- `jwks_polling_disabled_at` (String) Set when Anthropic's background JWKS poller has paused polling for this issuer after repeated fetch failures. Null while polling is active. Re-enabling requires the update-only `jwks_polling_disabled: false` toggle on the API, which this resource does not expose (see the provider documentation); use the API directly if this needs unpausing.
+- `jwks_polling_disabled_at` (String) Set when Anthropic's background JWKS poller has paused polling for this issuer after repeated fetch failures. Null while polling is active. Set `jwks_polling_disabled = false` to have the provider re-enable polling when it finds it paused.
+- `poll_status` (Attributes) Live state of Anthropic's background JWKS polling for this issuer, as of the last refresh. Null for inline-key issuers (nothing to fetch), and while the status is unavailable or polling has not started yet. It changes on every poll cycle: a normal plan records the new values without planning any change, but a refresh-only plan, as drift detection runs, reports them as changed outside of Terraform. (see [below for nested schema](#nestedatt--poll_status))
 - `updated_at` (String) Last update timestamp (RFC 3339).
 - `updated_by_actor_id` (String) Tagged ID (`user_...`/`svac_...`) of the actor that last updated this issuer.
 
@@ -86,6 +91,16 @@ Optional:
 - `discovery_base` (String) Set when the discovery URL differs from `issuer_url`. Only applicable when `type` is `discovery`.
 - `keys` (String) JSON array of inline JWK objects. Required when `type` is `inline`; must be absent otherwise.
 - `url` (String) JWKS endpoint. Required when `type` is `explicit_url`; must be absent otherwise.
+
+
+<a id="nestedatt--poll_status"></a>
+### Nested Schema for `poll_status`
+
+Read-Only:
+
+- `consecutive_failures` (Number) Consecutive fetch failures since the last success.
+- `last_fetched_at` (String) When the last successful fetch completed (RFC 3339). Null if no fetch has succeeded yet.
+- `next_poll_at` (String) When the next fetch is scheduled (RFC 3339). Null while polling is paused.
 
 ## Import
 

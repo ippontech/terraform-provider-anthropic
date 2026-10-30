@@ -4,7 +4,7 @@
 // Package wifprobetest holds the harness behind the TestAccWIFStalenessProbe
 // tests in internal/services/federation and internal/services/serviceaccounts:
 // they measure read-after-write staleness on the Workload Identity Federation
-// endpoints (see the "Read-after-write consistency" section of CLAUDE.md). The
+// endpoints (see internal/services/federation/CLAUDE.md). The
 // harness is an instrument, not an assertion library: Read never fails a test
 // on a stale read, it only records when the endpoint converged.
 //
@@ -16,6 +16,7 @@ package wifprobetest
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -86,7 +87,7 @@ func Write(t *testing.T, res *Result, write func() (time.Time, error)) time.Time
 			return writtenAt
 		}
 		var apierr *anthropic.Error
-		if !errors.As(err, &apierr) || apierr.StatusCode != 404 || time.Now().After(deadline) {
+		if !errors.As(err, &apierr) || apierr.StatusCode != http.StatusNotFound || time.Now().After(deadline) {
 			Fatal(t, fmt.Sprintf("%s trial %d write (after %d 404s)", res.Endpoint, res.Trial, res.WriteNotFound), err)
 		}
 		res.WriteNotFound++
@@ -112,7 +113,7 @@ func Read(t *testing.T, res *Result, writtenAt time.Time, read func() (updatedAt
 		switch {
 		case err != nil:
 			var apierr *anthropic.Error
-			if errors.As(err, &apierr) && apierr.StatusCode == 401 {
+			if errors.As(err, &apierr) && apierr.StatusCode == http.StatusUnauthorized {
 				Fatal(t, res.Endpoint+" read", err)
 			}
 			t.Logf("%s trial %d: read error (counted as stale): %s", res.Endpoint, res.Trial, err)
@@ -133,7 +134,8 @@ func Read(t *testing.T, res *Result, writtenAt time.Time, read func() (updatedAt
 }
 
 // LogTable prints every trial as one row of a fixed-width table via t.Log, so
-// the numbers can be copied into CLAUDE.md as they are.
+// the numbers can be copied into internal/services/federation/CLAUDE.md as
+// they are.
 func LogTable(t *testing.T, results []Result) {
 	t.Helper()
 	var b strings.Builder

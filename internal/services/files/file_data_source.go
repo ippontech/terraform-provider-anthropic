@@ -7,12 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -145,10 +147,10 @@ func (d *FileDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	id := config.ID.ValueString()
-	file, err := d.client.Files.GetMetadata(ctx, id)
+	file, err := d.client.Files.GetMetadata(ctx, id, anthropic.FileGetMetadataParams{})
 	if err != nil {
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			resp.Diagnostics.AddError("File Not Found", fmt.Sprintf("No file with ID %q exists (or it has been deleted or has expired).", id))
 			return
 		}
