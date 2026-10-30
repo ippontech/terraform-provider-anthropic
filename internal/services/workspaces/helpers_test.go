@@ -4,7 +4,6 @@
 package workspaces
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -33,38 +32,4 @@ func workspaceFixture() string {
 			"workspace_geo": "us"
 		}
 	}`
-}
-
-type pageData[T any] struct {
-	data    []T
-	hasMore bool
-	lastID  string
-}
-
-// fetchAllPages drives the standard pagination loop used by all list data sources.
-// unmarshal converts a raw response body into a pageData[T], normalising LastID to a plain string.
-func fetchAllPages[T any](t *testing.T, client *admin.Client, basePath string, unmarshal func([]byte) (pageData[T], error)) []T {
-	t.Helper()
-	var all []T
-	afterID := ""
-	for {
-		path := basePath
-		if afterID != "" {
-			path += "&after_id=" + afterID
-		}
-		b, err := client.DoRequest(context.Background(), "GET", path, nil)
-		if err != nil {
-			t.Fatalf("DoRequest: %v", err)
-		}
-		page, err := unmarshal(b)
-		if err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		all = append(all, page.data...)
-		if !page.hasMore {
-			break
-		}
-		afterID = page.lastID
-	}
-	return all
 }
