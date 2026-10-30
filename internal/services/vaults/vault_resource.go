@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -348,14 +349,15 @@ func (r *VaultResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	if data.ArchiveOnDestroy.ValueBool() {
 		_, err := r.client.Beta.Vaults.Archive(ctx, data.ID.ValueString(), anthropic.BetaVaultArchiveParams{})
-		if err != nil {
+		if err != nil && !providerrors.IsNotFound(err) {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive vault: %s", err))
 		}
 		return
 	}
 
+	// A 404 means the vault is already gone, which is what destroy wants.
 	_, err := r.client.Beta.Vaults.Delete(ctx, data.ID.ValueString(), anthropic.BetaVaultDeleteParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete vault: %s", err))
 	}
 }
@@ -396,7 +398,9 @@ func mapVaultResponseToState(vault *anthropic.BetaManagedAgentsVault, data *Vaul
 		diags.Append(d...)
 		data.Metadata = metaMap
 	} else {
-		data.Metadata = types.MapNull(types.StringType)
+		// The API answers {} both without metadata and after metadata = {}: keep
+		// a known empty map, or metadata = {} fails with an inconsistent result.
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(data.Metadata)
 	}
 
 	return diags
