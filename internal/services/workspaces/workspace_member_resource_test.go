@@ -24,7 +24,7 @@ func workspaceMemberFixture() string {
 
 func TestWorkspaceMemberCreate_parsesResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/v1/organizations/workspaces/ws_01abc123/members" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/workspaces/ws_01abc123/members" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
@@ -79,7 +80,9 @@ func TestAccFederationIssuerDataSource_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("data.anthropic_federation_issuer.test", "issuer_url", issuer.IssuerURL),
 					resource.TestCheckResourceAttrSet("data.anthropic_federation_issuer.test", "created_at"),
 					resource.TestCheckResourceAttrSet("data.anthropic_federation_issuer.test", "jwks.type"),
-					resource.TestCheckResourceAttr("data.anthropic_federation_issuer.test", "poll_status.consecutive_failures", "0"),
+					// poll_status.consecutive_failures is not asserted: it
+					// is 0 until the first poll of this fresh issuer, then
+					// moves with every fetch of the unreachable discovery URL.
 				),
 			},
 		},

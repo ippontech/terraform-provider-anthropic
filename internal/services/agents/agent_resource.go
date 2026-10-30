@@ -5,14 +5,18 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"time"
+	"maps"
+	"math"
+	"regexp"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -24,8 +28,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -59,6 +65,7 @@ type AgentResourceModel struct {
 	MCPToolsets       types.List   `tfsdk:"mcp_toolsets"`
 	CustomTools       types.List   `tfsdk:"custom_tools"`
 	Multiagent        types.Object `tfsdk:"multiagent"`
+	ExecutionIdentity types.Object `tfsdk:"execution_identity"`
 	ID                types.String `tfsdk:"id"`
 	Version           types.Int64  `tfsdk:"version"`
 	CreatedAt         types.String `tfsdk:"created_at"`
@@ -77,7 +84,21 @@ type agentSkillModel struct {
 	Version types.String `tfsdk:"version"`
 }
 
+// agentToolConfigModel is an `agent_toolset.configs` entry. The web options
+// apply to web_fetch and web_search only (agent_web_tools.go).
 type agentToolConfigModel struct {
+	Name             types.String `tfsdk:"name"`
+	Enabled          types.Bool   `tfsdk:"enabled"`
+	PermissionPolicy types.String `tfsdk:"permission_policy"`
+	AllowedDomains   types.Set    `tfsdk:"allowed_domains"`
+	BlockedDomains   types.Set    `tfsdk:"blocked_domains"`
+	MaxContentTokens types.Int64  `tfsdk:"max_content_tokens"`
+	UserLocation     types.Object `tfsdk:"user_location"`
+	URLSources       types.Object `tfsdk:"url_sources"`
+}
+
+// agentMCPToolConfigModel is an `mcp_toolsets[*].configs` entry.
+type agentMCPToolConfigModel struct {
 	Name             types.String `tfsdk:"name"`
 	Enabled          types.Bool   `tfsdk:"enabled"`
 	PermissionPolicy types.String `tfsdk:"permission_policy"`
@@ -105,9 +126,14 @@ type agentCustomToolModel struct {
 // --- Attribute type maps for nested objects ---
 
 var agentToolConfigAttrTypes = map[string]attr.Type{
-	"name":              types.StringType,
-	"enabled":           types.BoolType,
-	"permission_policy": types.StringType,
+	"name":               types.StringType,
+	"enabled":            types.BoolType,
+	"permission_policy":  types.StringType,
+	"allowed_domains":    types.SetType{ElemType: types.StringType},
+	"blocked_domains":    types.SetType{ElemType: types.StringType},
+	"max_content_tokens": types.Int64Type,
+	"user_location":      types.ObjectType{AttrTypes: agentUserLocationAttrTypes},
+	"url_sources":        types.ObjectType{AttrTypes: agentURLSourcesAttrTypes},
 }
 
 var agentToolsetAttrTypes = map[string]attr.Type{
@@ -148,7 +174,20 @@ var agentCustomToolAttrTypes = map[string]attr.Type{
 
 // --- Permission policy validators (reused across tool schemas) ---
 
-var permissionPolicyValidator = stringvalidator.OneOf("always_allow", "always_ask")
+// Permission policy values
+// (https://platform.claude.com/docs/en/managed-agents/permission-policies).
+const (
+	policyAlwaysAllow = "always_allow"
+	policyAlwaysAsk   = "always_ask"
+	policyAuto        = "auto"
+)
+
+var permissionPolicyValidator = stringvalidator.OneOf(policyAlwaysAllow, policyAlwaysAsk, policyAuto)
+
+// permissionPolicyValuesDescription describes the values of a toolset's
+// default permission policy; per-tool overrides list the values only.
+const permissionPolicyValuesDescription = "`always_allow` (runs without confirmation), `always_ask` (waits for approval) or `auto` " +
+	"(the server evaluates each call and runs it, denies it or waits for approval; not a human checkpoint, since a call it judges safe runs before anyone sees it)"
 
 // uniqueMCPServerNamesValidator rejects two mcp_toolsets entries for the same
 // server: mapMCPToolsetsToState matches toolsets by server name and keeps one
@@ -289,7 +328,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"agent_toolset": schema.SingleNestedAttribute{
 				Optional:            true,
-				MarkdownDescription: "Configuration for built-in agent tools (bash, edit, read, write, glob, grep, web_fetch, web_search).",
+				MarkdownDescription: "Configuration for built-in agent tools (" + strings.Join(builtinToolNames(), ", ") + ").",
 				Attributes: map[string]schema.Attribute{
 					"default_enabled": schema.BoolAttribute{
 						Optional:            true,
@@ -297,22 +336,23 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						MarkdownDescription: "Whether tools are enabled by default. Defaults to `true`.",
 					},
 					"default_permission_policy": schema.StringAttribute{
-						Optional:            true,
-						Computed:            true,
-						MarkdownDescription: "Default permission policy: `always_allow` or `always_ask`.",
-						Validators:          []validator.String{permissionPolicyValidator},
+						Optional: true,
+						Computed: true,
+						MarkdownDescription: "Default permission policy: " + permissionPolicyValuesDescription + ". The API applies `always_allow` when omitted. " +
+							"Removing the attribute does not plan a change on its own: set the policy you want instead.",
+						Validators: []validator.String{permissionPolicyValidator},
 					},
 					"configs": schema.ListNestedAttribute{
-						Optional:            true,
-						MarkdownDescription: "Per-tool configuration overrides.",
+						Optional: true,
+						MarkdownDescription: "Per-tool configuration overrides. The `web_fetch` and `web_search` entries also accept " +
+							"`allowed_domains` or `blocked_domains`, plus `max_content_tokens` and `url_sources` (`web_fetch`) or `user_location` (`web_search`); " +
+							"setting one of these on another tool fails at plan time.",
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"name": schema.StringAttribute{
 									Required:            true,
 									MarkdownDescription: "Built-in tool name.",
-									Validators: []validator.String{stringvalidator.OneOf(
-										"bash", "edit", "read", "write", "glob", "grep", "web_fetch", "web_search",
-									)},
+									Validators:          []validator.String{stringvalidator.OneOf(builtinToolNames()...)},
 								},
 								"enabled": schema.BoolAttribute{
 									Optional:            true,
@@ -320,9 +360,67 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 								},
 								"permission_policy": schema.StringAttribute{
 									Optional:            true,
-									MarkdownDescription: "Permission policy override: `always_allow` or `always_ask`.",
+									MarkdownDescription: "Permission policy override: `always_allow`, `always_ask` or `auto`.",
 									Validators:          []validator.String{permissionPolicyValidator},
 								},
+								"allowed_domains": schema.SetAttribute{
+									Optional:    true,
+									ElementType: types.StringType,
+									MarkdownDescription: "`web_fetch` and `web_search` only. The only hosts the tool can reach. " +
+										"Each entry is a plain hostname such as `docs.example.com` (no scheme, port or wildcard) and also covers its subdomains; " +
+										"a `web_search` entry may carry a path suffix. 1-64 entries of 1-255 characters. Conflicts with `blocked_domains`. " +
+										"With `limited` environment networking, every entry must also be within the environment's `allowed_hosts`, or creating a session fails.",
+									Validators: []validator.Set{
+										setvalidator.SizeBetween(1, 64),
+										setvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 255)),
+									},
+								},
+								"blocked_domains": schema.SetAttribute{
+									Optional:    true,
+									ElementType: types.StringType,
+									MarkdownDescription: "`web_fetch` and `web_search` only. Hosts the tool can never reach, written like `allowed_domains`. " +
+										"1-64 entries of 1-255 characters. Conflicts with `allowed_domains`.",
+									Validators: []validator.Set{
+										setvalidator.SizeBetween(1, 64),
+										setvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 255)),
+									},
+								},
+								"max_content_tokens": schema.Int64Attribute{
+									Optional: true,
+									MarkdownDescription: "`web_fetch` only. Maximum number of tokens of fetched text content included in the context per call. " +
+										"Does not apply to binary content such as PDFs. Positive integer.",
+									Validators: []validator.Int64{int64validator.Between(1, math.MaxInt32)},
+								},
+								"user_location": schema.SingleNestedAttribute{
+									Optional: true,
+									MarkdownDescription: "`web_search` only. Approximate user location used to localize search results " +
+										"(sent with `type = \"approximate\"`, the only precision the API supports). At least one field must be set.",
+									Attributes: map[string]schema.Attribute{
+										"country": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "Two-letter ISO 3166-1 country code, uppercase (e.g. `US`). The API rejects a country its search provider does not support.",
+											Validators: []validator.String{stringvalidator.RegexMatches(
+												regexp.MustCompile(`^[A-Z]{2}$`), "must be a two-letter uppercase ISO 3166-1 country code",
+											)},
+										},
+										"city": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "City name. 1-255 characters.",
+											Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
+										},
+										"region": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "Region or state name. 1-255 characters.",
+											Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
+										},
+										"timezone": schema.StringAttribute{
+											Optional:            true,
+											MarkdownDescription: "IANA timezone identifier (e.g. `America/Los_Angeles`). The API rejects a name that is not a valid IANA timezone.",
+											Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
+										},
+									},
+								},
+								"url_sources": urlSourcesSchema(),
 							},
 						},
 					},
@@ -344,10 +442,12 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							MarkdownDescription: "Whether MCP tools are enabled by default.",
 						},
 						"default_permission_policy": schema.StringAttribute{
-							Optional:            true,
-							Computed:            true,
-							MarkdownDescription: "Default permission policy: `always_allow` or `always_ask`.",
-							Validators:          []validator.String{permissionPolicyValidator},
+							Optional: true,
+							Computed: true,
+							MarkdownDescription: "Default permission policy: " + permissionPolicyValuesDescription + ". " +
+								"The API applies `always_ask` when omitted, so tools added to the server later do not run without approval. " +
+								"Removing the attribute does not plan a change on its own: set `always_ask` to go back to it.",
+							Validators: []validator.String{permissionPolicyValidator},
 						},
 						"configs": schema.ListNestedAttribute{
 							Optional:            true,
@@ -364,7 +464,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 									},
 									"permission_policy": schema.StringAttribute{
 										Optional:            true,
-										MarkdownDescription: "Permission policy override: `always_allow` or `always_ask`.",
+										MarkdownDescription: "Permission policy override: `always_allow`, `always_ask` or `auto`.",
 										Validators:          []validator.String{permissionPolicyValidator},
 									},
 								},
@@ -387,9 +487,11 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							MarkdownDescription: "Description shown to the agent. 1-1024 characters.",
 						},
 						"input_schema": schema.StringAttribute{
-							Optional:            true,
-							CustomType:          jsontypes.NormalizedType{},
-							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.",
+							Optional:   true,
+							CustomType: jsontypes.NormalizedType{},
+							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
+								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted. " +
+								"When `input_schema` itself is omitted, `{\"type\": \"object\"}` is sent (a tool without parameters), since the API requires an input schema.",
 						},
 					},
 				},
@@ -397,23 +499,42 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 
 			"multiagent": schema.SingleNestedAttribute{
 				Optional: true,
-				MarkdownDescription: "Coordinator topology (beta): the agent orchestrates work by spawning session threads, each running an agent from the roster. " +
-					"Entries must reference distinct agents, referenced agents must not have their own `multiagent` roster (depth limit 1), " +
-					"and `inference_geo` must match across the coordinator and all members. " +
-					"The roster is snapshotted on create/update: to pick up a newer version of a member, change its `version`. " +
-					"The API resolves a `self` entry into an `agent` reference carrying the coordinator's own ID and echoes the `advisor` entry last; " +
+				MarkdownDescription: "Multiagent orchestration (beta), of type `coordinator` or `multiagent_20261001` (see the Multiagent orchestration section). " +
+					"Referenced agents must not have their own `multiagent` (depth limit 1), and `inference_geo` must match across the agent and every agent it references. " +
+					"Agent references are snapshotted on create/update: to pick up a newer version of a referenced agent, change its `version`. " +
+					"The API resolves a `self` entry into an `agent` reference carrying the agent's own ID (and echoes a coordinator `advisor` entry last); " +
 					"state keeps the configured order and `self` entries as configured. " +
 					"When imported (no configuration to correlate with), a `self` entry is therefore read back as an `agent` entry whose `id` is the agent's own ID.",
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
-						Required:            true,
-						MarkdownDescription: "Topology type. Only `coordinator` is supported.",
-						Validators:          []validator.String{stringvalidator.OneOf("coordinator")},
+						Required: true,
+						MarkdownDescription: "`coordinator` (a roster in `agents`) or `multiagent_20261001` " +
+							"(`subagents`, `workflows` and `advisor`, each turned on or off on its own).",
+						Validators: []validator.String{stringvalidator.OneOf(multiagentTypeCoordinator, multiagentType20261001)},
+					},
+					"subagents": multiagentMemberSchema(
+						"`multiagent_20261001` only. Delegation to subagents, each running in its own session thread (one level deep, at most 25 child threads at a time). " +
+							"Omitted, it takes the API default: enabled, with inline agents."),
+					"workflows": multiagentMemberSchema(
+						"`multiagent_20261001` only. Dynamic workflows: programs the agent writes, which the server runs in the background with many agents. " +
+							"Omitted, it takes the API default: enabled, with inline agents."),
+					"advisor": schema.SingleNestedAttribute{
+						Optional: true,
+						MarkdownDescription: "`multiagent_20261001` only. An advisor model the session's primary thread can consult mid-turn. " +
+							"Omitted, the agent has no advisor (the API default). For `coordinator`, use an `advisor` entry in `agents` instead.",
+						Attributes: map[string]schema.Attribute{
+							"model": schema.StringAttribute{
+								Required: true,
+								MarkdownDescription: "Advisor model ID. It must be at least as capable as the agent's model, " +
+									"or the API rejects the pairing.",
+							},
+						},
 					},
 					"agents": schema.ListNestedAttribute{
-						Required:            true,
-						MarkdownDescription: "Roster of agents the coordinator may spawn. 1-20 entries, at most one `self` and one `advisor`.",
-						Validators:          []validator.List{listvalidator.SizeBetween(1, 20)},
+						Optional: true,
+						MarkdownDescription: "`coordinator` only, and required there. Roster of agents the coordinator may spawn. " +
+							"1-20 entries referencing distinct agents, at most one `self` and one `advisor`.",
+						Validators: []validator.List{listvalidator.SizeBetween(1, 20)},
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"type": schema.StringAttribute{
@@ -439,6 +560,8 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					},
 				},
 			},
+
+			"execution_identity": executionIdentitySchema(),
 
 			// --- Computed ---
 			"id": schema.StringAttribute{
@@ -469,7 +592,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 }
 
 func (r *AgentResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
-	return []resource.ConfigValidator{&multiagentConfigValidator{}}
+	return []resource.ConfigValidator{&multiagentConfigValidator{}, &agentToolConfigsValidator{}, &executionIdentityConfigValidator{}}
 }
 
 // --- Configure ---
@@ -504,65 +627,11 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	params := anthropic.BetaAgentNewParams{
-		Model: buildModelConfigParams(data),
-		Name:  data.Name.ValueString(),
-	}
-	if !data.Description.IsNull() {
-		params.Description = param.NewOpt(data.Description.ValueString())
-	}
-	if !data.System.IsNull() {
-		params.System = param.NewOpt(data.System.ValueString())
-	}
-
-	// Metadata
-	if !data.Metadata.IsNull() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
-	}
-
-	// MCP servers
-	if !data.MCPServers.IsNull() {
-		var servers []agentMCPServerModel
-		resp.Diagnostics.Append(data.MCPServers.ElementsAs(ctx, &servers, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.MCPServers = make([]anthropic.BetaManagedAgentsURLMCPServerParams, len(servers))
-		for i, s := range servers {
-			params.MCPServers[i] = anthropic.BetaManagedAgentsURLMCPServerParams{
-				Name: s.Name.ValueString(),
-				Type: anthropic.BetaManagedAgentsURLMCPServerParamsTypeURL,
-				URL:  s.URL.ValueString(),
-			}
-		}
-	}
-
-	// Skills
-	resp.Diagnostics.Append(buildSkillsParams(ctx, data.Skills, &params.Skills)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Tools
-	tools, diags := buildToolsParams(ctx, data)
+	params, diags := buildCreateParams(ctx, data)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	params.Tools = tools
-
-	// Multiagent
-	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent, types.ObjectNull(agentMultiagentAttrTypes))
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	params.Multiagent = multiagent
 
 	agent, err := r.client.Beta.Agents.New(ctx, params)
 	if err != nil {
@@ -578,6 +647,87 @@ func (r *AgentResource) Create(ctx context.Context, req resource.CreateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// buildCreateParams builds the create request from the plan. Unset optional
+// attributes are omitted, so the API applies its defaults.
+func buildCreateParams(ctx context.Context, data AgentResourceModel) (anthropic.BetaAgentNewParams, diag.Diagnostics) {
+	params := anthropic.BetaAgentNewParams{
+		Model: buildModelConfigParams(data),
+		Name:  data.Name.ValueString(),
+	}
+	if !data.Description.IsNull() {
+		params.Description = param.NewOpt(data.Description.ValueString())
+	}
+	if !data.System.IsNull() {
+		params.System = param.NewOpt(data.System.ValueString())
+	}
+
+	var diags diag.Diagnostics
+	if !data.Metadata.IsNull() {
+		var meta map[string]string
+		diags.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
+		if diags.HasError() {
+			return params, diags
+		}
+		params.Metadata = meta
+	}
+
+	servers, d := buildMCPServersParams(ctx, data.MCPServers)
+	diags.Append(d...)
+	if diags.HasError() {
+		return params, diags
+	}
+	params.MCPServers = servers
+
+	diags.Append(buildSkillsParams(ctx, data.Skills, &params.Skills)...)
+	if diags.HasError() {
+		return params, diags
+	}
+
+	tools, d := buildToolsParams(ctx, data)
+	diags.Append(d...)
+	if diags.HasError() {
+		return params, diags
+	}
+	params.Tools = tools
+
+	multiagent, d := buildMultiagentParams(ctx, data.Multiagent, types.ObjectNull(agentMultiagentAttrTypes))
+	diags.Append(d...)
+	if diags.HasError() {
+		return params, diags
+	}
+	params.Multiagent = multiagent
+
+	// Execution identity: omitted when unset, which stores the default.
+	identity, sendIdentity, d := buildExecutionIdentityParams(ctx, data.ExecutionIdentity, types.ObjectNull(agentExecutionIdentityAttrTypes))
+	diags.Append(d...)
+	if sendIdentity {
+		params.ExecutionIdentity = identity
+	}
+	return params, diags
+}
+
+// buildMCPServersParams builds the mcp_servers of a request, nil when the
+// attribute is null.
+func buildMCPServersParams(ctx context.Context, list types.List) ([]anthropic.BetaManagedAgentsURLMCPServerParams, diag.Diagnostics) {
+	if list.IsNull() {
+		return nil, nil
+	}
+	var servers []agentMCPServerModel
+	diags := list.ElementsAs(ctx, &servers, false)
+	if diags.HasError() {
+		return nil, diags
+	}
+	params := make([]anthropic.BetaManagedAgentsURLMCPServerParams, len(servers))
+	for i, s := range servers {
+		params[i] = anthropic.BetaManagedAgentsURLMCPServerParams{
+			Name: s.Name.ValueString(),
+			Type: anthropic.BetaManagedAgentsURLMCPServerParamsTypeURL,
+			URL:  s.URL.ValueString(),
+		}
+	}
+	return params, diags
+}
+
 // --- Read ---
 
 func (r *AgentResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -589,6 +739,11 @@ func (r *AgentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	agent, err := r.client.Beta.Agents.Get(ctx, data.ID.ValueString(), anthropic.BetaAgentGetParams{})
 	if err != nil {
+		// Deleted out of band: drop it from state so the next plan re-creates it.
+		if providerrors.IsNotFound(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read agent: %s", err))
 		return
 	}
@@ -623,95 +778,10 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	params := anthropic.BetaAgentUpdateParams{
-		Model: buildModelConfigParams(data),
-		Name:  param.NewOpt(data.Name.ValueString()),
-	}
-
-	// Optimistic locking: the API requires a version of at least 1 when supplied,
-	// and applies the update unconditionally when omitted.
-	if v := state.Version.ValueInt64(); v > 0 {
-		params.Version = param.NewOpt(v)
-	}
-
-	if !data.Description.IsNull() {
-		params.Description = param.NewOpt(data.Description.ValueString())
-	} else {
-		params.Description = param.NewOpt("")
-	}
-
-	if !data.System.IsNull() {
-		params.System = param.NewOpt(data.System.ValueString())
-	} else {
-		params.System = param.NewOpt("")
-	}
-
-	// Metadata
-	if !data.Metadata.IsNull() {
-		var meta map[string]string
-		resp.Diagnostics.Append(data.Metadata.ElementsAs(ctx, &meta, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.Metadata = meta
-	} else {
-		params.Metadata = map[string]string{}
-	}
-
-	// MCP servers
-	if !data.MCPServers.IsNull() {
-		var servers []agentMCPServerModel
-		resp.Diagnostics.Append(data.MCPServers.ElementsAs(ctx, &servers, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		params.MCPServers = make([]anthropic.BetaManagedAgentsURLMCPServerParams, len(servers))
-		for i, s := range servers {
-			params.MCPServers[i] = anthropic.BetaManagedAgentsURLMCPServerParams{
-				Name: s.Name.ValueString(),
-				Type: anthropic.BetaManagedAgentsURLMCPServerParamsTypeURL,
-				URL:  s.URL.ValueString(),
-			}
-		}
-	} else {
-		params.MCPServers = []anthropic.BetaManagedAgentsURLMCPServerParams{}
-	}
-
-	// Skills — explicitly send empty slice when null to clear API-side skills.
-	resp.Diagnostics.Append(buildSkillsParams(ctx, data.Skills, &params.Skills)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if params.Skills == nil {
-		params.Skills = []anthropic.BetaManagedAgentsSkillParamsUnion{}
-	}
-
-	// Tools
-	createTools, diags := buildToolsParams(ctx, data)
+	params, diags := buildUpdateParams(ctx, data, state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
-	}
-	// Convert BetaAgentNewParamsToolUnion to BetaAgentUpdateParamsToolUnion
-	updateTools := make([]anthropic.BetaAgentUpdateParamsToolUnion, len(createTools))
-	for i, t := range createTools {
-		updateTools[i] = anthropic.BetaAgentUpdateParamsToolUnion{
-			OfAgentToolset20260401: t.OfAgentToolset20260401,
-			OfMCPToolset:           t.OfMCPToolset,
-			OfCustom:               t.OfCustom,
-		}
-	}
-	params.Tools = updateTools
-
-	// Multiagent: clearing must send an explicit null, an omitted field keeps the roster.
-	multiagent, diags := buildMultiagentParams(ctx, data.Multiagent, state.Multiagent)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	params.Multiagent = multiagent
-	if data.Multiagent.IsNull() && !state.Multiagent.IsNull() {
-		params.SetExtraFields(multiagentClearField())
 	}
 
 	agent, err := r.client.Beta.Agents.Update(ctx, state.ID.ValueString(), params)
@@ -728,6 +798,110 @@ func (r *AgentResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// buildUpdateParams builds the update request from the plan and the prior
+// state. Every field the configuration can clear is sent, empty when unset,
+// since the API keeps an omitted field
+// (https://platform.claude.com/docs/en/api/beta/agents/update).
+func buildUpdateParams(ctx context.Context, data, state AgentResourceModel) (anthropic.BetaAgentUpdateParams, diag.Diagnostics) {
+	params := anthropic.BetaAgentUpdateParams{
+		Model:       buildModelConfigParams(data),
+		Name:        param.NewOpt(data.Name.ValueString()),
+		Description: param.NewOpt(data.Description.ValueString()),
+		System:      param.NewOpt(data.System.ValueString()),
+	}
+
+	// Optimistic locking: the API requires a version of at least 1 when supplied,
+	// and applies the update unconditionally when omitted.
+	if v := state.Version.ValueInt64(); v > 0 {
+		params.Version = param.NewOpt(v)
+	}
+
+	// Metadata is a patch on update: an omitted key is kept and a null one is
+	// deleted (https://platform.claude.com/docs/en/api/beta/agents/update), so
+	// keys removed from the configuration are sent as null. The typed
+	// map[string]string cannot carry a null, hence the extra field.
+	metaPatch, diags := tfvalue.MetadataPatch(ctx, data.Metadata, state.Metadata)
+	if diags.HasError() {
+		return params, diags
+	}
+
+	servers, d := buildMCPServersParams(ctx, data.MCPServers)
+	diags.Append(d...)
+	if diags.HasError() {
+		return params, diags
+	}
+	params.MCPServers = servers
+	if params.MCPServers == nil {
+		params.MCPServers = []anthropic.BetaManagedAgentsURLMCPServerParams{}
+	}
+
+	// Skills — explicitly send empty slice when null to clear API-side skills.
+	diags.Append(buildSkillsParams(ctx, data.Skills, &params.Skills)...)
+	if diags.HasError() {
+		return params, diags
+	}
+	if params.Skills == nil {
+		params.Skills = []anthropic.BetaManagedAgentsSkillParamsUnion{}
+	}
+
+	tools, d := buildToolsParams(ctx, data)
+	diags.Append(d...)
+	if diags.HasError() {
+		return params, diags
+	}
+	params.Tools = updateToolsParams(tools)
+
+	// Multiagent: clearing must send an explicit null, an omitted field keeps the roster.
+	multiagent, d := buildMultiagentParams(ctx, data.Multiagent, state.Multiagent)
+	diags.Append(d...)
+	if diags.HasError() {
+		return params, diags
+	}
+	params.Multiagent = multiagent
+
+	// SetExtraFields replaces the extra fields, so it is called once.
+	if extraFields := updateExtraFields(metaPatch, data, state); len(extraFields) > 0 {
+		params.SetExtraFields(extraFields)
+	}
+
+	// Execution identity: removing it sends the service account (the default).
+	identity, sendIdentity, d := buildExecutionIdentityParams(ctx, data.ExecutionIdentity, state.ExecutionIdentity)
+	diags.Append(d...)
+	if sendIdentity {
+		params.ExecutionIdentity = identity
+	}
+	return params, diags
+}
+
+// updateToolsParams converts the create tools union into the update one; it
+// is never nil, so an update without tools sends [] and clears them.
+func updateToolsParams(tools []anthropic.BetaAgentNewParamsToolUnion) []anthropic.BetaAgentUpdateParamsToolUnion {
+	updateTools := make([]anthropic.BetaAgentUpdateParamsToolUnion, len(tools))
+	for i, t := range tools {
+		updateTools[i] = anthropic.BetaAgentUpdateParamsToolUnion{
+			OfAgentToolset20260401: t.OfAgentToolset20260401,
+			OfMCPToolset:           t.OfMCPToolset,
+			OfCustom:               t.OfCustom,
+		}
+	}
+	return updateTools
+}
+
+// updateExtraFields returns the members of the update the typed params cannot
+// carry: the metadata patch, whose deleted keys are JSON nulls, and
+// multiagent: null when the configuration removes it (see
+// multiagentClearField).
+func updateExtraFields(metaPatch map[string]any, data, state AgentResourceModel) map[string]any {
+	extraFields := map[string]any{}
+	if len(metaPatch) > 0 {
+		extraFields["metadata"] = metaPatch
+	}
+	if data.Multiagent.IsNull() && !state.Multiagent.IsNull() {
+		maps.Copy(extraFields, multiagentClearField())
+	}
+	return extraFields
+}
+
 // --- Delete (archive) ---
 
 func (r *AgentResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -739,6 +913,9 @@ func (r *AgentResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	_, err := r.client.Beta.Agents.Archive(ctx, data.ID.ValueString(), anthropic.BetaAgentArchiveParams{})
 	if err != nil {
+		if providerrors.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive agent: %s", err))
 		return
 	}
@@ -763,7 +940,7 @@ func (r *AgentResource) ImportState(ctx context.Context, req resource.ImportStat
 // removing it from the configuration clears the pin.
 func buildModelConfigParams(plan AgentResourceModel) anthropic.BetaManagedAgentsModelConfigParams {
 	model := anthropic.BetaManagedAgentsModelConfigParams{
-		ID: anthropic.BetaManagedAgentsModel(plan.Model.ValueString()),
+		ID: plan.Model.ValueString(),
 	}
 	if !plan.ModelSpeed.IsNull() && !plan.ModelSpeed.IsUnknown() {
 		model.Speed = anthropic.BetaManagedAgentsModelConfigParamsSpeed(plan.ModelSpeed.ValueString())
@@ -840,133 +1017,223 @@ func buildSkillsParams(ctx context.Context, skillsList types.List, target *[]ant
 	return diags
 }
 
-// buildToolsParams converts the three tool-related attributes into a single SDK tools slice.
+// isKnown reports whether v holds a value: neither null nor unknown.
+func isKnown(v attr.Value) bool {
+	return !v.IsNull() && !v.IsUnknown()
+}
+
+// buildToolsParams converts the three tool-related attributes into a single
+// SDK tools slice: the agent toolset, then the MCP toolsets, then the custom
+// tools. It is nil when none is configured.
 func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic.BetaAgentNewParamsToolUnion, diag.Diagnostics) {
-	var diags diag.Diagnostics
 	var tools []anthropic.BetaAgentNewParamsToolUnion
 
-	// Agent toolset
-	if !data.AgentToolset.IsNull() && !data.AgentToolset.IsUnknown() {
-		var toolset agentToolsetModel
-		diags.Append(data.AgentToolset.As(ctx, &toolset, basetypes.ObjectAsOptions{})...)
+	toolset, diags := buildAgentToolsetParams(ctx, data.AgentToolset)
+	if diags.HasError() {
+		return nil, diags
+	}
+	if toolset != nil {
+		tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfAgentToolset20260401: toolset})
+	}
+
+	mcpToolsets, d := buildMCPToolsetsParams(ctx, data.MCPToolsets)
+	diags.Append(d...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	tools = append(tools, mcpToolsets...)
+
+	customTools, d := buildCustomToolsParams(ctx, data.CustomTools)
+	diags.Append(d...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	return append(tools, customTools...), diags
+}
+
+// buildAgentToolsetParams builds the agent_toolset_20260401 tool, nil when
+// agent_toolset is null or unknown. Defaults left unset are omitted, so the
+// API applies its own.
+func buildAgentToolsetParams(ctx context.Context, obj types.Object) (*anthropic.BetaManagedAgentsAgentToolset20260401Params, diag.Diagnostics) {
+	if !isKnown(obj) {
+		return nil, nil
+	}
+	var toolset agentToolsetModel
+	diags := obj.As(ctx, &toolset, basetypes.ObjectAsOptions{})
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	params := &anthropic.BetaManagedAgentsAgentToolset20260401Params{
+		Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
+	}
+	if isKnown(toolset.DefaultEnabled) {
+		params.DefaultConfig.Enabled = param.NewOpt(toolset.DefaultEnabled.ValueBool())
+	}
+	if isKnown(toolset.DefaultPermissionPolicy) {
+		params.DefaultConfig.PermissionPolicy = buildAgentToolsetDefaultPermissionPolicy(toolset.DefaultPermissionPolicy.ValueString())
+	}
+
+	configs, d := buildAgentToolConfigsParams(ctx, toolset.Configs)
+	diags.Append(d...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	params.Configs = configs
+	return params, diags
+}
+
+// buildAgentToolConfigsParams builds the per-tool configs of the agent
+// toolset, nil when the list is null or empty (the field is then omitted).
+func buildAgentToolConfigsParams(ctx context.Context, list types.List) ([]anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, diag.Diagnostics) {
+	if list.IsNull() || len(list.Elements()) == 0 {
+		return nil, nil
+	}
+	var configs []agentToolConfigModel
+	diags := list.ElementsAs(ctx, &configs, false)
+	if diags.HasError() {
+		return nil, diags
+	}
+	sdkConfigs := make([]anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, len(configs))
+	for i, c := range configs {
+		cfg, d := buildAgentToolConfigFromModel(ctx, c)
+		diags.Append(d...)
 		if diags.HasError() {
 			return nil, diags
 		}
-
-		params := anthropic.BetaManagedAgentsAgentToolset20260401Params{
-			Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
-		}
-
-		if !toolset.DefaultEnabled.IsNull() && !toolset.DefaultEnabled.IsUnknown() {
-			params.DefaultConfig.Enabled = param.NewOpt(toolset.DefaultEnabled.ValueBool())
-		}
-		if !toolset.DefaultPermissionPolicy.IsNull() && !toolset.DefaultPermissionPolicy.IsUnknown() {
-			params.DefaultConfig.PermissionPolicy = buildAgentToolsetDefaultPermissionPolicy(toolset.DefaultPermissionPolicy.ValueString())
-		}
-
-		if !toolset.Configs.IsNull() && len(toolset.Configs.Elements()) > 0 {
-			var configs []agentToolConfigModel
-			diags.Append(toolset.Configs.ElementsAs(ctx, &configs, false)...)
-			if diags.HasError() {
-				return nil, diags
-			}
-			sdkConfigs := make([]anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, len(configs))
-			for i, c := range configs {
-				var enabled param.Opt[bool]
-				if !c.Enabled.IsNull() && !c.Enabled.IsUnknown() {
-					enabled = param.NewOpt(c.Enabled.ValueBool())
-				}
-				var policy string
-				if !c.PermissionPolicy.IsNull() && !c.PermissionPolicy.IsUnknown() {
-					policy = c.PermissionPolicy.ValueString()
-				}
-
-				cfg, d := buildAgentToolConfigParams(c.Name.ValueString(), enabled, policy)
-				diags.Append(d...)
-				if diags.HasError() {
-					return nil, diags
-				}
-				sdkConfigs[i] = cfg
-			}
-			params.Configs = sdkConfigs
-		}
-
-		tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfAgentToolset20260401: &params})
+		sdkConfigs[i] = cfg
 	}
+	return sdkConfigs, diags
+}
 
-	// MCP toolsets
-	if !data.MCPToolsets.IsNull() && len(data.MCPToolsets.Elements()) > 0 {
-		var toolsets []agentMCPToolsetModel
-		diags.Append(data.MCPToolsets.ElementsAs(ctx, &toolsets, false)...)
+// buildAgentToolConfigFromModel resolves a planned configs entry and builds
+// its union branch. An unset enabled or permission_policy is omitted, so the
+// tool inherits the toolset default.
+func buildAgentToolConfigFromModel(ctx context.Context, c agentToolConfigModel) (anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, diag.Diagnostics) {
+	var enabled param.Opt[bool]
+	if isKnown(c.Enabled) {
+		enabled = param.NewOpt(c.Enabled.ValueBool())
+	}
+	var policy string
+	if isKnown(c.PermissionPolicy) {
+		policy = c.PermissionPolicy.ValueString()
+	}
+	web, diags := webToolOptionsFromModel(ctx, c)
+	if diags.HasError() {
+		return anthropic.BetaManagedAgentsAgentToolConfigParamsUnion{}, diags
+	}
+	cfg, d := buildAgentToolConfigParams(c.Name.ValueString(), enabled, policy, web)
+	diags.Append(d...)
+	return cfg, diags
+}
+
+// buildMCPToolsetsParams builds one mcp_toolset tool per mcp_toolsets entry,
+// nil when the list is null or empty.
+func buildMCPToolsetsParams(ctx context.Context, list types.List) ([]anthropic.BetaAgentNewParamsToolUnion, diag.Diagnostics) {
+	if list.IsNull() || len(list.Elements()) == 0 {
+		return nil, nil
+	}
+	var toolsets []agentMCPToolsetModel
+	diags := list.ElementsAs(ctx, &toolsets, false)
+	if diags.HasError() {
+		return nil, diags
+	}
+	var tools []anthropic.BetaAgentNewParamsToolUnion
+	for _, t := range toolsets {
+		p, d := buildMCPToolsetParams(ctx, t)
+		diags.Append(d...)
 		if diags.HasError() {
 			return nil, diags
 		}
-
-		for _, t := range toolsets {
-			p := anthropic.BetaManagedAgentsMCPToolsetParams{
-				MCPServerName: t.MCPServerName.ValueString(),
-				Type:          anthropic.BetaManagedAgentsMCPToolsetParamsTypeMCPToolset,
-			}
-
-			if !t.DefaultEnabled.IsNull() && !t.DefaultEnabled.IsUnknown() {
-				p.DefaultConfig.Enabled = param.NewOpt(t.DefaultEnabled.ValueBool())
-			}
-			if !t.DefaultPermissionPolicy.IsNull() && !t.DefaultPermissionPolicy.IsUnknown() {
-				p.DefaultConfig.PermissionPolicy = buildMCPToolsetDefaultPermissionPolicy(t.DefaultPermissionPolicy.ValueString())
-			}
-
-			if !t.Configs.IsNull() && len(t.Configs.Elements()) > 0 {
-				var configs []agentToolConfigModel
-				diags.Append(t.Configs.ElementsAs(ctx, &configs, false)...)
-				if diags.HasError() {
-					return nil, diags
-				}
-				sdkConfigs := make([]anthropic.BetaManagedAgentsMCPToolConfigParams, len(configs))
-				for i, c := range configs {
-					sdkConfigs[i] = anthropic.BetaManagedAgentsMCPToolConfigParams{
-						Name: c.Name.ValueString(),
-					}
-					if !c.Enabled.IsNull() && !c.Enabled.IsUnknown() {
-						sdkConfigs[i].Enabled = param.NewOpt(c.Enabled.ValueBool())
-					}
-					if !c.PermissionPolicy.IsNull() && !c.PermissionPolicy.IsUnknown() {
-						sdkConfigs[i].PermissionPolicy = buildMCPToolConfigPermissionPolicy(c.PermissionPolicy.ValueString())
-					}
-				}
-				p.Configs = sdkConfigs
-			}
-
-			tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfMCPToolset: &p})
-		}
+		tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfMCPToolset: p})
 	}
-
-	// Custom tools
-	if !data.CustomTools.IsNull() && len(data.CustomTools.Elements()) > 0 {
-		var customTools []agentCustomToolModel
-		diags.Append(data.CustomTools.ElementsAs(ctx, &customTools, false)...)
-		if diags.HasError() {
-			return nil, diags
-		}
-
-		for _, t := range customTools {
-			p := anthropic.BetaManagedAgentsCustomToolParams{
-				Name:        t.Name.ValueString(),
-				Description: t.Description.ValueString(),
-				Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
-			}
-			if !t.InputSchema.IsNull() && !t.InputSchema.IsUnknown() {
-				var schema anthropic.BetaManagedAgentsCustomToolInputSchemaParam
-				if err := json.Unmarshal([]byte(t.InputSchema.ValueString()), &schema); err != nil {
-					diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
-					return nil, diags
-				}
-				p.InputSchema = schema
-			}
-			tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfCustom: &p})
-		}
-	}
-
 	return tools, diags
+}
+
+// buildMCPToolsetParams builds an mcp_toolset tool. Defaults and per-tool
+// values left unset are omitted.
+func buildMCPToolsetParams(ctx context.Context, t agentMCPToolsetModel) (*anthropic.BetaManagedAgentsMCPToolsetParams, diag.Diagnostics) {
+	p := &anthropic.BetaManagedAgentsMCPToolsetParams{
+		MCPServerName: t.MCPServerName.ValueString(),
+		Type:          anthropic.BetaManagedAgentsMCPToolsetParamsTypeMCPToolset,
+	}
+	if isKnown(t.DefaultEnabled) {
+		p.DefaultConfig.Enabled = param.NewOpt(t.DefaultEnabled.ValueBool())
+	}
+	if isKnown(t.DefaultPermissionPolicy) {
+		p.DefaultConfig.PermissionPolicy = buildMCPToolsetDefaultPermissionPolicy(t.DefaultPermissionPolicy.ValueString())
+	}
+	if t.Configs.IsNull() || len(t.Configs.Elements()) == 0 {
+		return p, nil
+	}
+	var configs []agentMCPToolConfigModel
+	diags := t.Configs.ElementsAs(ctx, &configs, false)
+	if diags.HasError() {
+		return nil, diags
+	}
+	p.Configs = make([]anthropic.BetaManagedAgentsMCPToolConfigParams, len(configs))
+	for i, c := range configs {
+		p.Configs[i] = buildMCPToolConfigParams(c)
+	}
+	return p, diags
+}
+
+func buildMCPToolConfigParams(c agentMCPToolConfigModel) anthropic.BetaManagedAgentsMCPToolConfigParams {
+	p := anthropic.BetaManagedAgentsMCPToolConfigParams{Name: c.Name.ValueString()}
+	if isKnown(c.Enabled) {
+		p.Enabled = param.NewOpt(c.Enabled.ValueBool())
+	}
+	if isKnown(c.PermissionPolicy) {
+		p.PermissionPolicy = buildMCPToolConfigPermissionPolicy(c.PermissionPolicy.ValueString())
+	}
+	return p
+}
+
+// buildCustomToolsParams builds one custom tool per custom_tools entry, nil
+// when the list is null or empty.
+func buildCustomToolsParams(ctx context.Context, list types.List) ([]anthropic.BetaAgentNewParamsToolUnion, diag.Diagnostics) {
+	if list.IsNull() || len(list.Elements()) == 0 {
+		return nil, nil
+	}
+	var customTools []agentCustomToolModel
+	diags := list.ElementsAs(ctx, &customTools, false)
+	if diags.HasError() {
+		return nil, diags
+	}
+	var tools []anthropic.BetaAgentNewParamsToolUnion
+	for _, t := range customTools {
+		p, d := buildCustomToolParams(t)
+		diags.Append(d...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfCustom: p})
+	}
+	return tools, diags
+}
+
+func buildCustomToolParams(t agentCustomToolModel) (*anthropic.BetaManagedAgentsCustomToolParams, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	p := &anthropic.BetaManagedAgentsCustomToolParams{
+		Name:        t.Name.ValueString(),
+		Description: t.Description.ValueString(),
+		Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
+	}
+	// The schema reaches the API as configured, root-level keywords such
+	// as additionalProperties and $defs included, with "type": "object"
+	// added when it has no type. The API requires one, so a tool
+	// configured without it is sent as a tool without parameters.
+	configured := customToolNoParameters
+	if isKnown(t.InputSchema) {
+		configured = t.InputSchema.ValueString()
+	}
+	schema, err := customToolInputSchemaParam(configured)
+	if err != nil {
+		diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
+		return nil, diags
+	}
+	p.InputSchema = schema
+	return p, diags
 }
 
 // mappingMode tells mapAgentResponseToState which request the response answers.
@@ -991,171 +1258,159 @@ const (
 )
 
 // mapAgentResponseToState maps the API response to the Terraform state model.
+// A value the API leaves absent becomes null, a null current value kept as
+// is, and a list the API returns empty keeps a configured []
+// (listAfterEmptyResponse); metadata, model_speed, the toolsets, the custom
+// tools' input_schema, multiagent and execution_identity are correlated with
+// the current (planned or prior) value instead.
 func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAgentsAgent, data *AgentResourceModel, mode mappingMode) diag.Diagnostics {
-	var diags diag.Diagnostics
-
 	data.ID = types.StringValue(agent.ID)
 	data.Name = types.StringValue(agent.Name)
-	data.Model = types.StringValue(string(agent.Model.ID))
+	data.Model = types.StringValue(agent.Model.ID)
 	data.Version = types.Int64Value(agent.Version)
-	data.CreatedAt = types.StringValue(agent.CreatedAt.Format(time.RFC3339))
-	data.UpdatedAt = types.StringValue(agent.UpdatedAt.Format(time.RFC3339))
-
-	if agent.ArchivedAt.IsZero() {
-		data.ArchivedAt = types.StringNull()
-	} else {
-		data.ArchivedAt = types.StringValue(agent.ArchivedAt.Format(time.RFC3339))
-	}
-
-	// Model speed: when API returns "" (meaning "standard"), preserve whatever was
-	// already in data (from prior state or plan) to prevent perpetual diffs.
-	if agent.Model.Speed != "" {
-		data.ModelSpeed = types.StringValue(string(agent.Model.Speed))
-	} else if data.ModelSpeed.IsUnknown() || data.ModelSpeed.IsNull() {
-		data.ModelSpeed = types.StringNull()
-	}
-	// else: keep existing data.ModelSpeed (e.g. "standard") to avoid drift
-
+	data.CreatedAt = formatTime(agent.CreatedAt)
+	data.UpdatedAt = formatTime(agent.UpdatedAt)
+	data.ArchivedAt = tfvalue.TimeOrNull(agent.ArchivedAt)
+	data.ModelSpeed = modelSpeedAfterResponse(agent.Model.Speed, data.ModelSpeed)
 	data.ModelEffort = modelEffortFromResponse(agent.Model)
 	data.ModelInferenceGeo = modelInferenceGeoFromResponse(agent.Model)
+	data.Description = stringAfterResponse(agent.Description, data.Description)
+	data.System = stringAfterResponse(agent.System, data.System)
 
-	// Description
-	if agent.Description != "" {
-		data.Description = types.StringValue(agent.Description)
-	} else if !data.Description.IsNull() {
-		data.Description = types.StringNull()
-	}
-
-	// System
-	if agent.System != "" {
-		data.System = types.StringValue(agent.System)
-	} else if !data.System.IsNull() {
-		data.System = types.StringNull()
-	}
-
-	// Metadata
+	var diags diag.Diagnostics
 	if len(agent.Metadata) > 0 {
-		elements := make(map[string]attr.Value, len(agent.Metadata))
-		for k, v := range agent.Metadata {
-			elements[k] = types.StringValue(v)
-		}
-		metaMap, d := types.MapValue(types.StringType, elements)
+		metadata, d := metadataValue(agent.Metadata)
 		diags.Append(d...)
-		data.Metadata = metaMap
-	} else if !data.Metadata.IsNull() {
-		data.Metadata = types.MapNull(types.StringType)
+		data.Metadata = metadata
+	} else {
+		data.Metadata = tfvalue.MetadataAfterEmptyResponse(data.Metadata)
 	}
 
-	// MCP servers
-	if len(agent.MCPServers) > 0 {
-		serverObjs := make([]attr.Value, len(agent.MCPServers))
-		for i, s := range agent.MCPServers {
-			obj, d := types.ObjectValue(agentMCPServerAttrTypes, map[string]attr.Value{
-				"name": types.StringValue(s.Name),
-				"url":  types.StringValue(s.URL),
-			})
-			diags.Append(d...)
-			serverObjs[i] = obj
-		}
-		serverList, d := types.ListValue(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}, serverObjs)
-		diags.Append(d...)
-		data.MCPServers = serverList
-	} else if !data.MCPServers.IsNull() {
-		data.MCPServers = types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes})
-	}
+	servers, d := mcpServersValue(agent.MCPServers)
+	diags.Append(d...)
+	data.MCPServers = listAfterResponse(ctx, servers, data.MCPServers)
 
-	// Skills
-	if len(agent.Skills) > 0 {
-		skillObjs := make([]attr.Value, len(agent.Skills))
-		for i, s := range agent.Skills {
-			version := types.StringValue(s.Version)
-			obj, d := types.ObjectValue(agentSkillAttrTypes, map[string]attr.Value{
-				"type":     types.StringValue(s.Type),
-				"skill_id": types.StringValue(s.SkillID),
-				"version":  version,
-			})
-			diags.Append(d...)
-			skillObjs[i] = obj
-		}
-		skillList, d := types.ListValue(types.ObjectType{AttrTypes: agentSkillAttrTypes}, skillObjs)
-		diags.Append(d...)
-		data.Skills = skillList
-	} else if !data.Skills.IsNull() {
-		data.Skills = types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes})
-	}
+	skills, d := skillsValue(agent.Skills)
+	diags.Append(d...)
+	data.Skills = listAfterResponse(ctx, skills, data.Skills)
 
-	// Tools: split API response into agent_toolset, mcp_toolsets, and custom_tools
-	var apiAgentToolset *anthropic.BetaManagedAgentsAgentToolset20260401
-	var apiMCPToolsets []anthropic.BetaManagedAgentsMCPToolset
-	var apiCustomTools []anthropic.BetaManagedAgentsCustomTool
-
-	for _, tool := range agent.Tools {
-		switch tool.Type {
-		case "agent_toolset_20260401":
-			t := tool.AsAgentToolset20260401()
-			apiAgentToolset = &t
-		case "mcp_toolset":
-			apiMCPToolsets = append(apiMCPToolsets, tool.AsMCPToolset())
-		case "custom":
-			apiCustomTools = append(apiCustomTools, tool.AsCustom())
-		}
-	}
-
-	// Agent toolset
-	if apiAgentToolset != nil {
-		toolsetObj, d := mapAgentToolsetToState(ctx, apiAgentToolset, data.AgentToolset, mode)
-		diags.Append(d...)
-		data.AgentToolset = toolsetObj
-	} else if !data.AgentToolset.IsNull() {
-		data.AgentToolset = types.ObjectNull(agentToolsetAttrTypes)
-	}
-
-	// MCP toolsets
-	if len(apiMCPToolsets) > 0 {
-		mcpList, d := mapMCPToolsetsToState(ctx, apiMCPToolsets, data.MCPToolsets, mode)
-		diags.Append(d...)
-		data.MCPToolsets = mcpList
-	} else if !data.MCPToolsets.IsNull() {
-		data.MCPToolsets = types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes})
-	}
-
-	// Custom tools
-	if len(apiCustomTools) > 0 {
-		toolObjs := make([]attr.Value, len(apiCustomTools))
-		for i, t := range apiCustomTools {
-			inputSchema := jsontypes.NewNormalizedNull()
-			if raw := t.InputSchema.RawJSON(); raw != "" && raw != "null" {
-				inputSchema = jsontypes.NewNormalizedValue(raw)
-			}
-			obj, d := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
-				"name":         types.StringValue(t.Name),
-				"description":  types.StringValue(t.Description),
-				"input_schema": inputSchema,
-			})
-			diags.Append(d...)
-			toolObjs[i] = obj
-		}
-		toolList, d := types.ListValue(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}, toolObjs)
-		diags.Append(d...)
-		data.CustomTools = toolList
-	} else if !data.CustomTools.IsNull() {
-		data.CustomTools = types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes})
-	}
+	diags.Append(mapAgentToolsToState(ctx, splitAgentTools(agent.Tools), data, mode)...)
 
 	// Multiagent: correlate with the planned/prior roster (see mapMultiagentToState).
 	multiagent, d := mapMultiagentToState(ctx, agent.Multiagent, agent.ID, data.Multiagent)
 	diags.Append(d...)
 	data.Multiagent = multiagent
 
+	// Execution identity: the echoed default stays null (see mapExecutionIdentityToState).
+	identity, d := mapExecutionIdentityToState(agent.ExecutionIdentity, data.ExecutionIdentity)
+	diags.Append(d...)
+	data.ExecutionIdentity = identity
+
 	return diags
 }
 
+// mapAgentToolsToState maps the three kinds of tools onto agent_toolset,
+// mcp_toolsets and custom_tools; mode applies to the two toolsets.
+func mapAgentToolsToState(ctx context.Context, tools agentTools, data *AgentResourceModel, mode mappingMode) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	if tools.toolset != nil {
+		toolset, d := mapAgentToolsetToState(ctx, tools.toolset, data.AgentToolset, mode)
+		diags.Append(d...)
+		data.AgentToolset = toolset
+	} else {
+		data.AgentToolset = keepNull(types.ObjectNull(agentToolsetAttrTypes), data.AgentToolset)
+	}
+
+	if len(tools.mcp) > 0 {
+		mcpToolsets, d := mapMCPToolsetsToState(ctx, tools.mcp, data.MCPToolsets, mode)
+		diags.Append(d...)
+		data.MCPToolsets = mcpToolsets
+	} else {
+		data.MCPToolsets = listAfterEmptyResponse(data.MCPToolsets, types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes})
+	}
+
+	customTools, d := customToolsValue(tools.custom, customToolInputSchemaState(customToolInputSchemas(ctx, data.CustomTools)))
+	diags.Append(d...)
+	data.CustomTools = listAfterResponse(ctx, customTools, data.CustomTools)
+	return diags
+}
+
+// listAfterEmptyResponse is the state value of a list attribute the API
+// returns empty. The API returns [] both for an attribute never set and for
+// one set to [], so a known empty list stays as configured and a null one
+// stays null; anything else becomes null. Mapping a configured [] to null
+// failed the apply with "Provider produced inconsistent result after apply"
+// (tfvalue.MetadataAfterEmptyResponse does the same for metadata).
+func listAfterEmptyResponse(current types.List, elemType attr.Type) types.List {
+	if current.IsNull() || (!current.IsUnknown() && len(current.Elements()) == 0) {
+		return current
+	}
+	return types.ListNull(elemType)
+}
+
+// listAfterResponse is the state value of a list attribute mapped from the
+// response: v when the API returned elements, else listAfterEmptyResponse.
+func listAfterResponse(ctx context.Context, v, current types.List) types.List {
+	if v.IsNull() {
+		return listAfterEmptyResponse(current, v.ElementType(ctx))
+	}
+	return v
+}
+
 // apiToolConfig is the response-side shape shared by built-in and MCP per-tool
-// configs, so a single mapping serves both toolset kinds.
+// configs, so a single mapping serves both toolset kinds. extra holds the
+// attributes only one kind has, already mapped verbatim (the web options of a
+// built-in tool, see webToolOptionsFromResponse); it is nil for MCP tools.
 type apiToolConfig struct {
 	name             string
 	enabled          bool
 	permissionPolicy string
+	extra            map[string]attr.Value
+}
+
+// values returns the attribute values of the config object, with `enabled`
+// and `permission_policy` as resolved by the caller.
+func (c apiToolConfig) values(enabled types.Bool, permissionPolicy types.String) map[string]attr.Value {
+	values := map[string]attr.Value{
+		"name":              types.StringValue(c.name),
+		"enabled":           enabled,
+		"permission_policy": permissionPolicy,
+	}
+	maps.Copy(values, c.extra)
+	return values
+}
+
+// trackedToolConfig is what mapToolConfigsToState needs from a configured
+// entry. It is read attribute by attribute because built-in and MCP entries
+// have different object types; attrs keeps them all for the extra attributes
+// of a kind (webToolOptionsToState).
+type trackedToolConfig struct {
+	name         string
+	enabledUnset bool
+	policyUnset  bool
+	attrs        map[string]attr.Value
+}
+
+func trackedToolConfigs(current types.List) []trackedToolConfig {
+	var tracked []trackedToolConfig
+	for _, el := range current.Elements() {
+		obj, ok := el.(types.Object)
+		if !ok || obj.IsNull() || obj.IsUnknown() {
+			continue
+		}
+		attrs := obj.Attributes()
+		name, _ := attrs["name"].(types.String)
+		enabled, _ := attrs["enabled"].(types.Bool)
+		policy, _ := attrs["permission_policy"].(types.String)
+		tracked = append(tracked, trackedToolConfig{
+			name:         name.ValueString(),
+			enabledUnset: enabled.IsNull(),
+			policyUnset:  policy.IsNull(),
+			attrs:        attrs,
+		})
+	}
+	return tracked
 }
 
 // mapToolConfigsToState maps a toolset's per-tool configs from the API into
@@ -1172,7 +1427,10 @@ type apiToolConfig struct {
 //   - a field the configuration left unset stays null only while the API value
 //     equals the toolset default it inherits (the docs: per-tool configs
 //     override `default_config`), so an echoed default causes no perpetual diff
-//     and a diverging value does.
+//     and a diverging value does;
+//   - the extra attributes of a kind (the web options of built-in tools) have
+//     no inherited default; a tracked config resolves them against current
+//     with webToolOptionsToState.
 //
 // A null current (a toolset state holds without a configs block) maps every
 // other API config verbatim, and stays null when there is none.
@@ -1185,17 +1443,14 @@ type apiToolConfig struct {
 // With applyMapping (Create, Update) a null current stays null, configs for
 // other tools are not appended and a field the plan leaves null stays null:
 // what differs from the plan shows on the next Read.
-func mapToolConfigsToState(ctx context.Context, current types.List, apiConfigs []apiToolConfig, defaultEnabled bool, defaultPolicy string, attrTypes map[string]attr.Type, mode mappingMode) (types.List, diag.Diagnostics) {
+func mapToolConfigsToState(current types.List, apiConfigs []apiToolConfig, defaultEnabled bool, defaultPolicy string, attrTypes map[string]attr.Type, mode mappingMode) (types.List, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	elemType := types.ObjectType{AttrTypes: attrTypes}
 
-	var stateConfigs []agentToolConfigModel
+	var stateConfigs []trackedToolConfig
 	switch {
 	case !current.IsNull() && !current.IsUnknown():
-		diags.Append(current.ElementsAs(ctx, &stateConfigs, false)...)
-		if diags.HasError() {
-			return types.ListNull(elemType), diags
-		}
+		stateConfigs = trackedToolConfigs(current)
 	case len(apiConfigs) == 0, current.IsNull() && mode == applyMapping:
 		return types.ListNull(elemType), diags
 	}
@@ -1208,40 +1463,22 @@ func mapToolConfigsToState(ctx context.Context, current types.List, apiConfigs [
 	configObjs := make([]attr.Value, 0, len(apiConfigs))
 	tracked := make(map[string]bool, len(stateConfigs))
 	for _, sc := range stateConfigs {
-		name := sc.Name.ValueString()
-		tracked[name] = true
-		apiCfg, ok := apiByName[name]
+		tracked[sc.name] = true
+		apiCfg, ok := apiByName[sc.name]
 		if !ok {
 			continue
 		}
-		enabled := types.BoolValue(apiCfg.enabled)
-		if sc.Enabled.IsNull() && (mode == applyMapping || apiCfg.enabled == defaultEnabled) {
-			enabled = types.BoolNull()
-		}
-		permPolicy := types.StringValue(apiCfg.permissionPolicy)
-		if sc.PermissionPolicy.IsNull() && (mode == applyMapping || apiCfg.permissionPolicy == defaultPolicy) {
-			permPolicy = types.StringNull()
-		}
-		obj, d := types.ObjectValue(attrTypes, map[string]attr.Value{
-			"name":              types.StringValue(name),
-			"enabled":           enabled,
-			"permission_policy": permPolicy,
-		})
+		obj, d := trackedToolConfigValue(sc, apiCfg, defaultEnabled, defaultPolicy, attrTypes, mode)
 		diags.Append(d...)
 		configObjs = append(configObjs, obj)
 	}
 
 	for _, c := range apiConfigs {
-		isDefault := c.enabled == defaultEnabled && c.permissionPolicy == defaultPolicy
-		if mode == applyMapping || tracked[c.name] || (isDefault && mode == readMapping) {
+		if tracked[c.name] || !appendsUntrackedToolConfig(c, defaultEnabled, defaultPolicy, mode) {
 			continue
 		}
 		tracked[c.name] = true
-		obj, d := types.ObjectValue(attrTypes, map[string]attr.Value{
-			"name":              types.StringValue(c.name),
-			"enabled":           types.BoolValue(c.enabled),
-			"permission_policy": types.StringValue(c.permissionPolicy),
-		})
+		obj, d := types.ObjectValue(attrTypes, c.values(types.BoolValue(c.enabled), types.StringValue(c.permissionPolicy)))
 		diags.Append(d...)
 		configObjs = append(configObjs, obj)
 	}
@@ -1252,6 +1489,39 @@ func mapToolConfigsToState(ctx context.Context, current types.List, apiConfigs [
 	list, d := types.ListValue(elemType, configObjs)
 	diags.Append(d...)
 	return list, diags
+}
+
+// trackedToolConfigValue maps the API config of a tool current tracks. A field
+// the configuration left unset stays null while the API value equals the
+// toolset default it inherits, and always with applyMapping; the web options
+// of a built-in tool resolve against current (webToolOptionsToState).
+func trackedToolConfigValue(sc trackedToolConfig, apiCfg apiToolConfig, defaultEnabled bool, defaultPolicy string, attrTypes map[string]attr.Type, mode mappingMode) (types.Object, diag.Diagnostics) {
+	enabled := types.BoolValue(apiCfg.enabled)
+	if sc.enabledUnset && (mode == applyMapping || apiCfg.enabled == defaultEnabled) {
+		enabled = types.BoolNull()
+	}
+	permPolicy := types.StringValue(apiCfg.permissionPolicy)
+	if sc.policyUnset && (mode == applyMapping || apiCfg.permissionPolicy == defaultPolicy) {
+		permPolicy = types.StringNull()
+	}
+	if apiCfg.extra != nil {
+		apiCfg.extra = webToolOptionsToState(sc.attrs, apiCfg.extra, mode)
+	}
+	return types.ObjectValue(attrTypes, apiCfg.values(enabled, permPolicy))
+}
+
+// appendsUntrackedToolConfig reports whether the API config of a tool current
+// does not track goes into state: never with applyMapping, on Read only when
+// it differs from the toolset defaults, and always with importMapping.
+func appendsUntrackedToolConfig(c apiToolConfig, defaultEnabled bool, defaultPolicy string, mode mappingMode) bool {
+	switch mode {
+	case applyMapping:
+		return false
+	case readMapping:
+		return c.enabled != defaultEnabled || c.permissionPolicy != defaultPolicy
+	default:
+		return true
+	}
 }
 
 // mapAgentToolsetToState maps the API agent toolset response to a Terraform object.
@@ -1277,14 +1547,15 @@ func mapAgentToolsetToState(ctx context.Context, apiToolset *anthropic.BetaManag
 
 	apiConfigs := make([]apiToolConfig, 0, len(apiToolset.Configs))
 	for _, c := range apiToolset.Configs {
-		apiConfigs = append(apiConfigs, apiToolConfig{
-			name:             string(c.Name),
-			enabled:          c.Enabled,
-			permissionPolicy: c.PermissionPolicy.Type,
-		})
+		cfg, d := apiAgentToolConfig(c)
+		diags.Append(d...)
+		apiConfigs = append(apiConfigs, cfg)
+	}
+	if diags.HasError() {
+		return types.ObjectNull(agentToolsetAttrTypes), diags
 	}
 
-	configsList, d := mapToolConfigsToState(ctx, currentConfigs, apiConfigs,
+	configsList, d := mapToolConfigsToState(currentConfigs, apiConfigs,
 		apiToolset.DefaultConfig.Enabled, apiToolset.DefaultConfig.PermissionPolicy.Type, agentToolConfigAttrTypes, mode)
 	diags.Append(d...)
 	if diags.HasError() {
@@ -1338,7 +1609,7 @@ func mapMCPToolsetsToState(ctx context.Context, apiToolsets []anthropic.BetaMana
 				permissionPolicy: c.PermissionPolicy.Type,
 			})
 		}
-		configsList, d := mapToolConfigsToState(ctx, currentConfigs, apiConfigs,
+		configsList, d := mapToolConfigsToState(currentConfigs, apiConfigs,
 			apiToolset.DefaultConfig.Enabled, apiToolset.DefaultConfig.PermissionPolicy.Type, agentMCPToolConfigAttrTypes, configsMode)
 		diags.Append(d...)
 
@@ -1377,10 +1648,9 @@ func mapMCPToolsetsToState(ctx context.Context, apiToolsets []anthropic.BetaMana
 
 // --- Permission policy builder helpers ---
 
-// alwaysAllowPolicyParam and alwaysAskPolicyParam build the two permission policy
-// variants. Since SDK v1.66.0 every built-in tool carries its own
-// `PermissionPolicyUnion` type, but all of them are unions over these same two
-// params, so the branches below only differ in which union struct they fill in.
+// alwaysAllowPolicyParam, alwaysAskPolicyParam and autoPolicyParam build the
+// three permission policy variants
+// (https://platform.claude.com/docs/en/managed-agents/permission-policies).
 func alwaysAllowPolicyParam() *anthropic.BetaManagedAgentsAlwaysAllowPolicyParam {
 	return &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
 		Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
@@ -1393,149 +1663,45 @@ func alwaysAskPolicyParam() *anthropic.BetaManagedAgentsAlwaysAskPolicyParam {
 	}
 }
 
-// buildAgentToolConfigParams maps a `configs` entry to the SDK's discriminated
-// tool-config union. Since SDK v1.66.0 the flat
-// `BetaManagedAgentsAgentToolConfigParams` (a `name` enum plus shared fields) is
-// split into one struct per built-in tool, so the Terraform `name` attribute now
-// selects the union branch instead of populating a field. The accepted names are
-// the same eight the schema validator enforces.
-func buildAgentToolConfigParams(name string, enabled param.Opt[bool], policyType string) (anthropic.BetaManagedAgentsAgentToolConfigParamsUnion, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	var u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion
+func autoPolicyParam() *anthropic.BetaManagedAgentsAutoPolicyParam {
+	p := anthropic.NewBetaManagedAgentsAutoPolicyParam()
+	return &p
+}
 
-	switch name {
-	case "bash":
-		cfg := &anthropic.BetaManagedAgentsBashToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfBash = cfg
-	case "edit":
-		cfg := &anthropic.BetaManagedAgentsEditToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfEdit = cfg
-	case "read":
-		cfg := &anthropic.BetaManagedAgentsReadToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfRead = cfg
-	case "write":
-		cfg := &anthropic.BetaManagedAgentsWriteToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfWrite = cfg
-	case "glob":
-		cfg := &anthropic.BetaManagedAgentsGlobToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfGlob = cfg
-	case "grep":
-		cfg := &anthropic.BetaManagedAgentsGrepToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfGrep = cfg
-	case "web_fetch":
-		cfg := &anthropic.BetaManagedAgentsWebFetchToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfWebFetch = cfg
-	case "web_search":
-		cfg := &anthropic.BetaManagedAgentsWebSearchToolConfigParams{Enabled: enabled}
-		switch policyType {
-		case "always_allow":
-			cfg.PermissionPolicy.OfAlwaysAllow = alwaysAllowPolicyParam()
-		case "always_ask":
-			cfg.PermissionPolicy.OfAlwaysAsk = alwaysAskPolicyParam()
-		}
-		u.OfWebSearch = cfg
-	default:
-		diags.AddError(
-			"Unsupported built-in tool name",
-			fmt.Sprintf("%q is not a supported built-in tool name. Expected one of: bash, edit, read, write, glob, grep, web_fetch, web_search.", name),
-		)
+// permissionPolicyParams returns the variants of a permission policy union to
+// fill for policyType: one non-nil pointer for a known policy, none for ""
+// (the union is then omitted and the toolset default applies). Since SDK
+// v1.66.0 every built-in tool, the MCP tool configs and both toolset defaults
+// carry their own `PermissionPolicyUnion` type, but all of them are unions over
+// these same three params, so callers assign the result to their union's
+// OfAlwaysAllow, OfAlwaysAsk and OfAuto fields. permissionPolicyValidator
+// rejects any other value at plan time.
+func permissionPolicyParams(policyType string) (*anthropic.BetaManagedAgentsAlwaysAllowPolicyParam, *anthropic.BetaManagedAgentsAlwaysAskPolicyParam, *anthropic.BetaManagedAgentsAutoPolicyParam) {
+	switch policyType {
+	case policyAlwaysAllow:
+		return alwaysAllowPolicyParam(), nil, nil
+	case policyAlwaysAsk:
+		return nil, alwaysAskPolicyParam(), nil
+	case policyAuto:
+		return nil, nil, autoPolicyParam()
 	}
-
-	return u, diags
+	return nil, nil, nil
 }
 
 func buildAgentToolsetDefaultPermissionPolicy(policyType string) anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion {
-	switch policyType {
-	case "always_allow":
-		return anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
-			},
-		}
-	case "always_ask":
-		return anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAsk: &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
-			},
-		}
-	}
-	return anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion{}
+	var u anthropic.BetaManagedAgentsAgentToolsetDefaultConfigParamsPermissionPolicyUnion
+	u.OfAlwaysAllow, u.OfAlwaysAsk, u.OfAuto = permissionPolicyParams(policyType)
+	return u
 }
 
 func buildMCPToolConfigPermissionPolicy(policyType string) anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion {
-	switch policyType {
-	case "always_allow":
-		return anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion{
-			OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
-			},
-		}
-	case "always_ask":
-		return anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion{
-			OfAlwaysAsk: &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
-			},
-		}
-	}
-	return anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion{}
+	var u anthropic.BetaManagedAgentsMCPToolConfigParamsPermissionPolicyUnion
+	u.OfAlwaysAllow, u.OfAlwaysAsk, u.OfAuto = permissionPolicyParams(policyType)
+	return u
 }
 
 func buildMCPToolsetDefaultPermissionPolicy(policyType string) anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion {
-	switch policyType {
-	case "always_allow":
-		return anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow,
-			},
-		}
-	case "always_ask":
-		return anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion{
-			OfAlwaysAsk: &anthropic.BetaManagedAgentsAlwaysAskPolicyParam{
-				Type: anthropic.BetaManagedAgentsAlwaysAskPolicyTypeAlwaysAsk,
-			},
-		}
-	}
-	return anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion{}
+	var u anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion
+	u.OfAlwaysAllow, u.OfAlwaysAsk, u.OfAuto = permissionPolicyParams(policyType)
+	return u
 }

@@ -5,7 +5,6 @@ package messages
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -20,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -46,6 +46,7 @@ type CountTokensDataSourceModel struct {
 	Model        types.String `tfsdk:"model"`
 	Messages     types.List   `tfsdk:"messages"`
 	System       types.String `tfsdk:"system"`
+	Speed        types.String `tfsdk:"speed"`
 	Thinking     types.Object `tfsdk:"thinking"`
 	OutputConfig types.Object `tfsdk:"output_config"`
 	CacheControl types.Object `tfsdk:"cache_control"`
@@ -104,15 +105,20 @@ func (d *CountTokensDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 				Optional:            true,
 				MarkdownDescription: "System prompt providing context and instructions to the model.",
 			},
+			"speed": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Speed the real request would use. " + speedDescription,
+				Validators:          []validator.String{stringvalidator.OneOf("standard", "fast")},
+			},
 			"thinking": schema.SingleNestedAttribute{
 				Optional: true,
 				MarkdownDescription: "Extended thinking configuration, so the count includes the thinking overhead the real request would carry. Same shape as `anthropic_message`; no beta header is needed (verified against the live API on 2026-10-08). " +
-					"Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = \"disabled\"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools` instead, which this provider does not support). Other models were not verified.",
+					"Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = \"disabled\"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5`, which asks for `between_tools` instead. Other models were not verified.",
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Thinking mode: `enabled` (requires `budget_tokens`), `disabled` or `adaptive`.",
-						Validators:          []validator.String{stringvalidator.OneOf("enabled", "disabled", "adaptive")},
+						MarkdownDescription: "Thinking mode: `enabled` (requires `budget_tokens`), `disabled`, `adaptive` or `between_tools` (thinking off, but progress updates between tool calls come back as thinking blocks).",
+						Validators:          []validator.String{stringvalidator.OneOf("enabled", "disabled", "adaptive", "between_tools")},
 					},
 					"budget_tokens": schema.Int64Attribute{
 						Optional:            true,
@@ -121,7 +127,7 @@ func (d *CountTokensDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 					},
 					"display": schema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "How thinking content appears in the response: `summarized` or `omitted`. Not allowed when `type` is `disabled`.",
+						MarkdownDescription: "How thinking content appears in the response: `summarized` or `omitted`. Only allowed when `type` is `enabled` or `adaptive`.",
 						Validators:          []validator.String{stringvalidator.OneOf("summarized", "omitted")},
 					},
 				},
@@ -213,12 +219,12 @@ func (d *CountTokensDataSource) ConfigValidators(_ context.Context) []datasource
 }
 
 // countTokensThinkingValidator requires budget_tokens iff type is "enabled"
-// and forbids display with type "disabled". Unknown values count as neither
+// and forbids display with type "disabled" or "between_tools". Unknown values count as neither
 // set nor missing, so configs fed by unresolved references still validate.
 type countTokensThinkingValidator struct{}
 
 func (countTokensThinkingValidator) Description(_ context.Context) string {
-	return "budget_tokens is required when thinking.type is enabled (and not allowed otherwise); display is not allowed when thinking.type is disabled"
+	return "budget_tokens is required when thinking.type is enabled (and not allowed otherwise); display is not allowed when thinking.type is disabled or between_tools"
 }
 
 func (v countTokensThinkingValidator) MarkdownDescription(ctx context.Context) string {
@@ -248,10 +254,10 @@ func (countTokensThinkingValidator) ValidateDataSource(ctx context.Context, req 
 			resp.Diagnostics.AddAttributeError(base.AtName("budget_tokens"), "Missing budget_tokens",
 				"`budget_tokens` is required when `thinking.type` is \"enabled\".")
 		}
-	case "disabled":
+	case "disabled", "between_tools":
 		if displaySet {
 			resp.Diagnostics.AddAttributeError(base.AtName("display"), "Invalid display",
-				"`display` is not allowed when `thinking.type` is \"disabled\".")
+				fmt.Sprintf("`display` is not allowed when `thinking.type` is %q.", m.Type.ValueString()))
 		}
 		if budgetSet {
 			resp.Diagnostics.AddAttributeError(base.AtName("budget_tokens"), "Invalid budget_tokens",
@@ -265,31 +271,12 @@ func (countTokensThinkingValidator) ValidateDataSource(ctx context.Context, req 
 	}
 }
 
-// buildCountTokensParams converts the data source model into SDK request params.
+// buildCountTokensParams converts the data source model into SDK request
+// params. The first error stops it.
 func buildCountTokensParams(ctx context.Context, data CountTokensDataSourceModel) (anthropic.MessageCountTokensParams, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	var msgModels []MessageParamModel
-	diags.Append(data.Messages.ElementsAs(ctx, &msgModels, false)...)
+	sdkMessages, diags := decodeMessages[MessageParamModel](ctx, data.Messages)
 	if diags.HasError() {
 		return anthropic.MessageCountTokensParams{}, diags
-	}
-
-	sdkMessages := make([]anthropic.MessageParam, len(msgModels))
-	for i, m := range msgModels {
-		block := anthropic.NewTextBlock(m.Content.ValueString())
-		switch m.Role.ValueString() {
-		case "user":
-			sdkMessages[i] = anthropic.NewUserMessage(block)
-		case "assistant":
-			sdkMessages[i] = anthropic.NewAssistantMessage(block)
-		default:
-			diags.AddError(
-				"Invalid Message Role",
-				fmt.Sprintf("Message at index %d has invalid role %q; must be \"user\" or \"assistant\".", i, m.Role.ValueString()),
-			)
-			return anthropic.MessageCountTokensParams{}, diags
-		}
 	}
 
 	params := anthropic.MessageCountTokensParams{
@@ -297,72 +284,84 @@ func buildCountTokensParams(ctx context.Context, data CountTokensDataSourceModel
 		Messages: sdkMessages,
 	}
 
-	if !data.System.IsNull() && !data.System.IsUnknown() {
+	if isKnownString(data.System) {
 		params.System = anthropic.MessageCountTokensParamsSystemUnion{
 			OfString: anthropic.String(data.System.ValueString()),
 		}
 	}
 
-	if !data.Thinking.IsNull() && !data.Thinking.IsUnknown() {
-		var t countTokensThinkingModel
-		diags.Append(data.Thinking.As(ctx, &t, objectAsOptions)...)
+	if isKnownString(data.Speed) {
+		params.Speed = anthropic.MessageCountTokensParamsSpeed(data.Speed.ValueString())
+	}
+
+	if isKnown(data.Thinking) {
+		thinking, d := countTokensThinkingParam(ctx, data.Thinking)
+		diags.Append(d...)
 		if diags.HasError() {
 			return params, diags
 		}
-		switch t.Type.ValueString() {
-		case "enabled":
-			cfg := anthropic.ThinkingConfigEnabledParam{BudgetTokens: t.BudgetTokens.ValueInt64()}
-			if !t.Display.IsNull() {
-				cfg.Display = anthropic.ThinkingConfigEnabledDisplay(t.Display.ValueString())
-			}
-			params.Thinking = anthropic.ThinkingConfigParamUnion{OfEnabled: &cfg}
-		case "disabled":
-			params.Thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
-		case "adaptive":
-			cfg := anthropic.ThinkingConfigAdaptiveParam{}
-			if !t.Display.IsNull() {
-				cfg.Display = anthropic.ThinkingConfigAdaptiveDisplay(t.Display.ValueString())
-			}
-			params.Thinking = anthropic.ThinkingConfigParamUnion{OfAdaptive: &cfg}
-		default:
-			diags.AddAttributeError(path.Root("thinking").AtName("type"), "Invalid thinking type",
-				fmt.Sprintf("Unsupported thinking type %q.", t.Type.ValueString()))
-			return params, diags
-		}
+		params.Thinking = thinking
 	}
 
-	if !data.OutputConfig.IsNull() && !data.OutputConfig.IsUnknown() {
-		var o countTokensOutputConfigModel
-		diags.Append(data.OutputConfig.As(ctx, &o, objectAsOptions)...)
+	if isKnown(data.OutputConfig) {
+		outputConfig, d := countTokensOutputConfigParam(ctx, data.OutputConfig)
+		diags.Append(d...)
 		if diags.HasError() {
 			return params, diags
 		}
-		if !o.Effort.IsNull() {
-			params.OutputConfig.Effort = anthropic.OutputConfigEffort(o.Effort.ValueString())
-		}
-		if !o.Format.IsNull() && !o.Format.IsUnknown() {
-			var schemaObj map[string]any
-			if err := json.Unmarshal([]byte(o.Format.ValueString()), &schemaObj); err != nil || schemaObj == nil {
-				diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid format",
-					fmt.Sprintf("`format` must be a JSON object holding a JSON schema: %v", err))
-				return params, diags
-			}
-			params.OutputConfig.Format = anthropic.JSONOutputFormatParam{Schema: schemaObj}
-		}
+		params.OutputConfig = outputConfig
 	}
 
-	if !data.CacheControl.IsNull() && !data.CacheControl.IsUnknown() {
+	if isKnown(data.CacheControl) {
 		var c countTokensCacheControlModel
 		diags.Append(data.CacheControl.As(ctx, &c, objectAsOptions)...)
 		if diags.HasError() {
 			return params, diags
 		}
-		cc := anthropic.CacheControlEphemeralParam{}
-		if !c.TTL.IsNull() {
-			cc.TTL = anthropic.CacheControlEphemeralTTL(c.TTL.ValueString())
-		}
-		params.CacheControl = cc
+		// cacheControlParam sets the type explicitly, so `cache_control = {}`
+		// (no ttl) still reaches the API (same trap as anthropic_message).
+		params.CacheControl = cacheControlParam(&CacheControlModel{TTL: c.TTL})
 	}
 
 	return params, diags
+}
+
+// countTokensThinkingParam reads the `thinking` block into the SDK union.
+func countTokensThinkingParam(ctx context.Context, obj types.Object) (anthropic.ThinkingConfigParamUnion, diag.Diagnostics) {
+	var t countTokensThinkingModel
+	diags := obj.As(ctx, &t, objectAsOptions)
+	if diags.HasError() {
+		return anthropic.ThinkingConfigParamUnion{}, diags
+	}
+	thinking, ok := thinkingParam(t.Type.ValueString(), t.BudgetTokens, t.Display)
+	if !ok {
+		diags.AddAttributeError(path.Root("thinking").AtName("type"), "Invalid thinking type",
+			fmt.Sprintf("Unsupported thinking type %q.", t.Type.ValueString()))
+	}
+	return thinking, diags
+}
+
+// countTokensOutputConfigParam reads the `output_config` block: the effort,
+// and the format wrapped as a json_schema output format. A format that is
+// not a JSON object, JSON null included, is an error.
+func countTokensOutputConfigParam(ctx context.Context, obj types.Object) (anthropic.OutputConfigParam, diag.Diagnostics) {
+	var o countTokensOutputConfigModel
+	diags := obj.As(ctx, &o, objectAsOptions)
+	if diags.HasError() {
+		return anthropic.OutputConfigParam{}, diags
+	}
+	oc := anthropic.OutputConfigParam{}
+	if !o.Effort.IsNull() {
+		oc.Effort = anthropic.OutputConfigEffort(o.Effort.ValueString())
+	}
+	if isKnown(o.Format) {
+		schemaObj, err := formatSchema(o.Format)
+		if err != nil || schemaObj == nil {
+			diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid format",
+				fmt.Sprintf("`format` must be a JSON object holding a JSON schema: %v", err))
+			return oc, diags
+		}
+		oc.Format = anthropic.JSONOutputFormatParam{Schema: schemaObj}
+	}
+	return oc, diags
 }

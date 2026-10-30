@@ -6,15 +6,28 @@ package workspaces
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"maps"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
+	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
@@ -40,7 +53,7 @@ func mapFixture(t *testing.T, raw string) WorkspaceResourceModel {
 		t.Fatalf("parse: %v", err)
 	}
 	var data WorkspaceResourceModel
-	if diags := mapWorkspaceToState(context.Background(), &ws, &data); diags.HasError() {
+	if diags := mapWorkspaceToState(&ws, &data); diags.HasError() {
 		t.Fatalf("mapWorkspaceToState: %v", diags)
 	}
 	// The mapped model must fit the resource schema.
@@ -240,5 +253,109 @@ func TestTagKeyValidator(t *testing.T) {
 		if resp.Diagnostics.HasError() != wantErr {
 			t.Errorf("key %q: error = %v, want %v", key, resp.Diagnostics.HasError(), wantErr)
 		}
+	}
+}
+
+// configureOnPlatform configures the workspace resource as a gateway platform
+// alias would: one SDK client, the 404 guard on it, the Admin API through it.
+func configureOnPlatform(t *testing.T, srv *httptest.Server, p platform.Platform) resource.Resource {
+	t.Helper()
+	sdk := anthropic.NewClient(
+		option.WithoutEnvironmentDefaults(),
+		option.WithBaseURL(srv.URL),
+		option.WithHeader("Authorization", "Bearer gateway-token"),
+		option.WithMiddleware(platform.NotFoundGuard(p)),
+	)
+	r := NewWorkspaceResource()
+	var resp resource.ConfigureResponse
+	r.(resource.ResourceWithConfigure).Configure(context.Background(),
+		resource.ConfigureRequest{ProviderData: providerdata.ForPlatform(p, &sdk)}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Configure: %v", resp.Diagnostics)
+	}
+	return r
+}
+
+func workspaceTFValue(t *testing.T, r resource.Resource, set map[string]tftypes.Value) tftypes.Value {
+	t.Helper()
+	values := schematest.NullValues(t, r)
+	maps.Copy(values, set)
+	return tftypes.NewValue(schematest.ResourceObjectType(t, r), values)
+}
+
+// TestWorkspaceResourceCreatesThroughThePlatformClient: on a gateway platform
+// the workspace is created through the platform's SDK client (its credential,
+// never x-api-key), and the response maps to state as first party.
+func TestWorkspaceResourceCreatesThroughThePlatformClient(t *testing.T) {
+	t.Setenv("ANTHROPIC_ADMIN_API_KEY", "sk-ant-admin01-must-not-be-sent")
+
+	var got *http.Request
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Clone(r.Context())
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(workspaceFullFixture))
+	}))
+	defer srv.Close()
+
+	r := configureOnPlatform(t, srv, platform.AWS)
+	sch := schematest.ResourceSchema(t, r)
+	plan := workspaceTFValue(t, r, map[string]tftypes.Value{"name": tftypes.NewValue(tftypes.String, "test-workspace")})
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: sch, Raw: plan}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: sch, Raw: plan}}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+
+	if got.Method != http.MethodPost || got.URL.Path != "/v1/organizations/workspaces" || gotBody != `{"name":"test-workspace"}` {
+		t.Errorf("request = %s %s %s", got.Method, got.URL.Path, gotBody)
+	}
+	if got.Header.Get("X-Api-Key") != "" || got.Header.Get("Authorization") != "Bearer gateway-token" {
+		t.Errorf("credentials: x-api-key = %q, authorization = %q", got.Header.Get("X-Api-Key"), got.Header.Get("Authorization"))
+	}
+	var id types.String
+	resp.Diagnostics.Append(resp.State.GetAttribute(context.Background(), path.Root("id"), &id)...)
+	if id.ValueString() != "wrkspc_01ABC" {
+		t.Errorf("state id = %q", id.ValueString())
+	}
+}
+
+// TestWorkspaceResourceReadOnAPlatform: a gateway 404 keeps the workspace in
+// state and reports it; the API's not_found_error still removes it.
+func TestWorkspaceResourceReadOnAPlatform(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantRemoved bool
+	}{
+		{"gateway 404", `{"message":"Not Found"}`, false},
+		{"API not_found_error", `{"type":"error","error":{"type":"not_found_error","message":"Workspace not found"}}`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			r := configureOnPlatform(t, srv, platform.AWS)
+			state := tfsdk.State{
+				Schema: schematest.ResourceSchema(t, r),
+				Raw:    workspaceTFValue(t, r, map[string]tftypes.Value{"id": tftypes.NewValue(tftypes.String, "wrkspc_01ABC")}),
+			}
+			resp := &resource.ReadResponse{State: state}
+			r.Read(context.Background(), resource.ReadRequest{State: state}, resp)
+
+			if removed := resp.State.Raw.IsNull(); removed != tt.wantRemoved {
+				t.Fatalf("removed = %v, want %v (diagnostics: %v)", removed, tt.wantRemoved, resp.Diagnostics)
+			}
+			if !tt.wantRemoved && !resp.Diagnostics.HasError() {
+				t.Error("a gateway 404 kept the workspace but reported nothing")
+			}
+		})
 	}
 }

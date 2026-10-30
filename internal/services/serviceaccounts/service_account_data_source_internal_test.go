@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 )
 
@@ -33,10 +34,7 @@ func TestMapServiceAccountDataSourceToState_basicFields(t *testing.T) {
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if got := data.ID.ValueString(); got != "svac_01ABC" {
 		t.Errorf("ID = %q, want svac_01ABC", got)
@@ -78,10 +76,7 @@ func TestMapServiceAccountDataSourceToState_emptyDescriptionMapsToNull(t *testin
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if !data.Description.IsNull() {
 		t.Errorf("expected Description to be null for an empty API string, got %q", data.Description.ValueString())
@@ -102,10 +97,7 @@ func TestMapServiceAccountDataSourceToState_archivedFields(t *testing.T) {
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if data.ArchivedAt.IsNull() {
 		t.Fatal("expected ArchivedAt to be non-null for an archived service account")
@@ -185,10 +177,7 @@ func TestServiceAccountDataSource_readSuccess(t *testing.T) {
 	}
 
 	var data ServiceAccountDataSourceModel
-	diags := mapServiceAccountToState(sa, &data)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	mapServiceAccountToState(sa, &data)
 
 	if got := data.ID.ValueString(); got != "svac_01ABC" {
 		t.Errorf("ID = %q, want svac_01ABC", got)

@@ -9,13 +9,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
@@ -35,7 +40,7 @@ func inviteFixture(status string) string {
 
 func TestInviteCreate_mapsResponseToState(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/v1/organizations/invites" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/invites" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
@@ -212,6 +217,52 @@ func TestInviteResource_planModifiers(t *testing.T) {
 			t.Errorf("attribute %q missing RequiresReplace plan modifier", name)
 		}
 	}
+}
+
+// allOrganizationRoles is every value the API reports as an organization role
+// (OrganizationRole in the Admin API reference), assignable or not.
+var allOrganizationRoles = []string{
+	"user", "developer", "billing", "claude_code_user", "admin",
+	"managed", "owner", "membership_admin", "primary_owner",
+}
+
+// assertRoleAttribute checks that a role attribute only rejects an empty value
+// (no OneOf: an imported invite or member can hold a role the API cannot
+// assign) and that its description names the roles the API cannot assign.
+func assertRoleAttribute(t *testing.T, s schema.Schema) {
+	t.Helper()
+	role, ok := s.Attributes["role"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("role is %T, want schema.StringAttribute", s.Attributes["role"])
+	}
+	validate := func(v string) bool {
+		req := validator.StringRequest{Path: path.Root("role"), ConfigValue: types.StringValue(v)}
+		for _, val := range role.Validators {
+			var resp validator.StringResponse
+			val.ValidateString(context.Background(), req, &resp)
+			if resp.Diagnostics.HasError() {
+				return false
+			}
+		}
+		return true
+	}
+	for _, v := range allOrganizationRoles {
+		if !validate(v) {
+			t.Errorf("role %q rejected at plan time", v)
+		}
+	}
+	if validate("") {
+		t.Error("empty role accepted")
+	}
+	for _, want := range []string{"`admin`", "`owner`", "`membership_admin`", "`primary_owner`", "cannot be assigned", "`write:rbac_groups`"} {
+		if !strings.Contains(role.MarkdownDescription, want) {
+			t.Errorf("role description does not mention %s: %q", want, role.MarkdownDescription)
+		}
+	}
+}
+
+func TestInviteResource_roleAttribute(t *testing.T) {
+	assertRoleAttribute(t, schematest.ResourceSchema(t, NewInviteResource()))
 }
 
 // TestInviteResource_importState verifies ImportState wires the id attribute.

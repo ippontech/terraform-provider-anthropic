@@ -7,13 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -194,10 +195,7 @@ func (r *ServiceAccountResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	resp.Diagnostics.Append(mapServiceAccountToState(sa, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	mapServiceAccountToState(sa, &data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -216,7 +214,7 @@ func (r *ServiceAccountResource) Read(ctx context.Context, req resource.ReadRequ
 		// The service account was deleted out-of-band: drop it from state so the
 		// next plan recreates it instead of erroring forever.
 		var apierr *anthropic.Error
-		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -224,10 +222,7 @@ func (r *ServiceAccountResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
-	resp.Diagnostics.Append(mapServiceAccountToState(sa, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	mapServiceAccountToState(sa, &data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -245,7 +240,7 @@ func isTerminalServiceAccountReadError(err error) bool {
 	}
 
 	switch apierr.StatusCode {
-	case 401, 403, 404:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
 		return true
 	default:
 		return false
@@ -319,10 +314,7 @@ func (r *ServiceAccountResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	resp.Diagnostics.Append(mapServiceAccountToState(sa, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	mapServiceAccountToState(sa, &plan)
 
 	awaitServiceAccountUpdateVisible(ctx, r.client, state.ID.ValueString(), sa.UpdatedAt, serviceAccountConsistencyTimeout, serviceAccountConsistencyInterval)
 
@@ -339,7 +331,7 @@ func (r *ServiceAccountResource) Delete(ctx context.Context, req resource.Delete
 	}
 
 	_, err := r.client.Beta.Organization.ServiceAccounts.Archive(ctx, data.ID.ValueString(), anthropic.BetaOrganizationServiceAccountArchiveParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive service account: %s", err))
 	}
 }
@@ -404,9 +396,7 @@ func buildServiceAccountUpdateParams(plan, state *ServiceAccountResourceModel) a
 }
 
 // mapServiceAccountToState maps the API response to the Terraform state model.
-func mapServiceAccountToState(sa *anthropic.BetaServiceAccount, data *ServiceAccountResourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
-
+func mapServiceAccountToState(sa *anthropic.BetaServiceAccount, data *ServiceAccountResourceModel) {
 	data.ID = types.StringValue(sa.ID)
 	data.Name = types.StringValue(sa.Name)
 	data.OrganizationRole = types.StringValue(string(sa.OrganizationRole))
@@ -419,8 +409,6 @@ func mapServiceAccountToState(sa *anthropic.BetaServiceAccount, data *ServiceAcc
 	data.ArchivedByActorID = tfvalue.StringOrNull(sa.ArchivedByActorID)
 
 	data.ArchivedAt = tfvalue.TimeOrNull(sa.ArchivedAt)
-
-	return diags
 }
 
 // descriptionOrNull maps the API's description the same way stringOrNull
