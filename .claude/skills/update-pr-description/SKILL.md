@@ -1,116 +1,95 @@
 ---
 name: update-pr-description
 description: >
-  Updates the GitHub PR description for the current branch based on the work
-  done in the current Claude session. Use after any meaningful change to a PR
-  (feature, fix, refactor, docs). Invoked automatically when Claude stops if
-  an open PR exists for the current branch. Also works inside Vibe Kanban
-  worktrees (vk/* branches) by resolving the PR via the VK issue context.
+  Drafts an updated description for the open GitHub pull request of the
+  current branch from the work done in the session, and publishes it only
+  after the user approves the draft. Use when the user asks to update, rewrite
+  or refresh a PR description, after a meaningful change (feature, fix,
+  refactor, docs) to a branch that has an open PR, or when the end-of-task
+  reminder suggests it, including in Vibe Kanban worktrees on vk/* branches.
+  Not for opening a new PR (ship).
 model: sonnet
 ---
 
 # update-pr-description
 
-Use this skill to rewrite the PR description so it accurately reflects what
-was implemented during this session.
+A PR description is public and may have been written by a person, so this skill always shows a draft and changes nothing on GitHub until the user approves it.
 
-## Trigger
+## Step 1: Find the open PR
 
-- Automatically at the end of any session where an open PR exists for the
-  current branch
-- Explicitly when the user says "update the PR description" or similar
-
-## Workflow
-
-### Step 1 — Gather context
-
-Run in a **single parallel message**:
+On a normal branch:
 
 ```bash
-git rev-parse --abbrev-ref HEAD      # current branch
-git log main..HEAD --oneline         # commits on this branch
-git diff main...HEAD --stat          # files changed vs main
+gh pr list --repo ippontech/terraform-provider-anthropic --head "$(git branch --show-current)" \
+  --state open --json number,url,headRepositoryOwner \
+  --jq '.[] | "number=\(.number) owner=\(.headRepositoryOwner.login) url=\(.url)"'
 ```
 
-### Step 2 — Find the open PR
+`--head` matches the branch name in every fork: keep only the PR whose owner is the owner of the repository the branch is pushed to (`ippontech`, or the user's fork). If more than one remains, ask the user which one to update.
 
-#### Normal branch
+In a Vibe Kanban worktree (branch `vk/<id>-<name>`), the branch has no PR of its own:
+1. Read the current issue with `mcp__vibe_kanban__get_context` when the Vibe Kanban tools are available.
+2. Collect the branch names the issue body references (lines such as `feat/...`, `fix/...`, `chore/...`, or a `## Branch` section).
+3. For each branch, look for an open PR with the GitHub MCP tools when they are available, otherwise with the `gh pr list` command above and `--head <branch>`.
+4. Run steps 2 to 5 for each open PR found, one draft per PR describing what changed in that PR.
+
+For example, an issue body with `## Branch` followed by `feat/skill-version-resource` leads to `gh pr list --repo ippontech/terraform-provider-anthropic --head feat/skill-version-resource --state open`.
+
+If no open PR is found, tell the user in one line and stop.
+
+## Step 2: Gather context
 
 ```bash
-gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number,url \
-  --jq 'if length > 0 then "number=\(.[0].number) url=\(.[0].url)" else "" end'
+gh pr view <number> --repo ippontech/terraform-provider-anthropic --json title,body,commits,files
 ```
 
-If an open PR exists, proceed to Step 3.
+The session is the main source: what was discussed, changed and verified. The commits and files complete it; the current body shows what a person already wrote.
 
-#### Vibe Kanban worktree (branch starts with `vk/`)
+## Step 3: Write the draft
 
-Vibe Kanban sessions run in worktrees on `vk/<id>-<name>` branches that have
-no direct PR. In this case:
-
-1. Call `mcp__vibe_kanban__get_context` to get the current workspace/issue.
-2. From the returned issue body, extract all branch names referenced (look for
-   lines matching `feat/...`, `fix/...`, `chore/...`, or a `## Branch` section).
-3. For each extracted branch, call `mcp__github__pull_request_read` (method:
-   `get`) to check for an open PR.
-4. Collect all open PRs found and run Steps 3–4 for **each one** — write a
-   separate description per PR reflecting what changed in that PR specifically.
-
-If `get_context` is unavailable or returns no useful issue, stop silently.
-
-#### Fallback
-
-If no open PR is found by any method above, stop silently.
-
-### Step 3 — Write the updated description
-
-Synthesise the new body from two sources:
-1. **Session context** — what was actually discussed and changed during this
-   Claude session (the primary source of truth)
-2. **Git context** — commit messages and changed files for completeness
-
-Use this structure:
+Keep from the current body what the session does not contradict: issue references (`Closes #N`), checklists, and notes a person wrote. Add or rewrite only what the new work changes, because replacing a reviewer-facing description with a session summary loses context the author put there on purpose.
 
 ```markdown
 ## Summary
 
-<1-3 bullet points: what changed and why — lead with the why>
+<1-3 bullets: what changed and why, the why first>
 
 ## What changed
 
-<Optional: additional detail if the summary bullets are not sufficient.
- Omit this section if the summary covers everything.>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+<Optional detail when the summary is not enough; omit otherwise.>
 ```
 
-Guidelines:
-- Preserve any existing "Closes #N" or issue references from the old description
-- One bullet per logical change — do not list individual files
-- Do not invent claims about behaviour you have not observed in this session
-- Keep it concise: a reviewer should understand the PR in under 30 seconds
-- **Write each bullet as a single unbroken line — do not hard-wrap at 80 chars**, as continuation lines render as visible line breaks on GitHub
+- One bullet per logical change, not one per file.
+- Only claims about behaviour observed in this session or stated in the commits.
+- Short enough for a reviewer to understand the PR in under 30 seconds.
+- Each bullet on a single unbroken line, because GitHub renders hard line breaks.
+- End with the PR footer your session instructions specify, if any.
 
-### Step 4 — Update the PR
+## Step 4: Ask for approval
 
-Use the GitHub API to update the PR (`gh pr edit` can fail with a Projects
-classic deprecation error):
+Show the user the full draft and, when the PR already had a body, what it adds, removes and keeps. Ask whether to publish it as is, edit it, or leave the PR unchanged, and wait for the answer. Only an explicit go-ahead leads to step 5.
 
-```bash
-cat > /tmp/pr_body.txt << 'ENDBODY'
-<new body>
-ENDBODY
-gh api repos/{owner}/{repo}/pulls/<number> \
-  --method PATCH \
-  --raw-field body="$(cat /tmp/pr_body.txt)" \
-  --jq '.html_url'
-```
-
-Report the PR URL back to the user.
-
-Then write the sentinel file to suppress the Stop hook for 5 minutes:
+Whatever the answer, mark the description as handled, so the end-of-task reminder stays quiet until the next commit:
 
 ```bash
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 touch "/tmp/claude-pr-desc-done-$(echo "$branch" | tr '/' '-')"
 ```
+
+## Step 5: Publish the approved draft
+
+Use the GitHub API, because `gh pr edit` can fail with a Projects (classic) deprecation error. `mktemp` gives each run its own file, so parallel sessions never overwrite each other's draft.
+
+```bash
+body=$(mktemp)
+cat > "$body" <<'ENDBODY'
+<approved body>
+ENDBODY
+gh api repos/ippontech/terraform-provider-anthropic/pulls/<number> \
+  --method PATCH \
+  --raw-field body="$(cat "$body")" \
+  --jq '.html_url'
+rm -f "$body"
+```
+
+Report the PR URL to the user.

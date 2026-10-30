@@ -54,19 +54,25 @@ With `dev_overrides`, `terraform init` is not required — run `terraform plan` 
 
 Alternatively, `make terraform-test` auto-generates a project-local `.dev.tfrc` and uses it automatically (see [Run Terraform native tests](#run-terraform-native-tests) below).
 
-### Set your API keys
+### Set your credentials
 
-The provider uses two API keys:
+The provider accepts three credentials:
 
 ```bash
-# Required for all resources and data sources
+# Standard API key: most resources and data sources (agents, environments, skills, vaults, files, ...)
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Required for organization management resources (workspaces, environments)
+# Admin API key: organization endpoints (workspaces and their members, API keys, invites, organization members)
 export ANTHROPIC_ADMIN_API_KEY="sk-ant-admin-..."
+
+# OAuth bearer token with the org:admin scope: Workload Identity Federation endpoints
+# (service accounts, federation issuers and rules), which reject API keys
+export ANTHROPIC_AUTH_TOKEN="..."
 ```
 
-At least one key must be set. `ANTHROPIC_API_KEY` is needed for most resources and data sources. `ANTHROPIC_ADMIN_API_KEY` is needed for organization management resources (`anthropic_workspace`). Both can be set at the same time.
+At least one must be set, and they can be combined. The provider can also obtain the OAuth token itself through its `federation` block, which conflicts with `auth_token` (see `docs/index.md`).
+
+Leave `ANTHROPIC_AUTH_TOKEN` unset when you run acceptance tests: the OAuth-gated tests create federation objects and service accounts that can only be archived, never deleted, and there is no dedicated test organization for them yet (#58, #137).
 
 > **Test isolation.** Acceptance and Terraform native tests create real resources. Use an `ANTHROPIC_API_KEY` scoped to a **dedicated, non-production workspace** so test resources never land in a production workspace. This project uses a workspace named `terraform-tests`: standard-API resources (vaults, agents, environments, skills, ...) are created there via the key's scope, and the Admin API read-only data source tests target the same workspace by its ID (exposed as `acctest.TerraformTestsWorkspaceID`).
 
@@ -98,12 +104,12 @@ make terraform-test
 
 Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set (some tests exercise Admin API resources).
 
-## Merge Request Process
+## Pull Request Process
 
-1. Create your MR and add reviewers. Owners or contributors of this repository must be added as reviewers.
+1. Create your PR and add reviewers. Owners or contributors of this repository must be added as reviewers.
 2. Run `make` (formats, lints, tests, installs, and regenerates docs in one step).
 3. Run pre-commit hooks `pre-commit run -a`.
-4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG).
+4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged PRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG).
 
 ## Commit Signing
 
@@ -129,7 +135,7 @@ For GitHub to show **Verified**, add the key's public half under your account *S
 ## Checklists for contributions
 
 - [ ] Add [semantics prefix](#semantic-pull-requests) to your commits
-- [ ] MR title and description written in English
+- [ ] PR title and description written in English
 - [ ] Run `make` (fmt + lint + test + install + generate)
 - [ ] Run pre-commit hooks `pre-commit run -a`
 - [ ] CI is passing
@@ -148,7 +154,7 @@ To generate changelog, Pull Requests and Commit messages must follow [convention
 
 We use the `chore` prefix to generate a new release and for changelog generation (the label '[skip ci]' allows us to skip CI). It can be used for `chore: update changelog` commit message by example.
 
-We do Squash Merge during the MRs merge. The title of the MR is the commit title (commit type + scope + short description) and the description of the MR is the commit body.
+We squash-merge PRs. The title of the PR is the commit title (commit type + scope + short description) and the description of the PR is the commit body.
 
 ## Dependency Updates
 
@@ -158,8 +164,8 @@ Its behaviour is driven by `renovate.json` at the repository root. See [`.github
 
 ## Claude Code
 
-This project includes a [Claude Code](https://claude.ai/code) configuration under `.claude/` to help contributors follow Terraform provider best practices.
+This project includes a [Claude Code](https://claude.ai/code) configuration under `.claude/` (skills, sub-agents and one hook) to help contributors follow the conventions in `CLAUDE.md`.
 
-The [`terraform-skill@antonbabenko`](https://github.com/antonbabenko/terraform-skill) plugin is enabled for this project. It provides guidance and code generation assistance aligned with HashiCorp's Terraform plugin framework conventions — schema design, resource/data source patterns, testing, and documentation generation.
+The project settings enable HashiCorp's [`terraform@claude-plugins-official`](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/terraform) plugin from Anthropic's official marketplace. It runs the Terraform MCP server in Docker (`hashicorp/terraform-mcp-server:0.4.0`, passing `TFE_TOKEN` from your environment when set), which gives Claude access to Terraform Registry documentation. Without Docker the server does not start, and the rest of the configuration works without it. Other Terraform plugins, if you want them, go in your user settings.
 
-If you use Claude Code, this skill will be automatically active when working in this repository. No additional setup is required.
+Besides that MCP server, the configuration runs one command on your machine: a `Stop` hook, `.claude/hooks/stop-reminders.sh`, which runs when Claude finishes a reply. It reads `git` state and, when the branch has new commits, looks up the open PR with `gh pr view`. It never blocks Claude, edits files or publishes anything: at most it shows you a reminder to run `make` (which regenerates `docs/`), `/update-pr-description` (which drafts a PR description and asks before publishing it) or `/update-project-knowledge`.
