@@ -1,0 +1,39 @@
+---
+page_title: "anthropic_plugin Resource - anthropic"
+subcategory: "Claude Enterprise"
+description: |-
+  Uploads an organization-owned plugin to a Claude Enterprise organization and chooses the version members are served.
+---
+
+# anthropic_plugin (Resource)
+
+Uploads an organization-owned plugin to a Claude Enterprise organization through the [Plugins API](https://platform.claude.com/docs/en/manage-claude/plugins-api), chooses the version members are served, and deletes the plugin on destroy. A plugin bundles skills, commands, agents, hooks, MCP servers and CLIs, described by its manifest at `.claude-plugin/plugin.json`.
+
+> **API**: `POST /v1/organizations/plugins`, `GET/POST/DELETE /v1/organizations/plugins/{plugin_id}` (Plugins API).
+> **Auth**: Claude Enterprise Admin API key with the `read:plugins` and `write:plugins` scopes (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`), created by the primary owner in claude.ai under Organization settings > API. A Claude Console Admin API key does not work.
+> **Beta header**: `ce-plugins-2026-09-01`, sent by the provider (the endpoints answer 404 without it).
+> **Availability**: beta, Claude Enterprise organizations only, and not organizations with HIPAA readiness enabled.
+> **Cost**: Free.
+
+## Behavior
+
+- **Create** uploads the plugin and its first version from `source_dir` (every regular file under the directory, under its path within it, except Git metadata: `.git` directories and files at any depth are left out) or `source_archive` (one `.zip` or `.plugin` archive), into `marketplace_id` or the organization's library marketplace. The upload must meet the [upload requirements](https://platform.claude.com/docs/en/manage-claude/plugins-api#upload-requirements); the manifest's `name` becomes the plugin's `name`, unique within the marketplace. The upload is not idempotent, so the provider never resends it after a server error.
+- **Later content goes through `anthropic_plugin_version`.** `source_dir`, `source_archive` and `release_notes` are read only when the plugin is created: changing them afterwards uploads nothing, and the plan says so with a warning.
+- **`served_version_id` pins the plugin.** Left unset, members are served the newest version. Setting it serves that version and pins the plugin: later uploads are stored but not served until `served_version_id` names them, and a pinned plugin cannot be unpinned. Removing the attribute leaves the pin where it is. Because an `anthropic_plugin_version` refers to its plugin, it cannot be referenced back from `served_version_id` (Terraform would report a cycle): pass the version ID in, for example through a variable your pipeline sets once it has tested the version. Set it only once the plugin exists: a new plugin has no version yet, so a plan that creates the plugin fails while `served_version_id` is set, including a replacement (a `marketplace_id` change, or a plugin deleted outside Terraform), whose configured ID belongs to the previous plugin. With `ignore_changes` covering `served_version_id` (or `all`), Terraform plans with the served version in the configuration but applies the configuration as written: on an unpinned plugin whose configuration does not set `served_version_id`, every plan shows an in-place update with `served_version_pinned` and every value the API computes (`latest_version_id`, `updated_at`, the display fields, `content_scan`, `components`, `reach`, `created_by`, the installation preference) as known after apply, so whatever reads them changes too, and the apply leaves the plugin unpinned. An unset `served_version_id` is never changed by Terraform, so it needs no `ignore_changes`: list the other attributes instead of `all`, set `served_version_id`, or pin the plugin in claude.ai to end it.
+- **Content scanning.** When the organization scans plugin content, members are served a version only once its scan is `completed` with `pass` or `warn`. Serving a version whose scan is still running fails (`scan_pending`: apply again later), and one whose scan failed is refused.
+- **Destroy deletes the plugin permanently**, with every version it holds and its installation settings. To withhold a plugin reversibly instead, set its organization-wide installation setting to `not_available` with `anthropic_plugin_installation_setting` (and remove or change its group settings, which override it).
+- A plugin in a marketplace synchronized from Git cannot receive uploads or be deleted here: change the repository instead.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/plugin/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an existing organization-owned plugin using its ID. An imported plugin needs neither `source_dir` nor `source_archive`: they are only read to create one.
+
+```shell
+terraform import anthropic_plugin.example <plugin_id>
+```

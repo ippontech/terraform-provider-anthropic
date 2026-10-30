@@ -339,7 +339,7 @@ func (r *ServiceAccountResource) Delete(ctx context.Context, req resource.Delete
 	}
 
 	_, err := r.client.Beta.Organization.ServiceAccounts.Archive(ctx, data.ID.ValueString(), anthropic.BetaOrganizationServiceAccountArchiveParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive service account: %s", err))
 	}
 }
