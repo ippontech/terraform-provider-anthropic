@@ -307,6 +307,8 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		skills.NewSkillsDataSource,
 		userprofiles.NewUserProfileDataSource,
 		userprofiles.NewUserProfilesDataSource,
+		vaults.NewVaultDataSource,
+		vaults.NewVaultsDataSource,
 		workspaces.NewWorkspaceDataSource,
 		workspaces.NewWorkspaceMemberDataSource,
 		workspaces.NewWorkspaceMembersDataSource,
