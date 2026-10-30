@@ -82,6 +82,121 @@ func TestAdminClient_doRequest_sendsCorrectHeaders(t *testing.T) {
 	}
 }
 
+func TestAdminClient_doRequest_requestOptions(t *testing.T) {
+	var gotBeta, gotCustom, gotAPIKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBeta = r.Header.Get("anthropic-beta")
+		gotCustom = r.Header.Get("x-custom")
+		gotAPIKey = r.Header.Get("x-api-key")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/webhooks", nil,
+		WithBeta("webhooks-2026-10-07", "other-2026-01-01"), WithHeader("x-custom", "v"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBeta != "webhooks-2026-10-07,other-2026-01-01" {
+		t.Errorf("anthropic-beta = %q, want both values comma-separated", gotBeta)
+	}
+	if gotCustom != "v" {
+		t.Errorf("x-custom = %q, want %q", gotCustom, "v")
+	}
+	if gotAPIKey != "test-key" {
+		t.Errorf("x-api-key = %q, the options must not drop the client's own headers", gotAPIKey)
+	}
+}
+
+func TestAdminClient_doRequest_rawBody(t *testing.T) {
+	var gotContentType, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("content-type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	body := RawBody{ContentType: "multipart/form-data; boundary=x", Data: []byte("--x--")}
+	if _, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/plugins", body); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotContentType != body.ContentType {
+		t.Errorf("content-type = %q, want %q", gotContentType, body.ContentType)
+	}
+	if gotBody != "--x--" {
+		t.Errorf("body = %q, want the raw bytes, not JSON", gotBody)
+	}
+}
+
+func TestAdminClient_doRequest_betaOptionsAddUp(t *testing.T) {
+	var gotBeta string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBeta = r.Header.Get("anthropic-beta")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/webhooks", nil,
+		WithBeta("webhooks-2026-10-07"), WithBeta(), WithBeta("other-2026-01-01", "third-2026-02-02"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBeta != "webhooks-2026-10-07,other-2026-01-01,third-2026-02-02" {
+		t.Errorf("anthropic-beta = %q, want every option's values, in order", gotBeta)
+	}
+}
+
+func TestAdminClient_doRequest_rawBodyPointer(t *testing.T) {
+	var gotContentType, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("content-type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	body := &RawBody{ContentType: "multipart/form-data; boundary=x", Data: []byte("--x--")}
+	if _, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/plugins", body); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotContentType != body.ContentType {
+		t.Errorf("content-type = %q, want %q", gotContentType, body.ContentType)
+	}
+	if gotBody != "--x--" {
+		t.Errorf("body = %q, want the raw bytes, not JSON", gotBody)
+	}
+}
+
+func TestAdminClient_doRequest_nilRawBodyPointer(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	client := newTestAdminClient(t, srv)
+	_, err := client.DoRequest(context.Background(), "POST", "/v1/organizations/plugins", (*RawBody)(nil))
+	if err == nil || !strings.Contains(err.Error(), "nil *RawBody") {
+		t.Fatalf("err = %v, want a nil *RawBody error", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("server got %d requests, want none", n)
+	}
+}
+
 func TestAdminClient_doRequest_noContentTypeWithoutBody(t *testing.T) {
 	var gotContentType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
