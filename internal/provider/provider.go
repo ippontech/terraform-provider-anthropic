@@ -24,6 +24,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/externalkeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/federation"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/files"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/memorystores"
@@ -249,6 +250,7 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		apikeys.NewAPIKeyResource,
 		deployments.NewDeploymentResource,
 		environments.NewEnvironmentResource,
+		externalkeys.NewExternalKeyResource,
 		federation.NewFederationIssuerResource,
 		federation.NewFederationRuleResource,
 		federation.NewFederationRuleWorkspaceResource,
@@ -280,6 +282,8 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		deployments.NewDeploymentRunsDataSource,
 		environments.NewEnvironmentDataSource,
 		environments.NewEnvironmentsDataSource,
+		externalkeys.NewExternalKeyDataSource,
+		externalkeys.NewExternalKeysDataSource,
 		federation.NewFederationIssuersDataSource,
 		federation.NewFederationRulesDataSource,
 		federation.NewFederationIssuerDataSource,
