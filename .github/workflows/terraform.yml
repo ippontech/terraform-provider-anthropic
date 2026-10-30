@@ -1,0 +1,59 @@
+name: Terraform
+
+# Terraform-level checks that need neither credentials nor the Anthropic API,
+# so they can run on every pull request, forks included. The live native tests
+# (make terraform-test) still run only after merge, in testacc.yml.
+on:
+  pull_request:
+  merge_group:
+
+permissions: {}
+
+jobs:
+  terraform-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      # No version check call to checkpoint-api.hashicorp.com.
+      CHECKPOINT_DISABLE: '1'
+    steps:
+      # No registry.terraform.io and no api.anthropic.com: the provider comes
+      # from dev_overrides, and the native tests run here mock it.
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            proxy.golang.org:443
+            release-assets.githubusercontent.com:443
+            releases.hashicorp.com:443
+            storage.googleapis.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: make terraform-fmt-check
+
+      # Builds and installs the provider, then validates the 63 example
+      # directories against it.
+      - name: Validate the examples
+        run: make terraform-validate
+
+      # The test files with a mock_provider block (11 today): plan and apply
+      # against the mocked provider, no credentials.
+      - name: Run the offline native tests
+        run: make terraform-test-mock

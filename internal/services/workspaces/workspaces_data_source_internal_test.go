@@ -126,6 +126,29 @@ func TestWorkspacesDataSource_pagination(t *testing.T) {
 	}
 }
 
+func TestBuildWorkspacesListQuery(t *testing.T) {
+	tests := []struct {
+		name            string
+		afterID         string
+		includeArchived types.Bool
+		includeDefault  types.Bool
+		want            string
+	}{
+		{"defaults", "", types.BoolNull(), types.BoolNull(), "limit=1000"},
+		{"false is not sent", "", types.BoolValue(false), types.BoolValue(false), "limit=1000"},
+		{"unknown is not sent", "", types.BoolUnknown(), types.BoolUnknown(), "limit=1000"},
+		{"include default", "", types.BoolNull(), types.BoolValue(true), "include_default=true&limit=1000"},
+		{"both filters and cursor", "wrkspc_01", types.BoolValue(true), types.BoolValue(true), "after_id=wrkspc_01&include_archived=true&include_default=true&limit=1000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildWorkspacesListQuery(tt.afterID, tt.includeArchived, tt.includeDefault).Encode(); got != tt.want {
+				t.Errorf("query = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMapWorkspaceToListObject_archivedAt(t *testing.T) {
 	archived := "2026-04-01T00:00:00Z"
 	ws := workspacesListFixture("wrkspc_01", "archived", &archived)
