@@ -1,0 +1,69 @@
+diff --git a/internal/a/a.go b/internal/a/a.go
+index 1111111..2222222 100644
+--- a/internal/a/a.go
++++ b/internal/a/a.go
+@@ -4 +4 @@ func A() {
+-	old()
++	new()
+@@ -8,0 +9,2 @@ func B() {
++	x()
++	y()
+@@ -20,2 +21,0 @@ func C() {
+-	gone()
+-	gone2()
+diff --git a/internal/a/a_resource.go b/internal/a/a_resource.go
+index 3333333..4444444 100644
+--- a/internal/a/a_resource.go
++++ b/internal/a/a_resource.go
+@@ -5,0 +6 @@ func R() {
++	z := 1
+diff --git a/internal/a/a_test.go b/internal/a/a_test.go
+index 5555555..6666666 100644
+--- a/internal/a/a_test.go
++++ b/internal/a/a_test.go
+@@ -1,0 +2,3 @@ package a
+++++ b/looks/like/a/header.go
++func TestA(t *testing.T) {
++}
+diff --git a/internal/helper/h.go b/internal/helper/h.go
+index 7777777..8888888 100644
+--- a/internal/helper/h.go
++++ b/internal/helper/h.go
+@@ -1 +1 @@
+-a
+\ No newline at end of file
++b
+diff --git a/internal/a/removed.go b/internal/a/removed.go
+deleted file mode 100644
+index 9999999..0000000
+--- a/internal/a/removed.go
++++ /dev/null
+@@ -1,3 +0,0 @@
+-x
+-y
+-z
+diff --git a/README.md b/README.md
+index aaaaaaa..bbbbbbb 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-a
++b
+diff --git a/internal/a/sp ace.go b/internal/a/sp ace.go
+new file mode 100644
+index 0000000..ccccccc
+--- /dev/null
++++ b/internal/a/sp ace.go	
+@@ -0,0 +1,2 @@
++package a
++var v = 1
+\ No newline at end of file
+diff --git "a/internal/a/\303\251.go" "b/internal/a/\303\251.go"
+new file mode 100644
+index 0000000..ddddddd
+--- /dev/null
++++ "b/internal/a/\303\251.go"
+@@ -0,0 +1,3 @@
++package a
++func E() {}
++var w = 2
