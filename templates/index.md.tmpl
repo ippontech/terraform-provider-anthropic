@@ -11,7 +11,7 @@ It allows you to manage and query Anthropic resources such as models.
 
 ## Authentication
 
-The provider accepts three distinct credentials, depending on which resources you manage. At least one must be configured; they are independent, and configuring one never substitutes for another.
+The provider accepts three distinct credentials, depending on which resources you manage. At least one must be configured; they are independent, and configuring one never substitutes for another. Two of them, the API key and the OAuth bearer token, can also be minted by the provider itself through [Workload Identity Federation](#workload-identity-federation-federation), so a workload stores no credential at all.
 
 ### API Key (`api_key` / `ANTHROPIC_API_KEY`)
 
@@ -33,6 +33,8 @@ provider "anthropic" {
 }
 ```
 
+A workload with Workload Identity Federation needs no key: the [`api_federation` block](#workload-identity-federation-for-the-standard-client-api_federation) mints the standard client's credential from the workload's own identity token.
+
 ### Workspace (`workspace_id`)
 
 API keys are [personal or service account keys](https://platform.claude.com/docs/en/manage-claude/authentication#key-types), bound to an identity rather than to a workspace. A key created for a single workspace needs nothing more. A key that is not must say which workspace each request acts in, or the API answers `400 anthropic-workspace-id is required when authenticating with an identity-linked API key`. Set `workspace_id` and the provider sends that header on every request of the standard client, so one key serves one provider alias per workspace:
@@ -49,7 +51,7 @@ provider "anthropic" {
 }
 ```
 
-Leave it unset with a single-workspace key: the API answers `404 Workspace not found` to any `anthropic-workspace-id` header on such a key, even one naming the key's own workspace. For the same reason `workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the Anthropic SDKs' federation variable, often exported for other tools in the same job, and it is read by `federation.workspace_id` only. The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time. An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
+Leave it unset with a single-workspace key: the API answers `404 Workspace not found` to any `anthropic-workspace-id` header on such a key, even one naming the key's own workspace. For the same reason `workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the Anthropic SDKs' federation variable, often exported for other tools in the same job, and it is read by `federation.workspace_id` and `api_federation.workspace_id` only. The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time. When the standard client is itself federated (`api_federation`), `workspace_id` selects the workspace of the exchange instead of becoming a header, see that block. An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
 
 ### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
 
@@ -126,6 +128,38 @@ The command is stopped after 30 seconds. Its stderr is not shown in the error, s
 Give the rule a `token_lifetime_seconds` well above 120 (the default, 3600, is fine). The SDK refreshes within the last 120 seconds of an access token's life, so with a shorter lifetime every request refreshes, and runs the identity source, which can hit the identity provider's rate limit on a large plan.
 
 Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation.
+
+### Workload Identity Federation for the standard client (`api_federation`)
+
+The same exchange, against a rule whose OAuth scope is `workspace:developer` or `workspace:inference`, yields a workspace-scoped token that backs the standard client in place of `api_key`: every standard resource and data source (agents, skills, environments, vaults, memory stores, files, deployments, messages...) then runs on a token minted from the workload's own identity, and the pipeline stores no API key. The `api_federation` block takes the same attributes and environment variables as `federation`, so in a job set up as in the [guide's workload section](guides/workload_identity_federation#4-how-the-workload-consumes-the-rule), the whole configuration is:
+
+```hcl
+provider "anthropic" {
+  # ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_FEDERATION_RULE_ID,
+  # ANTHROPIC_SERVICE_ACCOUNT_ID and ANTHROPIC_IDENTITY_TOKEN_FILE fill it.
+  api_federation = {}
+}
+```
+
+Or, with the rule written out and an identity token fetched per exchange:
+
+```hcl
+provider "anthropic" {
+  api_federation = {
+    organization_id     = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id  = "fdrl_..." # oauth_scope = "workspace:developer"
+    service_account_id  = "svac_..."
+    identity_token_file = "/var/run/secrets/anthropic.com/token"
+  }
+}
+```
+
+- **It replaces `api_key`.** Configuring both is an error, and an exported `ANTHROPIC_API_KEY` is ignored with a warning, as `federation` does with `auth_token`.
+- **The token is scoped to one workspace at exchange time**, and the `anthropic-workspace-id` header does not apply to it, so the provider never sends that header on a federated standard client. The workspace is `api_federation.workspace_id`, else the provider-level `workspace_id`, else `ANTHROPIC_WORKSPACE_ID`; the two attributes must name the same workspace when both are set. A rule enabled for a single workspace needs none of them. One workspace per provider alias, as with an identity-linked key.
+- **A rule carries a single scope**, so managing both WIF (`org:admin`) and the workspace's resources from one configuration takes two rules and both blocks: `federation` for the admin endpoints, `api_federation` for everything else; the same rule in both is rejected at plan time. Each block exchanges on its own, so an identity token carrying a `jti` (GitHub Actions, Kubernetes, Entra) must be fetched fresh for each: give both blocks an `identity_token_command`, or distinct files. One file, or `ANTHROPIC_IDENTITY_TOKEN_FILE` filling both blocks, presents the same assertion twice and the second exchange fails with `jti_reused`; the provider warns at plan time when both blocks read the same file or literal.
+- The Admin API has no federated counterpart: `admin_api_key` stays a stored key.
+
+Everything said of `federation` applies: the identity token source is re-read or re-run per exchange, the block alone enables it (the environment variables never do), and every attribute must be known at plan time.
 
 Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 
