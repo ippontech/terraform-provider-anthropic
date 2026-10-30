@@ -10,6 +10,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -44,37 +45,89 @@ func (d *APIKeyDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			},
 			"status": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Status of the API key (`active` or `inactive`).",
+				MarkdownDescription: "Status of the API key: `active`, `inactive`, `archived` or `expired`.",
 			},
 			"workspace_id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The ID of the workspace this key is scoped to, or null for organization-level keys.",
+				MarkdownDescription: apiKeyWorkspaceIDDescription,
+				DeprecationMessage:  apiKeyWorkspaceIDDeprecation,
+			},
+			"scope":     apiKeyScopeDataSourceAttribute(),
+			"principal": apiKeyPrincipalDataSourceAttribute(),
+			"expires_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: apiKeyExpiresAtDescription,
 			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "RFC 3339 timestamp of when the API key was created.",
 			},
-			"created_by": schema.SingleNestedAttribute{
-				Computed:            true,
-				MarkdownDescription: "Details about the actor who created this API key.",
-				Attributes: map[string]schema.Attribute{
-					"id": schema.StringAttribute{
-						Computed:            true,
-						MarkdownDescription: "Identifier of the creator.",
-					},
-					"type": schema.StringAttribute{
-						Computed:            true,
-						MarkdownDescription: "Type of the creator (e.g. `user`).",
-					},
-				},
-			},
+			"created_by": apiKeyCreatedByDataSourceAttribute(),
 			"partial_key_hint": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The last four visible characters of the API key, for identification.",
+				MarkdownDescription: apiKeyPartialKeyHintDescription,
 			},
 			"type": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Object type. Always `api_key`.",
+			},
+		},
+	}
+}
+
+// The three nested attributes below are shared by anthropic_api_key and the
+// anthropic_api_keys list items, which carry the same object.
+
+func apiKeyScopeDataSourceAttribute() schema.SingleNestedAttribute {
+	return schema.SingleNestedAttribute{
+		Computed:            true,
+		MarkdownDescription: apiKeyScopeDescription,
+		Attributes: map[string]schema.Attribute{
+			"type": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Scope type: `workspace` or `organization`.",
+			},
+			"workspace_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "ID of the workspace the key belongs to, the Default Workspace included. Null when `type` is `organization`.",
+			},
+		},
+	}
+}
+
+func apiKeyPrincipalDataSourceAttribute() schema.SingleNestedAttribute {
+	return schema.SingleNestedAttribute{
+		Computed:            true,
+		MarkdownDescription: apiKeyPrincipalDescription,
+		Attributes: map[string]schema.Attribute{
+			"type": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Principal type: `user_actor` or `service_account_actor`.",
+			},
+			"user_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "ID of the user the key acts as. Null unless `type` is `user_actor`.",
+			},
+			"service_account_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "ID of the service account the key acts as. Null unless `type` is `service_account_actor`.",
+			},
+		},
+	}
+}
+
+func apiKeyCreatedByDataSourceAttribute() schema.SingleNestedAttribute {
+	return schema.SingleNestedAttribute{
+		Computed:            true,
+		MarkdownDescription: apiKeyCreatedByDescription,
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Identifier of the creator.",
+			},
+			"type": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Type of the creator: `user` or `service_account`.",
 			},
 		},
 	}

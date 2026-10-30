@@ -1,25 +1,17 @@
 // Copyright (c) Ippon
 // SPDX-License-Identifier: MPL-2.0
 
-// Package retry provides retry helpers for operations that the Anthropic SDK
-// cannot retry automatically.
-//
-// Multipart file uploads set req.Body without req.GetBody, so the SDK's
-// built-in retry logic (which requires a replayable body) is bypassed for
-// all 5xx responses. MultipartUpload works around this by re-opening files
-// from disk on each attempt.
+// Package retry holds the provider's retry policy for SDK requests
+// (Middleware, installed on every client by SDKOptions) and the multipart
+// bundle helper MultipartUpload.
 package retry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"time"
-
-	"github.com/anthropics/anthropic-sdk-go"
 )
 
 // NamedReader wraps an io.Reader with an explicit multipart filename.
@@ -44,14 +36,8 @@ func (r NamedReader) Filename() string { return r.name }
 
 var _ interface{ Filename() string } = NamedReader{}
 
-// backoff returns the delay before the given retry attempt.
-// Replaced by tests to avoid real sleeps.
-var backoff = func(attempt int) time.Duration {
-	return time.Duration(attempt) * 5 * time.Second
-}
-
-// MultipartUpload opens filePaths fresh on each attempt and calls fn with the
-// resulting readers, retrying up to 3 times on 5xx API errors with backoff.
+// MultipartUpload opens filePaths and calls fn once with the resulting
+// readers, closing the files afterwards.
 //
 // Each file's multipart name is `dirName + "/" + <relPath>`, where relPath is
 // the file's path relative to bundleRoot in forward-slash form, preserving
@@ -59,37 +45,24 @@ var backoff = func(attempt int) time.Duration {
 // upload body and must match the `name` field of the bundle's SKILL.md
 // frontmatter.
 //
-// File-open errors and non-5xx API errors are returned immediately without
-// retrying.
+// It does not retry: the SDK buffers the multipart body, so the client's
+// Middleware replays the upload, only on 429, 529 or a connection error
+// before it got a connection, since the POST creates an object. A retry
+// loop here would multiply the client's attempts (it used to retry 5xx
+// three times on top of the SDK's three attempts: nine POSTs).
 func MultipartUpload[T any](ctx context.Context, filePaths []string, bundleRoot, dirName string, fn func([]io.Reader) (T, error)) (T, error) {
-	const maxAttempts = 3
 	var zero T
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return zero, ctx.Err()
-			case <-time.After(backoff(attempt)):
-			}
-		}
-
-		files, openedFiles, err := openFiles(filePaths, bundleRoot, dirName)
-		if err != nil {
-			return zero, err
-		}
-
-		result, err := fn(files)
-		closeAll(openedFiles)
-		if err == nil {
-			return result, nil
-		}
-
-		var apierr *anthropic.Error
-		if !errors.As(err, &apierr) || apierr.StatusCode < 500 || attempt == maxAttempts-1 {
-			return zero, err
-		}
+	if err := ctx.Err(); err != nil {
+		return zero, err
 	}
-	return zero, nil // unreachable
+
+	files, openedFiles, err := openFiles(filePaths, bundleRoot, dirName)
+	if err != nil {
+		return zero, err
+	}
+	defer closeAll(openedFiles)
+
+	return fn(files)
 }
 
 func openFiles(filePaths []string, bundleRoot, dirName string) ([]io.Reader, []*os.File, error) {
@@ -107,7 +80,7 @@ func openFiles(filePaths []string, bundleRoot, dirName string) ([]io.Reader, []*
 			closeAll(opened)
 			return nil, nil, fmt.Errorf("file %q is not inside bundle root %q (relative path: %q)", p, bundleRoot, rel)
 		}
-		f, err := os.Open(p)
+		f, err := os.Open(p) //nolint:gosec // G304: a file of the configured skill bundle, checked to be under bundleRoot above
 		if err != nil {
 			closeAll(opened)
 			return nil, nil, fmt.Errorf("unable to open file %q: %w", p, err)

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -22,9 +23,12 @@ func testAccCheckEnvironmentDestroyed(s *terraform.State) error {
 			continue
 		}
 		_, err := client.Beta.Environments.Get(context.Background(), rs.Primary.ID, anthropic.BetaEnvironmentGetParams{})
-		if err != nil {
+		if providerrors.IsNotFound(err) {
 			// Resource not found — destroyed successfully.
-			return nil
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("checking environment %s after destroy: %w", rs.Primary.ID, err)
 		}
 		return fmt.Errorf("environment %s still exists", rs.Primary.ID)
 	}

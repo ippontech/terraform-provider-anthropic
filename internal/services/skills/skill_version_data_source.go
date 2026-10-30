@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
@@ -112,13 +113,15 @@ func (d *SkillVersionDataSource) Read(ctx context.Context, req datasource.ReadRe
 		return
 	}
 
-	skillVersion, err := d.client.Beta.Skills.Versions.Get(ctx, data.Version.ValueString(), anthropic.BetaSkillVersionGetParams{
+	res, err := d.client.Beta.Skills.Versions.Get(ctx, data.Version.ValueString(), anthropic.BetaSkillVersionGetParams{
 		SkillID: data.SkillID.ValueString(),
+		Betas:   skillsBetas(),
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to retrieve skill version: %s", err))
 		return
 	}
+	skillVersion := decodeBetaSkillVersion(res.RawJSON())
 
 	data.ID = types.StringValue(skillVersion.ID)
 	data.Name = types.StringValue(skillVersion.Name)

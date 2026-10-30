@@ -26,7 +26,7 @@ const organizationMemberFixture = `{
 
 func TestOrganizationMemberDataSource_read(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" || r.URL.Path != "/v1/organizations/users/user_01WCz1FkmYMm4gnmykNKUu3Q" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/users/user_01WCz1FkmYMm4gnmykNKUu3Q" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}

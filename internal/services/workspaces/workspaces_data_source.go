@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
@@ -32,6 +33,7 @@ type WorkspacesDataSource struct {
 
 type WorkspacesDataSourceModel struct {
 	IncludeArchived types.Bool `tfsdk:"include_archived"`
+	IncludeDefault  types.Bool `tfsdk:"include_default"`
 	Workspaces      types.List `tfsdk:"workspaces"`
 }
 
@@ -76,6 +78,12 @@ func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 			"include_archived": schema.BoolAttribute{
 				Optional:            true,
 				MarkdownDescription: "When true, archived workspaces are included in the results.",
+			},
+			"include_default": schema.BoolAttribute{
+				Optional: true,
+				MarkdownDescription: "When true, the organization's Default Workspace is included in the results (the API leaves it out by default). " +
+					"It is the only way to get the Default Workspace's ID, which the Admin API reports in an API key's `scope.workspace_id` " +
+					"(the key's `workspace_id` is null for a key in the Default Workspace).",
 			},
 			"workspaces": schema.ListNestedAttribute{
 				Computed:            true,
@@ -132,7 +140,7 @@ func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 						},
 						"external_key_id": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.",
+							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace (on Claude Platform on AWS, the AWS KMS key ARN), or null.",
 						},
 						"compartment_id": schema.StringAttribute{
 							Computed:            true,
@@ -192,16 +200,7 @@ func (d *WorkspacesDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	var afterID string
 
 	for {
-		params := url.Values{}
-		params.Set("limit", "1000")
-		if afterID != "" {
-			params.Set("after_id", afterID)
-		}
-		if !data.IncludeArchived.IsNull() && !data.IncludeArchived.IsUnknown() && data.IncludeArchived.ValueBool() {
-			params.Set("include_archived", "true")
-		}
-
-		path := "/v1/organizations/workspaces?" + params.Encode()
+		path := "/v1/organizations/workspaces?" + buildWorkspacesListQuery(afterID, data.IncludeArchived, data.IncludeDefault).Encode()
 		respBytes, err := d.adminClient.DoRequest(ctx, "GET", path, nil)
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspaces: %s", err))
@@ -214,20 +213,24 @@ func (d *WorkspacesDataSource) Read(ctx context.Context, req datasource.ReadRequ
 			return
 		}
 
-		for i := range page.Data {
-			ws := &page.Data[i]
-			obj, diags := mapWorkspaceToListObject(ws)
-			resp.Diagnostics.Append(diags...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-			wsObjs = append(wsObjs, obj)
+		objs, diags := mapWorkspacesToListObjects(page.Data)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
 		}
+		wsObjs = append(wsObjs, objs...)
 
-		if !page.HasMore || page.LastID == nil {
+		if !page.HasMore {
 			break
 		}
-		afterID = *page.LastID
+		// A null or empty last_id cannot name the next page, and the cursor
+		// just sent would request the same page again forever.
+		next, err := admin.NextAfterID(afterID, page.lastID())
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspaces: %s.", err))
+			return
+		}
+		afterID = next
 	}
 
 	wsList, diags := types.ListValue(types.ObjectType{AttrTypes: workspaceListItemAttrTypes}, wsObjs)
@@ -238,6 +241,29 @@ func (d *WorkspacesDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	data.Workspaces = wsList
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// lastID returns the page's last_id, "" when it is null.
+func (p *workspaceListAPIResponse) lastID() string {
+	if p.LastID == nil {
+		return ""
+	}
+	return *p.LastID
+}
+
+// mapWorkspacesToListObjects maps one page of workspaces to list elements.
+func mapWorkspacesToListObjects(page []workspaceAPIResponse) ([]attr.Value, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	objs := make([]attr.Value, 0, len(page))
+	for i := range page {
+		obj, d := mapWorkspaceToListObject(&page[i])
+		diags.Append(d...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		objs = append(objs, obj)
+	}
+	return objs, diags
 }
 
 func mapWorkspaceToListObject(ws *workspaceAPIResponse) (attr.Value, diag.Diagnostics) {
@@ -305,4 +331,21 @@ func mapWorkspaceToListObject(ws *workspaceAPIResponse) (attr.Value, diag.Diagno
 	})
 	diags.Append(d...)
 	return obj, diags
+}
+
+// buildWorkspacesListQuery builds the query of one page of GET /v1/organizations/workspaces.
+// Both filters are sent only when true: the API defaults them to false.
+func buildWorkspacesListQuery(afterID string, includeArchived, includeDefault types.Bool) url.Values {
+	params := url.Values{}
+	params.Set("limit", "1000")
+	if afterID != "" {
+		params.Set("after_id", afterID)
+	}
+	if includeArchived.ValueBool() {
+		params.Set("include_archived", "true")
+	}
+	if includeDefault.ValueBool() {
+		params.Set("include_default", "true")
+	}
+	return params
 }

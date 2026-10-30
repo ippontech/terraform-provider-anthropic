@@ -4,10 +4,18 @@
 package userprofiles_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
@@ -20,12 +28,46 @@ import (
 // they are gated behind an explicit opt-in on top of the usual PreCheck, and
 // CI (which does not set it) always skips them.
 func preCheckUserProfilesAcc(t *testing.T) {
+	t.Helper()
 	acctest.PreCheck(t)
 	if os.Getenv("ANTHROPIC_USER_PROFILES_ACC") == "" {
 		t.Skip("skipping: ANTHROPIC_USER_PROFILES_ACC is not set. The user profiles beta returns 404 for " +
 			"the terraform-tests organization as of 2026-09-30; set this variable once it is enabled to run " +
 			"these tests live.")
 	}
+}
+
+const (
+	destroyCheckTimeout  = 5 * time.Second
+	destroyCheckInterval = 200 * time.Millisecond
+)
+
+// testAccCheckUserProfileDestroyed polls Get until every profile the test
+// created answers 404 (Delete calls DELETE /v1/user_profiles/{id}) or the
+// deadline passes.
+func testAccCheckUserProfileDestroyed(s *terraform.State) error {
+	client := acctest.NewAPIKeyClient()
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "anthropic_user_profile" {
+			continue
+		}
+		deadline := time.Now().Add(destroyCheckTimeout)
+		for {
+			_, err := client.Beta.UserProfiles.Get(context.Background(), rs.Primary.ID, anthropic.BetaUserProfileGetParams{})
+			var apiErr *anthropic.Error
+			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+				break
+			}
+			if time.Now().After(deadline) {
+				if err == nil {
+					return fmt.Errorf("user profile %s still exists %v after destroy", rs.Primary.ID, destroyCheckTimeout)
+				}
+				return fmt.Errorf("checking user profile %s after destroy: %w", rs.Primary.ID, err)
+			}
+			time.Sleep(destroyCheckInterval)
+		}
+	}
+	return nil
 }
 
 const testAccUserProfileResourceBasicConfig = `
@@ -40,6 +82,7 @@ func TestAccUserProfileResource_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { preCheckUserProfilesAcc(t) },
 		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckUserProfileDestroyed,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccUserProfileResourceBasicConfig,
@@ -92,6 +135,7 @@ func TestAccUserProfileResource_update(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { preCheckUserProfilesAcc(t) },
 		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckUserProfileDestroyed,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccUserProfileResourceUpdateConfigV1,

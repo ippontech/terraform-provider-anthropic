@@ -1,0 +1,198 @@
+== unknown workspace_id
+Error at workspace_id: Unknown Workspace Configuration
+    workspace_id depends on a value that is not known until apply. Provider configuration must be known at plan time.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== no credential
+Error: Missing Credentials
+    At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token. For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or google_cloud block instead.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== api_key
+served: platform first_party, workspaceless false, same data for data sources true, standard true, admin false, oauth false
+== every first-party credential
+served: platform first_party, workspaceless false, same data for data sources true, standard true, admin true, oauth true
+== credentials from the environment
+served: platform first_party, workspaceless false, same data for data sources true, standard true, admin true, oauth true
+== federation
+served: platform first_party, workspaceless false, same data for data sources true, standard false, admin false, oauth true
+== federation and auth_token
+Error at federation: Conflicting OAuth Credentials
+    federation and auth_token both supply the org:admin bearer token. Configure one.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== federation and unknown auth_token
+Error at federation: Conflicting OAuth Credentials
+    federation and auth_token both supply the org:admin bearer token. Configure one.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== federation and ANTHROPIC_AUTH_TOKEN
+Warning at federation: ANTHROPIC_AUTH_TOKEN Ignored
+    ANTHROPIC_AUTH_TOKEN is set, but the federation block supplies the org:admin bearer token, so the variable is not used. Unset it to silence this warning.
+served: platform first_party, workspaceless false, same data for data sources true, standard false, admin false, oauth true
+== federation without organization and rule
+Error at federation.organization_id: Missing Federation Organization
+    Set federation.organization_id or the ANTHROPIC_ORGANIZATION_ID environment variable.
+Error at federation.federation_rule_id: Missing Federation Rule
+    Set federation.federation_rule_id or the ANTHROPIC_FEDERATION_RULE_ID environment variable.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws and google_cloud
+Error at google_cloud: Conflicting Platform Configuration
+    aws and google_cloud cannot both be set: each reaches a different organization. Use a separate provider alias for each.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws with every first-party credential
+Error at aws: Conflicting Platform Configuration
+    aws and api_key cannot both be set: the aws block reaches Claude Platform on AWS with AWS credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+Error at aws: Conflicting Platform Configuration
+    aws and admin_api_key cannot both be set: the aws block reaches Claude Platform on AWS with AWS credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+Error at aws: Conflicting Platform Configuration
+    aws and auth_token cannot both be set: the aws block reaches Claude Platform on AWS with AWS credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+Error at aws: Conflicting Platform Configuration
+    aws and federation cannot both be set: the aws block reaches Claude Platform on AWS with AWS credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws unknown block
+Error at aws: Unknown AWS Configuration
+    The aws block depends on a value that is not known until apply. Provider configuration must be known at plan time.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws unknown attributes
+Error at aws.region: Unknown AWS Configuration
+    aws.region depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at aws.profile: Unknown AWS Configuration
+    aws.profile depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at aws.api_key: Unknown AWS Configuration
+    aws.api_key depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at aws.access_key: Unknown AWS Configuration
+    aws.access_key depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at aws.secret_key: Unknown AWS Configuration
+    aws.secret_key depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at aws.session_token: Unknown AWS Configuration
+    aws.session_token depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at aws.base_url: Unknown AWS Configuration
+    aws.base_url depends on a value that is not known until apply. Provider configuration must be known at plan time.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws three credential sources and a lone access_key
+Error at aws: Conflicting AWS Credentials
+    Set at most one of aws.api_key, aws.access_key/aws.secret_key and aws.profile.
+Error at aws: Incomplete AWS Credentials
+    aws.access_key and aws.secret_key must be set together.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws api_key and a lone secret_key
+Error at aws: Conflicting AWS Credentials
+    Set at most one of aws.api_key, aws.access_key/aws.secret_key and aws.profile.
+Error at aws: Incomplete AWS Credentials
+    aws.access_key and aws.secret_key must be set together.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws lone session_token, no workspace, no region
+Error at aws.session_token: Incomplete AWS Credentials
+    aws.session_token is only used with aws.access_key and aws.secret_key.
+Error at workspace_id: Missing Workspace
+    Claude Platform on AWS identifies the workspace of every inference and resource request by the anthropic-workspace-id header. Set workspace_id or the ANTHROPIC_AWS_WORKSPACE_ID environment variable (ANTHROPIC_WORKSPACE_ID is not read with the aws block). An alias that only manages workspaces needs one too: any workspace of the same region.
+Error at aws.region: Missing AWS Region
+    Set aws.region or the AWS_REGION environment variable: it selects the gateway endpoint and the SigV4 signing region, and a workspace is reachable only through the region it was created in.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws keys
+Warning at aws: Claude Platform on AWS support is in beta
+    Claude Platform on AWS support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform aws, workspaceless false, same data for data sources true, standard true, admin true, oauth false
+== aws keys, region and workspace from the environment
+Warning at aws: Claude Platform on AWS support is in beta
+    Claude Platform on AWS support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform aws, workspaceless false, same data for data sources true, standard true, admin true, oauth false
+== aws api_key and base_url without region
+Warning at aws: Claude Platform on AWS support is in beta
+    Claude Platform on AWS support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform aws, workspaceless false, same data for data sources true, standard true, admin true, oauth false
+== aws api_key without region
+Error at aws.region: Missing AWS Region
+    Set aws.region or the AWS_REGION environment variable: it selects the gateway endpoint and the SigV4 signing region, and a workspace is reachable only through the region it was created in.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws keys and base_url without region
+Error at aws.region: Missing AWS Region
+    Set aws.region or the AWS_REGION environment variable: it selects the gateway endpoint and the SigV4 signing region, and a workspace is reachable only through the region it was created in.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== aws api_key and base_url from the environment without region
+Warning at aws: Claude Platform on AWS support is in beta
+    Claude Platform on AWS support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform aws, workspaceless false, same data for data sources true, standard true, admin true, oauth false
+== google_cloud with every first-party credential
+Error at google_cloud: Conflicting Platform Configuration
+    google_cloud and api_key cannot both be set: the google_cloud block reaches Claude Models on Google Cloud with Google credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+Error at google_cloud: Conflicting Platform Configuration
+    google_cloud and admin_api_key cannot both be set: the google_cloud block reaches Claude Models on Google Cloud with Google credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+Error at google_cloud: Conflicting Platform Configuration
+    google_cloud and auth_token cannot both be set: the google_cloud block reaches Claude Models on Google Cloud with Google credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+Error at google_cloud: Conflicting Platform Configuration
+    google_cloud and federation cannot both be set: the google_cloud block reaches Claude Models on Google Cloud with Google credentials, where no Anthropic credential is accepted. Use a separate provider alias for each organization.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== google_cloud unknown block
+Error at google_cloud: Unknown Google Cloud Configuration
+    The google_cloud block depends on a value that is not known until apply. Provider configuration must be known at plan time.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== google_cloud unknown attributes
+Error at google_cloud.project: Unknown Google Cloud Configuration
+    google_cloud.project depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at google_cloud.location: Unknown Google Cloud Configuration
+    google_cloud.location depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at google_cloud.credentials: Unknown Google Cloud Configuration
+    google_cloud.credentials depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at google_cloud.access_token: Unknown Google Cloud Configuration
+    google_cloud.access_token depends on a value that is not known until apply. Provider configuration must be known at plan time.
+Error at google_cloud.base_url: Unknown Google Cloud Configuration
+    google_cloud.base_url depends on a value that is not known until apply. Provider configuration must be known at plan time.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== google_cloud credentials and access_token
+Error at google_cloud: Conflicting Google Cloud Credentials
+    Set at most one of google_cloud.credentials and google_cloud.access_token.
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== google_cloud credentials not JSON
+Error at google_cloud.credentials: Invalid Google Cloud Credentials
+    google_cloud.credentials is not a JSON credential file: invalid character 'o' in literal null (expecting 'u')
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== google_cloud credentials of another type
+Error at google_cloud.credentials: Invalid Google Cloud Credentials
+    google_cloud.credentials has type "external_account_authorized_user_x"; accepted types: [service_account authorized_user external_account external_account_authorized_user impersonated_service_account]
+served: nothing (ResourceData <nil>, DataSourceData <nil>, platform first_party)
+== google_cloud access_token
+Warning at google_cloud: Claude Models on Google Cloud (Anthropic managed) support is in beta
+    Claude Models on Google Cloud (Anthropic managed) support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform google_cloud, workspaceless false, same data for data sources true, standard true, admin true, oauth false
+== google_cloud access_token without workspace
+Warning at google_cloud: Claude Models on Google Cloud (Anthropic managed) support is in beta
+    Claude Models on Google Cloud (Anthropic managed) support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform google_cloud, workspaceless true, same data for data sources true, standard true, admin true, oauth false
+== google_cloud workspace and project from the environment
+Warning at google_cloud: Claude Models on Google Cloud (Anthropic managed) support is in beta
+    Claude Models on Google Cloud (Anthropic managed) support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform google_cloud, workspaceless false, same data for data sources true, standard true, admin true, oauth false
+== google_cloud authorized_user credentials
+Warning at google_cloud: Claude Models on Google Cloud (Anthropic managed) support is in beta
+    Claude Models on Google Cloud (Anthropic managed) support in this provider is verified with offline tests only, against local fakes of the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may behave differently there.
+
+The guide lists what remains unverified: https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud
+
+Please report what works and what does not: https://github.com/ippontech/terraform-provider-anthropic/issues
+served: platform google_cloud, workspaceless false, same data for data sources true, standard true, admin true, oauth false

@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -47,15 +49,15 @@ func testAccCheckDeploymentArchived(s *terraform.State) error {
 
 // awaitDeploymentArchivedForTest polls Get until archived_at is set, riding
 // out the same read-after-write staleness window documented for the vaults
-// API (see CLAUDE.md); deployments share the underlying Beta managed-agents
-// infrastructure.
+// API (see internal/services/vaults/CLAUDE.md); deployments share the
+// underlying Beta managed-agents infrastructure.
 func awaitDeploymentArchivedForTest(client anthropic.Client, id string) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		deployment, err := client.Beta.Deployments.Get(context.Background(), id, anthropic.BetaDeploymentGetParams{})
 		if err != nil {
 			var apierr *anthropic.Error
-			if errors.As(err, &apierr) && apierr.StatusCode == 404 {
+			if errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound {
 				return fmt.Errorf("deployment %s not found while waiting for it to be archived", id)
 			}
 			return err

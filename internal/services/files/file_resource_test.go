@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 )
 
@@ -46,7 +47,7 @@ func awaitFileGone(client anthropic.Client, id string) error {
 	deadline := time.Now().Add(destroyCheckTimeout)
 	var lastErr error
 	for {
-		_, err := client.Files.GetMetadata(context.Background(), id)
+		_, err := client.Files.GetMetadata(context.Background(), id, anthropic.FileGetMetadataParams{})
 		if isNotFoundError(err) {
 			return nil
 		}
