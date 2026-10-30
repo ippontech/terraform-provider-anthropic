@@ -27,6 +27,15 @@ repos:
         entry: mise exec -- poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
         pass_filenames: false
         always_run: true
+      # Secrets in the staged changes, with the rules of .gitleaks.toml, at the
+      # version pinned in mise.toml (the gitleaks workflow scans the commits of
+      # a pull request). A deliberate fake in a test takes `gitleaks:allow` at
+      # the end of its line, in the commit that adds the line.
+      - id: gitleaks
+        name: gitleaks
+        language: system
+        entry: mise exec -- gitleaks git --pre-commit --staged --config .gitleaks.toml --redact --no-banner --verbose
+        pass_filenames: false
   - repo: https://github.com/semgrep/semgrep
     rev: v1.182.0
     hooks:
