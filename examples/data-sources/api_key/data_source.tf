@@ -20,6 +20,11 @@ output "api_key_status" {
   value       = data.anthropic_api_key.example.status
 }
 
+output "api_key_workspace_id" {
+  description = "Workspace the key belongs to, Default Workspace included (null for an organization-scoped key)."
+  value       = data.anthropic_api_key.example.scope.workspace_id
+}
+
 output "api_key_partial_hint" {
   description = "Last characters of the key, for identification without exposing the secret."
   value       = data.anthropic_api_key.example.partial_key_hint

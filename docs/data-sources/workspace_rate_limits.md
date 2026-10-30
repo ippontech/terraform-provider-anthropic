@@ -2,15 +2,21 @@
 page_title: "anthropic_workspace_rate_limits Data Source - anthropic"
 subcategory: "Workspaces"
 description: |-
-  Lists workspace-level rate-limit overrides. Only entries with at least one override are returned; groups inheriting org-level limits are omitted.
+  Lists a workspace's rate limits: its overrides by default, or every group with the values it inherits from the organization when include_inherited is true.
 ---
 
 # anthropic_workspace_rate_limits (Data Source)
 
-Lists workspace-level rate-limit overrides for a given workspace. Only entries that have at least one override are returned; groups inheriting organization-level limits are **not** listed.
+Lists a workspace's rate limits, one entry per rate-limit group.
+
+By default only the groups and limiter types that have a workspace-level override are returned. With `include_inherited = true`, every group with organization-level limits that the workspace can see is listed, with the values the workspace inherits from the organization next to its own overrides; each value's `source.type` (`workspace` or `organization`) tells them apart.
+
+Each entry's `rate_limit_id` is the ID of the organization's rate-limit entry for the group, the one a workspace override for that group refers to.
+
+`group_type` is deprecated in favour of `group.type` (always equal), and Admin API version 2026-10-21 removes it. The `group_type` **filter** is unchanged.
 
 > **API**: `GET /v1/organizations/workspaces/{workspace_id}/rate_limits` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -21,14 +27,31 @@ data "anthropic_workspace_rate_limits" "example" {
   workspace_id = var.workspace_id
 }
 
+# Every group the workspace can see, with the values it inherits from the
+# organization next to its own overrides (each value's source.type says which).
+data "anthropic_workspace_rate_limits" "effective" {
+  workspace_id      = var.workspace_id
+  include_inherited = true
+}
+
 variable "workspace_id" {
   type        = string
-  description = "The ID of the workspace to list rate-limit overrides for."
+  description = "The ID of the workspace to list rate limits for."
 }
 
 output "rate_limits_count" {
-  description = "Number of rate-limit overrides configured for the workspace."
+  description = "Number of rate-limit groups with at least one override in the workspace."
   value       = length(data.anthropic_workspace_rate_limits.example.rate_limits)
+}
+
+output "effective_rate_limit_groups" {
+  description = "Rate-limit groups that apply to the workspace, with the ID an override for each one takes."
+  value = [
+    for rl in data.anthropic_workspace_rate_limits.effective.rate_limits : {
+      group         = rl.group.type == "model_group" ? rl.group.display_name : rl.group.type
+      rate_limit_id = rl.rate_limit_id
+    }
+  ]
 }
 ```
 
@@ -37,25 +60,38 @@ output "rate_limits_count" {
 
 ### Required
 
-- `workspace_id` (String) The ID of the workspace to list rate-limit overrides for.
+- `workspace_id` (String) The ID of the workspace to list rate limits for.
 
 ### Optional
 
 - `group_type` (String) Filter results to a specific group type (`model_group`, `batch`, `token_count`, `files`, `skills`, `web_search`).
+- `include_inherited` (Boolean) Also list the limiter values the workspace inherits from the organization, including groups with no workspace-level override; each value's `source.type` tells them apart. Default: `false`.
 
 ### Read-Only
 
-- `rate_limits` (Attributes List) Rate-limit overrides set for this workspace. (see [below for nested schema](#nestedatt--rate_limits))
+- `rate_limits` (Attributes List) Rate-limit entries for this workspace, one per group. (see [below for nested schema](#nestedatt--rate_limits))
 
 <a id="nestedatt--rate_limits"></a>
 ### Nested Schema for `rate_limits`
 
 Read-Only:
 
-- `group_type` (String) Rate-limit group type.
-- `limits` (Attributes List) Individual rate-limit entries. (see [below for nested schema](#nestedatt--rate_limits--limits))
-- `models` (List of String) Models included in this limit group. Null when `group_type` is not `model_group`.
+- `group` (Attributes) The rate-limit group the entry applies to: a model family (`model_group`) or an API surface. (see [below for nested schema](#nestedatt--rate_limits--group))
+- `group_type` (String, Deprecated) Use `group.type` instead. Rate-limit group type, always equal to `group.type`. Admin API version 2026-10-21 removes this field.
+- `limits` (Attributes List) The workspace's limiter values for this group. (see [below for nested schema](#nestedatt--rate_limits--limits))
+- `models` (List of String) Models included in this limit group (the ones this workspace has access to). Null when `group.type` is not `model_group`.
+- `rate_limit_id` (String) The `id` of the organization's rate-limit entry this entry applies to: the ID that setting a workspace override for this group takes.
 - `type` (String) Object type. Always `workspace_rate_limit`.
+
+<a id="nestedatt--rate_limits--group"></a>
+### Nested Schema for `rate_limits.group`
+
+Read-Only:
+
+- `display_name` (String) Human-readable name of a model group (e.g. `Claude Sonnet 4.x`), for display only. Null for other group types.
+- `id` (String) Identifier of the rate-limit group (`rlg_...`), the same in every organization. Not the entry's own ID.
+- `type` (String) Group type: one of `model_group`, `batch`, `token_count`, `files`, `skills`, `web_search`.
+
 
 <a id="nestedatt--rate_limits--limits"></a>
 ### Nested Schema for `rate_limits.limits`
@@ -63,5 +99,13 @@ Read-Only:
 Read-Only:
 
 - `org_limit` (Number) Organization-level limit, or null if no org limit is configured.
+- `source` (Attributes) Where `value` comes from. (see [below for nested schema](#nestedatt--rate_limits--limits--source))
 - `type` (String) Limit type (e.g. `requests_per_minute`).
-- `value` (Number) Override value applied to this workspace.
+- `value` (Number) The workspace's value for this limiter type: its override when `source.type` is `workspace`, otherwise the organization's value.
+
+<a id="nestedatt--rate_limits--limits--source"></a>
+### Nested Schema for `rate_limits.limits.source`
+
+Read-Only:
+
+- `type` (String) `workspace` (a workspace-level override is stored) or `organization` (inherited; listed only with `include_inherited = true`).
