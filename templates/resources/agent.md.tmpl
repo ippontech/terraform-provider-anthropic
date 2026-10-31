@@ -18,6 +18,27 @@ Creates and manages a Managed Agent on the Anthropic platform (beta). Agents are
 
 {{ codefile "hcl" "examples/resources/agent/resource.tf" }}
 
+## Permission policies
+
+`default_permission_policy` (on `agent_toolset` and on each `mcp_toolsets` entry) and the per-tool `permission_policy` overrides take one of three values ([Permission policies](https://platform.claude.com/docs/en/managed-agents/permission-policies)):
+
+- `always_allow`: the tool runs with no confirmation. The agent toolset uses it when no default is set.
+- `always_ask`: the session pauses until your client approves or denies the call. MCP toolsets use it when no default is set, so tools added to an MCP server later do not run without approval.
+- `auto`: the server evaluates each call from the tool, its input and the session so far, then runs it, denies it (the agent gets an error tool result) or pauses for approval when it reaches no determination. No toolset uses it by default.
+
+Those defaults are what the API applies to a toolset sent without `default_permission_policy`. Removing the attribute from an existing toolset does not plan a change on its own, since the attribute is computed: to change the policy, set the value you want, `always_ask` for instance.
+
+`auto` is not a human checkpoint: a call the server judges safe runs before anyone sees it, and its effects might not be reversible. Keep `always_ask` on the tools whose calls a person must review. The server reads what your client posts in `user.message` events as your intent, so relaying untrusted end-user input there can get a call allowed. Permission policies do not apply to `custom_tools`, which your application runs.
+
+## Web tool restrictions
+
+The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
+
+These lists are not the only restrictions applied to the two tools:
+
+- In a cloud environment with `limited` networking, the environment's `allowed_hosts` also applies to `web_search` and `web_fetch`. Creating a session fails with a 400 error when an enabled web tool's `allowed_domains` has an entry that is not within `allowed_hosts`. An `allowed_hosts` entry matches one exact host unless it starts with `*.`, so `docs.example.com` is not within `["example.com"]`, while an `allowed_domains` entry also covers its subdomains. The environment is chosen per session, so Terraform cannot check this when it applies the agent.
+- The organization's web search and web fetch settings on the **Capabilities** page of the Claude Console apply on top of the agent's lists: a URL or search result must pass both the organization's domain restrictions and the agent's.
+
 {{ .SchemaMarkdown | trimspace }}
 
 ## Import

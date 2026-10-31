@@ -228,7 +228,7 @@ func (r *FileResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	file, err := r.client.Files.GetMetadata(ctx, data.ID.ValueString())
+	file, err := r.client.Files.GetMetadata(ctx, data.ID.ValueString(), anthropic.FileGetMetadataParams{})
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
@@ -257,7 +257,7 @@ func (r *FileResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	_, err := r.client.Files.Delete(ctx, data.ID.ValueString())
+	_, err := r.client.Files.Delete(ctx, data.ID.ValueString(), anthropic.FileDeleteParams{})
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {

@@ -62,6 +62,31 @@ run "agent_resource_example" {
   }
 
   assert {
+    condition     = contains(anthropic_agent.developer.agent_toolset.configs[1].allowed_domains, "arxiv.org")
+    error_message = "Expected web_search to keep its allowed_domains."
+  }
+
+  assert {
+    condition     = anthropic_agent.developer.agent_toolset.configs[1].user_location.country == "US"
+    error_message = "Expected web_search to keep its user_location."
+  }
+
+  assert {
+    condition     = anthropic_agent.developer.agent_toolset.configs[2].max_content_tokens == 50000
+    error_message = "Expected web_fetch to keep its max_content_tokens."
+  }
+
+  assert {
+    condition     = anthropic_agent.mcp_agent.mcp_toolsets[0].default_permission_policy == "auto"
+    error_message = "Expected the MCP toolset to keep the auto permission policy."
+  }
+
+  assert {
+    condition     = anthropic_agent.mcp_agent.mcp_toolsets[0].configs[0].permission_policy == "always_ask"
+    error_message = "Expected the delete_record override to keep always_ask."
+  }
+
+  assert {
     condition     = anthropic_agent.coordinator.multiagent.type == "coordinator"
     error_message = "Expected a coordinator topology."
   }
