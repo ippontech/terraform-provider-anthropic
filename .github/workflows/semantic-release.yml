@@ -40,7 +40,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: '26'
 
       # The whole tree, transitive packages included, comes from the committed lockfile with its
       # integrity hashes, and no package lifecycle script runs (also enforced by the .npmrc there).
