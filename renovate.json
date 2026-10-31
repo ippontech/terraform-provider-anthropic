@@ -121,6 +121,15 @@
       "allowedVersions": "<2.0.0"
     },
     {
+      "description": "Review every anthropic-sdk-go minor release before it merges, in its own PR: v1 minors have changed what goes over the wire without breaking the build (v1.68.0 stopped sending the skills beta header, v1.75.0 started sending extra input_schema keys, v1.80.0 turned multiagent into a union), and no check on a PR calls the live API. Its own PR, so that the routine Go dependencies PR can be merged while an SDK minor waits for a closer look. Patch releases stay in that group; like every root go.mod update, neither is automerged.",
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Anthropic Go SDK",
+      "groupSlug": "anthropic-sdk-go",
+      "automerge": false
+    },
+    {
       "description": "Never propose a major SDK update, OSV vulnerability-fix PRs included (their allowedVersions replaces any hold above): a new major is the #192 migration, not a dependency bump.",
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],

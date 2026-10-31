@@ -34,7 +34,7 @@ shows its recent runs and their logs.
 | `postUpdateOptions` | `gomodTidy`: Renovate runs `go mod tidy` after bumping a Go module, so the `go.sum` entries of the transitive dependencies the bump pulls in are written too. Without it a bump of a module with new requirements (the `[SECURITY]` PRs on `tools/go.mod` of 2026-10, #501 to #505) leaves a `go.sum` that `go` rejects with `missing go.sum entry`, and every job that builds the module fails ([docs](https://docs.renovatebot.com/configuration-options/#postupdateoptions)). `go mod tidy` would also drop the root `toolchain` line if it were not newer than the `go` line (see [Go version](#go-version)), so keep it newer |
 | `enabledManagers` | `github-actions`, `gomod`, `mise`, `pre-commit`, `custom.regex`, `npm` |
 | `customManagers` | Two regex managers, see [Custom managers](#custom-managers) below |
-| `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, except release tooling and the root `go.mod` (see [Release tooling](#release-tooling) and [Go modules](#go-modules)), plus a version hold on the Anthropic Go SDK's next major (see [Version holds](#version-holds)) |
+| `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, except release tooling and the root `go.mod` (see [Release tooling](#release-tooling) and [Go modules](#go-modules)), plus a version hold on the Anthropic Go SDK's next major and a PR of its own for its minor releases (see [Version holds](#version-holds)) |
 
 Two of these entries are less obvious than they look:
 
@@ -176,8 +176,12 @@ Three consequences worth knowing:
 
 - `allowedVersions` filters the version out entirely, so the SDK will keep appearing **up to date** on
   the Dependency Dashboard while v2 releases ship. #192 is the reminder, not the dashboard.
-- v1 minor and patch releases are still allowed and come in the `Go dependencies` PR, reviewed like every
-  other root `go.mod` update (v1.84.0 is the last v1 release at the time of writing).
+- v1 patch releases come in the `Go dependencies` PR, reviewed like every other root `go.mod` update. v1
+  minor releases (v1.84.0 is the last one at the time of writing) get a PR of their own, `Anthropic Go SDK`:
+  three v1 minors changed what goes over the wire without breaking the build (v1.68.0 stopped sending the
+  skills beta header, v1.75.0 started sending extra `input_schema` keys, v1.80.0 turned `multiagent` into
+  a union), and no check on a PR calls the live API, so a green build says nothing about them. Keeping them
+  apart lets a maintainer merge the routine `Go dependencies` PR while an SDK minor waits for a closer look.
 - An `osvVulnerabilityAlerts` PR brings its own `allowedVersions` (the fixed versions), which Renovate appends
   after `packageRules` and which replaces the hold. A second rule therefore always disables the SDK's `major`
   updates, a new major being the #192 migration: a fix released only in v2 gets no `[SECURITY]` PR, the weekly
