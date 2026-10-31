@@ -16,7 +16,9 @@ Sends a message to an Anthropic model via the Messages API and stores the respon
 
 ~> **Note:** This resource implements an immutable, write-only pattern. There is no persistent storage of messages beyond Terraform state; the resource calls the Anthropic Messages API during `terraform apply` and stores the response. Modifying any input attribute causes the resource to be replaced (a new API call is made). There is no `terraform refresh` from a remote API state.
 
-~> **Not yet supported:** the `diagnostics` request parameter (`previous_message_id`) and the `between_tools` thinking type (`thinking.type = "between_tools"`) need a newer Anthropic Go SDK than the pinned v1.67.0 and will follow with the SDK bump (see [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192)). `top_p`, `top_k`, `tools`, `tool_choice`, `container`, `compaction` and `fallbacks` are not exposed.
+~> **Deprecated:** `temperature` will be removed in the next major version of the provider, together with the move to the Anthropic Go SDK v2 and API version `2026-10-21`, which rejects `temperature` (HTTP 400) at any value, `1.0` included ([migration guide](https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters)). Under API version `2023-06-01`, which the provider sends today, Claude 4.7 and later models already reject any value other than `1.0`. Leave it unset: the provider then omits the parameter and the model samples at its default of `1.0`. Like any input change, removing it from an existing resource replaces that resource, which sends a new, billable request.
+
+~> **Not yet supported:** the `diagnostics` request parameter (`previous_message_id`) and the `between_tools` thinking type (`thinking.type = "between_tools"`) are not exposed yet. `top_p`, `top_k`, `tools`, `tool_choice`, `container`, `compaction` and `fallbacks` are not exposed.
 
 ## Example Usage
 
@@ -38,12 +40,11 @@ output "response" {
   value       = anthropic_message.example.content
 }
 
-# Example with system prompt and temperature
+# Example with a system prompt
 resource "anthropic_message" "with_system" {
-  model       = "claude-haiku-4-5-20251001"
-  max_tokens  = 512
-  system      = "You are a helpful assistant that answers questions concisely."
-  temperature = 0.7
+  model      = "claude-haiku-4-5-20251001"
+  max_tokens = 512
+  system     = "You are a helpful assistant that answers questions concisely."
 
   messages = [
     {
@@ -165,7 +166,7 @@ output "structured_capital" {
 - `service_tier` (String) Whether to use priority capacity if available (`auto`) or standard capacity only (`standard_only`).
 - `stop_sequences` (List of String) Custom text sequences that make the model stop generating. When one is matched, `stop_reason` is `stop_sequence` and `stop_sequence` holds the matched text.
 - `system` (String) System prompt providing context and instructions to the model.
-- `temperature` (Number) Amount of randomness injected into the response (0.0–1.0). Lower values (closer to 0) produce more focused and deterministic responses; higher values produce more creative responses. If not specified, the model uses its default.
+- `temperature` (Number, Deprecated) Amount of randomness injected into the response (0.0–1.0). Will be removed in the next major version, together with the move to API version `2026-10-21`, which rejects `temperature` (HTTP 400) at any value, `1.0` included. Under the API version the provider sends today (`2023-06-01`), Claude 4.7 and later models already reject any value other than `1.0`. If not specified, the parameter is not sent and the model samples at its default (`1.0`).
 - `thinking` (Attributes) Extended thinking configuration. If omitted, the model's default behaviour applies. Note: `{ type = "disabled" }` is rejected by the API (HTTP 400) on claude-fable-5-1, claude-opus-5-5, and claude-sonnet-5-5 (verified 2026-10-08); omit the block instead or use `type = "adaptive"` with `output_config.effort` to control thinking behavior. (see [below for nested schema](#nestedatt--thinking))
 
 ### Read-Only
