@@ -15,12 +15,11 @@ output "response" {
   value       = anthropic_message.example.content
 }
 
-# Example with system prompt and temperature
+# Example with a system prompt
 resource "anthropic_message" "with_system" {
-  model       = "claude-haiku-4-5-20251001"
-  max_tokens  = 512
-  system      = "You are a helpful assistant that answers questions concisely."
-  temperature = 0.7
+  model      = "claude-haiku-4-5-20251001"
+  max_tokens = 512
+  system     = "You are a helpful assistant that answers questions concisely."
 
   messages = [
     {
@@ -121,4 +120,53 @@ resource "anthropic_message" "structured" {
 output "structured_capital" {
   description = "The capital extracted from the structured JSON reply."
   value       = jsondecode(anthropic_message.structured.content).capital
+}
+
+# Example with cache diagnostics over two turns: the first turn opts in, the
+# second names the first one's id, and the API reports why the cache could not
+# reuse the first turn's prefix, if it could not.
+resource "anthropic_message" "turn_1" {
+  model         = "claude-haiku-4-5-20251001"
+  max_tokens    = 64
+  system        = "You are a geography assistant. Answer in one word."
+  cache_control = {}
+  diagnostics   = {}
+
+  messages = [
+    {
+      role    = "user"
+      content = "What is the capital of France?"
+    }
+  ]
+}
+
+resource "anthropic_message" "turn_2" {
+  model         = "claude-haiku-4-5-20251001"
+  max_tokens    = 64
+  system        = "You are a geography assistant. Answer in one word."
+  cache_control = {}
+
+  diagnostics = {
+    previous_message_id = anthropic_message.turn_1.id
+  }
+
+  messages = [
+    {
+      role    = "user"
+      content = "What is the capital of France?"
+    },
+    {
+      role    = "assistant"
+      content = anthropic_message.turn_1.content
+    },
+    {
+      role    = "user"
+      content = "And of Italy?"
+    }
+  ]
+}
+
+output "cache_miss_reason" {
+  description = "Why the second turn could not reuse the first turn's prompt prefix (null when nothing diverged)."
+  value       = anthropic_message.turn_2.diagnostics.cache_miss_reason
 }

@@ -45,6 +45,7 @@ func ctModel(t *testing.T) CountTokensDataSourceModel {
 		Model:        types.StringValue("claude-haiku-4-5-20251001"),
 		Messages:     msgs,
 		System:       types.StringNull(),
+		Speed:        types.StringNull(),
 		Thinking:     types.ObjectNull(ctThinkingAttrTypes),
 		OutputConfig: types.ObjectNull(ctOutputConfigAttrTypes),
 		CacheControl: types.ObjectNull(ctCacheControlAttrTypes),
@@ -95,6 +96,7 @@ func TestBuildCountTokensParams_Thinking(t *testing.T) {
 		{"disabled", ctThinking("disabled", nil, ""), map[string]any{"type": "disabled"}},
 		{"adaptive", ctThinking("adaptive", nil, ""), map[string]any{"type": "adaptive"}},
 		{"adaptive with display", ctThinking("adaptive", nil, "summarized"), map[string]any{"type": "adaptive", "display": "summarized"}},
+		{"between_tools", ctThinking("between_tools", nil, ""), map[string]any{"type": "between_tools"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -133,9 +135,19 @@ func TestBuildCountTokensParams_OutputConfigAndCacheControl(t *testing.T) {
 
 func TestBuildCountTokensParams_OmitsUnsetBlocks(t *testing.T) {
 	got := ctMarshal(t, ctModel(t))
-	for _, k := range []string{"thinking", "output_config", "cache_control"} {
+	for _, k := range []string{"thinking", "output_config", "cache_control", "speed"} {
 		if _, ok := got[k]; ok {
 			t.Errorf("%s must be omitted when unset, got %v", k, got[k])
+		}
+	}
+}
+
+func TestBuildCountTokensParams_Speed(t *testing.T) {
+	for _, speed := range []string{"standard", "fast"} {
+		m := ctModel(t)
+		m.Speed = types.StringValue(speed)
+		if got := ctMarshal(t, m)["speed"]; got != speed {
+			t.Errorf("speed = %#v, want %q", got, speed)
 		}
 	}
 }
@@ -177,6 +189,9 @@ func TestCountTokensThinkingValidator(t *testing.T) {
 		{"disabled with budget", ctThinking("disabled", &budget, ""), true},
 		{"adaptive with display", ctThinking("adaptive", nil, "omitted"), false},
 		{"adaptive with budget", ctThinking("adaptive", &budget, ""), true},
+		{"between_tools", ctThinking("between_tools", nil, ""), false},
+		{"between_tools with display", ctThinking("between_tools", nil, "omitted"), true},
+		{"between_tools with budget", ctThinking("between_tools", &budget, ""), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

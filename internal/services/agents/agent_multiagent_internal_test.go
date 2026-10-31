@@ -11,6 +11,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
@@ -337,5 +338,115 @@ func TestValidateMultiagentConfig_unknownElement(t *testing.T) {
 	}
 	if d := validateMultiagentConfig(context.Background(), obj); d.HasError() {
 		t.Fatalf("unknown element must be accepted: %+v", d)
+	}
+}
+
+// multiagent_20261001 (SDK v1.80.0) is not managed by the provider. An agent
+// configured that way outside Terraform must read without an error: what the
+// coordinator roster can express is mapped (predefined subagents, then an
+// enabled advisor) and a warning names the agent. Shape from the
+// GET /v1/agents/{id} reference example.
+const multiagent20261001Roster = `,"multiagent":{
+	"type":"multiagent_20261001",
+	"advisor":{"type":"enabled","model":"claude-opus-4-6"},
+	"subagents":{"type":"enabled","inline_agents":{"type":"enabled"},
+		"predefined_agents":[{"type":"agent","id":"agent_a","version":3},{"type":"agent","id":"agent_owner","version":2}]},
+	"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},
+		"predefined_agents":[{"type":"agent","id":"agent_w","version":1}]}}`
+
+func requireOneMultiagentWarning(t *testing.T, d diag.Diagnostics) {
+	t.Helper()
+	if d.HasError() {
+		t.Fatalf("unexpected error: %+v", d)
+	}
+	w := d.Warnings()
+	if len(w) != 1 || w[0].Summary() != "Unsupported multiagent type" ||
+		!strings.Contains(w[0].Detail(), `"agent_owner"`) || !strings.Contains(w[0].Detail(), `"multiagent_20261001"`) {
+		t.Fatalf("expected one unsupported-type warning naming the agent, got %+v", d)
+	}
+}
+
+func TestMapMultiagentToState_multiagent20261001Import(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	requireOneMultiagentWarning(t, diags)
+
+	var ma agentMultiagentModel
+	if d := got.As(context.Background(), &ma, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatalf("as: %+v", d)
+	}
+	if ma.Type.ValueString() != "multiagent_20261001" {
+		t.Errorf("type = %s, want the API type", ma.Type)
+	}
+	e := decodeEntries(t, got)
+	if len(e) != 3 ||
+		e[0].Type.ValueString() != "agent" || e[0].ID.ValueString() != "agent_a" || e[0].Version.ValueInt64() != 3 || !e[0].Model.IsNull() ||
+		e[1].Type.ValueString() != "agent" || e[1].ID.ValueString() != "agent_owner" || e[1].Version.ValueInt64() != 2 ||
+		e[2].Type.ValueString() != "advisor" || e[2].Model.ValueString() != "claude-opus-4-6" || !e[2].ID.IsNull() || !e[2].Version.IsNull() {
+		t.Fatalf("roster = %+v, want the predefined subagents then the advisor (workflows not mapped)", e)
+	}
+}
+
+// With a coordinator roster in prior state, the resource Read correlates by key
+// as usual: the type change surfaces as a diff, never as an error.
+func TestMapAgentResponseToState_multiagent20261001WithPriorRoster(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
+	data := AgentResourceModel{Multiagent: multiagentObj(t,
+		multiagentEntryObj(t, "self", types.StringNull(), types.Int64Null(), types.StringNull()),
+		multiagentEntryObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(3), types.StringNull()),
+	)}
+	requireOneMultiagentWarning(t, mapAgentResponseToState(context.Background(), agent, &data, readMapping))
+	var ma agentMultiagentModel
+	if d := data.Multiagent.As(context.Background(), &ma, basetypes.ObjectAsOptions{}); d.HasError() {
+		t.Fatalf("as: %+v", d)
+	}
+	if ma.Type.ValueString() != "multiagent_20261001" {
+		t.Errorf("type = %s, want the API type", ma.Type)
+	}
+	e := decodeEntries(t, data.Multiagent)
+	if len(e) != 3 || e[0].Type.ValueString() != "self" || e[1].ID.ValueString() != "agent_a" || e[2].Type.ValueString() != "advisor" {
+		t.Fatalf("roster = %+v, want self and agent_a in config order, then the advisor as drift", e)
+	}
+}
+
+func TestMapAgentResponseToDataSource_multiagent20261001(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
+	var data AgentDataSourceModel
+	requireOneMultiagentWarning(t, mapAgentResponseToDataSource(agent, &data))
+	if e := decodeEntries(t, data.Multiagent); len(e) != 3 {
+		t.Fatalf("roster = %+v", e)
+	}
+	_, d := mapAgentToDataSourceObject(agent)
+	requireOneMultiagentWarning(t, d)
+}
+
+// Disabled members leave an empty roster, still typed, still warned about.
+func TestMapMultiagentToObject_multiagent20261001Disabled(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001",
+		"advisor":{"type":"disabled"},"subagents":{"type":"disabled"},"workflows":{"type":"disabled"}}`)
+	got, diags := mapMultiagentToObject(agent.Multiagent, agent.ID)
+	requireOneMultiagentWarning(t, diags)
+	if got.IsNull() {
+		t.Fatal("a multiagent object is present: it must not read as null")
+	}
+	if e := decodeEntries(t, got); len(e) != 0 {
+		t.Fatalf("roster = %+v, want empty", e)
+	}
+}
+
+// The coordinator branch maps exactly as before, without any warning.
+func TestMapMultiagentToObject_coordinatorHasNoWarning(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, multiagentAPIRoster)
+	got, diags := mapMultiagentToObject(agent.Multiagent, agent.ID)
+	if len(diags) != 0 {
+		t.Fatalf("unexpected diagnostics: %+v", diags)
+	}
+	if e := decodeEntries(t, got); len(e) != 4 {
+		t.Fatalf("roster = %+v", e)
 	}
 }
