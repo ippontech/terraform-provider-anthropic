@@ -6,17 +6,17 @@ type: project
 
 Five workflows exist as of April 2026:
 - `provider.yml` — PR + merge_group: lint (fmt + golangci-lint), unit tests (make test), generate (make generate + drift check)
-- `testacc.yml` — push to main + workflow_dispatch: acceptance tests (make testacc) and terraform-test (make terraform-test); both jobs use the `acctest` GitHub Environment, which gates secret access
+- `testacc.yml` — workflow_call (from `semantic-release.yml`) + workflow_dispatch: acceptance tests (make testacc) and terraform-test (make terraform-test); both jobs use the `acctest` GitHub Environment, which gates secret access
 - `goreleaser-snapshot.yml` — merge_group: GoReleaser snapshot build; validates release config before merge
 - `goreleaser-release.yml` — push of semver tags: full GoReleaser release with GPG signing
-- `semantic-release.yml` — push to main: runs semantic-release to create tags and changelogs; uses a GitHub App token to bypass branch protection
+- `semantic-release.yml` — push to main: calls `testacc.yml`, then, only if it passes, runs semantic-release to create tags and changelogs; uses a GitHub App token to bypass branch protection
 
 **Why:** Knowing these triggers avoids wasting time re-reading files every audit.
 
 **How to apply:** Use as a quick orientation; still re-read files to check for drift.
 
 Key intentional design decisions:
-- Acceptance tests run AFTER merge (on push to main), not on PRs — intentional to protect the API key from fork PRs
+- Acceptance tests run AFTER merge (on push to main), not on PRs — intentional to protect the API key from fork PRs; the release job `needs` them, so a red acceptance run publishes nothing
 - `acctest` GitHub Environment acts as the secret gate for ANTHROPIC_API_KEY
 - `make install` is called inside `make build` chain; no standalone install CI job — intentional (local dev only)
 - `terraform-test` (make terraform-test) IS covered by testacc.yml

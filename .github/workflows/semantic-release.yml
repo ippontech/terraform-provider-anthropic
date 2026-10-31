@@ -12,7 +12,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The acceptance tests need the maintainers' keys, which a pull request from a fork cannot read,
+  # so they run here, after the merge. The release waits for them: a red run publishes nothing.
+  acceptance-tests:
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    uses: ./.github/workflows/testacc.yml
+    permissions:
+      contents: read
+    # Passed by name, not with `secrets: inherit`: the values come from the acctest environment of
+    # the called jobs, and nothing else reaches them.
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_ADMIN_API_KEY: ${{ secrets.ANTHROPIC_ADMIN_API_KEY }}
+      ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
+
   release:
+    needs: acceptance-tests
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -56,6 +71,13 @@ jobs:
         with:
           app-id: ${{ secrets.SEMREL_APP_ID }}
           private-key: ${{ secrets.SEMREL_APP_PRIVATE_KEY }}
+          # Only what semantic-release uses: the release commit, the tag and the GitHub release
+          # (contents), the comments and labels on released issues and pull requests (issues,
+          # pull-requests). Without these inputs the token inherits every permission of the App,
+          # including any granted later for another purpose.
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
 
       # semantic-release authenticates its own git push with GITHUB_TOKEN (x-access-token URL).
       - name: Run semantic-release

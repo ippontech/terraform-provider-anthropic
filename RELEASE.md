@@ -1,3 +1,27 @@
+# How a release is cut
+
+Every push to `main` runs `semantic-release.yml`:
+
+1. The acceptance tests (`testacc.yml`, called as a reusable workflow) run against the real API with the keys of the `acctest` environment. They run after the merge because a pull request from a fork cannot read those keys.
+2. Only if they pass, semantic-release reads the commits since the last tag. A `feat`, `fix`, `perf`, `refactor`, `build` or `docs` commit, or a `BREAKING CHANGE` footer, cuts a version: semantic-release pushes the `chore(release):` commit with `CHANGELOG.md`, the `v*` tag and the GitHub release. Other commit types (`chore`, `ci`, `test`, ...) cut nothing.
+3. The tag starts `goreleaser-release.yml`, which builds, signs and attaches the binaries once a maintainer approves it (see [Protect the release credentials](#protect-the-release-credentials)).
+
+A red acceptance run publishes nothing. Fix the cause, or, if the API itself was failing, re-run the failed jobs of the most recent run on `main` only: an older run would take the place of a newer pending run, whose commit would then go untested, and its release would publish nothing since `main` has moved on. The next successful run releases every commit still pending. `Actions > Acceptance Tests > Run workflow` still runs the tests alone, without releasing.
+
+The workflow runs one at a time on `main` (`concurrency` group, no cancellation): when several commits land while a run is testing, only the newest waiting one runs. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit. The run that was testing publishes nothing, even when green, because semantic-release publishes only from the head of `main`; the newer run releases every pending commit once its own tests pass. A running test is never cancelled to make room: the objects it had created would stay in the test workspace, since nothing deletes them afterwards.
+
+## Approve a release
+
+A maintainer merges each update of the root `go.mod`, which Renovate never merges on its own (`.github/renovate.md`, "Go modules"), and each one cuts a version. The approval of the signing job is the last human decision before those modules ship signed to every user, so it checks them again, every change since the last signed release at once.
+
+The signing job waits in `Actions > GoReleaser Release`, on the run of the new tag, behind **Review deployments**, for one of the `release` environment's reviewers. Before approving:
+
+1. Open the run's summary. The `dependency-changes` job lists every `go.mod` line that changed since the last release with signed binaries; `go.mod` lists every module compiled into the provider, indirect ones included. A version that was tagged but never signed, or whose GitHub release was deleted, does not count as a baseline: its changes are listed again, and the summary names it. "None" means the release compiles the same modules as that last signed release.
+2. For each changed module, check that the new version is a published release of that module (a tag or release notes on its repository), and look for anything unexpected: a module nobody added on purpose, a version published a few days ago without notes, a repository that changed owner.
+3. Approve. If in doubt, reject: nothing is built, signed or published. The tag and the GitHub release stay without binaries, and the next fix ships under the next version number. Delete that GitHub release (the tag stays: the tag ruleset forbids deleting it) and say in the next release notes why the number was skipped. Never re-sign or replace a published version: the Terraform Registry asks to release a new version instead.
+
+After approving, check that the version shows up on the [Terraform Registry](https://registry.terraform.io/providers/ippontech/anthropic/latest). semantic-release publishes the GitHub release before the signed binaries are attached, now possibly hours apart. If the version does not appear, the Resync button on the provider's settings page in the Registry re-creates its webhook.
+
 # GPG Key Setup
 
 The release workflow signs the provider checksums with a GPG key. This is required by the [Terraform Registry](https://registry.terraform.io) to verify the authenticity of provider binaries.
@@ -81,6 +105,8 @@ Fill in:
 | Pull requests | Read & write |
 | Metadata | Read only (mandatory) |
 
+`semantic-release.yml` requests exactly these three write permissions when it mints the token (`permission-*` inputs of `actions/create-github-app-token`). A permission added to the App later does not reach the token, and if the App lacks one of the three, the token step fails.
+
 Click **Create GitHub App**.
 
 ## Generate a private key
@@ -127,8 +153,9 @@ Create two environments (`Settings > Environments > New environment`):
 |---|---|---|---|
 | `release` | `goreleaser-release.yml` | **Selected branches and tags**, one tag rule `v*` and no branch rule | `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` |
 | `semantic-release` | `semantic-release.yml` | **Selected branches and tags**, one branch rule `main` | `SEMREL_APP_ID`, `SEMREL_APP_PRIVATE_KEY` |
+| `acctest` (already set up) | `testacc.yml`, which `semantic-release.yml` calls before releasing | **Selected branches and tags**, one branch rule `main` | `ANTHROPIC_API_KEY`, `ANTHROPIC_ADMIN_API_KEY`, `ANTHROPIC_MULTI_WORKSPACE_API_KEY` |
 
-On `release`, also tick **Required reviewers** and add the maintainers: every signed release then waits for one approval in the Actions UI, which is the only control that holds even if a tag slips through. Leave **Allow administrators to bypass** unticked.
+On `release`, also tick **Required reviewers** and add the maintainers: every signed release then waits for one approval in the Actions UI ([Approve a release](#approve-a-release) says what to check), which is the only control that holds even if a tag slips through. Leave **Allow administrators to bypass** unticked.
 
 Then **delete the four secrets at repository level** (`Settings > Secrets and variables > Actions`), and check that no organization secret carries them. Until they are deleted, the environments protect nothing.
 
@@ -172,6 +199,6 @@ The first major planned this way is 2.0.0; candidates are the issues labelled as
 3. Open a PR `major/2.0.0` → `main` and merge it with a **merge commit**. semantic-release then analyses every commit since the last `v1.x` tag, finds the `BREAKING CHANGE:` footers, publishes a single `v2.0.0` and lists each breaking change in the release notes and in `CHANGELOG.md`.
 4. Restore the `main` ruleset (squash only, linear history, merge queue) and delete `major/2.0.0`.
 
-If a `1.x` maintenance line is needed after 2.0.0, create `1.x` from the last `v1.*` tag, add it to the workflow trigger and to `.releaserc` (`"branches": ["1.x", "main"]`); semantic-release then restricts it to `1.*` versions and refuses anything that would collide with `main`. Two of the release-credential guards admit `main` only and must be widened at the same time, or `1.x` gets no release and no signed artifacts: add a `1.x` branch rule to the deployment branches of the `semantic-release` environment (`Settings > Environments`), and extend the "Check the tagged commit is on main" step of `goreleaser-release.yml` to accept a commit on `1.x` as well.
+If a `1.x` maintenance line is needed after 2.0.0, create `1.x` from the last `v1.*` tag, add it to the workflow trigger and to `.releaserc` (`"branches": ["1.x", "main"]`); semantic-release then restricts it to `1.*` versions and refuses anything that would collide with `main`. Three guards admit `main` only and must be widened at the same time, or `1.x` gets no release and no signed artifacts: add a `1.x` branch rule to the deployment branches of the `semantic-release` environment and of the `acctest` environment, whose acceptance tests every release waits for (`Settings > Environments`), and extend the "Check the tagged commit is on main" step of `goreleaser-release.yml` to accept a commit on `1.x` as well.
 
 Pre-releases (`2.0.0-beta.N`, the approach the AWS provider used on `release/6.0.0-beta`) are deliberately not part of this process: they would require `@semantic-release/git` to commit `CHANGELOG.md` on the staging branch, which conflicts on every sync with `main`. Revisit only if users ask to test a beta from the Registry.
