@@ -104,6 +104,42 @@ func TestMapAgentResponseToState_customToolInputSchema(t *testing.T) {
 	}
 }
 
+// TestBuildToolsParams_customToolInputSchemaDropsRootExtras pins the request
+// body across the anthropic-sdk-go upgrade (v1.67 -> v1.84): since v1.75.0 the
+// SDK keeps root-level input_schema keys other than type/properties/required
+// and sends them, where v1.67.0 dropped them. buildToolsParams keeps dropping
+// them, so the SDK bump does not change what the API receives. Nested keys
+// (inside properties) were and still are sent.
+func TestBuildToolsParams_customToolInputSchemaDropsRootExtras(t *testing.T) {
+	t.Parallel()
+
+	tool, diags := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
+		"name":         types.StringValue("lookup_user"),
+		"description":  types.StringValue("Look up a user"),
+		"input_schema": jsontypes.NewNormalizedValue(`{"type":"object","properties":{"email":{"type":"string","description":"d"}},"required":["email"],"additionalProperties":false,"description":"root"}`),
+	})
+	if diags.HasError() {
+		t.Fatalf("tool: %+v", diags)
+	}
+	list, diags := types.ListValue(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}, []attr.Value{tool})
+	if diags.HasError() {
+		t.Fatalf("list: %+v", diags)
+	}
+
+	tools, diags := buildToolsParams(context.Background(), AgentResourceModel{CustomTools: list})
+	if diags.HasError() {
+		t.Fatalf("buildToolsParams: %+v", diags)
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[{"description":"Look up a user","input_schema":{"properties":{"email":{"description":"d","type":"string"}},"required":["email"],"type":"object"},"name":"lookup_user","type":"custom"}]`
+	if string(b) != want {
+		t.Fatalf("got  %s\nwant %s", b, want)
+	}
+}
+
 // TestBuildAgentToolConfigParams is a regression test for the anthropic-sdk-go
 // upgrade (v1.58 -> v1.67) that replaced the flat
 // BetaManagedAgentsAgentToolConfigParams (a `name` enum plus shared `enabled` /
