@@ -960,6 +960,12 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 					diags.AddError("Invalid input_schema", fmt.Sprintf("Failed to parse input_schema JSON for tool %q: %s", t.Name.ValueString(), err))
 					return nil, diags
 				}
+				// Since SDK v1.75.0 the unmarshal keeps root-level keys other than
+				// type/properties/required (additionalProperties, description, ...)
+				// in ExtraFields, and the request then sends them. SDK v1.67.0
+				// dropped them; keep dropping them so the SDK bump does not change
+				// the request body. Sending them is a separate, user-visible change.
+				schema.ExtraFields = nil
 				p.InputSchema = schema
 			}
 			tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfCustom: &p})

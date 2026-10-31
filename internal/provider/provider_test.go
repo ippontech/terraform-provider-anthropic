@@ -58,9 +58,15 @@ func clearCredentialEnv(t *testing.T) {
 // other provider attribute null.
 func configureProvider(t *testing.T, attrs map[string]tftypes.Value) *provider.ConfigureResponse {
 	t.Helper()
+	return configureProviderInstance(t, &AnthropicProvider{version: "test"}, attrs)
+}
+
+// configureProviderInstance is configureProvider on a provider the test keeps,
+// to call its resource and data source factories afterwards.
+func configureProviderInstance(t *testing.T, p *AnthropicProvider, attrs map[string]tftypes.Value) *provider.ConfigureResponse {
+	t.Helper()
 
 	ctx := context.Background()
-	p := &AnthropicProvider{version: "test"}
 
 	schemaResp := &provider.SchemaResponse{}
 	p.Schema(ctx, provider.SchemaRequest{}, schemaResp)
