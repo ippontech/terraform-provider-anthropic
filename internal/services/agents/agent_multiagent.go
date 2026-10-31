@@ -24,6 +24,15 @@ const (
 	multiagentEntryAdvisor = "advisor"
 )
 
+// Multiagent types. The provider manages only the coordinator roster; the
+// multiagent_20261001 configuration (SDK v1.80.0) is read best-effort, see
+// multiagentRosterFromAPI.
+const (
+	multiagentTypeCoordinator = "coordinator"
+	multiagentType20261001    = "multiagent_20261001"
+	multiagentMemberEnabled   = "enabled"
+)
+
 type agentMultiagentModel struct {
 	Type   types.String `tfsdk:"type"`
 	Agents types.List   `tfsdk:"agents"`
@@ -158,16 +167,18 @@ func validateMultiagentConfig(ctx context.Context, obj types.Object) diag.Diagno
 
 // --- Request building ---
 
-// buildMultiagentParams converts the planned multiagent object into SDK params.
-// It returns the zero value (omitted by the SDK) for a null or unknown object.
+// buildMultiagentParams converts the planned multiagent object into SDK params,
+// always on the coordinator branch of the union (the schema only accepts
+// `coordinator`). It returns the zero value (omitted by the SDK) for a null or
+// unknown object.
 //
 // prior is the roster from state (null on create). An `agent` entry whose planned
 // version is unknown (not set in config) reuses the version prior state holds for
 // the same id, so an unrelated update does not re-pin the member to its latest
 // version; a member absent from prior state is sent without version (API pins latest).
-func buildMultiagentParams(ctx context.Context, obj, prior types.Object) (anthropic.BetaManagedAgentsMultiagentParams, diag.Diagnostics) {
+func buildMultiagentParams(ctx context.Context, obj, prior types.Object) (anthropic.BetaManagedAgentsMultiagentParamsUnion, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	var out anthropic.BetaManagedAgentsMultiagentParams
+	var out anthropic.BetaManagedAgentsMultiagentParamsUnion
 	if obj.IsNull() || obj.IsUnknown() {
 		return out, diags
 	}
@@ -197,8 +208,10 @@ func buildMultiagentParams(ctx context.Context, obj, prior types.Object) (anthro
 		}
 	}
 
-	out.Type = anthropic.BetaManagedAgentsMultiagentParamsType(ma.Type.ValueString())
-	out.Agents = make([]anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion, 0, len(entries))
+	coordinator := anthropic.BetaManagedAgentsMultiagentCoordinatorParams{
+		Type:   anthropic.BetaManagedAgentsMultiagentCoordinatorParamsType(ma.Type.ValueString()),
+		Agents: make([]anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion, 0, len(entries)),
+	}
 	for _, e := range entries {
 		switch e.Type.ValueString() {
 		case multiagentEntryAgent:
@@ -213,15 +226,15 @@ func buildMultiagentParams(ctx context.Context, obj, prior types.Object) (anthro
 					p.Version = param.NewOpt(v)
 				}
 			}
-			out.Agents = append(out.Agents, anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{OfBetaManagedAgentsAgents: &p})
+			coordinator.Agents = append(coordinator.Agents, anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{OfBetaManagedAgentsAgents: &p})
 		case multiagentEntrySelf:
-			out.Agents = append(out.Agents, anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{
+			coordinator.Agents = append(coordinator.Agents, anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{
 				OfBetaManagedAgentsMultiagentSelfs: &anthropic.BetaManagedAgentsMultiagentSelfParams{
 					Type: anthropic.BetaManagedAgentsMultiagentSelfParamsTypeSelf,
 				},
 			})
 		case multiagentEntryAdvisor:
-			out.Agents = append(out.Agents, anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{
+			coordinator.Agents = append(coordinator.Agents, anthropic.BetaManagedAgentsMultiagentRosterEntryParamsUnion{
 				OfBetaManagedAgentsAdvisors: &anthropic.BetaManagedAgentsAdvisorParams{
 					Model: e.Model.ValueString(),
 					Type:  anthropic.BetaManagedAgentsAdvisorParamsTypeAdvisor,
@@ -232,6 +245,7 @@ func buildMultiagentParams(ctx context.Context, obj, prior types.Object) (anthro
 			return out, diags
 		}
 	}
+	out.OfCoordinator = &coordinator
 	return out, diags
 }
 
@@ -252,7 +266,65 @@ func multiagentEntryValue(typ string, id types.String, version types.Int64, mode
 	})
 }
 
-func multiagentAPIEntryValue(a anthropic.BetaManagedAgentsMultiagentAgentUnion) (attr.Value, diag.Diagnostics) {
+// multiagentRoster is the API's multiagent object reduced to what the Terraform
+// schema holds: a type and a flat list of agent and advisor entries.
+type multiagentRoster struct {
+	Type   string
+	Agents []multiagentRosterEntry
+}
+
+type multiagentRosterEntry struct {
+	Type    string
+	ID      string
+	Version int64
+	Model   string
+}
+
+// multiagentRosterFromAPI flattens the API's multiagent union. present is false
+// when the response carries no multiagent object (an absent or null field leaves
+// the SDK union at its zero value).
+//
+// SDK v1.80.0 turned the response field into a union of the coordinator roster,
+// which the provider manages, and the multiagent_20261001 configuration, which it
+// does not manage yet. The coordinator branch maps exactly as before. Any other
+// type can only come from an agent configured outside Terraform: rather than
+// failing the read, or reading it as an empty roster without notice, it is
+// flattened into what the schema can hold (multiagent_20261001: the predefined
+// subagents as agent entries, then an enabled advisor as an advisor entry) and
+// reported with a warning naming the agent.
+func multiagentRosterFromAPI(ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string) (multiagentRoster, bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if len(ma.Agents) == 0 && ma.Type == "" {
+		return multiagentRoster{}, false, diags
+	}
+	roster := multiagentRoster{Type: ma.Type}
+	if ma.Type == multiagentType20261001 {
+		if ma.Subagents.Type == multiagentMemberEnabled {
+			for _, a := range ma.Subagents.PredefinedAgents {
+				roster.Agents = append(roster.Agents, multiagentRosterEntry{Type: multiagentEntryAgent, ID: a.ID, Version: a.Version})
+			}
+		}
+		if ma.Advisor.Type == multiagentMemberEnabled {
+			roster.Agents = append(roster.Agents, multiagentRosterEntry{Type: multiagentEntryAdvisor, Model: ma.Advisor.Model})
+		}
+	} else {
+		for _, a := range ma.Agents {
+			roster.Agents = append(roster.Agents, multiagentRosterEntry{Type: a.Type, ID: a.ID, Version: a.Version, Model: a.Model})
+		}
+	}
+	if ma.Type != multiagentTypeCoordinator {
+		diags.AddWarning("Unsupported multiagent type", fmt.Sprintf(
+			"Agent %q has a multiagent configuration of type %q, which this provider version does not manage: only %q is supported. "+
+				"The \"multiagent\" attribute shows only what the coordinator roster can express (for %q: the predefined subagents as \"agent\" entries "+
+				"and an enabled advisor as an \"advisor\" entry); inline agents and workflows are not represented. "+
+				"If this agent is managed by an anthropic_agent resource, the next apply replaces this configuration with the configured "+
+				"\"multiagent\" block, or removes it when the block is absent.",
+			ownerID, ma.Type, multiagentTypeCoordinator, multiagentType20261001))
+	}
+	return roster, true, diags
+}
+
+func multiagentAPIEntryValue(a multiagentRosterEntry) (attr.Value, diag.Diagnostics) {
 	id, version, model := types.StringNull(), types.Int64Null(), types.StringNull()
 	if a.ID != "" {
 		id = types.StringValue(a.ID)
@@ -266,27 +338,25 @@ func multiagentAPIEntryValue(a anthropic.BetaManagedAgentsMultiagentAgentUnion) 
 	return multiagentEntryValue(a.Type, id, version, model)
 }
 
-// multiagentPresent reports whether the API response carries a roster. An absent or
-// null field leaves the SDK struct at its zero value.
-func multiagentPresent(ma anthropic.BetaManagedAgentsMultiagent) bool {
-	return len(ma.Agents) > 0 || ma.Type != ""
-}
-
 // mapMultiagentToObject maps the API roster verbatim (no prior state). The API
 // resolves a "self" entry into an "agent" entry carrying the owner's own ID, so a
 // self entry cannot be told apart from an explicit reference here.
-func mapMultiagentToObject(ma anthropic.BetaManagedAgentsMultiagent) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if !multiagentPresent(ma) {
+func mapMultiagentToObject(ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string) (types.Object, diag.Diagnostics) {
+	roster, present, diags := multiagentRosterFromAPI(ma, ownerID)
+	if !present {
 		return types.ObjectNull(agentMultiagentAttrTypes), diags
 	}
-	vals := make([]attr.Value, 0, len(ma.Agents))
-	for _, a := range ma.Agents {
+	return mapMultiagentRosterToObject(roster, diags)
+}
+
+func mapMultiagentRosterToObject(roster multiagentRoster, diags diag.Diagnostics) (types.Object, diag.Diagnostics) {
+	vals := make([]attr.Value, 0, len(roster.Agents))
+	for _, a := range roster.Agents {
 		v, d := multiagentAPIEntryValue(a)
 		diags.Append(d...)
 		vals = append(vals, v)
 	}
-	return multiagentObject(string(ma.Type), vals, diags)
+	return multiagentObject(roster.Type, vals, diags)
 }
 
 func multiagentObject(typ string, vals []attr.Value, diags diag.Diagnostics) (types.Object, diag.Diagnostics) {
@@ -311,28 +381,32 @@ func multiagentObject(typ string, vals []attr.Value, diags diag.Diagnostics) (ty
 // Prior entries with no API counterpart are dropped (the plan then shows the diff),
 // and API entries claimed by no prior entry are appended with their API type (drift).
 // Without a prior roster (import, first read) the API roster is mapped verbatim.
-func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMultiagent, ownerID string, prior types.Object) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if !multiagentPresent(ma) {
-		return types.ObjectNull(agentMultiagentAttrTypes), diags
+func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string, prior types.Object) (types.Object, diag.Diagnostics) {
+	roster, present, rosterDiags := multiagentRosterFromAPI(ma, ownerID)
+	if !present {
+		return types.ObjectNull(agentMultiagentAttrTypes), rosterDiags
 	}
 	if prior.IsNull() || prior.IsUnknown() {
-		return mapMultiagentToObject(ma)
+		return mapMultiagentRosterToObject(roster, rosterDiags)
 	}
+	// A prior roster that cannot be decoded falls back to the verbatim mapping
+	// without surfacing the decoding error.
+	var diags diag.Diagnostics
 	var pm agentMultiagentModel
 	diags.Append(prior.As(ctx, &pm, basetypes.ObjectAsOptions{})...)
 	if diags.HasError() || pm.Agents.IsNull() || pm.Agents.IsUnknown() {
-		return mapMultiagentToObject(ma)
+		return mapMultiagentRosterToObject(roster, rosterDiags)
 	}
 	var priorEntries []agentMultiagentEntryModel
 	diags.Append(pm.Agents.ElementsAs(ctx, &priorEntries, false)...)
 	if diags.HasError() {
-		return mapMultiagentToObject(ma)
+		return mapMultiagentRosterToObject(roster, rosterDiags)
 	}
+	diags.Append(rosterDiags...)
 
-	used := make([]bool, len(ma.Agents))
-	find := func(match func(a anthropic.BetaManagedAgentsMultiagentAgentUnion) bool) int {
-		for i, a := range ma.Agents {
+	used := make([]bool, len(roster.Agents))
+	find := func(match func(a multiagentRosterEntry) bool) int {
+		for i, a := range roster.Agents {
 			if !used[i] && match(a) {
 				used[i] = true
 				return i
@@ -350,13 +424,13 @@ func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMul
 			var idx int
 			switch {
 			case pass == 1 && typ == multiagentEntryAgent:
-				idx = find(func(a anthropic.BetaManagedAgentsMultiagentAgentUnion) bool {
+				idx = find(func(a multiagentRosterEntry) bool {
 					return a.Type == multiagentEntryAgent && a.ID == p.ID.ValueString()
 				})
 			case pass == 1 && typ == multiagentEntryAdvisor:
-				idx = find(func(a anthropic.BetaManagedAgentsMultiagentAgentUnion) bool { return a.Type == multiagentEntryAdvisor })
+				idx = find(func(a multiagentRosterEntry) bool { return a.Type == multiagentEntryAdvisor })
 			case pass == 2 && typ == multiagentEntrySelf:
-				idx = find(func(a anthropic.BetaManagedAgentsMultiagentAgentUnion) bool {
+				idx = find(func(a multiagentRosterEntry) bool {
 					return a.Type == multiagentEntryAgent && a.ID == ownerID
 				})
 			default:
@@ -370,20 +444,20 @@ func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMul
 			if typ == multiagentEntrySelf {
 				v, d = multiagentEntryValue(multiagentEntrySelf, types.StringNull(), types.Int64Null(), types.StringNull())
 			} else {
-				v, d = multiagentAPIEntryValue(ma.Agents[idx])
+				v, d = multiagentAPIEntryValue(roster.Agents[idx])
 			}
 			diags.Append(d...)
 			slots[i] = v
 		}
 	}
 
-	vals := make([]attr.Value, 0, len(ma.Agents))
+	vals := make([]attr.Value, 0, len(roster.Agents))
 	for _, s := range slots {
 		if s != nil {
 			vals = append(vals, s)
 		}
 	}
-	for i, a := range ma.Agents {
+	for i, a := range roster.Agents {
 		if used[i] {
 			continue
 		}
@@ -391,5 +465,5 @@ func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMul
 		diags.Append(d...)
 		vals = append(vals, v)
 	}
-	return multiagentObject(string(ma.Type), vals, diags)
+	return multiagentObject(roster.Type, vals, diags)
 }
