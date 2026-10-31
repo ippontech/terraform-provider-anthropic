@@ -19,7 +19,13 @@ resource "anthropic_agent" "assistant" {
   }
 }
 
-# Agent with built-in toolset configuration
+# Agent with built-in toolset configuration. The web tools take domain lists
+# (allowed_domains or blocked_domains), web_search a user_location and
+# web_fetch a max_content_tokens cap. With `limited` environment networking,
+# allowed_domains entries must also be within the environment's allowed_hosts.
+# web_fetch only fetches URLs already seen in the session; url_sources narrows
+# where they may come from, here user messages and web_search results only, so
+# a URL planted in a custom tool result is never fetched.
 resource "anthropic_agent" "developer" {
   model       = "claude-sonnet-4-6"
   name        = "Developer Agent"
@@ -33,12 +39,32 @@ resource "anthropic_agent" "developer" {
         name              = "bash"
         enabled           = true
         permission_policy = "always_ask"
+      },
+      {
+        name            = "web_search"
+        allowed_domains = ["docs.example.com", "arxiv.org"]
+        user_location = {
+          country  = "US"
+          timezone = "America/Los_Angeles"
+        }
+      },
+      {
+        name               = "web_fetch"
+        blocked_domains    = ["ads.example.com"]
+        max_content_tokens = 50000
+        url_sources = {
+          client_tool_results = { type = "none" }
+          server_tool_results = { type = "only", tools = ["web_search"] }
+        }
       }
     ]
   }
 }
 
-# Agent with MCP server and skills
+# Agent with MCP server and skills. With the `auto` permission policy the
+# server evaluates each call and runs it, denies it or waits for approval; a
+# call it judges safe runs before anyone sees it, so tools whose calls a
+# person must review keep `always_ask`.
 resource "anthropic_agent" "mcp_agent" {
   model       = "claude-sonnet-4-6"
   name        = "MCP Agent"
@@ -55,7 +81,13 @@ resource "anthropic_agent" "mcp_agent" {
     {
       mcp_server_name           = "my_server"
       default_enabled           = true
-      default_permission_policy = "always_allow"
+      default_permission_policy = "auto"
+      configs = [
+        {
+          name              = "delete_record"
+          permission_policy = "always_ask"
+        }
+      ]
     }
   ]
 
@@ -109,6 +141,35 @@ resource "anthropic_agent" "coordinator" {
         type = "self"
       },
     ]
+  }
+}
+
+# Agent of the multiagent_20261001 type: it may delegate only to the support
+# agent and to copies of itself (inline agents off), and dynamic workflows are
+# turned off. Both settings are on by default with this type; an advisor
+# model can be added with advisor = { model = "..." }.
+resource "anthropic_agent" "orchestrator" {
+  model       = "claude-sonnet-4-6"
+  name        = "Support Orchestrator"
+  description = "Delegates support inquiries to the support agent only"
+
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      inline_agents_enabled = false
+      predefined_agents = [
+        {
+          type = "agent"
+          id   = anthropic_agent.assistant.id
+        },
+        {
+          type = "self"
+        },
+      ]
+    }
+    workflows = {
+      enabled = false
+    }
   }
 }
 

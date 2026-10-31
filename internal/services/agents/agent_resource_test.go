@@ -213,6 +213,124 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.enabled"),
 				),
 			},
+			// Web options: the post-apply plan must be empty, i.e. the API echoes
+			// them verbatim and no default comes back for the unset ones.
+			{
+				Config: testAccAgentResourceWithWebOptionsConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.#", "2"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.name", "web_search"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.allowed_domains.*", "arxiv.org"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location.country", "US"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location.timezone", "America/Los_Angeles"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location.city"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.name", "web_fetch"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.blocked_domains.*", "ads.example.com"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens", "50000"),
+				),
+			},
+			// Swapping a list and dropping options: tools are replaced as a whole
+			// on update, so the removed values must not come back.
+			{
+				Config: testAccAgentResourceWithWebOptionsUpdatedConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.allowed_domains"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.blocked_domains.*", "ads.example.com"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.blocked_domains"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens", "10000"),
+				),
+			},
+			// The auto policy as the default and as an override: the post-apply
+			// plan must be empty, and the override left unset maps to null.
+			{
+				Config: testAccAgentResourceWithAutoPolicyConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.default_permission_policy", "auto"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.permission_policy", "always_ask"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.permission_policy"),
+				),
+			},
+			// url_sources, with an explicit `all`: the post-apply plan must be
+			// empty, i.e. the API echoes every key in the form that was sent.
+			{
+				Config: testAccAgentResourceWithURLSourcesConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.user_input", "all"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.client_tool_results.type", "none"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.client_tool_results.tools"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.server_tool_results.type", "only"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.server_tool_results.tools.*", "web_search"),
+				),
+			},
+			// Removing url_sources must not leave it behind (tools are replaced as
+			// a whole on update).
+			{
+				Config: testAccAgentResourceWithAutoPolicyConfig,
+				Check:  resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.url_sources"),
+			},
+		},
+	})
+}
+
+// The auto policy on an MCP toolset default and on an MCP tool override. The
+// MCP server is never reached: agents are only validated against it when a
+// session starts.
+func TestAccAgentResource_mcpToolsetAutoPolicy(t *testing.T) {
+	const name = "anthropic_agent.test_mcp"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceMCPAutoPolicyConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.default_permission_policy", "auto"),
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.configs.0.permission_policy", "always_ask"),
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.configs.1.permission_policy", "auto"),
+				),
+			},
+			{
+				ResourceName:      name,
+				ImportState:       true,
+				ImportStateVerify: true,
+				// Import has no configuration to tell an echoed default from an
+				// explicit override, so per-tool fields come back verbatim.
+				ImportStateVerifyIgnore: []string{"mcp_toolsets.0.configs"},
+			},
+		},
+	})
+}
+
+// The service account set explicitly, then removed: the API returns it for
+// every agent, so both post-apply plans must be empty. An aws_role identity is
+// only usable on Claude Platform on AWS and is covered by unit tests only.
+func TestAccAgentResource_executionIdentity(t *testing.T) {
+	const name = "anthropic_agent.test"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceEffortConfig(`execution_identity = { type = "service_account" }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "execution_identity.type", "service_account"),
+					resource.TestCheckNoResourceAttr(name, "execution_identity.role_arn"),
+				),
+			},
+			// Import cannot tell an explicit default from an unset attribute.
+			{
+				ResourceName:            name,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"execution_identity"},
+			},
+			{
+				Config: testAccAgentResourceEffortConfig(""),
+				Check:  resource.TestCheckNoResourceAttr(name, "execution_identity.type"),
+			},
 		},
 	})
 }
@@ -318,6 +436,132 @@ resource "anthropic_agent" "test_toolset" {
       }
     ]
   }
+}
+`
+
+const testAccAgentResourceWithWebOptionsConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "always_allow"
+    configs = [
+      {
+        name            = "web_search"
+        allowed_domains = ["docs.example.com", "arxiv.org"]
+        user_location = {
+          country  = "US"
+          timezone = "America/Los_Angeles"
+        }
+      },
+      {
+        name               = "web_fetch"
+        blocked_domains    = ["ads.example.com"]
+        max_content_tokens = 50000
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceWithWebOptionsUpdatedConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "always_allow"
+    configs = [
+      {
+        name            = "web_search"
+        blocked_domains = ["ads.example.com"]
+      },
+      {
+        name               = "web_fetch"
+        max_content_tokens = 10000
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceWithAutoPolicyConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "auto"
+    configs = [
+      {
+        name              = "bash"
+        permission_policy = "always_ask"
+      },
+      {
+        name               = "web_fetch"
+        max_content_tokens = 10000
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceWithURLSourcesConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "auto"
+    configs = [
+      {
+        name = "web_fetch"
+        url_sources = {
+          user_input          = "all"
+          client_tool_results = { type = "none" }
+          server_tool_results = { type = "only", tools = ["web_search"] }
+        }
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceMCPAutoPolicyConfig = `
+resource "anthropic_agent" "test_mcp" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-mcp-auto"
+
+  mcp_servers = [
+    {
+      name = "example"
+      url  = "https://mcp.example.com/mcp"
+    }
+  ]
+
+  mcp_toolsets = [
+    {
+      mcp_server_name           = "example"
+      default_enabled           = true
+      default_permission_policy = "auto"
+      configs = [
+        {
+          name              = "delete_record"
+          permission_policy = "always_ask"
+        },
+        {
+          name              = "search"
+          enabled           = true
+          permission_policy = "auto"
+        }
+      ]
+    }
+  ]
 }
 `
 
@@ -444,6 +688,114 @@ resource "anthropic_agent" "member_b" {
 resource "anthropic_agent" "coordinator" {
   model = "claude-sonnet-4-6"
   name  = "tf-acc-test-multiagent-coordinator"
+%s
+}
+`, block)
+}
+
+// multiagent_20261001: create with predefined subagents only, change the
+// members and fall back to the defaults, switch to the coordinator type, then
+// remove the block. Every post-apply plan must be empty.
+func TestAccAgentResource_multiagent20261001(t *testing.T) {
+	const orch = "anthropic_agent.orchestrator"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("a", "restricted"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(orch, "multiagent.type", "multiagent_20261001"),
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.inline_agents_enabled", "false"),
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.predefined_agents.#", "2"),
+					resource.TestCheckResourceAttrPair(orch, "multiagent.subagents.predefined_agents.0.id", "anthropic_agent.member_a", "id"),
+					resource.TestCheckResourceAttrSet(orch, "multiagent.subagents.predefined_agents.0.version"),
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.predefined_agents.1.type", "self"),
+					resource.TestCheckResourceAttr(orch, "multiagent.workflows.enabled", "false"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.advisor.model"),
+				),
+			},
+			// Import: a self entry cannot be told apart from an explicit reference
+			// without configuration, so the configuration is not compared.
+			{
+				ResourceName:            orch,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"multiagent"},
+			},
+			// Swap the member and drop every other setting: the defaults (inline
+			// agents and workflows on) are sent explicitly and read back as null.
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("b", "defaults"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(orch, "multiagent.subagents.predefined_agents.#", "1"),
+					resource.TestCheckResourceAttrPair(orch, "multiagent.subagents.predefined_agents.0.id", "anthropic_agent.member_b", "id"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.subagents.inline_agents_enabled"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.workflows.enabled"),
+				),
+			},
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("b", "coordinator"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(orch, "multiagent.type", "coordinator"),
+					resource.TestCheckResourceAttr(orch, "multiagent.agents.#", "1"),
+					resource.TestCheckNoResourceAttr(orch, "multiagent.subagents.predefined_agents.#"),
+				),
+			},
+			{
+				Config: testAccAgentResourceMultiagent20261001Config("b", "none"),
+				Check:  resource.TestCheckNoResourceAttr(orch, "multiagent.type"),
+			},
+		},
+	})
+}
+
+func testAccAgentResourceMultiagent20261001Config(member, layout string) string {
+	var block string
+	switch layout {
+	case "restricted":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      inline_agents_enabled = false
+      predefined_agents = [
+        { type = "agent", id = anthropic_agent.member_%s.id },
+        { type = "self" },
+      ]
+    }
+    workflows = { enabled = false }
+  }`, member)
+	case "defaults":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      predefined_agents = [{ type = "agent", id = anthropic_agent.member_%s.id }]
+    }
+  }`, member)
+	case "coordinator":
+		block = fmt.Sprintf(`
+  multiagent = {
+    type   = "coordinator"
+    agents = [{ type = "agent", id = anthropic_agent.member_%s.id }]
+  }`, member)
+	}
+	return fmt.Sprintf(`
+resource "anthropic_agent" "member_a" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-20261001-member-a"
+}
+
+resource "anthropic_agent" "member_b" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-20261001-member-b"
+}
+
+resource "anthropic_agent" "orchestrator" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-multiagent-20261001"
 %s
 }
 `, block)
