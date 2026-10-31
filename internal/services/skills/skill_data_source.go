@@ -115,11 +115,12 @@ func (d *SkillDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
-	skill, err := d.client.Beta.Skills.Get(ctx, data.SkillID.ValueString(), anthropic.BetaSkillGetParams{})
+	res, err := d.client.Beta.Skills.Get(ctx, data.SkillID.ValueString(), anthropic.BetaSkillGetParams{Betas: skillsBetas()})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to retrieve skill: %s", err))
 		return
 	}
+	skill := decodeBetaSkill(res.RawJSON())
 
 	data.ID = types.StringValue(skill.ID)
 	data.CreatedAt = types.StringValue(skill.CreatedAt)

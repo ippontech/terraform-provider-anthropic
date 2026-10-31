@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"sync/atomic"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -19,22 +20,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/federation"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/files"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/memorystores"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/messages"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
-	"github.com/ippontech/terraform-provider-anthropic/internal/services/workspaces"
 )
 
 // Ensure AnthropicProvider satisfies various provider interfaces.
@@ -46,6 +33,11 @@ type AnthropicProvider struct {
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
 	version string
+
+	// platform holds the platform.Platform that Configure resolved. The
+	// resource and data source factories read it (see gate.go), on other
+	// RPCs' goroutines, hence the atomic.
+	platform atomic.Value
 }
 
 // AnthropicProviderModel describes the provider data model.
@@ -58,7 +50,7 @@ type AnthropicProviderModel struct {
 }
 
 func (p *AnthropicProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "anthropic"
+	resp.TypeName = providerTypeName
 	resp.Version = p.version
 }
 
@@ -165,7 +157,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 
 	// Each client carries exactly the credential resolved above and nothing
 	// the environment contributed on its own — see newSDKClient.
-	pd := &providerdata.ProviderData{}
+	pd := &providerdata.ProviderData{Platform: platform.FirstParty}
 	if apiKey != "" {
 		// Only the standard client is workspace-scoped by header: the Admin
 		// API is organization-wide, and a federated bearer selects its
@@ -190,6 +182,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		)}
 	}
 
+	p.platform.Store(pd.Platform)
 	resp.DataSourceData = pd
 	resp.ResourceData = pd
 }
@@ -243,76 +236,24 @@ func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
 	return &client
 }
 
+// Resources and DataSources serve the registrations in registry.go, each
+// factory gated by the platform Configure resolves (gate.go).
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {
-	return []func() resource.Resource{
-		agents.NewAgentResource,
-		apikeys.NewAPIKeyResource,
-		deployments.NewDeploymentResource,
-		environments.NewEnvironmentResource,
-		federation.NewFederationIssuerResource,
-		federation.NewFederationRuleResource,
-		federation.NewFederationRuleWorkspaceResource,
-		files.NewFileResource,
-		memorystores.NewMemoryResource,
-		memorystores.NewMemoryStoreResource,
-		messages.NewMessageResource,
-		organizations.NewInviteResource,
-		organizations.NewOrganizationMemberResource,
-		serviceaccounts.NewServiceAccountResource,
-		serviceaccounts.NewServiceAccountWorkspaceResource,
-		skills.NewSkillResource,
-		skills.NewSkillVersionResource,
-		userprofiles.NewUserProfileResource,
-		vaults.NewVaultResource,
-		vaults.NewVaultCredentialResource,
-		workspaces.NewWorkspaceResource,
-		workspaces.NewWorkspaceMemberResource,
+	regs := resourceRegistrations()
+	factories := make([]func() resource.Resource, 0, len(regs))
+	for _, reg := range regs {
+		factories = append(factories, p.gateResource(reg))
 	}
+	return factories
 }
 
 func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{
-		agents.NewAgentDataSource,
-		apikeys.NewAPIKeyDataSource,
-		apikeys.NewAPIKeysDataSource,
-		agents.NewAgentsDataSource,
-		messages.NewCountTokensDataSource,
-		deployments.NewDeploymentRunsDataSource,
-		environments.NewEnvironmentDataSource,
-		environments.NewEnvironmentsDataSource,
-		federation.NewFederationIssuersDataSource,
-		federation.NewFederationRulesDataSource,
-		federation.NewFederationIssuerDataSource,
-		federation.NewFederationRuleDataSource,
-		federation.NewFederationRuleWorkspacesDataSource,
-		files.NewFileDataSource,
-		files.NewFilesDataSource,
-		memorystores.NewMemoryDataSource,
-		memorystores.NewMemoriesDataSource,
-		memorystores.NewMemoryStoreDataSource,
-		memorystores.NewMemoryStoresDataSource,
-		models.NewModelDataSource,
-		models.NewModelsDataSource,
-		organizations.NewOrganizationDataSource,
-		organizations.NewOrganizationMemberDataSource,
-		organizations.NewOrganizationMembersDataSource,
-		organizations.NewInviteDataSource,
-		organizations.NewInvitesDataSource,
-		serviceaccounts.NewServiceAccountsDataSource,
-		serviceaccounts.NewServiceAccountDataSource,
-		serviceaccounts.NewServiceAccountWorkspacesDataSource,
-		skills.NewSkillDataSource,
-		skills.NewSkillVersionDataSource,
-		skills.NewSkillVersionsDataSource,
-		skills.NewSkillsDataSource,
-		userprofiles.NewUserProfileDataSource,
-		userprofiles.NewUserProfilesDataSource,
-		workspaces.NewWorkspaceDataSource,
-		workspaces.NewWorkspaceMemberDataSource,
-		workspaces.NewWorkspaceMembersDataSource,
-		workspaces.NewWorkspaceRateLimitsDataSource,
-		workspaces.NewWorkspacesDataSource,
+	regs := dataSourceRegistrations()
+	factories := make([]func() datasource.DataSource, 0, len(regs))
+	for _, reg := range regs {
+		factories = append(factories, p.gateDataSource(reg))
 	}
+	return factories
 }
 
 func New(version string) func() provider.Provider {
