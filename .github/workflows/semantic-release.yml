@@ -12,7 +12,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The acceptance tests need the maintainers' keys, which a pull request from a fork cannot read,
+  # so they run here, after the merge. The release waits for them: a red run publishes nothing.
+  acceptance-tests:
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    uses: ./.github/workflows/testacc.yml
+    permissions:
+      contents: read
+    # Passed by name, not with `secrets: inherit`: the values come from the acctest environment of
+    # the called jobs, and nothing else reaches them.
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_ADMIN_API_KEY: ${{ secrets.ANTHROPIC_ADMIN_API_KEY }}
+      ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
+
   release:
+    needs: acceptance-tests
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
     timeout-minutes: 15

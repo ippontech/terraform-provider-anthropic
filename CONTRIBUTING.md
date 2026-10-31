@@ -103,7 +103,7 @@ Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set (some 
 1. Create your MR and add reviewers. Owners or contributors of this repository must be added as reviewers.
 2. Run `make` (formats, lints, tests, installs, and regenerates docs in one step).
 3. Run pre-commit hooks `pre-commit run -a`.
-4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG).
+4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG), once the acceptance tests pass on `main` (see `RELEASE.md`, "How a release is cut").
 
 ## Commit Signing
 

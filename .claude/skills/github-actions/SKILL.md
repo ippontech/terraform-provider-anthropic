@@ -97,19 +97,29 @@ steps:
 Jobs that use repository secrets must not be triggerable from fork pull requests. Fork PRs run with no access to secrets under a plain `pull_request` trigger — but this protection is bypassed by `pull_request_target`, which runs in the base branch context and exposes secrets.
 
 - Never use `pull_request_target` for jobs that access secrets unless forked code is never checked out.
-- Jobs needing secrets must be triggered by `push` to a protected branch, `workflow_dispatch`, or a GitHub Environment with required reviewers.
+- Jobs needing secrets must be triggered by `push` to a protected branch, `workflow_dispatch`, a GitHub Environment with required reviewers, or `workflow_call` from a workflow that meets one of these conditions.
+- A called workflow receives a secret only if the caller passes it, by name or with `secrets: inherit`, even a secret that exists only in the environment of the called job. That job then gets the environment's value. Keep such secrets `required: false`: `required` only checks that the caller passes the secret, not its value.
 
 ```yaml
-# Correct pattern for jobs needing secrets (e.g., acceptance tests)
+# Correct pattern for jobs needing secrets: testacc.yml, called by semantic-release.yml on push to main
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
   workflow_dispatch:
 
 jobs:
-  acceptance-tests:
-    environment: production  # requires manual approval from a maintainer
+  testacc:
+    environment: acctest  # holds the secret
     env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+# semantic-release.yml, the caller: passes the secret by name
+jobs:
+  acceptance-tests:
+    uses: ./.github/workflows/testacc.yml
+    secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
