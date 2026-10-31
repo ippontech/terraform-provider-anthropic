@@ -11,8 +11,8 @@ jobs:
   # Runs before the approval that releases the GPG key, with no secret (only the read-only job
   # token): it writes on the run's summary page the go.mod lines that changed since the last
   # release users received signed, which the approver checks before approving (RELEASE.md,
-  # "Approve a release"). Renovate automerges module updates, so this approval is the one human
-  # decision before they ship signed.
+  # "Approve a release"). A maintainer merged each module update; this approval is the last human
+  # check before they ship signed, with every change since the last signed release in one list.
   dependency-changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5

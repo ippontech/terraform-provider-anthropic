@@ -12,7 +12,7 @@ The workflow runs one at a time on `main` (`concurrency` group, no cancellation)
 
 ## Approve a release
 
-Renovate merges minor and patch module updates on its own, three days after they are published, and each one cuts a version. The approval of the signing job is the one human decision before those modules ship signed to every user, so it checks them.
+A maintainer merges each update of the root `go.mod`, which Renovate never merges on its own (`.github/renovate.md`, "Go modules"), and each one cuts a version. The approval of the signing job is the last human decision before those modules ship signed to every user, so it checks them again, every change since the last signed release at once.
 
 The signing job waits in `Actions > GoReleaser Release`, on the run of the new tag, behind **Review deployments**, for one of the `release` environment's reviewers. Before approving:
 
