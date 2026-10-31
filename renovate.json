@@ -115,18 +115,19 @@
       "semanticCommitType": "chore"
     },
     {
-      "description": "Hold anthropic-sdk-go below v1.68.0 until #192 is done: v1.68.0 renames skill fields the deployed API still returns under their old names. Patch releases within 1.67.x stay allowed. Remove this rule as part of #192, not on its own.",
+      "description": "Hold anthropic-sdk-go on v1 until #192 is done in major/2.0.0: v2 moves the client to API version 2026-10-21, which is breaking for this provider (temperature, api_keys.workspace_id and the rate-limit group_type are removed, skills come back in their GA shape only, and the API key is sent as Authorization: Bearer instead of x-api-key). v1 minor and patch releases stay allowed. Remove this rule as part of #192, not on its own.",
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
-      "allowedVersions": "<1.68.0"
+      "allowedVersions": "<2.0.0"
     },
     {
-      "description": "Same hold for OSV vulnerability-fix PRs, whose own allowedVersions (appended after this list) replaces the one above. While the SDK is below v1.68.0, every minor or major update is v1.68.0+, so disable those; a fix in a 1.67.x patch still gets its PR. The rule stops matching once the SDK is at v1.68.0 or later. allowedVersions and matchUpdateTypes cannot share a rule.",
+      "description": "Review every anthropic-sdk-go minor release before it merges, in its own PR: v1 minors have changed what goes over the wire without breaking the build (v1.68.0 stopped sending the skills beta header, v1.75.0 started sending extra input_schema keys, v1.80.0 turned multiagent into a union), and no check on a PR calls the live API. Its own PR, so that the routine Go dependencies PR can be merged while an SDK minor waits for a closer look. Patch releases stay in that group; like every root go.mod update, neither is automerged.",
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
-      "matchCurrentVersion": "<1.68.0",
-      "matchUpdateTypes": ["minor", "major"],
-      "enabled": false
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Anthropic Go SDK",
+      "groupSlug": "anthropic-sdk-go",
+      "automerge": false
     },
     {
       "description": "Never propose a major SDK update, OSV vulnerability-fix PRs included (their allowedVersions replaces any hold above): a new major is the #192 migration, not a dependency bump.",
