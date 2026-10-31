@@ -172,9 +172,10 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 						MarkdownDescription: "Default inference geo applied when requests omit the parameter.",
 					},
 					"workspace_geo": schema.StringAttribute{
-						Optional:            true,
-						Computed:            true,
-						MarkdownDescription: "Geographic region for workspace data storage. Immutable after creation — changing this forces a new resource.",
+						Optional: true,
+						Computed: true,
+						MarkdownDescription: "Geographic region for workspace data storage. Immutable after creation — changing this forces a new resource. " +
+							"Not configurable on Claude Platform on AWS, where the documentation gives every workspace an effective `us`: leave it unset there.",
 						PlanModifiers: []planmodifier.String{
 							stringplanmodifier.RequiresReplace(),
 							stringplanmodifier.UseStateForUnknown(),
@@ -195,7 +196,8 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"external_key_id": schema.StringAttribute{
 				Optional: true,
 				Computed: true,
-				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration used to encrypt this workspace's data. " +
+				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration used to encrypt this workspace's data; " +
+					"on Claude Platform on AWS, the ARN of the AWS KMS key, a single-Region key in the workspace's AWS account and region. " +
 					"Requires CMEK to be enabled for the organization. **Write-once**: a key can be attached to a workspace that has none, " +
 					"but the API cannot detach or replace it afterwards, so changing an attached key forces a new workspace. " +
 					"When omitted, a key attached outside Terraform is kept in state without forcing a replacement.",
@@ -210,7 +212,7 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			// --- Computed ---
 			"compartment_id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Identifier of the workspace's encryption compartment. Reference it in the KMS key policy when configuring CMEK on AWS.",
+				MarkdownDescription: "Identifier of the workspace's encryption compartment. Reference it in the KMS key policy when configuring CMEK on Claude Platform on AWS.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"user_profile_id": schema.StringAttribute{

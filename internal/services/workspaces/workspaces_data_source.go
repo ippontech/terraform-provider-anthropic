@@ -132,7 +132,7 @@ func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 						},
 						"external_key_id": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.",
+							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace (on Claude Platform on AWS, the AWS KMS key ARN), or null.",
 						},
 						"compartment_id": schema.StringAttribute{
 							Computed:            true,
