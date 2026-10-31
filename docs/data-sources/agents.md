@@ -80,16 +80,60 @@ Read-Only:
 
 - `configs` (Attributes List) Per-tool configuration overrides. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs))
 - `default_enabled` (Boolean) Whether tools are enabled by default.
-- `default_permission_policy` (String) Default permission policy: `always_allow` or `always_ask`.
+- `default_permission_policy` (String) Default permission policy: `always_allow`, `always_ask` or `auto`.
 
 <a id="nestedatt--agents--agent_toolset--configs"></a>
 ### Nested Schema for `agents.agent_toolset.configs`
 
 Read-Only:
 
+- `allowed_domains` (Set of String) The only hosts the tool can reach (`web_fetch` and `web_search`), null when unrestricted.
+- `blocked_domains` (Set of String) Hosts the tool can never reach (`web_fetch` and `web_search`), null when none.
 - `enabled` (Boolean) Whether this tool is enabled.
+- `max_content_tokens` (Number) Maximum number of tokens of fetched text content included in the context per call (`web_fetch`), null when unset.
 - `name` (String) Built-in tool name.
-- `permission_policy` (String) Permission policy: `always_allow` or `always_ask`.
+- `permission_policy` (String) Permission policy: `always_allow`, `always_ask` or `auto`.
+- `url_sources` (Attributes) Which sources may contribute the URLs `web_fetch` fetches, null when every source may. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources))
+- `user_location` (Attributes) Approximate user location used to localize search results (`web_search`), null when unset. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--user_location))
+
+<a id="nestedatt--agents--agent_toolset--configs--url_sources"></a>
+### Nested Schema for `agents.agent_toolset.configs.url_sources`
+
+Read-Only:
+
+- `client_tool_results` (Attributes) Which custom tools' results contribute URLs that may be fetched, null when every one does. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources--client_tool_results))
+- `server_tool_results` (Attributes) Which `web_search` and `web_fetch` results contribute URLs that may be fetched, null when every one does. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources--server_tool_results))
+- `user_input` (String) Whether URLs in user messages may be fetched: `all` or `none`, null when unset.
+
+<a id="nestedatt--agents--agent_toolset--configs--url_sources--client_tool_results"></a>
+### Nested Schema for `agents.agent_toolset.configs.url_sources.client_tool_results`
+
+Read-Only:
+
+- `tools` (Set of String) Tool names of an `only` or `except` filter.
+- `type` (String) `all`, `none`, `only` or `except`.
+
+
+<a id="nestedatt--agents--agent_toolset--configs--url_sources--server_tool_results"></a>
+### Nested Schema for `agents.agent_toolset.configs.url_sources.server_tool_results`
+
+Read-Only:
+
+- `tools` (Set of String) Tool names of an `only` or `except` filter.
+- `type` (String) `all`, `none`, `only` or `except`.
+
+
+
+<a id="nestedatt--agents--agent_toolset--configs--user_location"></a>
+### Nested Schema for `agents.agent_toolset.configs.user_location`
+
+Read-Only:
+
+- `city` (String) City name.
+- `country` (String) Two-letter ISO 3166-1 country code.
+- `region` (String) Region or state name.
+- `timezone` (String) IANA timezone identifier.
+
 
 
 
@@ -119,7 +163,7 @@ Read-Only:
 
 - `configs` (Attributes List) Per-MCP-tool configuration overrides. (see [below for nested schema](#nestedatt--agents--mcp_toolsets--configs))
 - `default_enabled` (Boolean) Whether MCP tools are enabled by default.
-- `default_permission_policy` (String) Default permission policy: `always_allow` or `always_ask`.
+- `default_permission_policy` (String) Default permission policy: `always_allow`, `always_ask` or `auto`.
 - `mcp_server_name` (String) Name of the MCP server.
 
 <a id="nestedatt--agents--mcp_toolsets--configs"></a>
@@ -129,7 +173,7 @@ Read-Only:
 
 - `enabled` (Boolean) Whether this tool is enabled.
 - `name` (String) Name of the MCP tool.
-- `permission_policy` (String) Permission policy: `always_allow` or `always_ask`.
+- `permission_policy` (String) Permission policy: `always_allow`, `always_ask` or `auto`.
 
 
 
