@@ -60,6 +60,7 @@ var agentListItemAttrTypes = map[string]attr.Type{
 	"mcp_toolsets":        types.ListType{ElemType: types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}},
 	"custom_tools":        types.ListType{ElemType: types.ObjectType{AttrTypes: agentCustomToolAttrTypes}},
 	"multiagent":          types.ObjectType{AttrTypes: agentMultiagentAttrTypes},
+	"execution_identity":  types.ObjectType{AttrTypes: agentExecutionIdentityAttrTypes},
 	"version":             types.Int64Type,
 	"created_at":          types.StringType,
 	"updated_at":          types.StringType,
@@ -181,26 +182,13 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 								},
 								"default_permission_policy": schema.StringAttribute{
 									Computed:            true,
-									MarkdownDescription: "Default permission policy: `always_allow` or `always_ask`.",
+									MarkdownDescription: "Default permission policy: `always_allow`, `always_ask` or `auto`.",
 								},
 								"configs": schema.ListNestedAttribute{
 									Computed:            true,
 									MarkdownDescription: "Per-tool configuration overrides.",
 									NestedObject: schema.NestedAttributeObject{
-										Attributes: map[string]schema.Attribute{
-											"name": schema.StringAttribute{
-												Computed:            true,
-												MarkdownDescription: "Built-in tool name.",
-											},
-											"enabled": schema.BoolAttribute{
-												Computed:            true,
-												MarkdownDescription: "Whether this tool is enabled.",
-											},
-											"permission_policy": schema.StringAttribute{
-												Computed:            true,
-												MarkdownDescription: "Permission policy: `always_allow` or `always_ask`.",
-											},
-										},
+										Attributes: agentToolConfigDataSourceAttributes(),
 									},
 								},
 							},
@@ -220,7 +208,7 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 									},
 									"default_permission_policy": schema.StringAttribute{
 										Computed:            true,
-										MarkdownDescription: "Default permission policy: `always_allow` or `always_ask`.",
+										MarkdownDescription: "Default permission policy: `always_allow`, `always_ask` or `auto`.",
 									},
 									"configs": schema.ListNestedAttribute{
 										Computed:            true,
@@ -237,7 +225,7 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 												},
 												"permission_policy": schema.StringAttribute{
 													Computed:            true,
-													MarkdownDescription: "Permission policy: `always_allow` or `always_ask`.",
+													MarkdownDescription: "Permission policy: `always_allow`, `always_ask` or `auto`.",
 												},
 											},
 										},
@@ -288,6 +276,7 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 								},
 							},
 						},
+						"execution_identity": executionIdentityDataSourceSchema(),
 						"version": schema.Int64Attribute{
 							Computed:            true,
 							MarkdownDescription: "The agent's current version.",
@@ -489,7 +478,7 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 	// Agent toolset
 	agentToolsetObj := types.ObjectNull(agentToolsetAttrTypes)
 	if apiAgentToolset != nil {
-		obj, d := mapAgentToolsetToDataSourceObject(apiAgentToolset)
+		obj, d := mapAgentToolsetToDataSource(apiAgentToolset)
 		diags.Append(d...)
 		agentToolsetObj = obj
 	}
@@ -530,7 +519,10 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		customToolsList = list
 	}
 
-	multiagentObj, d := mapMultiagentToObject(agent.Multiagent)
+	multiagentObj, d := mapMultiagentToObject(agent.Multiagent, agent.ID)
+	diags.Append(d...)
+
+	identityObj, d := executionIdentityObject(agent.ExecutionIdentity)
 	diags.Append(d...)
 
 	archivedAt := types.StringNull()
@@ -554,41 +546,11 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		"mcp_toolsets":        mcpToolsetsList,
 		"custom_tools":        customToolsList,
 		"multiagent":          multiagentObj,
+		"execution_identity":  identityObj,
 		"version":             types.Int64Value(agent.Version),
 		"created_at":          types.StringValue(agent.CreatedAt.Format(time.RFC3339)),
 		"updated_at":          types.StringValue(agent.UpdatedAt.Format(time.RFC3339)),
 		"archived_at":         archivedAt,
-	})
-	diags.Append(d...)
-	return obj, diags
-}
-
-// mapAgentToolsetToDataSourceObject converts an API agent toolset to a Terraform
-// object. Emits ALL API configs (no state-based filtering).
-func mapAgentToolsetToDataSourceObject(apiToolset *anthropic.BetaManagedAgentsAgentToolset20260401) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	configsList := types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes})
-	if len(apiToolset.Configs) > 0 {
-		configObjs := make([]attr.Value, len(apiToolset.Configs))
-		for i, c := range apiToolset.Configs {
-			obj, d := types.ObjectValue(agentToolConfigAttrTypes, map[string]attr.Value{
-				"name":              types.StringValue(string(c.Name)),
-				"enabled":           types.BoolValue(c.Enabled),
-				"permission_policy": types.StringValue(c.PermissionPolicy.Type),
-			})
-			diags.Append(d...)
-			configObjs[i] = obj
-		}
-		list, d := types.ListValue(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}, configObjs)
-		diags.Append(d...)
-		configsList = list
-	}
-
-	obj, d := types.ObjectValue(agentToolsetAttrTypes, map[string]attr.Value{
-		"default_enabled":           types.BoolValue(apiToolset.DefaultConfig.Enabled),
-		"default_permission_policy": types.StringValue(apiToolset.DefaultConfig.PermissionPolicy.Type),
-		"configs":                   configsList,
 	})
 	diags.Append(d...)
 	return obj, diags
