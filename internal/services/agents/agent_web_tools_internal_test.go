@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
@@ -489,6 +491,71 @@ func TestDomainSetToState(t *testing.T) {
 			}
 			if got := domainSetToState(tc.current, tc.api); !got.Equal(want) {
 				t.Errorf("got %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+// Two entries of one domain list that are the same domain under domainKey fail
+// at plan time: the API would not keep both spellings, so the apply would end
+// in an inconsistent result. Both domain lists use the validator.
+func TestUniqueDomainsValidator(t *testing.T) {
+	t.Parallel()
+
+	toolset, ok := schematest.ResourceSchema(t, NewAgentResource()).Attributes["agent_toolset"].(schema.SingleNestedAttribute)
+	if !ok {
+		t.Fatal("agent_toolset is not a single nested attribute")
+	}
+	configs, ok := toolset.Attributes["configs"].(schema.ListNestedAttribute)
+	if !ok {
+		t.Fatal("agent_toolset.configs is not a list nested attribute")
+	}
+	for _, name := range []string{"allowed_domains", "blocked_domains"} {
+		a, ok := configs.NestedObject.Attributes[name].(schema.SetAttribute)
+		if !ok {
+			t.Fatalf("%s is not a set attribute", name)
+		}
+		wired := false
+		for _, v := range a.SetValidators() {
+			_, isUnique := v.(uniqueDomainsValidator)
+			wired = wired || isUnique
+		}
+		if !wired {
+			t.Errorf("%s does not use uniqueDomainsValidator", name)
+		}
+	}
+
+	tests := []struct {
+		name       string
+		value      types.Set
+		wantDetail string // detail of the expected error; empty when none is expected
+	}{
+		{name: "null", value: types.SetNull(types.StringType)},
+		{name: "distinct, with an unknown entry", value: types.SetValueMust(types.StringType, []attr.Value{
+			types.StringValue("docs.example.com"), types.StringUnknown(), types.StringValue("example.com/Docs"), types.StringValue("example.com/docs"),
+		})},
+		{name: "hostname case", value: strSet("example.com", "arxiv.org", "Example.com"),
+			wantDetail: `"Example.com" and "example.com" are the same domain`},
+		{name: "trailing slash", value: strSet("docs.example.com/", "docs.example.com"),
+			wantDetail: `"docs.example.com" and "docs.example.com/" are the same domain`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resp := &validator.SetResponse{}
+			p := path.Root("agent_toolset").AtName("configs").AtListIndex(0).AtName("allowed_domains")
+			uniqueDomainsValidator{}.ValidateSet(context.Background(), validator.SetRequest{Path: p, ConfigValue: tt.value}, resp)
+			if tt.wantDetail == "" {
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("unexpected diagnostics: %+v", resp.Diagnostics)
+				}
+				return
+			}
+			if resp.Diagnostics.ErrorsCount() != 1 {
+				t.Fatalf("got %+v, want one error", resp.Diagnostics)
+			}
+			if got := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(got, tt.wantDetail) {
+				t.Errorf("detail = %q, want it to contain %q", got, tt.wantDetail)
 			}
 		})
 	}

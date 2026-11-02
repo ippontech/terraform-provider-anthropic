@@ -226,8 +226,8 @@ Required:
 
 Optional:
 
-- `allowed_domains` (Set of String) `web_fetch` and `web_search` only. The only hosts the tool can reach. Each entry is a plain hostname such as `docs.example.com` (no scheme, port or wildcard) and also covers its subdomains; a `web_search` entry may carry a path suffix. 1-64 entries of 1-255 characters. Conflicts with `blocked_domains`. With `limited` environment networking, every entry must also be within the environment's `allowed_hosts`, or creating a session fails.
-- `blocked_domains` (Set of String) `web_fetch` and `web_search` only. Hosts the tool can never reach, written like `allowed_domains`. 1-64 entries of 1-255 characters. Conflicts with `allowed_domains`.
+- `allowed_domains` (Set of String) `web_fetch` and `web_search` only. The only hosts the tool can reach. Each entry is a plain hostname such as `docs.example.com` (no scheme, port or wildcard) and also covers its subdomains; a `web_search` entry may carry a path suffix. 1-64 entries of 1-255 characters, each domain listed once (the hostname is compared without regard to case, and a trailing `/` is ignored). Conflicts with `blocked_domains`. With `limited` environment networking, every entry must also be within the environment's `allowed_hosts`, or creating a session fails.
+- `blocked_domains` (Set of String) `web_fetch` and `web_search` only. Hosts the tool can never reach, written and compared like `allowed_domains`. 1-64 entries of 1-255 characters, each domain listed once. Conflicts with `allowed_domains`.
 - `enabled` (Boolean) Whether this tool is enabled. Overrides `default_enabled`.
 - `max_content_tokens` (Number) `web_fetch` only. Maximum number of tokens of fetched text content included in the context per call. Does not apply to binary content such as PDFs. Positive integer.
 - `permission_policy` (String) Permission policy override: `always_allow` or `always_ask`.

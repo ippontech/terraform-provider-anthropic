@@ -375,21 +375,24 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 									ElementType: types.StringType,
 									MarkdownDescription: "`web_fetch` and `web_search` only. The only hosts the tool can reach. " +
 										"Each entry is a plain hostname such as `docs.example.com` (no scheme, port or wildcard) and also covers its subdomains; " +
-										"a `web_search` entry may carry a path suffix. 1-64 entries of 1-255 characters. Conflicts with `blocked_domains`. " +
+										"a `web_search` entry may carry a path suffix. 1-64 entries of 1-255 characters, each domain listed once " +
+										"(the hostname is compared without regard to case, and a trailing `/` is ignored). Conflicts with `blocked_domains`. " +
 										"With `limited` environment networking, every entry must also be within the environment's `allowed_hosts`, or creating a session fails.",
 									Validators: []validator.Set{
 										setvalidator.SizeBetween(1, 64),
 										setvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 255)),
+										uniqueDomainsValidator{},
 									},
 								},
 								"blocked_domains": schema.SetAttribute{
 									Optional:    true,
 									ElementType: types.StringType,
-									MarkdownDescription: "`web_fetch` and `web_search` only. Hosts the tool can never reach, written like `allowed_domains`. " +
-										"1-64 entries of 1-255 characters. Conflicts with `allowed_domains`.",
+									MarkdownDescription: "`web_fetch` and `web_search` only. Hosts the tool can never reach, written and compared like `allowed_domains`. " +
+										"1-64 entries of 1-255 characters, each domain listed once. Conflicts with `allowed_domains`.",
 									Validators: []validator.Set{
 										setvalidator.SizeBetween(1, 64),
 										setvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 255)),
+										uniqueDomainsValidator{},
 									},
 								},
 								"max_content_tokens": schema.Int64Attribute{

@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -160,6 +161,50 @@ func validateAgentToolConfigs(ctx context.Context, toolset types.Object) diag.Di
 		}
 	}
 	return diags
+}
+
+// uniqueDomainsValidator rejects two entries of one allowed_domains or
+// blocked_domains set that are the same domain under domainKey. The API docs
+// allow a domain once per list, while to Terraform two spellings of one
+// domain are distinct set elements: should the API store them normalized
+// (one entry, or two equal ones), state could not match the plan and the
+// apply would fail with an inconsistent result. Unknown entries are skipped,
+// so they stay valid at plan time.
+type uniqueDomainsValidator struct{}
+
+func (uniqueDomainsValidator) Description(context.Context) string {
+	return "each domain appears once: the hostname is compared without regard to case and a trailing / is ignored"
+}
+
+func (uniqueDomainsValidator) MarkdownDescription(context.Context) string {
+	return "each domain appears once: the hostname is compared without regard to case and a trailing `/` is ignored"
+}
+
+func (uniqueDomainsValidator) ValidateSet(_ context.Context, req validator.SetRequest, resp *validator.SetResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	var entries []string
+	for _, el := range req.ConfigValue.Elements() {
+		str, ok := el.(types.String)
+		if !ok || str.IsNull() || str.IsUnknown() {
+			continue
+		}
+		entries = append(entries, str.ValueString())
+	}
+	// Sorted, so the diagnostic names the entries in the same order every time.
+	slices.Sort(entries)
+	first := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key := domainKey(entry)
+		if prev, seen := first[key]; seen {
+			resp.Diagnostics.AddAttributeError(req.Path.AtSetValue(types.StringValue(entry)), "Duplicate domain",
+				fmt.Sprintf(`%q and %q are the same domain: the hostname is compared without regard to case and a trailing "/" is ignored. List it once.`,
+					prev, entry))
+			continue
+		}
+		first[key] = entry
+	}
 }
 
 // --- Plan -> params ---
