@@ -367,7 +367,7 @@ func TestWorkspaceRateLimitResource_DeleteClearsManagedTypes(t *testing.T) {
 
 // A refresh whose list does not show the overrides Create just set yet drops
 // them from state; Delete must still clear them, from the types Create
-// recorded in private state.
+// recorded in private state, after a list that still lags.
 func TestWorkspaceRateLimitResource_DeleteClearsTypesALaggingReadDropped(t *testing.T) {
 	srv, requests := rateLimitServer(t, rateLimitEntryJSON(testRateLimitID,
 		`[{"type":"output_tokens_per_minute","value":20000,"org_limit":80000,"source":{"type":"workspace"}},
@@ -384,10 +384,13 @@ func TestWorkspaceRateLimitResource_DeleteClearsTypesALaggingReadDropped(t *test
 		t.Fatalf("Delete: %v", resp.Diagnostics)
 	}
 
-	if len(*requests) != 3 {
-		t.Fatalf("requests = %d, want Create, Read and a Delete POST", len(*requests))
+	if len(*requests) != 4 {
+		t.Fatalf("requests = %d, want Create, Read, and Delete's list and POST", len(*requests))
 	}
-	del := (*requests)[2]
+	if list := (*requests)[2]; list.method != http.MethodGet || list.path != testRateLimitsListPath {
+		t.Fatalf("Delete's first request = %s %s, want GET %s", list.method, list.path, testRateLimitsListPath)
+	}
+	del := (*requests)[3]
 	if del.method != http.MethodPost || del.path != testRateLimitPath {
 		t.Fatalf("Delete request = %s %s, want POST %s", del.method, del.path, testRateLimitPath)
 	}
@@ -421,7 +424,7 @@ func TestWorkspaceRateLimitResource_UpdateClearsTypesALaggingReadDropped(t *test
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("Update: %v", updateResp.Diagnostics)
 	}
-	assertLimitsBody(t, (*requests)[2].limits, []struct {
+	assertLimitsBody(t, (*requests)[3].limits, []struct {
 		typ   string
 		value *int64
 	}{
@@ -434,12 +437,137 @@ func TestWorkspaceRateLimitResource_UpdateClearsTypesALaggingReadDropped(t *test
 	if deleteResp.Diagnostics.HasError() {
 		t.Fatalf("Delete: %v", deleteResp.Diagnostics)
 	}
-	assertLimitsBody(t, (*requests)[3].limits, []struct {
+	assertLimitsBody(t, (*requests)[5].limits, []struct {
 		typ   string
 		value *int64
 	}{
 		{"requests_per_minute", nil},
 	})
+}
+
+// withRecord records the overrides in private, as Create or Update would
+// after setting them, and returns private.
+func withRecord[P privateStateWriter](t *testing.T, private P, recorded map[string]int64) P {
+	t.Helper()
+	if diags := recordSetTypes(context.Background(), private, recorded); diags.HasError() {
+		t.Fatalf("recordSetTypes: %v", diags)
+	}
+	return private
+}
+
+// A type the resource set, then cleared out of band (a read dropped it from
+// state) and removed from the configuration, stays recorded: no update ran.
+// Update and Delete clear it only while the group does not hold another
+// value for it; set again in the Console or by another resource, it is left
+// alone.
+func TestWorkspaceRateLimitResource_RecordedTypeSetAgainElsewhere(t *testing.T) {
+	recorded := map[string]int64{"output_tokens_per_minute": 20000, "requests_per_minute": 100}
+	refreshed := rateLimitModel(map[string]int64{"output_tokens_per_minute": 20000})
+	listWith := func(rpm string) string {
+		return `{"data":[` + rateLimitEntryJSON(testRateLimitID,
+			`[{"type":"output_tokens_per_minute","value":20000,"org_limit":80000,"source":{"type":"workspace"}}`+rpm+`]`) +
+			`],"next_page":null}`
+	}
+	type limit = struct {
+		typ   string
+		value *int64
+	}
+	for _, tc := range []struct {
+		name, list       string
+		update, deletion []limit
+	}{
+		{
+			name:     "set again with another value",
+			list:     listWith(`,{"type":"requests_per_minute","value":500,"org_limit":4000,"source":{"type":"workspace"}}`),
+			update:   []limit{{"output_tokens_per_minute", i64(30000)}},
+			deletion: []limit{{"output_tokens_per_minute", nil}},
+		},
+		{
+			name:     "the recorded value",
+			list:     listWith(`,{"type":"requests_per_minute","value":100,"org_limit":4000,"source":{"type":"workspace"}}`),
+			update:   []limit{{"output_tokens_per_minute", i64(30000)}, {"requests_per_minute", nil}},
+			deletion: []limit{{"output_tokens_per_minute", nil}, {"requests_per_minute", nil}},
+		},
+		{
+			name:     "no entry for the group",
+			list:     `{"data":[],"next_page":null}`,
+			update:   []limit{{"output_tokens_per_minute", i64(30000)}, {"requests_per_minute", nil}},
+			deletion: []limit{{"output_tokens_per_minute", nil}, {"requests_per_minute", nil}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, requests := rateLimitServer(t, rateLimitEntryJSON(testRateLimitID, `[]`), tc.list, http.StatusOK)
+			r := &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+
+			updateResp := resource.UpdateResponse{State: rateLimitState(t, r, refreshed)}
+			updateResp.Private = newPrivateState(updateResp.Private)
+			r.Update(context.Background(), resource.UpdateRequest{
+				Plan:    rateLimitPlan(t, r, rateLimitModel(map[string]int64{"output_tokens_per_minute": 30000})),
+				State:   rateLimitState(t, r, refreshed),
+				Private: withRecord(t, newPrivateState(resource.UpdateRequest{}.Private), recorded),
+			}, &updateResp)
+			if updateResp.Diagnostics.HasError() {
+				t.Fatalf("Update: %v", updateResp.Diagnostics)
+			}
+
+			deleteResp := resource.DeleteResponse{State: rateLimitState(t, r, refreshed)}
+			r.Delete(context.Background(), resource.DeleteRequest{
+				State:   rateLimitState(t, r, refreshed),
+				Private: withRecord(t, newPrivateState(resource.UpdateRequest{}.Private), recorded),
+			}, &deleteResp)
+			if deleteResp.Diagnostics.HasError() {
+				t.Fatalf("Delete: %v", deleteResp.Diagnostics)
+			}
+
+			if len(*requests) != 4 {
+				t.Fatalf("requests = %d, want a list and a POST for Update, then for Delete", len(*requests))
+			}
+			for _, i := range []int{0, 2} {
+				if got := (*requests)[i]; got.method != http.MethodGet || got.path != testRateLimitsListPath {
+					t.Errorf("request %d = %s %s, want GET %s", i, got.method, got.path, testRateLimitsListPath)
+				}
+			}
+			assertLimitsBody(t, (*requests)[1].limits, tc.update)
+			assertLimitsBody(t, (*requests)[3].limits, tc.deletion)
+		})
+	}
+}
+
+// The list that checks a recorded type is a read like Read's: a gone
+// workspace (404) owns the type, and the request that follows gets the 404,
+// which Delete tolerates; any other failure fails the operation before any
+// override changes.
+func TestWorkspaceRateLimitResource_RecordedTypeListFails(t *testing.T) {
+	recorded := map[string]int64{"requests_per_minute": 100}
+	refreshed := rateLimitModel(map[string]int64{})
+
+	srv, requests := rateLimitServer(t, "", "", http.StatusNotFound)
+	r := &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+	resp := resource.DeleteResponse{State: rateLimitState(t, r, refreshed)}
+	r.Delete(context.Background(), resource.DeleteRequest{
+		State:   rateLimitState(t, r, refreshed),
+		Private: withRecord(t, newPrivateState(resource.UpdateRequest{}.Private), recorded),
+	}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Delete on a gone workspace must succeed, got: %v", resp.Diagnostics)
+	}
+	if len(*requests) != 2 || (*requests)[1].method != http.MethodPost {
+		t.Fatalf("requests = %+v, want the list then the POST", *requests)
+	}
+
+	srv, requests = rateLimitServer(t, "", "", http.StatusInternalServerError)
+	r = &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+	resp = resource.DeleteResponse{State: rateLimitState(t, r, refreshed)}
+	r.Delete(context.Background(), resource.DeleteRequest{
+		State:   rateLimitState(t, r, refreshed),
+		Private: withRecord(t, newPrivateState(resource.UpdateRequest{}.Private), recorded),
+	}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("Delete succeeded although the list failed")
+	}
+	if len(*requests) != 1 || (*requests)[0].method != http.MethodGet {
+		t.Errorf("requests = %+v, want only the failed list", *requests)
+	}
 }
 
 // createAndLaggingRead creates the resource with limits, then refreshes it
@@ -670,5 +798,26 @@ func TestBuildWorkspaceRateLimitPatch_marshalsClearsAsNull(t *testing.T) {
 	want := `{"limits":[{"type":"fast_otpm","value":null},{"type":"tokens_per_day","value":0}]}`
 	if string(body) != want {
 		t.Errorf("body = %s, want %s", body, want)
+	}
+}
+
+// A record that is not an object of type to value fails Delete before any
+// request: which types the resource set is unknown.
+func TestWorkspaceRateLimitResource_InvalidRecordFails(t *testing.T) {
+	srv, requests := rateLimitServer(t, "", "", http.StatusOK)
+	r := &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+	private := newPrivateState(resource.DeleteRequest{}.Private)
+	if diags := private.SetKey(context.Background(), setTypesPrivateKey, []byte(`["requests_per_minute"]`)); diags.HasError() {
+		t.Fatalf("SetKey: %v", diags)
+	}
+
+	state := rateLimitModel(map[string]int64{"output_tokens_per_minute": 20000})
+	resp := resource.DeleteResponse{State: rateLimitState(t, r, state)}
+	r.Delete(context.Background(), resource.DeleteRequest{State: rateLimitState(t, r, state), Private: private}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("Delete succeeded with an unreadable record")
+	}
+	if len(*requests) != 0 {
+		t.Errorf("requests = %d, want 0", len(*requests))
 	}
 }

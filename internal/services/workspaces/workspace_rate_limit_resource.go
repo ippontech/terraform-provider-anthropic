@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -75,11 +74,13 @@ var workspaceRateLimitTypes = []string{
 const maxWorkspaceRateLimitValue = 9007199254740991
 
 // setTypesPrivateKey names the private-state entry in which Create and Update
-// record the types they set, as a JSON array of type names. Read drops a
-// managed type from state when the list does not show it, as a list lagging
-// behind a write would, so Update and Delete clear the recorded types as well
-// as the state's keys: a refresh that has not caught up cannot leave an
-// override set with no resource tracking it.
+// record the overrides they set, as a JSON object of type to value. Read
+// drops a managed type from state when the list does not show it, as a list
+// lagging behind a write would, so Update and Delete clear the recorded types
+// as well as the state's keys: a refresh that has not caught up cannot leave
+// an override set with no resource tracking it. The values let them leave
+// alone a recorded type that was set again elsewhere since (see
+// ownedLimitTypes).
 const setTypesPrivateKey = "set_limit_types"
 
 // privateStateReader and privateStateWriter are the methods of the
@@ -315,7 +316,7 @@ func (r *WorkspaceRateLimitResource) Update(ctx context.Context, req resource.Up
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	owned, diags := ownedLimitTypes(ctx, req.Private, prior)
+	owned, diags := r.ownedLimitTypes(ctx, state, req.Private, prior, planned)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -358,7 +359,7 @@ func (r *WorkspaceRateLimitResource) Delete(ctx context.Context, req resource.De
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	owned, diags := ownedLimitTypes(ctx, req.Private, prior)
+	owned, diags := r.ownedLimitTypes(ctx, state, req.Private, prior, nil)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -427,33 +428,88 @@ func rateLimitValues(ctx context.Context, m types.Map) (map[string]int64, diag.D
 	return values, diags
 }
 
-// ownedLimitTypes returns the types the resource may have set: the keys of
-// its state's limits plus the types Create and Update recorded in private
-// state (none for an imported resource).
-func ownedLimitTypes(ctx context.Context, private privateStateReader, limits map[string]int64) (map[string]bool, diag.Diagnostics) {
+// ownedLimitTypes returns the types the resource may have set, for Update
+// (planned: the plan's limits) and Delete (planned: nil) to clear those the
+// plan lacks: the keys of the state's limits, plus the types Create and
+// Update recorded in private state (none for an imported resource).
+//
+// A recorded type in neither the state nor the plan was dropped by a read,
+// either because the list lagged behind the write or because the override
+// was cleared out of band. In the second case the type may since have left
+// the configuration, with no update to refresh the record, and been set
+// again in the Console or by another resource. Such types are checked
+// against one list of the group's overrides: a type the group holds with
+// another value than the recorded one is not owned any more.
+func (r *WorkspaceRateLimitResource) ownedLimitTypes(ctx context.Context, state WorkspaceRateLimitResourceModel, private privateStateReader, prior, planned map[string]int64) (map[string]bool, diag.Diagnostics) {
 	owned := map[string]bool{}
-	for t := range limits {
+	for t := range prior {
 		owned[t] = true
 	}
-	raw, diags := private.GetKey(ctx, setTypesPrivateKey)
-	if diags.HasError() || len(raw) == 0 {
+	recorded, diags := recordedLimits(ctx, private)
+	if diags.HasError() {
 		return owned, diags
 	}
-	var recorded []string
-	if err := json.Unmarshal(raw, &recorded); err != nil {
-		diags.AddError("Invalid Private State", fmt.Sprintf("Unable to read the limiter types recorded in private state: %s", err))
+	droppedByRead := map[string]int64{}
+	for t, v := range recorded {
+		_, inState := prior[t]
+		_, kept := planned[t]
+		if !inState && !kept {
+			droppedByRead[t] = v
+		}
+	}
+	if len(droppedByRead) == 0 {
 		return owned, diags
 	}
-	for _, t := range recorded {
-		owned[t] = true
+
+	current, err := r.groupOverrides(ctx, state.WorkspaceID.ValueString(), state.RateLimitID.ValueString())
+	if err != nil && !admin.IsNotFound(err) {
+		diags.AddError("Client Error", fmt.Sprintf("Unable to list workspace rate limits: %s", err))
+		return owned, diags
+	}
+	// A gone workspace (404) holds nothing: the request that follows gets
+	// the 404, which Delete tolerates.
+	for t, v := range droppedByRead {
+		if cur, set := current[t]; !set || cur == v {
+			owned[t] = true
+		}
 	}
 	return owned, diags
 }
 
-// recordSetTypes records the types a successful request left set: exactly
-// the planned ones, since it sent null for every other owned type.
+// groupOverrides returns the workspace overrides the list holds for the
+// group, by type.
+func (r *WorkspaceRateLimitResource) groupOverrides(ctx context.Context, workspaceID, rateLimitID string) (map[string]int64, error) {
+	items, err := listWorkspaceRateLimits(ctx, r.adminClient, workspaceID, "", false)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].RateLimitID == rateLimitID {
+			return overridesToState(&items[i], nil, true), nil
+		}
+	}
+	return map[string]int64{}, nil
+}
+
+// recordedLimits reads the overrides Create and Update recorded in private
+// state; none when nothing is recorded.
+func recordedLimits(ctx context.Context, private privateStateReader) (map[string]int64, diag.Diagnostics) {
+	raw, diags := private.GetKey(ctx, setTypesPrivateKey)
+	if diags.HasError() || len(raw) == 0 {
+		return nil, diags
+	}
+	var recorded map[string]int64
+	if err := json.Unmarshal(raw, &recorded); err != nil {
+		diags.AddError("Invalid Private State", fmt.Sprintf("Unable to read the limiter types recorded in private state: %s", err))
+		return nil, diags
+	}
+	return recorded, diags
+}
+
+// recordSetTypes records the overrides a successful request left set:
+// exactly the planned ones, since it sent null for every other owned type.
 func recordSetTypes(ctx context.Context, private privateStateWriter, planned map[string]int64) diag.Diagnostics {
-	raw, err := json.Marshal(slices.Sorted(maps.Keys(planned)))
+	raw, err := json.Marshal(planned)
 	if err != nil {
 		var diags diag.Diagnostics
 		diags.AddError("Invalid Private State", fmt.Sprintf("Unable to record the limiter types set: %s", err))
