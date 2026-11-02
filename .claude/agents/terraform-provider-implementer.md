@@ -20,7 +20,12 @@ The prompt carries the whole spec. You cannot ask questions during the run, so w
 
 ## Setup
 
-You run in an isolated git worktree. Fetch `origin`, then create the spec's branch from `origin/<branch>` if it already exists, otherwise from `origin/main`. A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`. Run every `make` command as `GOBIN="$PWD/.gobin" make ...` from the worktree root: `make install` and `.dev.tfrc` then use this worktree's provider binary (`.gobin/` is gitignored), not the `$(go env GOPATH)/bin` that parallel agents share and overwrite.
+You run in an isolated git worktree, on a branch of its own. Fetch `origin`, then pick the branch you commit on:
+
+- When the spec's branch does not exist locally (`git rev-parse --verify --quiet refs/heads/<branch>` prints nothing), create it from `origin/<branch>` if that exists, otherwise from `origin/main`, and commit on it.
+- When it already exists locally, do not check it out: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Move the worktree's own branch to it instead (`git reset --hard <branch>`: the worktree is fresh, and the local branch may carry commits not pushed yet), or to `origin/<branch>` when that is ahead of it (`git merge-base --is-ancestor <branch> origin/<branch>`). Commit there and name that branch in your report: the main agent fast-forwards the spec's branch to your commit.
+
+A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`. Run every `make` command as `GOBIN="$PWD/.gobin" make ...` from the worktree root: `make install` and `.dev.tfrc` then use this worktree's provider binary (`.gobin/` is gitignored), not the `$(go env GOPATH)/bin` that parallel agents share and overwrite.
 
 ## Scope
 
@@ -35,7 +40,7 @@ Done means all of the following:
 2. `pre-commit run -a` passes (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
 3. `make terraform-test` passes, or you report it as skipped because the credentials it needs are absent;
 4. the regenerated page under `docs/` has a non-empty `subcategory`;
-5. one local commit on the spec's branch, staging your files by path (never `git add -A`), with a conventional commit message such as `feat: add anthropic_<name> resource`.
+5. one local commit on the branch picked in *Setup*, staging your files by path (never `git add -A`), with a conventional commit message such as `feat: add anthropic_<name> resource`.
 
 Then stop. Do not push, open a PR or start another agent: the main agent decides on review and publication.
 
@@ -45,7 +50,7 @@ Blocked means a check still fails after you fixed what is in scope, or the spec 
 
 ```
 ## anthropic_<name> (<resource | data source>): done | blocked
-- Worktree / branch / commit: <path> / <branch> / <short sha, or none>
+- Worktree / branch / commit: <path> / <the branch you committed on> / <short sha, or none>
 - Files: <paths>
 - make: pass | fail (<target and error>)
 - pre-commit run -a: pass | fail (<hook>)

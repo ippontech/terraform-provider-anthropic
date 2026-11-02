@@ -12,7 +12,12 @@ You implement or modify a single GitHub Actions workflow in `.github/workflows/`
 
 ## Setup
 
-You run in an isolated git worktree. Fetch `origin`, then create the spec's branch from `origin/<branch>` if it already exists, otherwise from `origin/main`. Environment variables come from the project's `.env` through mise (`[env] _.file` in `mise.toml`); never `source` or read the file yourself. A worktree has no `.env`, so credential-dependent commands are expected to be unavailable there.
+You run in an isolated git worktree, on a branch of its own. Fetch `origin`, then pick the branch you commit on:
+
+- When the spec's branch does not exist locally (`git rev-parse --verify --quiet refs/heads/<branch>` prints nothing), create it from `origin/<branch>` if that exists, otherwise from `origin/main`, and commit on it.
+- When it already exists locally, do not check it out: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Move the worktree's own branch to it instead (`git reset --hard <branch>`: the worktree is fresh, and the local branch may carry commits not pushed yet), or to `origin/<branch>` when that is ahead of it (`git merge-base --is-ancestor <branch> origin/<branch>`). Commit there and name that branch in your report: the main agent fast-forwards the spec's branch to your commit.
+
+Environment variables come from the project's `.env` through mise (`[env] _.file` in `mise.toml`); never `source` or read the file yourself. A worktree has no `.env`, so credential-dependent commands are expected to be unavailable there.
 
 Read the existing workflows (`ls .github/workflows/`) and the most similar one before writing. Read `GNUmakefile` for available targets and `make` them in CI steps rather than reimplementing logic inline.
 
@@ -40,6 +45,8 @@ Fix all findings. If poutine flags an intentionally-used unverified-creator acti
 
 ## Commit and stop
 
+Commit on the branch picked in *Setup*:
+
 ```bash
 git add .github/workflows/<filename>.yml  # also tools/.poutine.yml if changed
 git commit -m "ci: add <description> workflow"
@@ -53,7 +60,7 @@ Then stop at this local commit. Do not push or start another agent: the main age
 ## Done: .github/workflows/<filename>.yml
 - Branch / Triggers / Jobs: ...
 - actionlint/poutine/semgrep/checkov: ✅/❌
-- Worktree / commit: <path> / <short sha, or none>
+- Worktree / branch / commit: <path> / <the branch you committed on> / <short sha, or none>
 - Left to the main agent: review, push, PR
 ```
 
