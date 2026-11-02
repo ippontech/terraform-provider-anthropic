@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
 	"github.com/ippontech/terraform-provider-anthropic/internal/providertest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdktest"
 )
 
 // defaultConfigJSON is the config the fake fills in on create as the
@@ -52,12 +53,27 @@ func expectEnvironment(description string, metadata map[string]string) []statech
 }
 
 // expectEnvironmentAction checks the action planned for the environment
-// before the apply, and an empty plan after the refresh that follows it.
-func expectEnvironmentAction(action plancheck.ResourceActionType) resource.ConfigPlanChecks {
+// before the apply, then runs the other pre-apply checks, and expects an
+// empty plan after the refresh that follows the apply.
+func expectEnvironmentAction(action plancheck.ResourceActionType, preApply ...plancheck.PlanCheck) resource.ConfigPlanChecks {
 	return resource.ConfigPlanChecks{
-		PreApply:             []plancheck.PlanCheck{plancheck.ExpectResourceAction(environmentAddr, action)},
+		PreApply:             append([]plancheck.PlanCheck{plancheck.ExpectResourceAction(environmentAddr, action)}, preApply...),
 		PostApplyPostRefresh: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 	}
+}
+
+// changeStoredEnvironment applies body to the one environment the fake
+// holds between the plan and the apply of a step, as an edit made outside
+// Terraform after `terraform plan -out`; metadata merges key by key.
+func changeStoredEnvironment(srv *environmentsFake, body map[string]any) plancheck.PlanCheck {
+	return providertest.ChangeAfterPlan(func() error {
+		envs := srv.environments.List(nil)
+		if len(envs) != 1 {
+			return fmt.Errorf("the fake holds %d environments, want 1", len(envs))
+		}
+		srv.environments.Update(fmt.Sprint(envs[0]["id"]), body, sdktest.PatchNullOrEmpty)
+		return nil
+	})
 }
 
 // expectStoredEnvironment checks the one environment the fake holds.
@@ -75,8 +91,8 @@ func expectStoredEnvironment(srv *environmentsFake, description any, metadata ma
 }
 
 // Removing one metadata key deletes it server-side: the update sends it as
-// null, since the API keeps omitted keys, and leaves the unchanged key out.
-// `metadata = {}` then deletes the rest and stays an empty map in state.
+// null, since the API keeps omitted keys. `metadata = {}` then deletes the
+// rest and stays an empty map in state.
 func TestEnvironmentResource_metadataKeyRemoved(t *testing.T) {
 	t.Parallel()
 	srv := newEnvironmentsFake(t)
@@ -107,7 +123,7 @@ func TestEnvironmentResource_metadataKeyRemoved(t *testing.T) {
 
 	srv.AssertCalled(routeCreateEnvironment, 1)
 	srv.AssertJSONBodies(routeUpdateEnvironment,
-		environmentUpdateBody(`"metadata":{"env":null}`),
+		environmentUpdateBody(`"metadata":{"team":"a","env":null}`),
 		environmentUpdateBody(`"metadata":{"team":null}`))
 	srv.assertRequestShape(t)
 }
@@ -127,6 +143,7 @@ func TestEnvironmentResource_descriptionAndMetadataRemoved(t *testing.T) {
 				Config:            environmentConfig("  description = \"to be removed\"\n  metadata    = { team = \"a\" }\n"),
 				ConfigPlanChecks:  expectEnvironmentAction(plancheck.ResourceActionCreate),
 				ConfigStateChecks: expectEnvironment("to be removed", map[string]string{"team": "a"}),
+				Check:             expectStoredEnvironment(srv, "to be removed", map[string]any{"team": "a"}),
 			},
 			{
 				Config:            environmentConfig(""),
@@ -138,5 +155,36 @@ func TestEnvironmentResource_descriptionAndMetadataRemoved(t *testing.T) {
 	})
 
 	srv.AssertJSONBodies(routeUpdateEnvironment, environmentUpdateBody(`"description":null,"metadata":{"team":null}`))
+	srv.assertRequestShape(t)
+}
+
+// A metadata value changed outside Terraform after the plan is reset by
+// the apply of that plan, which does not refresh first: the update resends
+// the unchanged key, where leaving it out would keep the other value and
+// fail the apply with an inconsistent result.
+func TestEnvironmentResource_metadataChangedAfterPlan(t *testing.T) {
+	t.Parallel()
+	srv := newEnvironmentsFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(srv.Server),
+		CheckDestroy:             checkEnvironmentsDeleted(srv),
+		Steps: []resource.TestStep{
+			{
+				Config:            environmentConfig("  metadata = { team = \"a\" }\n"),
+				ConfigPlanChecks:  expectEnvironmentAction(plancheck.ResourceActionCreate),
+				ConfigStateChecks: expectEnvironment("", map[string]string{"team": "a"}),
+			},
+			{
+				Config: environmentConfig("  metadata = { team = \"a\", env = \"dev\" }\n"),
+				ConfigPlanChecks: expectEnvironmentAction(plancheck.ResourceActionUpdate,
+					changeStoredEnvironment(srv, map[string]any{"metadata": map[string]any{"team": "b"}})),
+				ConfigStateChecks: expectEnvironment("", map[string]string{"team": "a", "env": "dev"}),
+				Check:             expectStoredEnvironment(srv, nil, map[string]any{"team": "a", "env": "dev"}),
+			},
+		},
+	})
+
+	srv.AssertJSONBodies(routeUpdateEnvironment, environmentUpdateBody(`"metadata":{"team":"a","env":"dev"}`))
 	srv.assertRequestShape(t)
 }
