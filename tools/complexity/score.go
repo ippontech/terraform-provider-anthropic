@@ -67,10 +67,12 @@ type function struct {
 	src []byte
 }
 
-// scoreTree scores every function declared in the files of t, generated
-// files aside. The scores are gocognit's, computed file by file as
-// golangci-lint's gocognit linter does, except that the //gocognit:ignore
-// directive is not honoured.
+// scoreTree scores every function declared in the files of t. The scores are
+// gocognit's, computed file by file as golangci-lint's gocognit linter does,
+// except that the //gocognit:ignore directive is not honoured and a file with
+// a "// Code generated ... DO NOT EDIT." header is scored like any other: the
+// repository generates no Go file, and a header anyone can add must not take
+// a file out of the ratchet.
 func scoreTree(t tree) (map[string]function, error) {
 	byKey := map[string][]function{}
 	for _, name := range slices.Sorted(maps.Keys(t)) {
@@ -114,9 +116,6 @@ func scoreFile(name string, src []byte) ([]function, error) {
 	f, err := parser.ParseFile(fset, name, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return nil, err
-	}
-	if ast.IsGenerated(f) {
-		return nil, nil
 	}
 	recursive := gocognit.RecursiveFuncs([]*ast.File{f}, nil)
 	var fns []function

@@ -5,8 +5,8 @@
 // job (`make complexity` locally).
 //
 // It scores every function declared in the non-test Go files under internal/
-// (the test-helper packages and generated files aside) twice: in the working
-// tree, and at the merge base of HEAD with -base. Then:
+// (the test-helper packages aside) twice: in the working tree, and at the
+// merge base of HEAD with -base. Then:
 //
 //   - a function that scores above -max at the merge base may change, but its
 //     score may not rise;
@@ -17,8 +17,10 @@
 //
 // Scores are gocognit's (github.com/uudashr/gocognit, the version
 // golangci-lint is built with), computed file by file as golangci-lint's
-// gocognit linter does. The //gocognit:ignore directive and //nolint
-// comments exempt nothing here.
+// gocognit linter does. The //gocognit:ignore directive, //nolint comments and
+// a "// Code generated ... DO NOT EDIT." header exempt nothing here: the
+// repository generates no Go file, and code that must stay out of the ratchet
+// goes through -exclude.
 //
 // It prints a Markdown report on stdout and exits 1 when a rule fails, 2 on a
 // usage or input error.

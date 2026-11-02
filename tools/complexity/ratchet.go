@@ -182,7 +182,7 @@ func writeReport(w io.Writer, r result, rep report) error {
 	if rep.gocognit != "" {
 		version += " " + rep.gocognit
 	}
-	fmt.Fprintf(&b, "Scope: %d functions in the non-test Go files under `%s`, outside `%s` and generated files. Scores from %s, file by file as golangci-lint computes them; `//gocognit:ignore` and `//nolint` exempt nothing here.\n",
+	fmt.Fprintf(&b, "Scope: %d functions in the non-test Go files under `%s`, outside `%s`. Scores from %s, file by file as golangci-lint computes them; `//gocognit:ignore`, `//nolint` and a `// Code generated` header exempt nothing here.\n",
 		r.checked, rep.dir, rep.exclude, version)
 	_, err := io.WriteString(w, b.String())
 	return err

@@ -97,9 +97,8 @@ func TestRunAgainstGit(t *testing.T) {
 	}
 
 	// Against HEAD itself, the merge base is the working tree's commit: the
-	// files out of scope (test, generated, testdata, sdktest, outside
-	// internal/) must be left out of the merge base too, or they would show
-	// up as gone.
+	// files out of scope (test, testdata, sdktest, outside internal/) must be
+	// left out of the merge base too, or they would show up as gone.
 	out.Reset()
 	if err := run(&out, fixtureOptions(dir, "HEAD")); err != nil {
 		t.Fatalf("run against HEAD: %v\n%s", err, out.String())
