@@ -579,3 +579,42 @@ func TestWorkspaceResourceUpdateTags(t *testing.T) {
 		})
 	}
 }
+
+// TestDataResidencyChanged: a data_residency child the plan leaves unknown is
+// not a change, so a tags-only update on AWS sends no extra request for it.
+func TestDataResidencyChanged(t *testing.T) {
+	ctx := context.Background()
+	obj := func(geos attr.Value, def attr.Value) types.Object {
+		o, diags := types.ObjectValue(workspaceDataResidencyAttrTypes, map[string]attr.Value{
+			"allowed_inference_geos": geos, "default_inference_geo": def, "workspace_geo": types.StringValue("us"),
+		})
+		if diags.HasError() {
+			t.Fatal(diags)
+		}
+		return o
+	}
+	unrestricted, _ := types.ListValueFrom(ctx, types.StringType, []string{"unrestricted"})
+	usOnly, _ := types.ListValueFrom(ctx, types.StringType, []string{"us"})
+	unknownGeos := types.ListUnknown(types.StringType)
+	state := obj(unrestricted, types.StringValue("global"))
+	tests := []struct {
+		name  string
+		plan  types.Object
+		state types.Object
+		want  bool
+	}{
+		{"children unknown in the plan", obj(unknownGeos, types.StringUnknown()), state, false},
+		{"same values", obj(unrestricted, types.StringValue("global")), state, false},
+		{"default changed", obj(unknownGeos, types.StringValue("us")), state, true},
+		{"geos changed", obj(usOnly, types.StringUnknown()), state, true},
+		{"no prior object", obj(unknownGeos, types.StringValue("us")), types.ObjectNull(workspaceDataResidencyAttrTypes), true},
+		{"plan null", types.ObjectNull(workspaceDataResidencyAttrTypes), state, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dataResidencyChanged(ctx, tc.plan, tc.state); got != tc.want {
+				t.Errorf("dataResidencyChanged = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

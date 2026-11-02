@@ -419,7 +419,7 @@ func (r *WorkspaceResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	othersChanged := !data.Name.Equal(state.Name) || body.ExternalKeyID != "" ||
-		(body.DataResidency != nil && !data.DataResidency.Equal(state.DataResidency))
+		(body.DataResidency != nil && dataResidencyChanged(ctx, data.DataResidency, state.DataResidency))
 	bodies := buildWorkspaceUpdateBodies(r.platform, body, othersChanged)
 
 	var ws *workspaceAPIResponse
@@ -459,6 +459,31 @@ func (r *WorkspaceResource) postWorkspaceUpdate(ctx context.Context, id string, 
 		return nil, "Parse Error", fmt.Sprintf("Unable to parse update workspace response: %s.", err)
 	}
 	return &ws, "", ""
+}
+
+// dataResidencyChanged reports whether the plan changes a data_residency
+// field an update can send. A child the plan leaves unknown (Optional+Computed,
+// the object only partly configured) is not a change: the update omits it.
+// workspace_geo is RequiresReplace and never reaches an update.
+func dataResidencyChanged(ctx context.Context, plan, state types.Object) bool {
+	if plan.IsNull() || plan.IsUnknown() {
+		return false
+	}
+	var p, s workspaceDataResidencyModel
+	if plan.As(ctx, &p, basetypes.ObjectAsOptions{}).HasError() {
+		return true
+	}
+	if !state.IsNull() && !state.IsUnknown() && state.As(ctx, &s, basetypes.ObjectAsOptions{}).HasError() {
+		return true
+	}
+	changed := func(planned, prior attr.Value) bool {
+		return !planned.IsNull() && !planned.IsUnknown() && (prior == nil || !planned.Equal(prior))
+	}
+	var priorGeos, priorDefault attr.Value
+	if !state.IsNull() && !state.IsUnknown() {
+		priorGeos, priorDefault = s.AllowedInferenceGeos, s.DefaultInferenceGeo
+	}
+	return changed(p.AllowedInferenceGeos, priorGeos) || changed(p.DefaultInferenceGeo, priorDefault)
 }
 
 // buildWorkspaceUpdateBodies returns the request bodies of one update, in the
