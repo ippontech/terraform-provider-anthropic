@@ -1,3 +1,9 @@
+## [1.63.8](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.7...v1.63.8) (2026-11-02)
+
+### 📚 Documentation
+
+* **license:** replace LICENSE with the official MPL-2.0 text ([#496](https://github.com/ippontech/terraform-provider-anthropic/issues/496)) ([91ce79e](https://github.com/ippontech/terraform-provider-anthropic/commit/91ce79efe769ecf204f2f86986872f61da2d6d78)), closes [#493](https://github.com/ippontech/terraform-provider-anthropic/issues/493) [#4](https://github.com/ippontech/terraform-provider-anthropic/issues/4)
+
 ## [1.63.7](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.6...v1.63.7) (2026-11-02)
 
 ### 🐛 Bug Fixes
