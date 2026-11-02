@@ -23,10 +23,10 @@ var platformBeta = map[platform.Platform]struct{ block, guide string }{
 }
 
 // addPlatformBetaWarning adds, on the platform block, the warning that the
-// platform's support is in beta: it is covered by tests against local fakes
-// only, never against the real gateway. Configure calls it once, after the
-// block configured the alias, so every alias on a cloud platform prints it once
-// per run, and a first-party alias never does.
+// platform's support is in beta: it is covered by tests against local fakes,
+// and little or not at all against the real gateway. Configure calls it once,
+// after the block configured the alias, so every alias on a cloud platform
+// prints it once per run, and a first-party alias never does.
 func addPlatformBetaWarning(diags *diag.Diagnostics, p platform.Platform) {
 	beta, ok := platformBeta[p]
 	if !ok {
@@ -35,8 +35,8 @@ func addPlatformBetaWarning(diags *diag.Diagnostics, p platform.Platform) {
 	// Each link ends its line, so that a terminal or a copy does not take
 	// trailing punctuation for part of it.
 	diags.AddAttributeWarning(path.Root(beta.block), p.DisplayName()+" support is in beta",
-		p.DisplayName()+" support in this provider is verified with offline tests only, against local fakes of "+
-			"the gateway: nothing has been tested against the real gateway yet, so requests, errors or routes may "+
+		p.DisplayName()+" support in this provider is verified with offline tests, against local fakes of the "+
+			"gateway, and has had little or no testing against the real gateway, so requests, errors or routes may "+
 			"behave differently there.\n\n"+
 			"The guide lists what remains unverified: "+beta.guide+"\n\n"+
 			"Please report what works and what does not: "+providerIssuesURL)

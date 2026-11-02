@@ -70,17 +70,15 @@ var (
 		"read-only in the Claude Console.")
 	awsNoOAuth = platform.Unavailable("Its gateway accepts no OAuth token, only AWS SigV4 or a key generated in " +
 		"the AWS Console, so Workload Identity Federation and its service accounts do not apply.")
-	awsDeployments = platform.Unverified("The platform page and the 2026-10-14 release notes list scheduled " +
-		"deployments, but the gateway's route table, which denies unlisted routes, does not list " +
-		"/v1/deployments or /v1/deployment_runs. A deployment also needs its agent's execution_identity " +
-		"to be an aws_role.")
 )
 
 func resourceRegistrations() []registration[resource.Resource] {
 	return []registration[resource.Resource]{
 		{New: agents.NewAgentResource, AWS: supported},
 		{New: apikeys.NewAPIKeyResource, AWS: awsAPIKeys},
-		{New: deployments.NewDeploymentResource, AWS: awsDeployments},
+		// Served, though the gateway's route table does not list them: verified
+		// against the real gateway on 2026-11-02 (pull request 460).
+		{New: deployments.NewDeploymentResource, AWS: supported},
 		{New: environments.NewEnvironmentResource, AWS: supported},
 		{New: federation.NewFederationIssuerResource, AWS: awsNoOAuth},
 		{New: federation.NewFederationRuleResource, AWS: awsNoOAuth},
@@ -113,7 +111,7 @@ func dataSourceRegistrations() []registration[datasource.DataSource] {
 		{New: apikeys.NewAPIKeysDataSource, AWS: awsAPIKeys},
 		{New: agents.NewAgentsDataSource, AWS: supported},
 		{New: messages.NewCountTokensDataSource, AWS: supported},
-		{New: deployments.NewDeploymentRunsDataSource, AWS: awsDeployments},
+		{New: deployments.NewDeploymentRunsDataSource, AWS: supported},
 		{New: environments.NewEnvironmentDataSource, AWS: supported},
 		{New: environments.NewEnvironmentsDataSource, AWS: supported},
 		{New: federation.NewFederationIssuersDataSource, AWS: awsNoOAuth},

@@ -176,15 +176,12 @@ Use environment variables or a secrets manager instead.
 
 Anthropic also serves the Claude API through cloud gateways, each in front of an Anthropic organization of its own: an existing organization cannot be converted, and API keys, workspaces and Console settings do not carry over. A platform block makes a provider alias manage such an organization instead of one on the Claude API. Amazon Bedrock, Claude Models on Google Cloud (Google managed, on Vertex AI) and Microsoft Foundry serve the Messages API only, with no organization to manage, so this provider does not cover them.
 
-~> **Beta.** Support for Claude Platform on AWS is in beta: it is verified with offline tests only, against a local fake gateway (requests signed and checked with the AWS SDK's own signer, URL shapes, configuration rules), never against the real gateway, and every plan or apply prints a warning saying so for each alias with an `aws` block. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
+~> **Beta.** Support for Claude Platform on AWS is in beta, and every plan or apply prints a warning saying so for each alias with an `aws` block. It is verified with offline tests, against a local fake gateway (requests signed and checked with the AWS SDK's own signer, URL shapes, configuration rules), and against the real gateway, in `eu-central-1` on 2026-11-02, with SigV4 credentials: reads, create and destroy of environments, skills, agents, messages and workspaces, and workspace tag updates. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 The main points not verified yet:
 
-- whether the gateway serves scheduled deployments, marked Unverified in the [availability table](#availability-by-platform);
-- the shape of the gateway's own errors, such as a 403 from IAM or a route it does not serve;
-- that `?beta=true`, which the SDK adds to beta routes, is accepted;
-- that the gateway canonicalizes the SigV4 signature of a path holding an encoded KMS key ARN as the AWS SDK signer does;
-- that it accepts an AWS Console key as `x-api-key`, as the SDK sends it, while the platform page documents `Authorization: Bearer`.
+- that the gateway accepts an AWS Console key as `x-api-key`, as the SDK sends it, while the platform page documents `Authorization: Bearer`;
+- attaching an AWS KMS key to a workspace (`external_key_id`): the gateway accepts the signature of a path holding an encoded key ARN, but no key was attached.
 
 ### Claude Platform on AWS (`aws`)
 
@@ -220,8 +217,6 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 |---|---|---|
 | `anthropic_api_key` | resource, data source | Unavailable |
 | `anthropic_api_keys` | data source | Unavailable |
-| `anthropic_deployment` | resource | Unverified |
-| `anthropic_deployment_runs` | data source | Unverified |
 | `anthropic_federation_issuer` | resource, data source | Unavailable |
 | `anthropic_federation_issuers` | data source | Unavailable |
 | `anthropic_federation_rule` | resource, data source | Unavailable |
@@ -245,9 +240,9 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 
 <!-- platform-availability:end -->
 
-On Claude Platform on AWS, the gateway serves only the workspace, external key and telemetry destination routes of the Admin API: AWS IAM manages organization and workspace membership, and API keys are generated in the AWS Console. It accepts no OAuth token, so Workload Identity Federation does not apply. Scheduled deployments are listed by the platform page but not by the gateway's route table, which denies unlisted routes, hence unverified; their agent also needs an `aws_role` execution identity.
+On Claude Platform on AWS, the gateway serves only the workspace, external key and telemetry destination routes of the Admin API: AWS IAM manages organization and workspace membership, and API keys are generated in the AWS Console. It accepts no OAuth token, so Workload Identity Federation does not apply. Scheduled deployments are served, though the gateway's route table does not list them; their agent needs an `aws_role` execution identity (see `anthropic_deployment`).
 
-On a platform, a `404` counts as "deleted outside Terraform" only when its body is the Claude API's own `not_found_error`. Any other 404, such as a gateway refusing a route it does not serve, fails the operation and keeps the object in state.
+On a platform, a `404` counts as "deleted outside Terraform" only when its body is the Claude API's own `not_found_error`. Any other 404, such as a gateway refusing a route it does not serve, fails the operation and keeps the object in state: on Claude Platform on AWS such a 404 has an empty body. A `403` from AWS IAM has the Claude API's error shape (`permission_error`) and names the action that was denied.
 
 ## Cost considerations
 

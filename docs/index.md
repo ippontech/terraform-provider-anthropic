@@ -176,15 +176,12 @@ Use environment variables or a secrets manager instead.
 
 Anthropic also serves the Claude API through cloud gateways, each in front of an Anthropic organization of its own: an existing organization cannot be converted, and API keys, workspaces and Console settings do not carry over. A platform block makes a provider alias manage such an organization instead of one on the Claude API. Amazon Bedrock, Claude Models on Google Cloud (Google managed, on Vertex AI) and Microsoft Foundry serve the Messages API only, with no organization to manage, so this provider does not cover them.
 
-~> **Beta.** Support for Claude Platform on AWS is in beta: it is verified with offline tests only, against a local fake gateway (requests signed and checked with the AWS SDK's own signer, URL shapes, configuration rules), never against the real gateway, and every plan or apply prints a warning saying so for each alias with an `aws` block. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
+~> **Beta.** Support for Claude Platform on AWS is in beta, and every plan or apply prints a warning saying so for each alias with an `aws` block. It is verified with offline tests, against a local fake gateway (requests signed and checked with the AWS SDK's own signer, URL shapes, configuration rules), and against the real gateway, in `eu-central-1` on 2026-11-02, with SigV4 credentials: reads, create and destroy of environments, skills, agents, messages and workspaces, and workspace tag updates. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 The main points not verified yet:
 
-- whether the gateway serves scheduled deployments, marked Unverified in the [availability table](#availability-by-platform);
-- the shape of the gateway's own errors, such as a 403 from IAM or a route it does not serve;
-- that `?beta=true`, which the SDK adds to beta routes, is accepted;
-- that the gateway canonicalizes the SigV4 signature of a path holding an encoded KMS key ARN as the AWS SDK signer does;
-- that it accepts an AWS Console key as `x-api-key`, as the SDK sends it, while the platform page documents `Authorization: Bearer`.
+- that the gateway accepts an AWS Console key as `x-api-key`, as the SDK sends it, while the platform page documents `Authorization: Bearer`;
+- attaching an AWS KMS key to a workspace (`external_key_id`): the gateway accepts the signature of a path holding an encoded key ARN, but no key was attached.
 
 ### Claude Platform on AWS (`aws`)
 
@@ -220,8 +217,6 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 |---|---|---|
 | `anthropic_api_key` | resource, data source | Unavailable |
 | `anthropic_api_keys` | data source | Unavailable |
-| `anthropic_deployment` | resource | Unverified |
-| `anthropic_deployment_runs` | data source | Unverified |
 | `anthropic_federation_issuer` | resource, data source | Unavailable |
 | `anthropic_federation_issuers` | data source | Unavailable |
 | `anthropic_federation_rule` | resource, data source | Unavailable |
@@ -245,9 +240,9 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 
 <!-- platform-availability:end -->
 
-On Claude Platform on AWS, the gateway serves only the workspace, external key and telemetry destination routes of the Admin API: AWS IAM manages organization and workspace membership, and API keys are generated in the AWS Console. It accepts no OAuth token, so Workload Identity Federation does not apply. Scheduled deployments are listed by the platform page but not by the gateway's route table, which denies unlisted routes, hence unverified; their agent also needs an `aws_role` execution identity.
+On Claude Platform on AWS, the gateway serves only the workspace, external key and telemetry destination routes of the Admin API: AWS IAM manages organization and workspace membership, and API keys are generated in the AWS Console. It accepts no OAuth token, so Workload Identity Federation does not apply. Scheduled deployments are served, though the gateway's route table does not list them; their agent needs an `aws_role` execution identity (see `anthropic_deployment`).
 
-On a platform, a `404` counts as "deleted outside Terraform" only when its body is the Claude API's own `not_found_error`. Any other 404, such as a gateway refusing a route it does not serve, fails the operation and keeps the object in state.
+On a platform, a `404` counts as "deleted outside Terraform" only when its body is the Claude API's own `not_found_error`. Any other 404, such as a gateway refusing a route it does not serve, fails the operation and keeps the object in state: on Claude Platform on AWS such a 404 has an empty body. A `403` from AWS IAM has the Claude API's error shape (`permission_error`) and names the action that was denied.
 
 ## Cost considerations
 
@@ -280,7 +275,7 @@ provider "anthropic" {}
 - `admin_api_key` (String, Sensitive) The key for the Admin API's organization management endpoints (workspaces and their members, workspace rate limits, API keys, the organization, organization members and invites): a Claude Console Admin API key (`sk-ant-admin01-...`), a Claude Enterprise Admin API key with scopes (`sk-ant-api01-...`, members and invites only), or a personal or service account key not scoped to a workspace. Sent in the `x-api-key` header. Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.
 - `api_key` (String, Sensitive) The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.
 - `auth_token` (String, Sensitive) An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, such as the Workload Identity Federation admin endpoints. Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.
-- `aws` (Attributes) **Beta.** Reach Claude Platform on AWS instead of the Claude API: the provider alias then manages the Anthropic organization tied to an AWS account, through the aws-external-anthropic gateway of one AWS region. Setting the block is what selects the platform; the AWS and ANTHROPIC_AWS_* environment variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token and federation, and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL variables are ignored: no first-party credential is valid there. workspace_id is required. Requests are signed with AWS SigV4 (service aws-external-anthropic), with credentials from access_key/secret_key, profile or the AWS default chain, unless api_key is set. Resources the gateway does not serve fail at plan time. Support for this platform is verified with offline tests only, and the provider prints a warning saying so. (see [below for nested schema](#nestedatt--aws))
+- `aws` (Attributes) **Beta.** Reach Claude Platform on AWS instead of the Claude API: the provider alias then manages the Anthropic organization tied to an AWS account, through the aws-external-anthropic gateway of one AWS region. Setting the block is what selects the platform; the AWS and ANTHROPIC_AWS_* environment variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token and federation, and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL variables are ignored: no first-party credential is valid there. workspace_id is required. Requests are signed with AWS SigV4 (service aws-external-anthropic), with credentials from access_key/secret_key, profile or the AWS default chain, unless api_key is set. Resources the gateway does not serve fail at plan time. Support for this platform is in beta, verified mostly with offline tests, and the provider prints a warning saying so. (see [below for nested schema](#nestedatt--aws))
 - `federation` (Attributes) Obtain the org:admin OAuth bearer token through Workload Identity Federation instead of `auth_token`. The provider exchanges an identity token from your platform (a CI OIDC token, a Kubernetes projected service account token, an Entra token...) for an Anthropic access token, and exchanges again before it expires, fetching a fresh identity token each time. Every attribute falls back to the environment variable the Anthropic SDKs read. Conflicts with `auth_token`; an exported ANTHROPIC_AUTH_TOKEN is ignored, with a warning. Give the federation rule a `token_lifetime_seconds` well above 120: the SDK refreshes within the last 120 seconds of a token's life, so a shorter lifetime refreshes, and fetches an identity token, on nearly every request. (see [below for nested schema](#nestedatt--federation))
 - `workspace_id` (String) Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header on every request of the standard client. Required with a personal or service account key that is not scoped to a single workspace; must be left unset with a single-workspace key, which the API rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only. With the aws block: required, sent on every request except the Admin API ones, and read from ANTHROPIC_AWS_WORKSPACE_ID when unset.
 

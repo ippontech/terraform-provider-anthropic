@@ -146,7 +146,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 			if want := tftypes.NewAttributePath().WithAttributeName(alias.block); !w.Attribute.Equal(want) {
 				t.Errorf("attribute = %v, want %v", w.Attribute, want)
 			}
-			for _, part := range []string{"verified with offline tests only", "report what works and what does not"} {
+			for _, part := range []string{"verified with offline tests", "little or no testing against the real gateway", "report what works and what does not"} {
 				if !strings.Contains(w.Detail, part) {
 					t.Errorf("detail %q lacks %q", w.Detail, part)
 				}
