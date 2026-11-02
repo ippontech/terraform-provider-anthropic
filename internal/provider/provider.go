@@ -213,8 +213,15 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	// The gate reads the configuration, as the federation check above does:
 	// an auth_token unknown at plan time is still configured.
 	var cliConfig *config.Config
-	if !data.CLI.IsNull() && data.AuthToken.IsNull() && authToken != "" {
-		tflog.Info(ctx, "cli block not used: ANTHROPIC_AUTH_TOKEN is set and supplies the org:admin bearer token")
+	if !data.CLI.IsNull() {
+		switch {
+		case !data.AuthToken.IsNull():
+			tflog.Info(ctx, "cli block not used: auth_token supplies the org:admin bearer token")
+		case federation != nil:
+			tflog.Info(ctx, "cli block not used: the federation block supplies the org:admin bearer token")
+		case authToken != "":
+			tflog.Info(ctx, "cli block not used: ANTHROPIC_AUTH_TOKEN is set and supplies the org:admin bearer token")
+		}
 	}
 	if data.AuthToken.IsNull() && authToken == "" && federation == nil {
 		cliConfig, diags = resolveCLI(ctx, data.CLI)
