@@ -1,6 +1,6 @@
 # gitleaks configuration: the default rules, plus one for Claude Enterprise
 # scoped keys. Read by the gitleaks workflow (.github/workflows/gitleaks.yml)
-# and the pre-commit hook.
+# and the pre-commit hooks.
 #
 # A deliberate fake secret in a test (a truncated PEM block, for example)
 # takes an inline `gitleaks:allow` comment on its line, in the commit that
