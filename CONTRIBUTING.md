@@ -56,7 +56,7 @@ Alternatively, `make terraform-test` auto-generates a project-local `.dev.tfrc` 
 
 ### Set your credentials
 
-The provider accepts three credentials:
+The provider accepts three credentials. For development and the tests, export the two API keys:
 
 ```bash
 # Standard API key: most resources and data sources (agents, environments, skills, vaults, files, ...)
@@ -64,19 +64,15 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Admin API key: organization endpoints (workspaces and their members, API keys, invites, organization members)
 export ANTHROPIC_ADMIN_API_KEY="sk-ant-admin-..."
-
-# OAuth bearer token with the org:admin scope: Workload Identity Federation endpoints
-# (service accounts, federation issuers and rules), which reject API keys
-export ANTHROPIC_AUTH_TOKEN="..."
 ```
 
-At least one must be set, and they can be combined. The provider can also obtain the OAuth token itself through its `federation` block, which conflicts with `auth_token` (see `docs/index.md`).
+The third is an OAuth bearer token with the `org:admin` scope (`auth_token`, or `ANTHROPIC_AUTH_TOKEN`), required by the Workload Identity Federation endpoints (service accounts, federation issuers and rules), which reject API keys. The provider can also obtain it itself through its `federation` block, which conflicts with `auth_token` (see `docs/index.md`). At least one credential must be set, and they can be combined.
 
-Leave `ANTHROPIC_AUTH_TOKEN` unset when you run acceptance tests: the OAuth-gated tests create federation objects and service accounts that can only be archived, never deleted, and there is no dedicated test organization for them yet (#58, #137).
+Do not export `ANTHROPIC_AUTH_TOKEN` in your shell or keep it in `.env`. Set it only for the one manual provider run that needs it (`ANTHROPIC_AUTH_TOKEN="..." terraform plan`). Whenever the variable is set, `make testacc` runs the OAuth-gated acceptance tests, which create federation issuers, rules and service accounts that can only be archived, never deleted, and there is no dedicated test organization for them yet (#58, #137).
 
 > **Test isolation.** Acceptance and Terraform native tests create real resources. Use an `ANTHROPIC_API_KEY` scoped to a **dedicated, non-production workspace** so test resources never land in a production workspace. This project uses a workspace named `terraform-tests`: standard-API resources (vaults, agents, environments, skills, ...) are created there via the key's scope, and the Admin API read-only data source tests target the same workspace by its ID (exposed as `acctest.TerraformTestsWorkspaceID`).
 
-A `.env` file at the project root (gitignored) can hold these keys and other machine-specific values. `mise.toml` declares it under `[env] _.file = ".env"`, so [mise](https://mise.jdx.dev/environments/) exports its variables automatically when you enter the directory; nothing to source by hand.
+A `.env` file at the project root (gitignored) can hold the two API keys and other machine-specific values, but not `ANTHROPIC_AUTH_TOKEN`. `mise.toml` declares it under `[env] _.file = ".env"`, so [mise](https://mise.jdx.dev/environments/) exports its variables automatically when you enter the directory; nothing to source by hand.
 
 ### Run unit tests
 
@@ -89,10 +85,10 @@ make test
 Go acceptance tests run against the live Anthropic API:
 
 ```bash
-TF_ACC=1 make testacc
+env -u ANTHROPIC_AUTH_TOKEN TF_ACC=1 make testacc
 ```
 
-Requires `ANTHROPIC_API_KEY` to be set.
+Requires `ANTHROPIC_API_KEY` to be set. `env -u` keeps an `ANTHROPIC_AUTH_TOKEN` exported anyway out of the run, so the OAuth-gated tests skip (see [Set your credentials](#set-your-credentials)).
 
 ### Run Terraform native tests
 
