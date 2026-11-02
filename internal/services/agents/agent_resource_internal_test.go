@@ -525,6 +525,11 @@ func TestMapToolConfigsToState_skipsUntrackedDefaults(t *testing.T) {
 		builtinAPIToolConfig(t, `{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_ask"}}`),
 		builtinAPIToolConfig(t, `{"type":"grep","name":"grep","enabled":false,"permission_policy":{"type":"always_allow"}}`),
 	}
+	// Equal to the defaults in enabled and permission_policy, but restricting
+	// the tool: a web option has no inherited default, so the config is reported.
+	webOption := builtinAPIToolConfig(t, `{"type":"web_search","name":"web_search","enabled":true,"permission_policy":{"type":"always_allow"},"blocked_domains":["ads.example.com"]}`)
+	// The same tool with no web option set changes nothing and stays skipped.
+	webNoOption := builtinAPIToolConfig(t, `{"type":"web_search","name":"web_search","enabled":true,"permission_policy":{"type":"always_allow"},"allowed_domains":[]}`)
 	tests := []struct {
 		name    string
 		current types.List
@@ -541,6 +546,17 @@ func TestMapToolConfigsToState_skipsUntrackedDefaults(t *testing.T) {
 			current: types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}),
 			api:     append(append([]apiToolConfig{}, echoed...), overrides...),
 			want:    []string{"web_fetch", "grep"},
+		},
+		{
+			name:    "no configs block, a web option set on a tool at the defaults",
+			current: types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}),
+			api:     append(append([]apiToolConfig{}, echoed...), webOption),
+			want:    []string{"web_search"},
+		},
+		{
+			name:    "no configs block, a web tool at the defaults with an empty domain list",
+			current: types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}),
+			api:     append(append([]apiToolConfig{}, echoed...), webNoOption),
 		},
 		{
 			name: "tracked config, defaults listed for other tools",

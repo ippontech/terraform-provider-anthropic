@@ -1298,6 +1298,19 @@ type apiToolConfig struct {
 	extra            map[string]attr.Value
 }
 
+// setsExtra reports whether the config sets one of its kind's extra
+// attributes (the web options of web_fetch and web_search). They have no
+// inherited default, and an unset one maps to null, so a non-null value is a
+// setting of its own.
+func (c apiToolConfig) setsExtra() bool {
+	for _, v := range c.extra {
+		if !v.IsNull() {
+			return true
+		}
+	}
+	return false
+}
+
 // values returns the attribute values of the config object, with `enabled`
 // and `permission_policy` as resolved by the caller.
 func (c apiToolConfig) values(enabled types.Bool, permissionPolicy types.String) map[string]attr.Value {
@@ -1351,8 +1364,10 @@ func trackedToolConfigs(current types.List) []trackedToolConfig {
 //     the API no longer returns is omitted, so it is re-created on apply;
 //   - configs the API returns for any other tool are appended in API order,
 //     except one whose `enabled` and `permission_policy` both equal the toolset
-//     defaults: it changes nothing, and if the API lists such configs for tools
-//     never configured, reporting them would leave a diff that never clears;
+//     defaults and that sets none of its kind's extra attributes (setsExtra): it
+//     changes nothing, and if the API lists such configs for tools never
+//     configured, reporting them would leave a diff that never clears. A web
+//     option has no inherited default, so a config that sets one is reported;
 //   - a field the configuration left unset stays null only while the API value
 //     equals the toolset default it inherits (the docs: per-tool configs
 //     override `default_config`), so an echoed default causes no perpetual diff
@@ -1414,7 +1429,7 @@ func mapToolConfigsToState(current types.List, apiConfigs []apiToolConfig, defau
 	}
 
 	for _, c := range apiConfigs {
-		isDefault := c.enabled == defaultEnabled && c.permissionPolicy == defaultPolicy
+		isDefault := c.enabled == defaultEnabled && c.permissionPolicy == defaultPolicy && !c.setsExtra()
 		if mode == applyMapping || tracked[c.name] || (isDefault && mode == readMapping) {
 			continue
 		}
