@@ -103,7 +103,7 @@ Read-Only:
 
 - `client_tool_results` (Attributes) Which custom tools' results contribute URLs that may be fetched, null when every one does. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources--client_tool_results))
 - `server_tool_results` (Attributes) Which `web_search` and `web_fetch` results contribute URLs that may be fetched, null when every one does. (see [below for nested schema](#nestedatt--agents--agent_toolset--configs--url_sources--server_tool_results))
-- `user_input` (String) Whether URLs in user messages may be fetched: `all` or `none`, null when unset.
+- `user_input` (String) `none` when URLs in user messages may not be fetched, null when they may (`all`, the default).
 
 <a id="nestedatt--agents--agent_toolset--configs--url_sources--client_tool_results"></a>
 ### Nested Schema for `agents.agent_toolset.configs.url_sources.client_tool_results`
@@ -111,7 +111,7 @@ Read-Only:
 Read-Only:
 
 - `tools` (Set of String) Tool names of an `only` or `except` filter.
-- `type` (String) `all`, `none`, `only` or `except`.
+- `type` (String) `none`, `only` or `except` (`all`, the default, makes the filter null).
 
 
 <a id="nestedatt--agents--agent_toolset--configs--url_sources--server_tool_results"></a>
@@ -120,7 +120,7 @@ Read-Only:
 Read-Only:
 
 - `tools` (Set of String) Tool names of an `only` or `except` filter.
-- `type` (String) `all`, `none`, `only` or `except`.
+- `type` (String) `none`, `only` or `except` (`all`, the default, makes the filter null).
 
 
 

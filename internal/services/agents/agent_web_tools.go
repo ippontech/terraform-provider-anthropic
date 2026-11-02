@@ -168,7 +168,7 @@ func urlSourcesDataSourceSchema() dsschema.SingleNestedAttribute {
 			Computed:            true,
 			MarkdownDescription: "Which " + source + " contribute URLs that may be fetched, null when every one does.",
 			Attributes: map[string]dsschema.Attribute{
-				"type":  dsschema.StringAttribute{Computed: true, MarkdownDescription: "`all`, `none`, `only` or `except`."},
+				"type":  dsschema.StringAttribute{Computed: true, MarkdownDescription: "`none`, `only` or `except` (`all`, the default, makes the filter null)."},
 				"tools": dsschema.SetAttribute{Computed: true, ElementType: types.StringType, MarkdownDescription: "Tool names of an `only` or `except` filter."},
 			},
 		}
@@ -177,7 +177,7 @@ func urlSourcesDataSourceSchema() dsschema.SingleNestedAttribute {
 		Computed:            true,
 		MarkdownDescription: "Which sources may contribute the URLs `web_fetch` fetches, null when every source may.",
 		Attributes: map[string]dsschema.Attribute{
-			"user_input":          dsschema.StringAttribute{Computed: true, MarkdownDescription: "Whether URLs in user messages may be fetched: `all` or `none`, null when unset."},
+			"user_input":          dsschema.StringAttribute{Computed: true, MarkdownDescription: "`none` when URLs in user messages may not be fetched, null when they may (`all`, the default)."},
 			"client_tool_results": filter("custom tools' results"),
 			"server_tool_results": filter("`web_search` and `web_fetch` results"),
 		},
@@ -556,11 +556,13 @@ func urlSourceFilterParamFromModel(ctx context.Context, key string, obj types.Ob
 // --- Response -> state ---
 
 // webToolOptionsFromResponse maps the web options of a built-in tool config
-// verbatim. The API documents no default for them (an unset domain list means
-// no restriction, and an unset max_content_tokens or user_location is taken
-// from the calling agent when a session runs): an unset option comes back
-// absent or null and maps to null, so unlike `enabled` and `permission_policy`
-// no comparison with an inherited default is needed to avoid a perpetual diff,
+// verbatim, except that the url_sources keys at their documented default map
+// to null (urlSourcesFromResponse). No other option has a documented default
+// (an unset domain list means no restriction, and an unset max_content_tokens
+// or user_location is taken from the calling agent when a session runs): an
+// unset option comes back absent or null and maps to null, so unlike `enabled`
+// and `permission_policy` no comparison with an inherited default is needed to
+// avoid a perpetual diff,
 // and a value set out of band surfaces as drift. As for `enabled`,
 // TestAccAgentResource_withAgentToolset checks that echo live, for every
 // option. A user_location with no field set (`{"type": "approximate"}` alone)
@@ -624,7 +626,9 @@ func webToolOptionsFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnio
 //     entries normalized;
 //   - with applyMapping, an option current leaves null stays null, and so does
 //     a user_location field: a default the API resolved for it would otherwise
-//     fail the apply as an inconsistent result. It shows on the next Read.
+//     fail the apply as an inconsistent result. It shows on the next Read;
+//   - url_sources is resolved key by key (urlSourcesToState), in both modes: a
+//     key current sets to `all` stays so while the API answers the default.
 //
 // Any other API value is kept, so a change made outside Terraform shows as
 // drift on Read.
@@ -641,6 +645,8 @@ func webToolOptionsToState(current, api map[string]attr.Value, mode mappingMode)
 			resolved[option] = domainSetToState(cur, apiValue)
 		case option == "user_location" && mode == applyMapping:
 			resolved[option] = userLocationToState(cur, apiValue)
+		case option == "url_sources":
+			resolved[option] = urlSourcesToState(cur, apiValue, mode)
 		default:
 			resolved[option] = apiValue
 		}
@@ -707,10 +713,15 @@ func userLocationToState(current, api attr.Value) attr.Value {
 	return obj
 }
 
-// urlSourcesFromResponse maps `url_sources` verbatim. The API answers in the
-// object form ({"type": ...}) and null for an unset key or object; a key given
-// in the string shorthand ("all"/"none") is read as well, so it never maps to
-// null by accident.
+// urlSourcesFromResponse maps `url_sources`. The API answers in the object
+// form ({"type": ...}); a key given in the string shorthand ("all"/"none") is
+// read as well. Every key defaults to `all` (web fetch tool docs, "URL
+// sources"), so a key at `all` maps to null like an absent or null one, and an
+// object left with no key maps to null, as an empty domain list does: whether
+// the API echoes the default or omits it, an unset key reads back unset, and an
+// untracked config that only carries defaults sets nothing (setsExtra). Any
+// other value is kept, so a source narrowed out of band shows as drift.
+// urlSourcesToState keeps a configured `all`.
 func urlSourcesFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnion) (types.Object, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if !c.JSON.URLSources.Valid() {
@@ -738,27 +749,89 @@ func urlSourcesFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnion) (
 		return obj
 	}
 
-	obj, d := types.ObjectValue(agentURLSourcesAttrTypes, map[string]attr.Value{
+	keys := map[string]attr.Value{
 		"user_input":          urlSourceType(src.UserInput.Type, src.JSON.UserInput),
 		"client_tool_results": filter(src.ClientToolResults, src.JSON.ClientToolResults),
 		"server_tool_results": filter(src.ServerToolResults, src.JSON.ServerToolResults),
-	})
+	}
+	obj, d := urlSourcesObject(keys)
 	diags.Append(d...)
 	return obj, diags
 }
 
+// urlSourcesObject builds a url_sources object from its keys, or null when no
+// key is set.
+func urlSourcesObject(keys map[string]attr.Value) (types.Object, diag.Diagnostics) {
+	for _, v := range keys {
+		if !v.IsNull() {
+			return types.ObjectValue(agentURLSourcesAttrTypes, keys)
+		}
+	}
+	return types.ObjectNull(agentURLSourcesAttrTypes), nil
+}
+
 // urlSourceType returns the type of a url_sources key: the decoded object's
-// `type`, the string itself when the key came in the shorthand form, or null
-// when the key is absent or null.
+// `type` or the string itself when the key came in the shorthand form, and
+// null when the key is absent, null or `all`, the default of every key.
 func urlSourceType(decoded string, field respjson.Field) types.String {
+	var typ string
 	if field.Valid() && decoded != "" {
-		return types.StringValue(decoded)
+		typ = decoded
+	} else if raw := field.Raw(); raw != "" && json.Unmarshal([]byte(raw), &typ) != nil {
+		typ = ""
 	}
-	var shorthand string
-	if raw := field.Raw(); raw != "" && json.Unmarshal([]byte(raw), &shorthand) == nil && shorthand != "" {
-		return types.StringValue(shorthand)
+	if typ == "" || typ == urlSourceAll {
+		return types.StringNull()
 	}
-	return types.StringNull()
+	return types.StringValue(typ)
+}
+
+// urlSourcesToState resolves the url_sources the API returns (its keys at the
+// default already null) against current's, key by key:
+//   - a key current sets to `all` keeps it while the API answers the default,
+//     whether it echoes `all` or omits the key;
+//   - with applyMapping, a key current leaves null stays null, as a
+//     user_location field does;
+//   - any other key takes the API value, so a source changed out of band
+//     shows as drift on Read.
+func urlSourcesToState(current, api attr.Value, mode mappingMode) attr.Value {
+	cur, okCur := current.(types.Object)
+	got, okAPI := api.(types.Object)
+	if !okCur || !okAPI || cur.IsNull() {
+		return api
+	}
+	keys := map[string]attr.Value{
+		"user_input":          types.StringNull(),
+		"client_tool_results": types.ObjectNull(agentURLSourceFilterAttrTypes),
+		"server_tool_results": types.ObjectNull(agentURLSourceFilterAttrTypes),
+	}
+	maps.Copy(keys, got.Attributes())
+	for key, apiKey := range keys {
+		curKey, ok := cur.Attributes()[key]
+		if !ok || curKey.IsUnknown() {
+			continue
+		}
+		if (curKey.IsNull() && mode == applyMapping) || (apiKey.IsNull() && urlSourceIsAll(curKey)) {
+			keys[key] = curKey
+		}
+	}
+	obj, diags := urlSourcesObject(keys)
+	if diags.HasError() {
+		return api
+	}
+	return obj
+}
+
+// urlSourceIsAll reports whether a url_sources key holds `all`.
+func urlSourceIsAll(v attr.Value) bool {
+	switch v := v.(type) {
+	case types.String:
+		return v.ValueString() == urlSourceAll
+	case types.Object:
+		typ, _ := v.Attributes()["type"].(types.String)
+		return typ.ValueString() == urlSourceAll
+	}
+	return false
 }
 
 // apiAgentToolConfig converts a built-in tool config from the API into the

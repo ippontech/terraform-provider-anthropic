@@ -274,7 +274,7 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 				),
 			},
 			// url_sources, with an explicit `all`: the post-apply plan must be
-			// empty, i.e. the API echoes every key in the form that was sent.
+			// empty, whether the API echoes the default or omits the key.
 			{
 				Config: testAccAgentResourceWithURLSourcesConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(

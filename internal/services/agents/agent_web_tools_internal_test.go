@@ -492,9 +492,10 @@ func TestMapAgentToolsetToState_webOptions(t *testing.T) {
 	}
 }
 
-// url_sources is read verbatim: the object form the API answers in maps back
-// to the configured value (tools are a set), a null or absent key stays null,
-// the string shorthand is read too, and a value set out of band surfaces.
+// url_sources is read as the API answers it: the object form maps back to the
+// configured value (tools are a set), a null, absent or default (`all`) key
+// stays null, the string shorthand is read too, and a value set out of band
+// surfaces.
 func TestMapAgentToolsetToState_urlSources(t *testing.T) {
 	t.Parallel()
 
@@ -518,12 +519,17 @@ func TestMapAgentToolsetToState_urlSources(t *testing.T) {
 			name: "shorthand keys",
 			sources: `{"user_input":"none","client_tool_results":{"type":"except","tools":[` +
 				`{"type":"tool_reference","name":"run_code"},{"type":"tool_reference","name":"shell"}]},"server_tool_results":"all"}`,
-			want: urlSources(types.StringValue("none"), urlFilter("except", "run_code", "shell"), urlFilter("all")),
+			want: configured,
 		},
 		{
 			name:    "out-of-band filter",
-			sources: `{"user_input":{"type":"none"},"client_tool_results":{"type":"all"}}`,
-			want:    urlSources(types.StringValue("none"), urlFilter("all"), noURLFilter),
+			sources: `{"user_input":{"type":"none"},"client_tool_results":{"type":"only","tools":[{"type":"tool_reference","name":"run_code"}]}}`,
+			want:    urlSources(types.StringValue("none"), urlFilter("only", "run_code"), noURLFilter),
+		},
+		{
+			name:    "filter widened out of band",
+			sources: `{"user_input":{"type":"none"},"client_tool_results":{"type":"all"},"server_tool_results":{"type":"all"}}`,
+			want:    urlSources(types.StringValue("none"), noURLFilter, noURLFilter),
 		},
 		{
 			name:    "removed out of band",
@@ -553,7 +559,7 @@ func TestMapAgentToolsetToState_urlSources(t *testing.T) {
 	agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
 		"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},
 		"configs":[{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_allow"},
-			"url_sources":{"user_input":null,"client_tool_results":{"type":"none"},"server_tool_results":{"type":"only","tools":[{"type":"tool_reference","name":"web_search"}]}}}]}]`)
+			"url_sources":{"user_input":{"type":"all"},"client_tool_results":{"type":"none"},"server_tool_results":{"type":"only","tools":[{"type":"tool_reference","name":"web_search"}]}}}]}]`)
 	var ds AgentDataSourceModel
 	if diags := mapAgentResponseToDataSource(agent, &ds); diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
@@ -562,6 +568,126 @@ func TestMapAgentToolsetToState_urlSources(t *testing.T) {
 	want := urlSources(types.StringNull(), urlFilter("none"), urlFilter("only", "web_search"))
 	if len(got) != 1 || !got[0].URLSources.Equal(want) {
 		t.Errorf("data source url_sources = %v, want %v", got, want)
+	}
+}
+
+// Every url_sources key defaults to `all`, and the API may answer that default
+// for a key the configuration leaves unset, or omit a key configured as `all`.
+// Create and Update must store the plan either way, or Terraform fails the
+// apply with "Provider produced inconsistent result after apply", and Read
+// must plan no change. A source narrowed out of band still shows on Read.
+func TestAgentResource_urlSourcesDefaults(t *testing.T) {
+	t.Parallel()
+
+	exampleSources := urlSources(types.StringNull(), urlFilter("none"), urlFilter("only", "web_search"))
+	tests := []struct {
+		name     string
+		planned  types.Object
+		sources  string
+		wantRead types.Object
+	}{
+		{
+			name:     "unset key answered as all",
+			planned:  exampleSources,
+			sources:  `{"user_input":{"type":"all"},"client_tool_results":{"type":"none"},"server_tool_results":{"type":"only","tools":[{"type":"tool_reference","name":"web_search"}]}}`,
+			wantRead: exampleSources,
+		},
+		{
+			name:     "unset key answered in the shorthand",
+			planned:  exampleSources,
+			sources:  `{"user_input":"all","client_tool_results":"none","server_tool_results":{"type":"only","tools":[{"type":"tool_reference","name":"web_search"}]}}`,
+			wantRead: exampleSources,
+		},
+		{
+			name:     "explicit all omitted",
+			planned:  urlSources(types.StringValue("all"), urlFilter("none"), urlFilter("all")),
+			sources:  `{"client_tool_results":{"type":"none"}}`,
+			wantRead: urlSources(types.StringValue("all"), urlFilter("none"), urlFilter("all")),
+		},
+		{
+			name:     "explicit all echoed",
+			planned:  urlSources(types.StringValue("all"), urlFilter("none"), urlFilter("all")),
+			sources:  `{"user_input":{"type":"all"},"client_tool_results":{"type":"none"},"server_tool_results":{"type":"all"}}`,
+			wantRead: urlSources(types.StringValue("all"), urlFilter("none"), urlFilter("all")),
+		},
+		{
+			name:     "unset object answered with defaults",
+			planned:  types.ObjectNull(agentURLSourcesAttrTypes),
+			sources:  `{"user_input":{"type":"all"},"client_tool_results":{"type":"all"},"server_tool_results":null}`,
+			wantRead: types.ObjectNull(agentURLSourcesAttrTypes),
+		},
+		{
+			name:     "unset object answered empty",
+			planned:  types.ObjectNull(agentURLSourcesAttrTypes),
+			sources:  `{}`,
+			wantRead: types.ObjectNull(agentURLSourcesAttrTypes),
+		},
+		{
+			name:     "unset object narrowed out of band",
+			planned:  types.ObjectNull(agentURLSourcesAttrTypes),
+			sources:  `{"user_input":{"type":"all"},"client_tool_results":{"type":"none"}}`,
+			wantRead: urlSources(types.StringNull(), urlFilter("none"), noURLFilter),
+		},
+		{
+			name:     "unset key narrowed out of band",
+			planned:  exampleSources,
+			sources:  `{"user_input":{"type":"none"},"client_tool_results":{"type":"none"},"server_tool_results":{"type":"only","tools":[{"type":"tool_reference","name":"web_search"}]}}`,
+			wantRead: urlSources(types.StringValue("none"), urlFilter("none"), urlFilter("only", "web_search")),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fetch := toolCfg("web_fetch")
+			fetch.URLSources = tc.planned
+			toolset, diags := types.ObjectValue(agentToolsetAttrTypes, map[string]attr.Value{
+				"default_enabled":           types.BoolValue(true),
+				"default_permission_policy": types.StringValue("always_ask"),
+				"configs": types.ListValueMust(types.ObjectType{AttrTypes: agentToolConfigAttrTypes},
+					[]attr.Value{toolCfgObj(t, fetch)}),
+			})
+			if diags.HasError() {
+				t.Fatalf("build agent_toolset: %+v", diags)
+			}
+			agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+				"default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}},
+				"configs":[{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_ask"},
+					"url_sources":`+tc.sources+`}]}]`)
+			planned := plannedAgent(agent, toolset, types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}))
+			created, updated, read := applyAndRead(t, agentServer(t, agent), agent, planned)
+
+			for step, data := range map[string]AgentResourceModel{"create": created, "update": updated} {
+				if !data.AgentToolset.Equal(planned.AgentToolset) {
+					t.Errorf("%s: agent_toolset = %s\nplanned:        %s", step, data.AgentToolset, planned.AgentToolset)
+				}
+			}
+			got := agentToolConfigsFromToolset(t, read.AgentToolset)
+			if len(got) != 1 || !got[0].URLSources.Equal(tc.wantRead) {
+				t.Errorf("read: url_sources = %v, want %v", got, tc.wantRead)
+			}
+		})
+	}
+}
+
+// A web_fetch config the configuration does not list, whose url_sources only
+// holds defaults, sets nothing: Read does not report it.
+func TestMapAgentToolsetToState_untrackedDefaultURLSources(t *testing.T) {
+	t.Parallel()
+
+	bash := toolCfg("bash")
+	bash.Enabled = types.BoolValue(false)
+	agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+		"default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}},
+		"configs":[
+			{"type":"bash","name":"bash","enabled":false,"permission_policy":{"type":"always_ask"}},
+			{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_ask"},
+			 "url_sources":{"user_input":{"type":"all"},"client_tool_results":{"type":"all"},"server_tool_results":"all"}}]}]`)
+	data := AgentResourceModel{AgentToolset: agentToolsetObj(t, toolCfgObj(t, bash))}
+	if diags := mapAgentResponseToState(context.Background(), agent, &data, readMapping); diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	if got := agentToolConfigsFromToolset(t, data.AgentToolset); len(got) != 1 {
+		t.Errorf("got %d configs, want only the tracked one: %+v", len(got), got)
 	}
 }
 
