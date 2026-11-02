@@ -35,6 +35,8 @@ GitHub opens a PR only once a branch has a commit, so tell the user: "Branches a
 
 When the agents report back, run the `provider-reviewer` agent on each branch, fix what it finds, and ask the user before pushing; `/ship` then pushes each branch and opens its PR.
 
+An agent rerun on a branch that already existed locally commits on its worktree's own branch and names it in its report: fast-forward the spec's branch to that commit (`git merge --ff-only <commit>` where the spec's branch is checked out) before pushing.
+
 ## Example
 
 Plan approved for `anthropic_environment` (resource) and `anthropic_environments` (data source): create two issues and the branches `feat/environment-resource` and `feat/environments-data-source` in one message, report the table, then launch two `provider-implementer` agents in parallel with their issue bodies.
