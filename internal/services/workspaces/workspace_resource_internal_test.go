@@ -404,9 +404,9 @@ func TestBuildWorkspaceUpdateBodies(t *testing.T) {
 
 // fakeWorkspaceGateway serves one workspace and applies the updates it
 // accepts, merging tags as the API does (a null value removes the key). Like
-// the Claude Platform on AWS gateway (2026-11-02), it rejects an empty tags
-// object, and with rejectCombinedTags, tags combined with another field; with
-// failTags it rejects every tags change.
+// the Claude Platform on AWS gateway, it rejects an empty tags object, and
+// with rejectCombinedTags, tags combined with another field; with failTags it
+// rejects every tags change.
 type fakeWorkspaceGateway struct {
 	t                  *testing.T
 	rejectCombinedTags bool

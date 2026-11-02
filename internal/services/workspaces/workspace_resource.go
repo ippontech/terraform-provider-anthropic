@@ -467,11 +467,10 @@ func (r *WorkspaceResource) postWorkspaceUpdate(ctx context.Context, id string, 
 // changed.
 //
 // The Claude Platform on AWS gateway rejects tags combined with any other
-// field ("'tags' must not be combined with other fields", seen against the
-// real gateway on 2026-11-02) and accepts a tags-only request. There, a tags
-// change goes in a request of its own, after one with the other fields, which
-// is sent only when one of them changed. An update without a tags change is
-// sent as on the Claude API.
+// field ("'tags' must not be combined with other fields") and accepts a
+// tags-only request. There, a tags change goes in a request of its own, after
+// one with the other fields, which is sent only when one of them changed. An
+// update without a tags change is sent as on the Claude API.
 func buildWorkspaceUpdateBodies(p platform.Platform, body workspaceUpdateRequest, othersChanged bool) []any {
 	if p != platform.AWS || body.Tags == nil {
 		return []any{body}

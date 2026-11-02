@@ -24,7 +24,7 @@ On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claud
 
 ## Claude Platform on AWS
 
-The gateway serves `/v1/deployments`, although its [route table](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) does not list it (verified against the real gateway on 2026-11-02).
+The gateway serves `/v1/deployments`, although its [route table](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) does not list it.
 
 There, each run creates its session as an IAM role of your AWS account ([scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)). Creating a deployment for an agent whose execution identity is not an `aws_role` fails with a 400: `On Claude Platform on AWS a deployment runs as the agent's AWS role. This agent has no execution_identity of type aws_role, so the deployment could never run.` The role's trust policy must let the `aws-external-anthropic.amazonaws.com` service principal call `sts:AssumeRole` and `sts:SetSourceIdentity`, the role needs `aws-external-anthropic:CreateSession`, `sts:GetWebIdentityToken` and `sts:TagGetWebIdentityToken`, and whoever sets the role on the agent needs `iam:PassRole` on it, in the same account. Set it in the agent's `execution_identity` (see `anthropic_agent`).
 

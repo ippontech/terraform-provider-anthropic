@@ -176,12 +176,7 @@ Use environment variables or a secrets manager instead.
 
 Anthropic also serves the Claude API through cloud gateways, each in front of an Anthropic organization of its own: an existing organization cannot be converted, and API keys, workspaces and Console settings do not carry over. A platform block makes a provider alias manage such an organization instead of one on the Claude API. Amazon Bedrock, Claude Models on Google Cloud (Google managed, on Vertex AI) and Microsoft Foundry serve the Messages API only, with no organization to manage, so this provider does not cover them.
 
-~> **Beta.** Support for Claude Platform on AWS is in beta, and every plan or apply prints a warning saying so for each alias with an `aws` block. It is verified with offline tests, against a local fake gateway (requests signed and checked with the AWS SDK's own signer, URL shapes, configuration rules), and against the real gateway, in `eu-central-1` on 2026-11-02, with SigV4 credentials: reads, create and destroy of environments, skills, agents, messages and workspaces, and workspace tag updates. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
-
-The main points not verified yet:
-
-- that the gateway accepts an AWS Console key as `x-api-key`, as the SDK sends it, while the platform page documents `Authorization: Bearer`;
-- attaching an AWS KMS key to a workspace (`external_key_id`): the gateway accepts the signature of a path holding an encoded key ARN, but no key was attached.
+~> **Beta.** Claude Platform on AWS support is in beta: it relies on the Anthropic SDK's AWS client, itself in beta, and its verification against the real gateway is still partial. Each plan or apply with an `aws` block prints a warning saying so. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 ### Claude Platform on AWS (`aws`)
 

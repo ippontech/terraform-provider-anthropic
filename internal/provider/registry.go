@@ -76,8 +76,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 	return []registration[resource.Resource]{
 		{New: agents.NewAgentResource, AWS: supported},
 		{New: apikeys.NewAPIKeyResource, AWS: awsAPIKeys},
-		// Served, though the gateway's route table does not list them: verified
-		// against the real gateway on 2026-11-02 (pull request 460).
+		// Served, though the gateway's route table does not list them.
 		{New: deployments.NewDeploymentResource, AWS: supported},
 		{New: environments.NewEnvironmentResource, AWS: supported},
 		{New: federation.NewFederationIssuerResource, AWS: awsNoOAuth},
