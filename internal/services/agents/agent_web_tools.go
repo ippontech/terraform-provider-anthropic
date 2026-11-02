@@ -285,12 +285,16 @@ func webToolOptionsFromModel(ctx context.Context, c agentToolConfigModel) (webTo
 // --- Response -> state ---
 
 // webToolOptionsFromResponse maps the web options of a built-in tool config
-// verbatim. The API documents no default for them: an unset option comes back
+// verbatim. The API documents no default for them (an unset domain list means
+// no restriction, and an unset max_content_tokens or user_location is taken
+// from the calling agent when a session runs): an unset option comes back
 // absent or null and maps to null, so unlike `enabled` and `permission_policy`
 // no comparison with an inherited default is needed to avoid a perpetual diff,
-// and a value set out of band surfaces as drift. Tools other than web_fetch and
-// web_search never carry them and map to nulls. For a config state or plan
-// tracks, webToolOptionsToState then resolves these values against it.
+// and a value set out of band surfaces as drift. As for `enabled`,
+// TestAccAgentResource_withAgentToolset checks that echo live, for every
+// option. Tools other than web_fetch and web_search never carry them and map
+// to nulls. For a config state or plan tracks, webToolOptionsToState then
+// resolves these values against it.
 func webToolOptionsFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnion) (map[string]attr.Value, diag.Diagnostics) {
 	var diags diag.Diagnostics
 

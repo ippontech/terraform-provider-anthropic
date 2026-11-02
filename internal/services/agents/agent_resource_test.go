@@ -251,6 +251,18 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens", "10000"),
 				),
 			},
+			// Dropping max_content_tokens, the only web option every earlier step
+			// sets: the post-apply plan must be empty, i.e. the API keeps it unset
+			// instead of filling a default, as the earlier steps check for the
+			// other options.
+			{
+				Config: testAccAgentResourceWithWebOptionsUnsetConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.name", "web_fetch"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.blocked_domains.*", "ads.example.com"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens"),
+				),
+			},
 		},
 	})
 }
@@ -489,6 +501,28 @@ resource "anthropic_agent" "test_toolset" {
       {
         name               = "web_fetch"
         max_content_tokens = 10000
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceWithWebOptionsUnsetConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "always_allow"
+    configs = [
+      {
+        name            = "web_search"
+        blocked_domains = ["ads.example.com"]
+      },
+      {
+        name            = "web_fetch"
+        blocked_domains = ["ads.example.com"]
       }
     ]
   }
