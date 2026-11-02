@@ -88,7 +88,7 @@ Go acceptance tests run against the live Anthropic API:
 env -u ANTHROPIC_AUTH_TOKEN TF_ACC=1 make testacc
 ```
 
-Requires `ANTHROPIC_API_KEY` to be set. `env -u` keeps an `ANTHROPIC_AUTH_TOKEN` exported anyway out of the run, so the OAuth-gated tests skip (see [Set your credentials](#set-your-credentials)).
+Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set, as for the Terraform native tests below: without the admin key, the Admin API data source tests fail rather than skip. `env -u` keeps an `ANTHROPIC_AUTH_TOKEN` exported anyway out of the run, so the OAuth-gated tests skip (see [Set your credentials](#set-your-credentials)).
 
 ### Run Terraform native tests
 
