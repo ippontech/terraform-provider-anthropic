@@ -6,6 +6,11 @@ package environments_test
 import (
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -128,6 +133,146 @@ resource "anthropic_environment" "archived" {
 		if len(reqs) != 1 || reqs[0].Fault != "status 404" || reqs[0].Path != want {
 			t.Errorf("%s: requests = %+v, want one to %s answered 404", route, reqs, want)
 		}
+	}
+	srv.assertRequestShape(t)
+}
+
+// singleWorkspaceKey puts srv behind a key scoped to a single workspace: a
+// request that carries anthropic-workspace-id, whatever workspace it names,
+// is answered 404 "Workspace not found" and never reaches srv (CLAUDE.md,
+// "Credentials and clients"); any other request is forwarded. The provider
+// talks to the front it returns.
+func singleWorkspaceKey(t *testing.T, srv *environmentsFake) *sdktest.Server {
+	t.Helper()
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := sdktest.NewServer(t)
+	front.Handle("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("anthropic-workspace-id") != "" {
+			sdktest.WriteAPIError(w, http.StatusNotFound, "", "Workspace not found")
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
+	return front
+}
+
+// workspace404s returns the requests front answered 404 "Workspace not
+// found", as "METHOD /path".
+func workspace404s(front *sdktest.Server) []string {
+	var out []string
+	for _, r := range front.Requests("/") {
+		if r.Header.Get("anthropic-workspace-id") != "" {
+			out = append(out, r.Method+" "+r.Path)
+		}
+	}
+	return out
+}
+
+// withWorkspaceID sets the provider's workspace_id in config, so the
+// standard client sends anthropic-workspace-id on every request.
+func withWorkspaceID(config string) string {
+	const block = "provider \"anthropic\" {\n"
+	return strings.Replace(config, block, block+"  workspace_id  = \"wrkspc_01TerraformTests\"\n", 1)
+}
+
+// A 404 "Workspace not found" says the key cannot use the workspace the
+// request names, not that the environment is gone: the refresh fails and the
+// environment stays in state, instead of being dropped and created again.
+func TestEnvironmentResource_workspaceNotFoundFailsRefresh(t *testing.T) {
+	t.Parallel()
+	srv := newEnvironmentsFake(t)
+	front := singleWorkspaceKey(t, srv)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(front),
+		CheckDestroy:             checkEnvironmentsDeleted(srv),
+		Steps: []resource.TestStep{
+			{
+				Config:           environmentConfig(""),
+				ConfigPlanChecks: expectEnvironmentCreated,
+			},
+			{
+				Config:      withWorkspaceID(environmentConfig("")),
+				ExpectError: regexp.MustCompile(`(?s)Unable\s+to\s+read\s+environment.*Workspace\s+not\s+found`),
+			},
+			{
+				Config:            environmentConfig(""),
+				ConfigPlanChecks:  resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				ConfigStateChecks: []statecheck.StateCheck{statecheck.ExpectKnownValue(environmentAddr, tfjsonpath.New("id"), knownvalue.StringExact(environmentID(1)))},
+			},
+		},
+	})
+
+	if got := workspace404s(front); len(got) == 0 || got[0] != "GET /v1/environments/"+environmentID(1) {
+		t.Errorf("workspace 404s = %v, want the refresh of %s", got, environmentID(1))
+	}
+	srv.AssertCalled(routeCreateEnvironment, 1)
+	srv.AssertCalled(routeDeleteEnvironment, 1)
+	srv.assertRequestShape(t)
+}
+
+// Destroy without a refresh (terraform destroy -refresh=false) fails on a
+// 404 "Workspace not found", for the DELETE and for the archive of
+// archive_on_destroy, and keeps both environments in state: neither call
+// reached them.
+func TestEnvironmentResource_workspaceNotFoundFailsDestroy(t *testing.T) {
+	t.Parallel()
+	srv := newEnvironmentsFake(t)
+	front := singleWorkspaceKey(t, srv)
+	config := providertest.ProviderConfig(sdktest.APIKey) + `
+resource "anthropic_environment" "deleted" {
+  name = "deleted-on-destroy"
+}
+
+resource "anthropic_environment" "archived" {
+  name               = "archived-on-destroy"
+  archive_on_destroy = true
+}
+`
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(front),
+		AdditionalCLIOptions:     &resource.AdditionalCLIOptions{Plan: resource.PlanOptions{NoRefresh: true}},
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("anthropic_environment.deleted", plancheck.ResourceActionCreate),
+						plancheck.ExpectResourceAction("anthropic_environment.archived", plancheck.ResourceActionCreate),
+					},
+				},
+			},
+			{
+				Config:      withWorkspaceID(config),
+				Destroy:     true,
+				ExpectError: regexp.MustCompile(`(?s)Unable\s+to\s+(delete|archive)\s+environment.*Workspace\s+not\s+found`),
+			},
+			{
+				Config:           config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+		},
+	})
+
+	// The header reached neither environment: one DELETE and one archive
+	// answered 404 by the front.
+	got := workspace404s(front)
+	slices.Sort(got)
+	if len(got) != 2 || !strings.HasPrefix(got[0], "DELETE /v1/environments/") || !strings.HasPrefix(got[1], "POST /v1/environments/") || !strings.HasSuffix(got[1], "/archive") {
+		t.Errorf("workspace 404s = %v, want one DELETE and one archive", got)
+	}
+	// The final destroy, without the header, deleted one and archived the
+	// other.
+	srv.AssertCalled(routeDeleteEnvironment, 1)
+	srv.AssertCalled(routeArchiveEnvironment, 1)
+	left := srv.environments.List(nil)
+	if len(left) != 1 || left[0]["name"] != "archived-on-destroy" || left[0]["archived_at"] == nil {
+		t.Errorf("environments left = %v, want the archived one only", left)
 	}
 	srv.assertRequestShape(t)
 }

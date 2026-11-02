@@ -17,6 +17,7 @@ import (
 
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdktest"
 )
 
 // newDeleteStatusServer answers every request with status and the API's error
@@ -28,7 +29,7 @@ func newDeleteStatusServer(t *testing.T, status int) (*httptest.Server, *atomic.
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"error","message":"` + http.StatusText(status) + `"}}`))
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"` + sdktest.ErrorType(status) + `","message":"` + http.StatusText(status) + `"}}`))
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &calls

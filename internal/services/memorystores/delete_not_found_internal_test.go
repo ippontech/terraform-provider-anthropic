@@ -10,25 +10,24 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 
-	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdktest"
 )
 
 // newDeleteStatusServer answers every request with status and the API's error
-// envelope, and counts the requests it served.
-func newDeleteStatusServer(t *testing.T, status int) (*httptest.Server, *atomic.Int32) {
+// envelope carrying message, and counts the requests it served.
+func newDeleteStatusServer(t *testing.T, status int, message string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"error","message":"` + http.StatusText(status) + `"}}`))
+		sdktest.WriteAPIError(w, status, "", message)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &calls
@@ -51,42 +50,58 @@ func deleteWithState(t *testing.T, r resource.Resource, attrs map[string]any) di
 }
 
 // Delete treats a 404 as success (the object is already gone, which is what
-// destroy wants) and still reports any other error.
+// destroy wants) and still reports any other error, a 404 "Workspace not
+// found" included: a single-workspace key answers it to any
+// anthropic-workspace-id header (the provider's workspace_id), and the
+// object may still exist.
 func TestDelete_NotFoundIsSuccess(t *testing.T) {
 	tests := []struct {
 		name     string
-		resource func(srv *httptest.Server) resource.Resource
+		resource func(c *anthropic.Client) resource.Resource
 		attrs    map[string]any
 	}{
 		{
-			name: "memory_store",
-			resource: func(srv *httptest.Server) resource.Resource {
-				return &MemoryStoreResource{client: oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0))}
-			},
-			attrs: map[string]any{"id": "memstore_01", "archive_on_destroy": false},
+			name:     "memory_store",
+			resource: func(c *anthropic.Client) resource.Resource { return &MemoryStoreResource{client: c} },
+			attrs:    map[string]any{"id": "memstore_01", "archive_on_destroy": false},
 		},
 		{
-			name: "memory_store archive_on_destroy",
-			resource: func(srv *httptest.Server) resource.Resource {
-				return &MemoryStoreResource{client: oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0))}
-			},
-			attrs: map[string]any{"id": "memstore_01", "archive_on_destroy": true},
+			name:     "memory_store archive_on_destroy",
+			resource: func(c *anthropic.Client) resource.Resource { return &MemoryStoreResource{client: c} },
+			attrs:    map[string]any{"id": "memstore_01", "archive_on_destroy": true},
 		},
 	}
+	workspaceHeader := option.WithHeader("anthropic-workspace-id", "wrkspc_01")
 
 	for _, tc := range tests {
 		t.Run(tc.name+"/404", func(t *testing.T) {
-			srv, calls := newDeleteStatusServer(t, http.StatusNotFound)
-			if diags := deleteWithState(t, tc.resource(srv), tc.attrs); diags.HasError() {
+			srv, calls := newDeleteStatusServer(t, http.StatusNotFound, "Not Found")
+			c := sdktest.NewAPIKeyClient(t, srv, option.WithMaxRetries(0))
+			if diags := deleteWithState(t, tc.resource(c), tc.attrs); diags.HasError() {
 				t.Fatalf("Delete on 404: %v", diags)
 			}
 			if got := calls.Load(); got != 1 {
 				t.Errorf("requests = %d, want 1", got)
 			}
 		})
+		t.Run(tc.name+"/404 with a workspace header", func(t *testing.T) {
+			srv, _ := newDeleteStatusServer(t, http.StatusNotFound, "Not Found")
+			c := sdktest.NewAPIKeyClient(t, srv, option.WithMaxRetries(0), workspaceHeader)
+			if diags := deleteWithState(t, tc.resource(c), tc.attrs); diags.HasError() {
+				t.Fatalf("Delete on 404: %v", diags)
+			}
+		})
+		t.Run(tc.name+"/workspace 404", func(t *testing.T) {
+			srv, _ := newDeleteStatusServer(t, http.StatusNotFound, "Workspace not found")
+			c := sdktest.NewAPIKeyClient(t, srv, option.WithMaxRetries(0), workspaceHeader)
+			if diags := deleteWithState(t, tc.resource(c), tc.attrs); !diags.HasError() {
+				t.Fatal("Delete on a workspace 404: want an error diagnostic")
+			}
+		})
 		t.Run(tc.name+"/500", func(t *testing.T) {
-			srv, _ := newDeleteStatusServer(t, http.StatusInternalServerError)
-			if diags := deleteWithState(t, tc.resource(srv), tc.attrs); !diags.HasError() {
+			srv, _ := newDeleteStatusServer(t, http.StatusInternalServerError, "Internal Server Error")
+			c := sdktest.NewAPIKeyClient(t, srv, option.WithMaxRetries(0))
+			if diags := deleteWithState(t, tc.resource(c), tc.attrs); !diags.HasError() {
 				t.Fatal("Delete on 500: want an error diagnostic")
 			}
 		})
