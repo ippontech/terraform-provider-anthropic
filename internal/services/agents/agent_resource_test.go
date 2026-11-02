@@ -244,10 +244,10 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 			{
 				Config: testAccAgentResourceWithWebOptionsUpdatedConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.allowed_domains"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.allowed_domains.#"),
 					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.blocked_domains.*", "ads.example.com"),
-					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location"),
-					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.blocked_domains"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.user_location.%"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.blocked_domains.#"),
 					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.max_content_tokens", "10000"),
 				),
 			},
