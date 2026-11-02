@@ -215,7 +215,6 @@ func (r *OrganizationMemberResource) Update(ctx context.Context, req resource.Up
 	// if the role is `admin` which cannot be set via the API.
 	apiFieldsChanged := !plan.Role.Equal(state.Role)
 	if !apiFieldsChanged {
-		plan.ID = state.ID
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}

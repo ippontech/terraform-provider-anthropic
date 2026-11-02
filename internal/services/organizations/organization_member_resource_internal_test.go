@@ -417,7 +417,10 @@ func TestOrganizationMemberResource_UpdateOnlyRemoveOnDestroy(t *testing.T) {
 
 func TestOrganizationMemberResource_RemoveOnDestroySurvivesLifecycle(t *testing.T) {
 	for _, value := range []types.Bool{types.BoolValue(true), types.BoolValue(false), types.BoolNull()} {
-		for _, operation := range []string{"create", "read", "update"} {
+		// "update" changes only remove_on_destroy, so Update skips the API call;
+		// "update_role" changes the role too, so the value must survive the API
+		// response mapping as well.
+		for _, operation := range []string{"create", "read", "update", "update_role"} {
 			t.Run(operation+"/"+value.String(), func(t *testing.T) {
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					w.Header().Set("content-type", "application/json")
@@ -436,13 +439,9 @@ func TestOrganizationMemberResource_RemoveOnDestroySurvivesLifecycle(t *testing.
 					t.Fatalf("State.Set: %v", diags)
 				}
 				plan := tfsdk.Plan(state)
-				if operation == "update" && value.IsNull() {
-					var planValues map[string]tftypes.Value
-					if err := plan.Raw.As(&planValues); err != nil {
-						t.Fatalf("Plan.Raw.As: %v", err)
-					}
-					planValues["remove_on_destroy"] = tftypes.NewValue(objType.AttributeTypes["remove_on_destroy"], false)
-					plan.Raw = tftypes.NewValue(objType, planValues)
+				if operation != "create" && operation != "read" && value.IsNull() {
+					// The framework's Default fills a null config value, so a real plan never carries a null.
+					plan.Raw = withAttribute(t, objType, plan.Raw, "remove_on_destroy", false)
 				}
 				switch operation {
 				case "create":
@@ -459,7 +458,10 @@ func TestOrganizationMemberResource_RemoveOnDestroySurvivesLifecycle(t *testing.
 						t.Fatalf("Read: %v", resp.Diagnostics)
 					}
 					state = resp.State
-				case "update":
+				case "update", "update_role":
+					if operation == "update_role" {
+						state.Raw = withAttribute(t, objType, state.Raw, "role", "user")
+					}
 					resp := resource.UpdateResponse{State: state}
 					member.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, &resp)
 					if resp.Diagnostics.HasError() {
@@ -477,6 +479,23 @@ func TestOrganizationMemberResource_RemoveOnDestroySurvivesLifecycle(t *testing.
 			})
 		}
 	}
+}
+
+// withAttribute returns a copy of raw with one attribute replaced. Value.As
+// exposes the map backing raw, so mutating it in place would also change every
+// other tfsdk value sharing it (a Plan built from a State, for instance).
+func withAttribute(t *testing.T, objType tftypes.Object, raw tftypes.Value, name string, value any) tftypes.Value {
+	t.Helper()
+	var shared map[string]tftypes.Value
+	if err := raw.As(&shared); err != nil {
+		t.Fatalf("Value.As: %v", err)
+	}
+	values := make(map[string]tftypes.Value, len(shared))
+	for k, v := range shared {
+		values[k] = v
+	}
+	values[name] = tftypes.NewValue(objType.AttributeTypes[name], value)
+	return tftypes.NewValue(objType, values)
 }
 
 // --- Delete ---
