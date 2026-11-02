@@ -1,3 +1,8 @@
+# `pre-commit install` installs a pre-push hook too, for the gitleaks scan of
+# the commits not pushed. default_stages keeps every hook that names no stage
+# of its own at the pre-commit stage, as when it was the only one installed.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -34,11 +39,20 @@ repos:
       # `pre-commit run -a` does not stash. Untracked files are left out, as
       # by every hook. A deliberate fake in a test takes `gitleaks:allow` at
       # the end of its line, in the commit that adds the line.
+      #
+      # The commits run before a push (`pre-commit run -a --hook-stage
+      # pre-push` by hand), from the commit pushed, or HEAD outside a push.
+      # Before a commit, they still hold the one `git commit --amend` or a
+      # fixup is about to rewrite, so a finding there would block its fix.
+      # always_run: a push whose net diff is empty can still carry a commit
+      # that adds a secret and one that removes it.
       - id: gitleaks
         name: gitleaks (commits not pushed)
         language: system
-        entry: mise exec -- gitleaks git --log-opts='HEAD --not --remotes' --config .gitleaks.toml --redact --no-banner --verbose
+        entry: sh -c 'exec mise exec -- gitleaks git --log-opts="${PRE_COMMIT_TO_REF:-HEAD} --not --remotes" --config .gitleaks.toml --redact --no-banner --verbose'
         pass_filenames: false
+        always_run: true
+        stages: [pre-push]
       - id: gitleaks
         name: gitleaks (staged changes)
         language: system
