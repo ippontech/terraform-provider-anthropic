@@ -1,3 +1,9 @@
+## [1.63.6](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.5...v1.63.6) (2026-11-02)
+
+### 📚 Documentation
+
+* **readme:** credit contributors with a contrib.rocks widget ([#528](https://github.com/ippontech/terraform-provider-anthropic/issues/528)) ([db04063](https://github.com/ippontech/terraform-provider-anthropic/commit/db0406301fdae58c711d6b1613c29984a1f879cd))
+
 ## [1.63.5](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.4...v1.63.5) (2026-11-02)
 
 ### 🐛 Bug Fixes
