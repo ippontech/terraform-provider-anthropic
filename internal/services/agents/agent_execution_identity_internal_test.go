@@ -85,35 +85,47 @@ func parseExecutionIdentity(t *testing.T, raw string) anthropic.BetaManagedAgent
 	return agent.ExecutionIdentity
 }
 
-// The API always returns an identity, `service_account` by default: it stays
-// null while the configuration leaves the attribute unset, and any other value
-// (an IAM role set out of band included) surfaces as drift.
+// On Read the API always returns an identity, `service_account` by default: it
+// stays null while the configuration leaves the attribute unset, and any other
+// value (an IAM role set out of band included) surfaces as drift. A response
+// without one keeps state. On Create and Update the plan is kept whatever the
+// API returns, since anything else fails the apply as an inconsistent result.
 func TestMapExecutionIdentityToState(t *testing.T) {
 	t.Parallel()
 
 	serviceAccount := `,"execution_identity":{"type":"service_account"}`
 	awsRole := `,"execution_identity":{"type":"aws_role","role_arn":"` + testRoleARN + `"}`
+	otherRole := `,"execution_identity":{"type":"aws_role","role_arn":"arn:aws:iam::123456789012:role/other"}`
+	sa := executionIdentity("service_account", types.StringNull())
+	role := executionIdentity("aws_role", types.StringValue(testRoleARN))
 
 	tests := []struct {
 		name    string
+		mode    mappingMode
 		api     string
 		current types.Object
 		want    types.Object
 	}{
-		{"default while unset", serviceAccount, noExecutionIdentity, noExecutionIdentity},
-		{"default configured explicitly", serviceAccount, executionIdentity("service_account", types.StringNull()),
-			executionIdentity("service_account", types.StringNull())},
-		{"aws role echoed", awsRole, executionIdentity("aws_role", types.StringValue(testRoleARN)),
-			executionIdentity("aws_role", types.StringValue(testRoleARN))},
-		{"aws role set out of band", awsRole, noExecutionIdentity, executionIdentity("aws_role", types.StringValue(testRoleARN))},
-		{"aws role removed out of band", serviceAccount, executionIdentity("aws_role", types.StringValue(testRoleARN)),
-			executionIdentity("service_account", types.StringNull())},
-		{"absent", ``, noExecutionIdentity, noExecutionIdentity},
+		{"default while unset", readMapping, serviceAccount, noExecutionIdentity, noExecutionIdentity},
+		{"default configured explicitly", readMapping, serviceAccount, sa, sa},
+		{"aws role echoed", readMapping, awsRole, role, role},
+		{"aws role set out of band", readMapping, awsRole, noExecutionIdentity, role},
+		{"aws role removed out of band", readMapping, serviceAccount, role, sa},
+		{"absent", readMapping, ``, noExecutionIdentity, noExecutionIdentity},
+		{"absent keeps the explicit default", readMapping, ``, sa, sa},
+		{"null keeps the explicit default", readMapping, `,"execution_identity":null`, sa, sa},
+		{"absent keeps an aws role", readMapping, ``, role, role},
+		{"apply: default while unset", applyMapping, serviceAccount, noExecutionIdentity, noExecutionIdentity},
+		{"apply: aws role echoed", applyMapping, awsRole, role, role},
+		{"apply: unset plan over a role the refresh missed", applyMapping, awsRole, noExecutionIdentity, noExecutionIdentity},
+		{"apply: explicit default not echoed", applyMapping, ``, sa, sa},
+		{"apply: aws role not echoed", applyMapping, ``, role, role},
+		{"apply: aws role echoed in another shape", applyMapping, otherRole, role, role},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, diags := mapExecutionIdentityToState(parseExecutionIdentity(t, tc.api), tc.current)
+			got, diags := mapExecutionIdentityToState(parseExecutionIdentity(t, tc.api), tc.current, tc.mode)
 			if diags.HasError() {
 				t.Fatalf("diags: %+v", diags)
 			}
@@ -201,7 +213,8 @@ func TestExecutionIdentityRoleARNPattern(t *testing.T) {
 }
 
 // agentIdentityServer answers every agent request with an agent carrying
-// identity, and records the request bodies.
+// identity (no execution_identity key when it is empty), and records the
+// request bodies.
 func agentIdentityServer(t *testing.T, identity string) (*httptest.Server, func() []map[string]any) {
 	t.Helper()
 	var mu sync.Mutex
@@ -214,9 +227,13 @@ func agentIdentityServer(t *testing.T, identity string) (*httptest.Server, func(
 		bodies = append(bodies, body)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		field := ""
+		if identity != "" {
+			field = `,"execution_identity":` + identity
+		}
 		_, _ = io.WriteString(w, `{"id":"agent_1","name":"n","model":{"id":"claude-sonnet-4-6"},"version":2,`+
 			`"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z","description":"","system":"",`+
-			`"metadata":{},"mcp_servers":[],"skills":[],"tools":[],"multiagent":null,"execution_identity":`+identity+`}`)
+			`"metadata":{},"mcp_servers":[],"skills":[],"tools":[],"multiagent":null`+field+`}`)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, func() []map[string]any {
@@ -265,6 +282,8 @@ func TestAgentResourceCreate_executionIdentity(t *testing.T) {
 		{"aws role", "aws_role", testRoleARN, `{"type":"aws_role","role_arn":"` + testRoleARN + `"}`,
 			`{"role_arn":"` + testRoleARN + `","type":"aws_role"}`},
 		{"unset", "", "", `{"type":"service_account"}`, ""},
+		// The plan is kept even when the API leaves the identity out of its answer.
+		{"explicit default not echoed", "service_account", "", "", `{"type":"service_account"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,7 +308,7 @@ func TestAgentResourceCreate_executionIdentity(t *testing.T) {
 			resp.Diagnostics.Append(resp.State.Get(context.Background(), &state)...)
 			want := noExecutionIdentity
 			if tc.typ != "" {
-				want = executionIdentity(tc.typ, types.StringValue(tc.roleARN))
+				want = executionIdentity(tc.typ, roleARNValue(tc.roleARN))
 			}
 			if !state.ExecutionIdentity.Equal(want) {
 				t.Errorf("state = %v, want %v", state.ExecutionIdentity, want)
@@ -298,29 +317,39 @@ func TestAgentResourceCreate_executionIdentity(t *testing.T) {
 	}
 }
 
+func roleARNValue(arn string) types.String {
+	if arn == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(arn)
+}
+
 // Update restores the default when the identity is removed, and keeps the
-// request body unchanged for a configuration that never set one.
+// request body unchanged for a configuration that never set one. The state it
+// returns is the planned identity, whatever the API holds.
 func TestAgentResourceUpdate_executionIdentity(t *testing.T) {
 	t.Parallel()
 
+	serviceAccount := `{"type":"service_account"}`
+	awsRole := `{"type":"aws_role","role_arn":"` + testRoleARN + `"}`
 	tests := []struct {
-		name      string
-		stateType string
-		planType  string
-		wantBody  string
+		name        string
+		stateType   string
+		planType    string
+		apiIdentity string
+		wantBody    string
 	}{
-		{"removed", "aws_role", "", `{"type":"service_account"}`},
-		{"never set", "", "", ""},
-		{"set", "", "aws_role", `{"role_arn":"` + testRoleARN + `","type":"aws_role"}`},
+		{"removed", "aws_role", "", serviceAccount, `{"type":"service_account"}`},
+		{"never set", "", "", serviceAccount, ""},
+		{"set", "", "aws_role", awsRole, `{"role_arn":"` + testRoleARN + `","type":"aws_role"}`},
+		// A role set out of band after the last refresh (or with -refresh=false):
+		// the update leaves it alone and the next Read reports it.
+		{"never set, role unseen by the refresh", "", "", awsRole, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			apiIdentity := `{"type":"service_account"}`
-			if tc.planType == "aws_role" {
-				apiIdentity = `{"type":"aws_role","role_arn":"` + testRoleARN + `"}`
-			}
-			srv, bodies := agentIdentityServer(t, apiIdentity)
+			srv, bodies := agentIdentityServer(t, tc.apiIdentity)
 			r := &AgentResource{client: oauthtest.NewSDKClient(t, srv)}
 			schema := schematest.ResourceSchema(t, r)
 			arn := func(typ string) string {
@@ -349,7 +378,7 @@ func TestAgentResourceUpdate_executionIdentity(t *testing.T) {
 			var after AgentResourceModel
 			resp.Diagnostics.Append(resp.State.Get(context.Background(), &after)...)
 			if tc.planType == "" && !after.ExecutionIdentity.IsNull() {
-				t.Errorf("state = %v, want null (the echoed default)", after.ExecutionIdentity)
+				t.Errorf("state = %v, want null (the plan)", after.ExecutionIdentity)
 			}
 		})
 	}

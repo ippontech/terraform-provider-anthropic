@@ -1154,7 +1154,6 @@ func updateToolsParams(tools []anthropic.BetaAgentNewParamsToolUnion) []anthropi
 }
 
 // mappingMode tells mapAgentResponseToState which request the response answers.
-// Only the tool mapping depends on it.
 type mappingMode int
 
 const (
@@ -1331,8 +1330,8 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	diags.Append(d...)
 	data.Multiagent = multiagent
 
-	// Execution identity: the echoed default stays null (see mapExecutionIdentityToState).
-	identity, d := mapExecutionIdentityToState(agent.ExecutionIdentity, data.ExecutionIdentity)
+	// Execution identity: the echoed default stays null, the plan is kept on apply (see mapExecutionIdentityToState).
+	identity, d := mapExecutionIdentityToState(agent.ExecutionIdentity, data.ExecutionIdentity, mode)
 	diags.Append(d...)
 	data.ExecutionIdentity = identity
 

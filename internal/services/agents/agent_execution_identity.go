@@ -184,12 +184,23 @@ func executionIdentityObject(e anthropic.BetaManagedAgentsExecutionIdentityUnion
 	})
 }
 
-// mapExecutionIdentityToState maps the API identity for the resource. The API
-// always returns one, `service_account` when none was set, so that default
-// stays null while the configuration (current: plan or prior state) leaves the
-// attribute unset; any other identity, an IAM role set out of band included,
-// is mapped and surfaces as drift.
-func mapExecutionIdentityToState(e anthropic.BetaManagedAgentsExecutionIdentityUnion, current types.Object) (types.Object, diag.Diagnostics) {
+// mapExecutionIdentityToState maps the API identity for the resource; current
+// is the plan (Create, Update) or prior state (Read).
+//
+// With applyMapping the plan is kept: the attribute is not Computed, so
+// Terraform rejects any other value as an inconsistent result after apply. An
+// identity the API holds beyond the plan (one set out of band that the last
+// refresh did not see) or echoes in another shape shows on the next Read.
+// A response without an identity says nothing about it, so current is kept.
+//
+// Otherwise the API returns `service_account` when none was set, so that
+// default stays null while current leaves the attribute unset; any other
+// identity, an IAM role set out of band included, is mapped and surfaces as
+// drift.
+func mapExecutionIdentityToState(e anthropic.BetaManagedAgentsExecutionIdentityUnion, current types.Object, mode mappingMode) (types.Object, diag.Diagnostics) {
+	if !current.IsUnknown() && (mode == applyMapping || e.Type == "") {
+		return current, nil
+	}
 	if e.Type == executionIdentityServiceAccount && (current.IsNull() || current.IsUnknown()) {
 		return types.ObjectNull(agentExecutionIdentityAttrTypes), nil
 	}
