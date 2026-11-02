@@ -101,18 +101,21 @@ func TestCollectionCRUDOverHTTP(t *testing.T) {
 }
 
 func TestCollectionUpdateModes(t *testing.T) {
+	// model stands for any object the reference does not call a patch: the
+	// agents API replaces it as a whole, so an omitted inference_geo is
+	// cleared in every mode.
 	for _, tc := range []struct {
 		mode UpdateMode
 		want string
 	}{
-		{Replace, `{"id":"x","name":"b","metadata":{"k1":null,"k3":""},"updated_at":"2026-01-01T00:00:01Z"}`},
-		{Patch, `{"id":"x","name":"b","metadata":{"k2":"v2","k3":""},"updated_at":"2026-01-01T00:00:01Z"}`},
-		{PatchNullOrEmpty, `{"id":"x","name":"b","metadata":{"k2":"v2"},"updated_at":"2026-01-01T00:00:01Z"}`},
+		{Replace, `{"id":"x","name":"b","metadata":{"k1":null,"k3":""},"model":{"id":"m2"},"updated_at":"2026-01-01T00:00:01Z"}`},
+		{Patch, `{"id":"x","name":"b","metadata":{"k2":"v2","k3":""},"model":{"id":"m2"},"updated_at":"2026-01-01T00:00:01Z"}`},
+		{PatchNullOrEmpty, `{"id":"x","name":"b","metadata":{"k2":"v2"},"model":{"id":"m2"},"updated_at":"2026-01-01T00:00:01Z"}`},
 	} {
 		s := NewServer(t)
 		c := s.NewCollection("x_")
-		c.Put(map[string]any{"id": "x", "name": "a", "metadata": map[string]any{"k1": "v1", "k2": "v2"}})
-		got, ok := c.Update("x", map[string]any{"name": "b", "metadata": map[string]any{"k1": nil, "k3": ""}}, tc.mode)
+		c.Put(map[string]any{"id": "x", "name": "a", "metadata": map[string]any{"k1": "v1", "k2": "v2"}, "model": map[string]any{"id": "m1", "inference_geo": "us"}})
+		got, ok := c.Update("x", map[string]any{"name": "b", "metadata": map[string]any{"k1": nil, "k3": ""}, "model": map[string]any{"id": "m2"}}, tc.mode)
 		if !ok {
 			t.Fatal("update of a stored object failed")
 		}
@@ -133,6 +136,28 @@ func TestCollectionUpdateModes(t *testing.T) {
 	}
 	if _, ok := c.Archive("missing"); ok {
 		t.Error("archive of a missing object succeeded")
+	}
+}
+
+func TestCollectionPatchMaps(t *testing.T) {
+	stored := map[string]any{"id": "x", "metadata": map[string]any{"k1": "v1"}, "tags": map[string]any{"t1": "a", "t2": "b"}}
+	body := map[string]any{"metadata": map[string]any{"k2": "v2"}, "tags": map[string]any{"t1": nil, "t3": "c"}}
+	for _, tc := range []struct {
+		name   string
+		fields []string
+		want   string
+	}{
+		// The fields named merge; metadata, no longer named, is replaced.
+		{"tags", []string{"tags"}, `{"id":"x","metadata":{"k2":"v2"},"tags":{"t2":"b","t3":"c"},"updated_at":"2026-01-01T00:00:01Z"}`},
+		{"none", nil, `{"id":"x","metadata":{"k2":"v2"},"tags":{"t1":null,"t3":"c"},"updated_at":"2026-01-01T00:00:01Z"}`},
+	} {
+		s := NewServer(t)
+		c := s.NewCollection("x_").PatchMaps(tc.fields...)
+		c.Put(stored)
+		got, _ := c.Update("x", body, Patch)
+		if diff := JSONDiff(render(got), tc.want); diff != "" {
+			t.Errorf("PatchMaps(%s):\n%s", tc.name, diff)
+		}
 	}
 }
 

@@ -21,11 +21,14 @@ const (
 	// Replace sets every field the body carries, a map as a whole and a null
 	// as null.
 	Replace UpdateMode = iota + 1
-	// Patch is Replace, except that a map field merges key by key and a key
-	// set to null is deleted. Reference: "metadata: Metadata patch. Set a
-	// key to a string to upsert it, or to null to delete it" on
+	// Patch is Replace, except that a patch-map field (metadata unless
+	// Collection.PatchMaps names others) merges key by key and a key set to
+	// null is deleted. Every other object, such as an agent's model, is
+	// replaced as a whole. Reference: "metadata: Metadata patch. Set a key
+	// to a string to upsert it, or to null to delete it" on
 	// https://platform.claude.com/docs/en/api/beta/agents/update (vaults,
-	// memory stores and deployments use the same wording).
+	// memory stores and deployments use the same wording), the only field
+	// these pages describe as a patch.
 	Patch
 	// PatchNullOrEmpty is Patch, except that an empty string deletes the key
 	// too. Reference: "Set a value to null or empty string to delete the
@@ -54,18 +57,21 @@ type Collection struct {
 	pos   map[string]int
 	items map[string]map[string]any
 	key   string
+	// patchMaps holds the fields Update merges key by key in the patch modes.
+	patchMaps map[string]bool
 }
 
 // NewCollection returns an empty collection whose generated IDs start with
-// idPrefix ("env_", "skill_").
+// idPrefix ("env_", "skill_"). Its only patch-map field is metadata.
 func (s *Server) NewCollection(idPrefix string) *Collection {
 	return &Collection{
-		s:        s,
-		idPrefix: idPrefix,
-		seen:     map[string]bool{},
-		pos:      map[string]int{},
-		items:    map[string]map[string]any{},
-		key:      "id",
+		s:         s,
+		idPrefix:  idPrefix,
+		seen:      map[string]bool{},
+		pos:       map[string]int{},
+		items:     map[string]map[string]any{},
+		key:       "id",
+		patchMaps: map[string]bool{"metadata": true},
 	}
 }
 
@@ -74,6 +80,19 @@ func (s *Server) NewCollection(idPrefix string) *Collection {
 // Call it before storing anything.
 func (c *Collection) KeyedBy(field string) *Collection {
 	c.key = field
+	return c
+}
+
+// PatchMaps makes fields, instead of metadata alone, the fields Update merges
+// key by key in Patch and PatchNullOrEmpty; every other field is replaced as
+// a whole. Name only the fields the endpoint's reference documents as a
+// patch (a workspace's tags, say); with no field, the patch modes merge
+// nothing. Call it before any update.
+func (c *Collection) PatchMaps(fields ...string) *Collection {
+	c.patchMaps = map[string]bool{}
+	for _, f := range fields {
+		c.patchMaps[f] = true
+	}
 	return c
 }
 
@@ -159,7 +178,8 @@ func (c *Collection) List(keep func(map[string]any) bool) []map[string]any {
 }
 
 // Update applies body to the object stored under key in mode, bumps its
-// updated_at and returns the result.
+// updated_at and returns the result. In the patch modes only the patch-map
+// fields (see PatchMaps) merge; any other field is set as in Replace.
 func (c *Collection) Update(key string, body map[string]any, mode UpdateMode) (map[string]any, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -170,7 +190,7 @@ func (c *Collection) Update(key string, body map[string]any, mode UpdateMode) (m
 	for f, v := range deepCopy(body) {
 		patch, isMap := v.(map[string]any)
 		stored, storedIsMap := o[f].(map[string]any)
-		if mode == Replace || !isMap {
+		if mode == Replace || !isMap || !c.patchMaps[f] {
 			o[f] = v
 			continue
 		}
