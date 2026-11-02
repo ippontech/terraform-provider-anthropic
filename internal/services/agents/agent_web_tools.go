@@ -293,8 +293,8 @@ func webToolOptionsFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnio
 // of defaults is verified against the live API, so only a real difference
 // reaches state:
 //   - a domain set that equals current's the way the API compares entries
-//     (hostnames ignore case and a trailing "/") keeps current's spelling, in
-//     case the API stores entries normalized;
+//     (see domainKey) keeps current's spelling, in case the API stores
+//     entries normalized;
 //   - with applyMapping, an option current leaves null stays null, and so does
 //     a user_location field: a default the API resolved for it would otherwise
 //     fail the apply as an inconsistent result. It shows on the next Read.
@@ -321,10 +321,15 @@ func webToolOptionsToState(current, api map[string]attr.Value, mode mappingMode)
 	return resolved
 }
 
-// domainKey is a domain entry as the API compares it: hostnames ignore case
-// and a trailing "/".
+// domainKey is a domain entry as the API compares it: the hostname ignores
+// case, a path suffix (web_search) keeps it, and a trailing "/" is ignored.
 func domainKey(entry string) string {
-	return strings.ToLower(strings.TrimRight(entry, "/"))
+	entry = strings.TrimRight(entry, "/")
+	host, path, hasPath := strings.Cut(entry, "/")
+	if !hasPath {
+		return strings.ToLower(host)
+	}
+	return strings.ToLower(host) + "/" + path
 }
 
 // domainSetToState returns current when api holds the same entries under

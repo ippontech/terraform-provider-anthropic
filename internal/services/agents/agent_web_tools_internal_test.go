@@ -472,6 +472,8 @@ func TestDomainSetToState(t *testing.T) {
 		wantCurrent bool
 	}{
 		{"case and trailing slash", strSet("Docs.Example.com", "arxiv.org/"), strSet("arxiv.org", "docs.example.com"), true},
+		{"hostname case with a path", strSet("Example.com/Docs/"), strSet("example.com/Docs"), true},
+		{"path case", strSet("example.com/Docs"), strSet("example.com/docs"), false},
 		{"another entry", strSet("docs.example.com"), strSet("api.example.com"), false},
 		{"an entry fewer", strSet("a.example.com", "b.example.com"), strSet("a.example.com"), false},
 		{"entries current repeats", strSet("example.com", "Example.com"), strSet("example.com", "other.com"), false},
