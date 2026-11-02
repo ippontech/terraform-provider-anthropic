@@ -15,8 +15,11 @@
 #      does not bring the reminder back).
 # The skills mark 2 and 3 as done by touching /tmp/claude-pr-desc-done-<branch>
 # and /tmp/claude-knowledge-done-<branch>; the hook touches the first itself
-# when GitHub reports no open PR for the branch. Any failure (missing git, gh
-# or jq, no network) ends silently with exit 0.
+# when GitHub reports no open PR for the branch. The branch is compared with
+# main of the remote that points to ippontech/terraform-provider-anthropic
+# (origin in a standard clone, upstream in a fork clone); with no such remote,
+# the checks on committed changes stay silent. Any failure (missing git, gh or
+# jq, no network) ends silently with exit 0. Tests: stop-reminders_test.sh.
 
 set -u
 
@@ -37,6 +40,17 @@ finish() {
   exit 0
 }
 
+# The upstream main the branch is compared with: <remote>/main of the remote
+# whose URL is ippontech/terraform-provider-anthropic, as the ship skill finds
+# it, since a fork clone's origin is the fork and its main is often stale.
+# Empty when no remote matches or its main was never fetched.
+base=""
+base_remote=$(git remote -v 2>/dev/null |
+  awk '$3 == "(fetch)" && $2 ~ /[\/:]ippontech\/terraform-provider-anthropic(\.git)?$/ {print $1; exit}')
+if [ -n "$base_remote" ] && git rev-parse --verify -q "refs/remotes/$base_remote/main" >/dev/null; then
+  base="$base_remote/main"
+fi
+
 # Modification time in seconds since the epoch (GNU stat, then BSD stat).
 mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
@@ -56,7 +70,7 @@ newer_than_docs() {
 }
 
 # 1. Docs generation: an uncommitted change newer than docs/index.md, or one
-#    the branch committed (origin/main..HEAD) without running make since:
+#    the branch committed ($base..HEAD) without running make since:
 #    both the file and its commit are newer than docs/index.md. The commit
 #    time leaves out a fresh checkout, which writes the files after
 #    docs/index.md but after their commits too.
@@ -69,7 +83,7 @@ while IFS= read -r line; do
     break
   fi
 done < <(git status --porcelain --untracked-files=all -- '*.go' templates examples 2>/dev/null)
-if [ "$docs_stale" = false ]; then
+if [ "$docs_stale" = false ] && [ -n "$base" ]; then
   docs_generated=$(mtime docs/index.md)
   commit_time=0
   while IFS= read -r line; do
@@ -81,7 +95,7 @@ if [ "$docs_stale" = false ]; then
       docs_stale=true
       break
     fi
-  done < <(git log --no-merges --format=@%ct --name-only origin/main..HEAD -- '*.go' templates examples 2>/dev/null)
+  done < <(git log --no-merges --format=@%ct --name-only "$base..HEAD" -- '*.go' templates examples 2>/dev/null)
 fi
 if [ "$docs_stale" = true ]; then
   reminders+=("Go sources, templates or examples changed after docs/ was last generated: run \`make\` (it includes \`make generate\`) and commit what it changes in docs/.")
@@ -95,8 +109,11 @@ esac
 slug=$(printf '%s' "$branch" | tr '/' '-')
 last_commit=$(git log -1 --format=%ct 2>/dev/null) || finish
 # The branch's own last commit touching Go or Terraform files: not the main
-# commits a merge brings in, nor the merge itself. Empty without origin/main.
-last_code_commit=$(git log -1 --format=%ct --no-merges origin/main..HEAD -- '*.go' '*.tf' 2>/dev/null || true)
+# commits a merge brings in, nor the merge itself. Empty without a base.
+last_code_commit=""
+if [ -n "$base" ]; then
+  last_code_commit=$(git log -1 --format=%ct --no-merges "$base..HEAD" -- '*.go' '*.tf' 2>/dev/null || true)
+fi
 
 # True when the sentinel ($1) is missing or older than the commit time $2.
 older_than() {
@@ -121,9 +138,9 @@ fi
 
 # 3. Project knowledge: the branch touches Go or Terraform files, and a commit
 #    touching them is newer than the last run.
-if older_than "/tmp/claude-knowledge-done-$slug" "$last_code_commit" &&
-  git rev-parse --verify -q origin/main >/dev/null &&
-  git diff --name-only origin/main...HEAD 2>/dev/null | grep -qE '\.(go|tf)$'; then
+if [ -n "$base" ] &&
+  older_than "/tmp/claude-knowledge-done-$slug" "$last_code_commit" &&
+  git diff --name-only "$base...HEAD" 2>/dev/null | grep -qE '\.(go|tf)$'; then
   reminders+=("Code changed on $branch: run /update-project-knowledge if this work showed a convention or a trap worth recording.")
 fi
 
