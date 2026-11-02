@@ -1,3 +1,9 @@
+## [1.63.7](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.6...v1.63.7) (2026-11-02)
+
+### 🐛 Bug Fixes
+
+* **deps:** update module golang.org/x/net to v0.62.0 [security] ([#515](https://github.com/ippontech/terraform-provider-anthropic/issues/515)) ([98708d8](https://github.com/ippontech/terraform-provider-anthropic/commit/98708d8c8c5dec84b12900621300ec4617ac2a01))
+
 ## [1.63.6](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.5...v1.63.6) (2026-11-02)
 
 ### 📚 Documentation
