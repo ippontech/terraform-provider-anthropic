@@ -160,6 +160,12 @@ func assertLimitsBody(t *testing.T, got []map[string]any, want []struct {
 
 func i64(v int64) *int64 { return &v }
 
+// newPrivateState returns an empty private state of the framework's type,
+// which this package cannot name (it is internal to the framework), as the
+// framework hands one to every Create, Read, Update and Delete. The argument
+// only fixes the type.
+func newPrivateState[T any](*T) *T { return new(T) }
+
 func stateLimits(t *testing.T, s tfsdk.State) (map[string]int64, bool) {
 	t.Helper()
 	var m WorkspaceRateLimitResourceModel
@@ -189,6 +195,7 @@ func TestWorkspaceRateLimitResource_CreateSendsPlannedLimits(t *testing.T) {
 	plan.Group = types.ObjectUnknown(rateLimitGroupAttrTypes)
 
 	resp := resource.CreateResponse{State: tfsdk.State{Schema: schematest.ResourceSchema(t, r)}}
+	resp.Private = newPrivateState(resp.Private)
 	r.Create(context.Background(), resource.CreateRequest{Plan: rateLimitPlan(t, r, plan)}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Create: %v", resp.Diagnostics)
@@ -236,6 +243,7 @@ func TestWorkspaceRateLimitResource_UpdateClearsRemovedTypes(t *testing.T) {
 	plan := rateLimitModel(map[string]int64{"requests_per_minute": 200, "input_tokens_per_minute": 5000})
 
 	resp := resource.UpdateResponse{State: rateLimitState(t, r, state)}
+	resp.Private = newPrivateState(resp.Private)
 	r.Update(context.Background(), resource.UpdateRequest{
 		Plan:  rateLimitPlan(t, r, plan),
 		State: rateLimitState(t, r, state),
@@ -275,6 +283,7 @@ func runRateLimitGroupUpdate(t *testing.T, postResponse string, stateGroup, plan
 	plan.Group = plannedGroup
 
 	resp := resource.UpdateResponse{State: rateLimitState(t, r, state)}
+	resp.Private = newPrivateState(resp.Private)
 	r.Update(context.Background(), resource.UpdateRequest{
 		Plan:  rateLimitPlan(t, r, plan),
 		State: rateLimitState(t, r, state),
@@ -354,6 +363,110 @@ func TestWorkspaceRateLimitResource_DeleteClearsManagedTypes(t *testing.T) {
 		{"output_tokens_per_minute", nil},
 		{"requests_per_minute", nil},
 	})
+}
+
+// A refresh whose list does not show the overrides Create just set yet drops
+// them from state; Delete must still clear them, from the types Create
+// recorded in private state.
+func TestWorkspaceRateLimitResource_DeleteClearsTypesALaggingReadDropped(t *testing.T) {
+	srv, requests := rateLimitServer(t, rateLimitEntryJSON(testRateLimitID,
+		`[{"type":"output_tokens_per_minute","value":20000,"org_limit":80000,"source":{"type":"workspace"}},
+		  {"type":"requests_per_minute","value":100,"org_limit":4000,"source":{"type":"workspace"}}]`),
+		`{"data":[],"next_page":null}`, http.StatusOK)
+	r := &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+
+	private := createAndLaggingRead(t, r, map[string]int64{"requests_per_minute": 100, "output_tokens_per_minute": 20000}).Private
+
+	refreshed := rateLimitModel(map[string]int64{})
+	resp := resource.DeleteResponse{State: rateLimitState(t, r, refreshed)}
+	r.Delete(context.Background(), resource.DeleteRequest{State: rateLimitState(t, r, refreshed), Private: private}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Delete: %v", resp.Diagnostics)
+	}
+
+	if len(*requests) != 3 {
+		t.Fatalf("requests = %d, want Create, Read and a Delete POST", len(*requests))
+	}
+	del := (*requests)[2]
+	if del.method != http.MethodPost || del.path != testRateLimitPath {
+		t.Fatalf("Delete request = %s %s, want POST %s", del.method, del.path, testRateLimitPath)
+	}
+	assertLimitsBody(t, del.limits, []struct {
+		typ   string
+		value *int64
+	}{
+		{"output_tokens_per_minute", nil},
+		{"requests_per_minute", nil},
+	})
+}
+
+// Same lag before an update that drops a type: Update must clear it, then
+// record only the planned types, so a later Delete no longer clears it.
+func TestWorkspaceRateLimitResource_UpdateClearsTypesALaggingReadDropped(t *testing.T) {
+	srv, requests := rateLimitServer(t, rateLimitEntryJSON(testRateLimitID,
+		`[{"type":"requests_per_minute","value":200,"org_limit":4000,"source":{"type":"workspace"}}]`),
+		`{"data":[],"next_page":null}`, http.StatusOK)
+	r := &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+
+	private := createAndLaggingRead(t, r, map[string]int64{"requests_per_minute": 100, "output_tokens_per_minute": 20000}).Private
+
+	refreshed := rateLimitModel(map[string]int64{})
+	plan := rateLimitModel(map[string]int64{"requests_per_minute": 200})
+	updateResp := resource.UpdateResponse{State: rateLimitState(t, r, refreshed), Private: private}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:    rateLimitPlan(t, r, plan),
+		State:   rateLimitState(t, r, refreshed),
+		Private: private,
+	}, &updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", updateResp.Diagnostics)
+	}
+	assertLimitsBody(t, (*requests)[2].limits, []struct {
+		typ   string
+		value *int64
+	}{
+		{"output_tokens_per_minute", nil},
+		{"requests_per_minute", i64(200)},
+	})
+
+	deleteResp := resource.DeleteResponse{State: rateLimitState(t, r, refreshed)}
+	r.Delete(context.Background(), resource.DeleteRequest{State: rateLimitState(t, r, refreshed), Private: updateResp.Private}, &deleteResp)
+	if deleteResp.Diagnostics.HasError() {
+		t.Fatalf("Delete: %v", deleteResp.Diagnostics)
+	}
+	assertLimitsBody(t, (*requests)[3].limits, []struct {
+		typ   string
+		value *int64
+	}{
+		{"requests_per_minute", nil},
+	})
+}
+
+// createAndLaggingRead creates the resource with limits, then refreshes it
+// against a list that does not show the write yet, as the framework does:
+// the private state Create returned goes through Read unchanged. It checks
+// that the refresh dropped every type and returns the Read response.
+func createAndLaggingRead(t *testing.T, r *WorkspaceRateLimitResource, limits map[string]int64) resource.ReadResponse {
+	t.Helper()
+	plan := rateLimitModel(limits)
+	plan.ID = types.StringUnknown()
+	plan.Group = types.ObjectUnknown(rateLimitGroupAttrTypes)
+	createResp := resource.CreateResponse{State: tfsdk.State{Schema: schematest.ResourceSchema(t, r)}}
+	createResp.Private = newPrivateState(createResp.Private)
+	r.Create(context.Background(), resource.CreateRequest{Plan: rateLimitPlan(t, r, plan)}, &createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", createResp.Diagnostics)
+	}
+
+	readResp := resource.ReadResponse{State: createResp.State, Private: createResp.Private}
+	r.Read(context.Background(), resource.ReadRequest{State: createResp.State, Private: createResp.Private}, &readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", readResp.Diagnostics)
+	}
+	if got, _ := stateLimits(t, readResp.State); len(got) != 0 {
+		t.Fatalf("limits after the lagging read = %v, want none", got)
+	}
+	return readResp
 }
 
 func TestWorkspaceRateLimitResource_DeleteToleratesNotFound(t *testing.T) {
@@ -549,7 +662,7 @@ func int64Elems(m map[string]int64) map[string]attr.Value {
 }
 
 func TestBuildWorkspaceRateLimitPatch_marshalsClearsAsNull(t *testing.T) {
-	patch := buildWorkspaceRateLimitPatch(map[string]int64{"tokens_per_day": 0}, map[string]int64{"fast_otpm": 3, "tokens_per_day": 9})
+	patch := buildWorkspaceRateLimitPatch(map[string]int64{"tokens_per_day": 0}, map[string]bool{"fast_otpm": true, "tokens_per_day": true})
 	body, err := json.Marshal(workspaceRateLimitSetRequest{Limits: patch})
 	if err != nil {
 		t.Fatal(err)
