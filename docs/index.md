@@ -17,7 +17,7 @@ Anthropic issues several kinds of keys, and each endpoint accepts only some of t
 
 | Provider argument | Key | Prefix | Created in | Use it for |
 |---|---|---|---|---|
-| `api_key` | Claude API key (personal, service account or legacy workspace key) **scoped to one workspace** | `sk-ant-api03-` | Claude Console, [API keys](https://platform.claude.com/settings/keys) | Every resource outside the organization APIs: messages, agents, environments, skills, files, vaults, memory stores, models, etc. |
+| `api_key` | Claude API key (personal, service account or legacy workspace key) scoped to one workspace, or one not scoped to a workspace together with [`workspace_id`](#workspace-workspace_id) | `sk-ant-api03-` | Claude Console, [API keys](https://platform.claude.com/settings/keys) | Every resource outside the organization APIs: messages, agents, environments, skills, files, vaults, memory stores, models, etc. |
 | `admin_api_key` | Claude Console Admin API key | `sk-ant-admin01-` | Claude Console, [Admin keys](https://platform.claude.com/settings/admin-keys), by a member with the admin role | Workspaces and their members, workspace rate limits, API keys, the organization, organization members and invites |
 | `admin_api_key` | Personal or service account key **not** scoped to a workspace | `sk-ant-api03-` | Claude Console, [API keys](https://platform.claude.com/settings/keys) | The same resources as a Console Admin API key, with the permissions of the user or service account the key belongs to |
 | `admin_api_key` | Claude Enterprise Admin API key, with scopes | `sk-ant-api01-` | claude.ai, [Organization settings > API](https://claude.ai/admin-settings/api-access), by the primary owner | Organization members and invites only, according to its [scopes](https://platform.claude.com/docs/en/manage-claude/admin-api-keys#choose-scopes-for-a-claude-enterprise-key): `read:members` (or `read:org_audit`) to read them, `write:members` to change a member's role, remove a member, create or withdraw an invite |
@@ -32,7 +32,7 @@ Anthropic issues several kinds of keys, and each endpoint accepts only some of t
 
 Required for all inference resources: `anthropic_message`, `anthropic_agent`, `anthropic_skill`, models, token counting, etc.
 
-Generate one in the [Anthropic Console → API Keys](https://platform.claude.com/settings/keys). Scope it to the workspace the resources belong to: the provider sends no `anthropic-workspace-id` header, and the API rejects (`400`) a request from a key that is not scoped to a workspace when that header is missing ([Select a workspace](https://platform.claude.com/docs/en/manage-claude/authentication#select-a-workspace)).
+Generate one in the [Anthropic Console → API Keys](https://platform.claude.com/settings/keys). A key scoped to one workspace needs nothing more. A key that is not must name the workspace each request acts in, or the API rejects the request with a `400` ([Select a workspace](https://platform.claude.com/docs/en/manage-claude/authentication#select-a-workspace)): set `workspace_id`, and the provider sends it in the `anthropic-workspace-id` header (see [Workspace](#workspace-workspace_id) below).
 
 **Environment variable** (recommended):
 
