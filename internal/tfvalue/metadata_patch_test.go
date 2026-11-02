@@ -5,6 +5,7 @@ package tfvalue
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -25,6 +26,20 @@ func stringMap(t *testing.T, m map[string]string) types.Map {
 	return v
 }
 
+// sixteenKeys returns the keys k1 to k16 with the values v1 to v16; when from
+// is not empty, the key from is renamed to, keeping its value.
+func sixteenKeys(from, to string) map[string]string {
+	m := map[string]string{}
+	for i := 1; i <= 16; i++ {
+		m[fmt.Sprintf("k%d", i)] = fmt.Sprintf("v%d", i)
+	}
+	if from != "" {
+		m[to] = m[from]
+		delete(m, from)
+	}
+	return m
+}
+
 func TestMetadataPatch(t *testing.T) {
 	null := types.MapNull(types.StringType)
 	unknown := types.MapUnknown(types.StringType)
@@ -35,22 +50,28 @@ func TestMetadataPatch(t *testing.T) {
 		want        map[string]any
 	}{
 		{
-			name:  "unchanged keys are resent",
+			name:  "unchanged keys are left out",
 			plan:  stringMap(t, map[string]string{"a": "1"}),
 			state: stringMap(t, map[string]string{"a": "1"}),
-			want:  map[string]any{"a": "1"},
+			want:  map[string]any{},
 		},
 		{
 			name:  "added and changed keys are upserted",
-			plan:  stringMap(t, map[string]string{"a": "2", "b": "3"}),
-			state: stringMap(t, map[string]string{"a": "1"}),
+			plan:  stringMap(t, map[string]string{"a": "2", "b": "3", "c": "4"}),
+			state: stringMap(t, map[string]string{"a": "1", "c": "4"}),
 			want:  map[string]any{"a": "2", "b": "3"},
 		},
 		{
 			name:  "removed key is sent as null",
 			plan:  stringMap(t, map[string]string{"a": "1"}),
 			state: stringMap(t, map[string]string{"a": "1", "b": "2"}),
-			want:  map[string]any{"a": "1", "b": nil},
+			want:  map[string]any{"b": nil},
+		},
+		{
+			name:  "a rename at the 16-pair limit sends two entries",
+			plan:  stringMap(t, sixteenKeys("k16", "renamed")),
+			state: stringMap(t, sixteenKeys("", "")),
+			want:  map[string]any{"k16": nil, "renamed": "v16"},
 		},
 		{
 			name:  "null plan deletes every prior key",

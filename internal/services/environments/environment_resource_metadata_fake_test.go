@@ -75,8 +75,8 @@ func expectStoredEnvironment(srv *environmentsFake, description any, metadata ma
 }
 
 // Removing one metadata key deletes it server-side: the update sends it as
-// null, since the API keeps omitted keys. `metadata = {}` then deletes the
-// rest and stays an empty map in state.
+// null, since the API keeps omitted keys, and leaves the unchanged key out.
+// `metadata = {}` then deletes the rest and stays an empty map in state.
 func TestEnvironmentResource_metadataKeyRemoved(t *testing.T) {
 	t.Parallel()
 	srv := newEnvironmentsFake(t)
@@ -107,7 +107,7 @@ func TestEnvironmentResource_metadataKeyRemoved(t *testing.T) {
 
 	srv.AssertCalled(routeCreateEnvironment, 1)
 	srv.AssertJSONBodies(routeUpdateEnvironment,
-		environmentUpdateBody(`"metadata":{"team":"a","env":null}`),
+		environmentUpdateBody(`"metadata":{"env":null}`),
 		environmentUpdateBody(`"metadata":{"team":null}`))
 	srv.assertRequestShape(t)
 }

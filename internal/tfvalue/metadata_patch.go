@@ -13,8 +13,12 @@ import (
 // MetadataPatch builds the metadata body of an update for endpoints that
 // apply metadata as a patch: an omitted key is kept, a key set to null is
 // deleted. Sending the planned map alone can therefore never remove a key, so
-// the patch upserts every planned key and sets every key present in the prior
-// state but absent from the plan to nil. A null plan deletes every prior key.
+// the patch upserts every planned key that is new or whose value changed and
+// sets every key present in the prior state but absent from the plan to nil.
+// A null plan deletes every prior key. Unchanged keys are left out, since the
+// API keeps them: the body holds only the changes, so a rename at the
+// 16-pair limit sends two entries rather than seventeen. This relies on the
+// prior state matching the API, which the refresh before an apply ensures.
 //
 // The result is a map[string]any (string values upsert, nil values delete),
 // to send with params.SetExtraFields(map[string]any{"metadata": patch})
@@ -22,32 +26,33 @@ import (
 // result means nothing changes: omit metadata from the request.
 func MetadataPatch(ctx context.Context, plan, state types.Map) (map[string]any, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	patch := map[string]any{}
+	var planned, prior map[string]string
 
 	if !plan.IsNull() && !plan.IsUnknown() {
-		var planned map[string]string
 		diags.Append(plan.ElementsAs(ctx, &planned, false)...)
 		if diags.HasError() {
 			return nil, diags
 		}
-		for k, v := range planned {
-			patch[k] = v
-		}
 	}
 
 	if !state.IsNull() && !state.IsUnknown() {
-		var prior map[string]string
 		diags.Append(state.ElementsAs(ctx, &prior, false)...)
 		if diags.HasError() {
 			return nil, diags
 		}
-		for k := range prior {
-			if _, kept := patch[k]; !kept {
-				patch[k] = nil
-			}
-		}
 	}
 
+	patch := map[string]any{}
+	for k, v := range planned {
+		if old, stored := prior[k]; !stored || old != v {
+			patch[k] = v
+		}
+	}
+	for k := range prior {
+		if _, kept := planned[k]; !kept {
+			patch[k] = nil
+		}
+	}
 	return patch, diags
 }
 
