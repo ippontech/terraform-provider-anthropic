@@ -120,10 +120,14 @@ func (r *WorkspaceRateLimitResource) Schema(_ context.Context, _ resource.Schema
 				ElementType: types.Int64Type,
 				MarkdownDescription: "Override values keyed by limiter type: `" + strings.Join(workspaceRateLimitTypes, "`, `") + "`. " +
 					"A value above the organization's own limit is stored, but the lower of the two is enforced. " +
-					"Removing a key clears that override. Changes take effect within about an hour.",
+					"Removing a key clears that override. A value cannot be `null`: leave the key out instead. " +
+					"Changes take effect within about an hour.",
 				Validators: []validator.Map{
 					mapvalidator.SizeAtLeast(1),
 					mapvalidator.KeysAre(stringvalidator.OneOf(workspaceRateLimitTypes...)),
+					// Between skips null values, and a null cannot be read
+					// into the map[string]int64 every request is built from.
+					mapvalidator.NoNullValues(),
 					mapvalidator.ValueInt64sAre(int64validator.Between(0, maxWorkspaceRateLimitValue)),
 				},
 			},

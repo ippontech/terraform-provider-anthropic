@@ -80,7 +80,7 @@ resource "anthropic_workspace_rate_limit" "sonnet" {
 
 ### Required
 
-- `limits` (Map of Number) Override values keyed by limiter type: `fast_itpmca`, `fast_otpm`, `input_tokens_per_minute`, `input_tokens_per_minute_cache_aware`, `output_tokens_per_minute`, `requests_per_minute`, `tokens_per_day`, `tokens_per_minute`, `tool_uses_per_second`. A value above the organization's own limit is stored, but the lower of the two is enforced. Removing a key clears that override. Changes take effect within about an hour.
+- `limits` (Map of Number) Override values keyed by limiter type: `fast_itpmca`, `fast_otpm`, `input_tokens_per_minute`, `input_tokens_per_minute_cache_aware`, `output_tokens_per_minute`, `requests_per_minute`, `tokens_per_day`, `tokens_per_minute`, `tool_uses_per_second`. A value above the organization's own limit is stored, but the lower of the two is enforced. Removing a key clears that override. A value cannot be `null`: leave the key out instead. Changes take effect within about an hour.
 - `rate_limit_id` (String) The `id` of the organization's rate-limit entry for the group to override: a `rate_limit_id` from `anthropic_workspace_rate_limits` with `include_inherited = true`.
 - `workspace_id` (String) The ID of the workspace to set overrides for.
 

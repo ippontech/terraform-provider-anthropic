@@ -443,24 +443,25 @@ func TestWorkspaceRateLimitResource_limitsValidators(t *testing.T) {
 	}
 
 	cases := map[string]struct {
-		value   map[string]int64
+		value   map[string]attr.Value
 		wantErr bool
 	}{
-		"valid":            {map[string]int64{"requests_per_minute": 100, "tool_uses_per_second": 0}, false},
-		"unknown type":     {map[string]int64{"requests_per_hour": 100}, true},
-		"negative":         {map[string]int64{"requests_per_minute": -1}, true},
-		"above 2^53 - 1":   {map[string]int64{"requests_per_minute": maxWorkspaceRateLimitValue + 1}, true},
-		"empty map":        {map[string]int64{}, true},
-		"max value is set": {map[string]int64{"tokens_per_day": maxWorkspaceRateLimitValue}, false},
+		"valid":            {int64Elems(map[string]int64{"requests_per_minute": 100, "tool_uses_per_second": 0}), false},
+		"unknown type":     {int64Elems(map[string]int64{"requests_per_hour": 100}), true},
+		"negative":         {int64Elems(map[string]int64{"requests_per_minute": -1}), true},
+		"above 2^53 - 1":   {int64Elems(map[string]int64{"requests_per_minute": maxWorkspaceRateLimitValue + 1}), true},
+		"empty map":        {int64Elems(map[string]int64{}), true},
+		"max value is set": {int64Elems(map[string]int64{"tokens_per_day": maxWorkspaceRateLimitValue}), false},
+		// A null value (e.g. a variable defaulting to null) would otherwise
+		// pass plan and fail at apply when the map is read into int64s.
+		"null value": {map[string]attr.Value{"requests_per_minute": types.Int64Null(), "tokens_per_day": types.Int64Value(5)}, true},
+		// An unknown value is checked again once known, at apply.
+		"unknown value": {map[string]attr.Value{"requests_per_minute": types.Int64Unknown()}, false},
 	}
 	for name, tc := range cases {
-		elems := map[string]attr.Value{}
-		for k, v := range tc.value {
-			elems[k] = types.Int64Value(v)
-		}
 		var resp validator.MapResponse
 		for _, v := range limitsAttr.MapValidators() {
-			v.ValidateMap(context.Background(), validator.MapRequest{ConfigValue: types.MapValueMust(types.Int64Type, elems)}, &resp)
+			v.ValidateMap(context.Background(), validator.MapRequest{ConfigValue: types.MapValueMust(types.Int64Type, tc.value)}, &resp)
 		}
 		if got := resp.Diagnostics.HasError(); got != tc.wantErr {
 			t.Errorf("%s: error = %v, want %v (%v)", name, got, tc.wantErr, resp.Diagnostics)
@@ -469,6 +470,14 @@ func TestWorkspaceRateLimitResource_limitsValidators(t *testing.T) {
 }
 
 // --- Helpers ---
+
+func int64Elems(m map[string]int64) map[string]attr.Value {
+	elems := map[string]attr.Value{}
+	for k, v := range m {
+		elems[k] = types.Int64Value(v)
+	}
+	return elems
+}
 
 func TestBuildWorkspaceRateLimitPatch_marshalsClearsAsNull(t *testing.T) {
 	patch := buildWorkspaceRateLimitPatch(map[string]int64{"tokens_per_day": 0}, map[string]int64{"fast_otpm": 3, "tokens_per_day": 9})
