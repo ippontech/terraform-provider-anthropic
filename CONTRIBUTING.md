@@ -140,7 +140,7 @@ For GitHub to show **Verified**, add the key's public half under your account *S
 
 ## Conventional Commits
 
-Pull requests are squash-merged: the PR title becomes the subject of the commit on `main`, and the PR description its body. [semantic-release](https://semantic-release.gitbook.io/semantic-release/) reads that commit to choose the next version and write the release notes, so the PR title must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>[(scope)]: <subject>`, for example `feat(agents): add execution_identity`. The `pr-title` check enforces it on every pull request. The commits inside a pull request do not reach `main`; the optional `commit-msg` hook below keeps them in the same format anyway.
+Pull requests are squash-merged: the PR title becomes the subject of the commit on `main`, and the PR description its body. [semantic-release](https://semantic-release.gitbook.io/semantic-release/) reads that commit to choose the next version and write the release notes, so the PR title must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>[(scope)]: <subject>`, for example `feat(agents): add execution_identity`. The `pr-title` check enforces it on every pull request, and again in the merge queue on the squash commit, so an edit made to the title or description after the check is caught there. The commits inside a pull request do not reach `main`; the optional `commit-msg` hook below keeps them in the same format anyway.
 
 | Type | Use it for | Release |
 |---|---|---|
@@ -149,11 +149,11 @@ Pull requests are squash-merged: the PR title becomes the subject of the commit 
 | `perf`, `refactor`, `build` | performance, refactoring, build changes | patch |
 | `docs` | documentation and examples: the Terraform Registry only shows the docs of a released version | patch |
 | `test`, `ci`, `style`, `chore` | tests, CI, formatting, tooling; Renovate uses `chore(deps)` for CI actions, pre-commit hooks and mise tools | none |
-| `Revert "<title>"` (GitHub's revert button) | undoing a merged pull request | patch |
+| `Revert "<title>"` (GitHub's revert button), `revert: <subject>` | undoing a merged pull request; the description needs a `This reverts commit <sha>.` line, with the hash of the commit reverted on `main` (the commit of GitHub's revert branch carries it), or semantic-release reads no revert | patch |
 
 `build`, `refactor` and `docs` release by choice of this repository (`releaseRules` in `.releaserc`); the others follow the defaults of `@semantic-release/commit-analyzer`. The `chore(release): <version>` commits on `main` are written by semantic-release itself after each release, to update `CHANGELOG.md`: a `chore` commit never triggers a release.
 
-A breaking change, marked by `!` after the type or a `BREAKING CHANGE:` footer, publishes a major version. semantic-release reads such a footer on any line of the description that starts with `BREAKING CHANGE` or `BREAKING-CHANGE`, in any case and after spaces or `*`, so `Breaking change: none` counts too. The `pr-title` check refuses both on pull requests to `main`, except the `major/<version>` release PR, which is merged with a merge commit: breaking changes go through the staging branch described in [RELEASE.md](RELEASE.md#major-versions).
+A breaking change, marked by `!` after the type or a `BREAKING CHANGE:` footer, publishes a major version. semantic-release reads such a footer on any line of the description that starts with `BREAKING CHANGE` or `BREAKING-CHANGE`, in any case and after spaces or `*`, so `Breaking change: none` counts too. It also takes a `!` before `: ` that follows any later `)` of the title as the breaking mark, so `chore(ci): refuse feat(api)!: titles` is breaking. The `pr-title` check refuses both on pull requests to `main`, except the `major/<version>` release PR, which is merged with a merge commit: breaking changes go through the staging branch described in [RELEASE.md](RELEASE.md#major-versions).
 
 To check your own commit messages locally, `pre-commit install` also installs a `commit-msg` hook ([conventional-pre-commit](https://github.com/compilerla/conventional-pre-commit)) that rejects a message outside these types.
 
