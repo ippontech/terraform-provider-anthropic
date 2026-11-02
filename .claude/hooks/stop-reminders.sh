@@ -14,8 +14,9 @@
 #      (committing the CLAUDE.md edits that skill writes, or merging main,
 #      does not bring the reminder back).
 # The skills mark 2 and 3 as done by touching /tmp/claude-pr-desc-done-<branch>
-# and /tmp/claude-knowledge-done-<branch>. Any failure (missing git, gh or jq,
-# no network) ends silently with exit 0.
+# and /tmp/claude-knowledge-done-<branch>; the hook touches the first itself
+# when GitHub reports no open PR for the branch. Any failure (missing git, gh
+# or jq, no network) ends silently with exit 0.
 
 set -u
 
@@ -103,11 +104,18 @@ older_than() {
 }
 
 # 2. PR description: only query GitHub when the sentinel is older than the
-#    last commit, so a stop without new commits costs no network call.
+#    last commit, so a stop without new commits costs no network call. An
+#    answer of no open PR (none found, or only closed ones) touches the
+#    sentinel too, so the next lookup waits for a new commit; a failed lookup
+#    (no network, not logged in) does not, and the next stop tries again.
 if older_than "/tmp/claude-pr-desc-done-$slug" "$last_commit" && command -v gh >/dev/null 2>&1; then
-  pr=$(gh pr view "$branch" --json number,state --jq 'select(.state == "OPEN") | .number' 2>/dev/null || true)
+  lookup=$(gh pr view "$branch" --json number,state \
+    --jq '"pr=" + (if .state == "OPEN" then (.number | tostring) else "" end)' 2>&1 || true)
+  pr=$(printf '%s\n' "$lookup" | sed -n 's/^pr=\([0-9][0-9]*\)$/\1/p')
   if [ -n "$pr" ]; then
     reminders+=("PR #$pr on $branch has commits its description may not cover yet: run /update-pr-description to draft an update (nothing is published without your approval).")
+  elif printf '%s\n' "$lookup" | grep -qE '^(pr=$|no pull requests found)'; then
+    touch "/tmp/claude-pr-desc-done-$slug" 2>/dev/null || true
   fi
 fi
 
