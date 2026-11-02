@@ -2,7 +2,7 @@
 page_title: "Claude Models on Google Cloud"
 subcategory: "Guides"
 description: |-
-  Manage the Anthropic organization of a Google Cloud project through Claude Models on Google Cloud (Anthropic managed): project services and IAM roles, Application Default Credentials, provider aliases, and what the provider can and cannot manage there. Beta: verified offline only.
+  Manage the Anthropic organization of a Google Cloud project through Claude Models on Google Cloud (Anthropic managed): project services and IAM roles, Application Default Credentials, provider aliases, and what the provider can and cannot manage there. Beta.
 ---
 
 # Claude Models on Google Cloud (Anthropic managed)
@@ -13,7 +13,7 @@ This is not Claude Models on Google Cloud (Google managed), the Vertex AI offeri
 
 The provider reaches the organization through its `google_cloud` block, documented with its rules in the "Cloud platforms" section of the [provider page](https://registry.terraform.io/providers/ippontech/anthropic/latest/docs). This guide covers what surrounds it.
 
-~> **Beta.** The provider's Claude Models on Google Cloud support is in beta, and every plan or apply prints a warning saying so. No Claude Models on Google Cloud organization was available to test against: the support is verified with offline tests only, against local fake gateways and token endpoints, never with requests to the real gateway. The main points not verified are the shape of the gateway's own errors, `?beta=true` on beta routes, whether user profiles, the Compliance API and Managed Agents webhooks are served, and the request URLs the SDK derives; [section 5](#5-what-is-not-verified) lists them all. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not. The offering launched on 2026-10-22, and its documentation still changes.
+~> **Beta.** Claude Models on Google Cloud support is in beta, and every plan or apply prints a warning saying so: it relies on the Anthropic SDK's Google Cloud client, itself in beta, and is verified with offline tests only. [Section 5](#5-what-is-not-verified) lists what remains open. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 ## 1. Before the first apply
 

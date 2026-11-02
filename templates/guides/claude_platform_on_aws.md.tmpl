@@ -2,7 +2,7 @@
 page_title: "Claude Platform on AWS"
 subcategory: "Guides"
 description: |-
-  Manage the Anthropic organization of an AWS account through Claude Platform on AWS: provider aliases per region and workspace, the IAM permissions of the Terraform principal, execution roles for scheduled deployments, and customer-managed keys in AWS KMS. Beta: verified offline only.
+  Manage the Anthropic organization of an AWS account through Claude Platform on AWS: provider aliases per region and workspace, the IAM permissions of the Terraform principal, execution roles for scheduled deployments, and customer-managed keys in AWS KMS. Beta.
 ---
 
 # Claude Platform on AWS
@@ -11,7 +11,7 @@ description: |-
 
 The provider reaches that organization through its `aws` block, documented with its rules in the "Cloud platforms" section of the [provider page](https://registry.terraform.io/providers/ippontech/anthropic/latest/docs). This guide covers what surrounds it: the AWS-side setup, how to split provider aliases, the IAM permissions Terraform needs, execution roles for scheduled deployments, and customer-managed keys.
 
-~> **Beta.** The provider's Claude Platform on AWS support is in beta, and every plan or apply prints a warning saying so. No Claude Platform on AWS organization was available to test against: the support is verified with offline tests only, against a local fake gateway that checks every request's SigV4 signature with the AWS SDK's own signer, never with requests to the real gateway. The main points not verified are whether the gateway serves scheduled deployments, the shape of its own errors, the signature of a path holding an encoded KMS key ARN, `?beta=true` on beta routes, and AWS Console keys sent as `x-api-key`; [section 7](#7-what-is-not-verified) lists them all. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
+~> **Beta.** Claude Platform on AWS support is in beta, and every plan or apply prints a warning saying so: it relies on the Anthropic SDK's AWS client, itself in beta, and its verification against the real gateway is still partial. [Section 7](#7-what-is-not-verified) lists what remains open. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 ## 1. Before the first apply
 
@@ -36,7 +36,7 @@ The provider reaches that organization through its `aws` block, documented with 
 
 ## 2. One provider alias per region and workspace
 
-A workspace is bound to the AWS region of the endpoint it was created through and is reachable only there. Every inference and resource request names its workspace in the `anthropic-workspace-id` header, so a provider alias serves one region and one workspace. Admin API requests (workspaces) do not carry the header, but the alias still needs a workspace ID: give the one created at sign-up.
+A workspace is bound to the AWS region of the endpoint it was created through and is reachable only there. Every inference and resource request names its workspace in the `anthropic-workspace-id` header, so a provider alias serves one region and one workspace. Admin API requests (workspaces) do not carry the header, but the alias still needs a workspace ID: give the one created at sign-up. The workspace object does not show its region, so keep it next to the workspace ID, in the alias that reaches it.
 
 A workspace created in the same run cannot be the `workspace_id` of an alias: provider configuration must be known at plan time, and the provider rejects an unknown `workspace_id`. Manage workspaces from one alias, and their contents from aliases whose workspace IDs are known: a variable, as below, or a separate configuration that reads the first one's outputs.
 
@@ -107,6 +107,9 @@ resource "aws_iam_policy" "terraform_anthropic" {
           "aws-external-anthropic:ListWorkspaces",
           "aws-external-anthropic:UpdateWorkspace",
           "aws-external-anthropic:ArchiveWorkspace",
+          "aws-external-anthropic:TagResource",
+          "aws-external-anthropic:UntagResource",
+          "aws-external-anthropic:ListTagsForResource",
         ]
         Resource = "*"
       },
@@ -181,13 +184,15 @@ resource "aws_iam_policy" "terraform_anthropic" {
 }
 ```
 
+Workspace tags are AWS resource tags: they work with IAM conditions (`aws:ResourceTag/<key>`) and cost allocation ([workspaces](https://docs.aws.amazon.com/claude-platform/latest/userguide/workspaces.html)). Changing them is authorized by `TagResource` (keys added or changed) and `UntagResource` (keys removed), not `UpdateWorkspace`; tags set at creation need only `CreateWorkspace`. Every workspace read also records `ListTagsForResource` in CloudTrail, so the policy grants it, although a policy without it was not tried. The provider sends a tags change in a request of its own, since the gateway rejects tags combined with any other field.
+
 With `aws.api_key` instead of SigV4, the principal also needs `aws-external-anthropic:CallWithBearerToken` on `"Resource": "*"`. Mind the IAM wildcard pitfalls the IAM page describes: `Delete*` does not match `Archive*` actions, and `*File` also matches the user profile actions.
 
 ## 4. Execution role for scheduled deployments
 
 On this platform a scheduled deployment runs each session as an IAM role of your AWS account ([scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)): the agent's execution identity must be an `aws_role` before a deployment is created for it, or the create returns a 400.
 
-~> `anthropic_deployment` and `anthropic_deployment_runs` are **unverified** on this platform: the platform page and the 2026-10-14 release notes announce scheduled deployments, but the gateway's route table, which denies the routes it does not list, does not list `/v1/deployments`. Set it in the agent's `execution_identity` (see `anthropic_agent`).
+-> The gateway serves `/v1/deployments` and `/v1/deployment_runs`, although its route table does not list them. For an agent without an `aws_role` execution identity, the create fails with `On Claude Platform on AWS a deployment runs as the agent's AWS role. This agent has no execution_identity of type aws_role, so the deployment could never run.` Set it in the agent's `execution_identity` (see `anthropic_agent`).
 
 ```hcl
 resource "aws_iam_role" "claude_sessions" {
@@ -316,8 +321,7 @@ The principal that attaches the key needs `kms:DescribeKey`, `kms:Encrypt` and `
 
 ## 6. What the provider manages on this platform
 
-- **Supported**: workspaces (create, rename, archive; `data_residency.workspace_geo` is not configurable here, leave it unset), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, user profiles (create, read, update; the provider never deletes them).
-- **Unverified**: scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
+- **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, user profiles (create, read, update; the provider never deletes them), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
 - **Unavailable**: API keys (generated in the AWS Console), organization members, invites and workspace members (AWS IAM manages access), rate limits, organization webhooks, the organization data source, and Workload Identity Federation (the gateway accepts no OAuth token).
 - **Not in the provider yet**: external key registrations, which the gateway serves.
 
@@ -325,16 +329,21 @@ Managed Agents sessions differ on this platform, which matters for agents and en
 
 ## 7. What is not verified
 
-Each of these needs a Claude Platform on AWS test organization:
+Verified against the real gateway:
 
-1. Whether the gateway serves `/v1/deployments` and `/v1/deployment_runs`.
-2. The shape of the gateway's own errors (403 from IAM, a route it does not serve). The provider keeps an object in state on any 404 that is not the Claude API's `not_found_error`, which is the safe side, but the message cannot be tuned without seeing one.
-3. That the gateway canonicalizes the signature of a path holding an encoded KMS key ARN (`%2F`) as the AWS SDK signer does.
-4. That `?beta=true`, which the SDK adds to beta routes, is accepted.
-5. That an AWS Console key is accepted as `x-api-key`, as SDK v1.84 sends it; the current platform page documents `Authorization: Bearer`.
-6. What the gateway does with `data_residency.workspace_geo` and `tags` on a workspace create, and whether the workspace object shows its region.
-7. That Admin API requests without an `anthropic-workspace-id` header are accepted, as the platform page says.
-8. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
+- the deployment routes are served;
+- a route the gateway does not serve answers 404 with an empty body, and an IAM deny answers 403 with a `permission_error` body naming the denied action;
+- the signature of a path holding an encoded KMS key ARN, and `?beta=true` on beta routes, are accepted;
+- Admin API requests need no `anthropic-workspace-id` header;
+- `workspace_geo` accepts `us` or no value; tags merge as on the Claude API, but only in a request of their own, and CloudTrail records them as `TagResource` and `UntagResource`.
+
+Not verified yet, each needing a Claude Platform on AWS organization:
+
+1. That an AWS Console key is accepted as `x-api-key`, as SDK v1.84 sends it; the current platform page documents `Authorization: Bearer`.
+2. Attaching a KMS key to a workspace: the signature of the path is accepted, but no key was attached.
+3. Whether reading a workspace fails without `ListTagsForResource`, which CloudTrail records on every read.
+4. That a name or `data_residency` update is authorized by `UpdateWorkspace`: none was sent yet.
+5. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
 
 ## See also
 
