@@ -302,9 +302,11 @@ func (r *WorkspaceRateLimitResource) Update(ctx context.Context, req resource.Up
 	}
 
 	plan.ID = state.ID
-	// group is planned from state (UseStateForUnknown); only a response that
-	// carries one may replace it, so a trimmed response cannot null it out.
-	if entry.Group != nil {
+	// group is planned from state (UseStateForUnknown), and a known planned
+	// value must come back unchanged, so the response's group (which can
+	// differ, e.g. a renamed display_name) only fills an unknown one. The next
+	// Read refreshes it from the list.
+	if plan.Group.IsUnknown() {
 		plan.Group, diags = rateLimitGroupValue(entry.Group)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {

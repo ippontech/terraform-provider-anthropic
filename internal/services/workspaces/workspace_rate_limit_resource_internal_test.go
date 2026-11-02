@@ -262,6 +262,75 @@ func TestWorkspaceRateLimitResource_UpdateClearsRemovedTypes(t *testing.T) {
 	}
 }
 
+// runRateLimitGroupUpdate runs an Update whose plan holds plannedGroup,
+// against a server answering postResponse, and returns the stored group.
+func runRateLimitGroupUpdate(t *testing.T, postResponse string, stateGroup, plannedGroup types.Object) types.Object {
+	t.Helper()
+	srv, _ := rateLimitServer(t, postResponse, "", http.StatusOK)
+	r := &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+
+	state := rateLimitModel(map[string]int64{"requests_per_minute": 100})
+	state.Group = stateGroup
+	plan := rateLimitModel(map[string]int64{"requests_per_minute": 200})
+	plan.Group = plannedGroup
+
+	resp := resource.UpdateResponse{State: rateLimitState(t, r, state)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan:  rateLimitPlan(t, r, plan),
+		State: rateLimitState(t, r, state),
+	}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+	var got WorkspaceRateLimitResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+	return got.Group
+}
+
+func TestWorkspaceRateLimitResource_UpdateKeepsPlannedGroup(t *testing.T) {
+	// The response's display_name differs from the planned one (renamed since
+	// the last refresh); Terraform rejects a known planned value that changes.
+	planned := types.ObjectValueMust(rateLimitGroupAttrTypes, map[string]attr.Value{
+		"id":           types.StringValue("rlg_01SONNET"),
+		"type":         types.StringValue("model_group"),
+		"display_name": types.StringValue("Claude Sonnet"),
+	})
+	got := runRateLimitGroupUpdate(t, rateLimitEntryJSON(testRateLimitID,
+		`[{"type":"requests_per_minute","value":200,"org_limit":4000,"source":{"type":"workspace"}}]`), planned, planned)
+	if !got.Equal(planned) {
+		t.Errorf("group = %v, want the planned %v", got, planned)
+	}
+}
+
+func TestWorkspaceRateLimitResource_UpdateFillsUnknownGroup(t *testing.T) {
+	cases := map[string]struct {
+		response string
+		wantNull bool
+	}{
+		"from the response": {rateLimitEntryJSON(testRateLimitID, `[]`), false},
+		"null when the response has none": {`{"type":"workspace_rate_limit","rate_limit_id":"rl_01SONNET",` +
+			`"workspace_id":"wrkspc_01WS","limits":[]}`, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := runRateLimitGroupUpdate(t, tc.response, types.ObjectNull(rateLimitGroupAttrTypes), types.ObjectUnknown(rateLimitGroupAttrTypes))
+			if got.IsUnknown() {
+				t.Fatal("group is still unknown after apply")
+			}
+			if got.IsNull() != tc.wantNull {
+				t.Fatalf("group = %v, want null %v", got, tc.wantNull)
+			}
+			if !tc.wantNull {
+				if id := got.Attributes()["id"].(types.String).ValueString(); id != "rlg_01SONNET" {
+					t.Errorf("group.id = %q, want rlg_01SONNET", id)
+				}
+			}
+		})
+	}
+}
+
 // --- Delete ---
 
 func TestWorkspaceRateLimitResource_DeleteClearsManagedTypes(t *testing.T) {
