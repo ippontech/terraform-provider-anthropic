@@ -220,6 +220,70 @@ func TestCollectionChildrenAndListing(t *testing.T) {
 	}
 }
 
+func TestCollectionKeyCreatedAgain(t *testing.T) {
+	// A delete behind Terraform's back, then an apply, creates an object
+	// under a key used before: it is a new object, with an id no other one
+	// has, listed last, and the walk still lists every object once.
+	s, _, parts := newThingsAPI(t, Replace)
+	c := NewAPIKeyClient(t, s.Server, option.WithMaxRetries(0))
+	ctx := context.Background()
+	const thing = "thing_000000000000000000000001"
+	ids := map[any]bool{}
+	create := func(name string) {
+		ids[parts.Create(map[string]any{"name": name, "thing_id": thing})["id"]] = true
+	}
+	create("wheel")
+	create("door")
+	parts.Delete("wheel")
+	create("wheel")
+	create("seat")
+	if len(ids) != 4 {
+		t.Errorf("4 objects created, %d ids: %v", len(ids), ids)
+	}
+
+	var names []string
+	for after := ""; ; {
+		var p struct {
+			Data    []map[string]any `json:"data"`
+			HasMore bool             `json:"has_more"`
+			LastID  string           `json:"last_id"`
+		}
+		query := "?limit=1"
+		if after != "" {
+			query += "&after_id=" + after
+		}
+		if err := c.Get(ctx, "/v1/things/"+thing+"/parts"+query, nil, &p); err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range p.Data {
+			names = append(names, o["name"].(string))
+		}
+		if !p.HasMore {
+			break
+		}
+		after = p.LastID
+	}
+	if got := strings.Join(names, ","); got != "door,wheel,seat" {
+		t.Errorf("parts listed %q, want door,wheel,seat", got)
+	}
+}
+
+func TestCollectionCreateSkipsSeededIDs(t *testing.T) {
+	// A seed whose id has the shape Create generates is not overwritten by
+	// the next Create.
+	s := NewServer(t)
+	c := s.NewCollection("x_")
+	seed := map[string]any{"id": "x_000000000000000000000002", "name": "seed"}
+	c.Put(seed)
+	a, b := c.Create(map[string]any{}), c.Create(map[string]any{})
+	if a["id"] == seed["id"] || b["id"] == seed["id"] || a["id"] == b["id"] {
+		t.Errorf("ids %v and %v next to the seed's %v", a["id"], b["id"], seed["id"])
+	}
+	if got, _ := c.Get("x_000000000000000000000002"); got["name"] != "seed" || c.Len() != 3 {
+		t.Errorf("seed now %v, %d objects", got, c.Len())
+	}
+}
+
 func TestCollectionHandlerErrors(t *testing.T) {
 	rec := newRecorderTB(t)
 	s := NewServer(rec)

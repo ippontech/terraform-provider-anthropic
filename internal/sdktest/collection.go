@@ -49,11 +49,14 @@ type Collection struct {
 
 	mu    sync.Mutex
 	clock int
-	// order holds every key ever stored, deleted ones included, and pos the
-	// rank of every id ever stored, so a cursor naming an object deleted
-	// since it was handed out still has a position.
+	// order holds the key of every object ever stored, in creation order,
+	// deleted ones included: a key deleted then stored again (KeyedBy) is a
+	// new object, appended once more. live is the rank in order of the
+	// object each key holds now, and pos the rank of every id ever stored,
+	// so a cursor naming an object deleted since it was handed out still
+	// has a position.
 	order []string
-	seen  map[string]bool
+	live  map[string]int
 	pos   map[string]int
 	items map[string]map[string]any
 	key   string
@@ -67,7 +70,7 @@ func (s *Server) NewCollection(idPrefix string) *Collection {
 	return &Collection{
 		s:         s,
 		idPrefix:  idPrefix,
-		seen:      map[string]bool{},
+		live:      map[string]int{},
 		pos:       map[string]int{},
 		items:     map[string]map[string]any{},
 		key:       "id",
@@ -102,15 +105,15 @@ func (c *Collection) tick() string {
 }
 
 // Create stores a copy of obj and returns the stored object. It sets id
-// (idPrefix and a sequence number) unless obj has one, and created_at and
-// updated_at unless obj has them.
+// (idPrefix and a sequence number no object stored before has had) unless
+// obj has one, and created_at and updated_at unless obj has them.
 func (c *Collection) Create(obj map[string]any) map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	o := deepCopy(obj)
 	now := c.tick()
 	if _, ok := o["id"]; !ok {
-		o["id"] = fmt.Sprintf("%s%024d", c.idPrefix, len(c.order)+1)
+		o["id"] = c.newID()
 	}
 	for _, f := range []string{"created_at", "updated_at"} {
 		if _, ok := o[f]; !ok {
@@ -129,10 +132,23 @@ func (c *Collection) Put(obj map[string]any) {
 	c.store(deepCopy(obj))
 }
 
+// newID returns the next sequence number's id, skipping any id stored
+// before (a seed Put with an id of that shape, say).
+func (c *Collection) newID() string {
+	for n := len(c.order) + 1; ; n++ {
+		id := fmt.Sprintf("%s%024d", c.idPrefix, n)
+		if _, used := c.pos[id]; !used {
+			return id
+		}
+	}
+}
+
+// store keeps o under its key. Unless the key holds an object with the same
+// id (an object stored again), o is a new object: it takes the next rank.
 func (c *Collection) store(o map[string]any) {
 	k := fmt.Sprint(o[c.key])
-	if !c.seen[k] {
-		c.seen[k] = true
+	if cur, ok := c.items[k]; !ok || idOf(cur) != idOf(o) {
+		c.live[k] = len(c.order)
 		c.pos[idOf(o)] = len(c.order)
 		c.order = append(c.order, k)
 	}
@@ -169,8 +185,8 @@ func (c *Collection) List(keep func(map[string]any) bool) []map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []map[string]any
-	for _, k := range c.order {
-		if o, ok := c.items[k]; ok && (keep == nil || keep(o)) {
+	for i, k := range c.order {
+		if o, ok := c.items[k]; ok && c.live[k] == i && (keep == nil || keep(o)) {
 			out = append(out, deepCopy(o))
 		}
 	}
