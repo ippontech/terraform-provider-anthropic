@@ -292,9 +292,12 @@ func webToolOptionsFromModel(ctx context.Context, c agentToolConfigModel) (webTo
 // no comparison with an inherited default is needed to avoid a perpetual diff,
 // and a value set out of band surfaces as drift. As for `enabled`,
 // TestAccAgentResource_withAgentToolset checks that echo live, for every
-// option. Tools other than web_fetch and web_search never carry them and map
-// to nulls. For a config state or plan tracks, webToolOptionsToState then
-// resolves these values against it.
+// option. A user_location with no field set (`{"type": "approximate"}` alone)
+// maps to null too, as an empty domain list does: it localizes nothing, and a
+// configuration cannot hold one (agentToolConfigsValidator), so mapping it as
+// an object would leave a diff that never clears. Tools other than web_fetch
+// and web_search never carry them and map to nulls. For a config state or plan
+// tracks, webToolOptionsToState then resolves these values against it.
 func webToolOptionsFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnion) (map[string]attr.Value, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
@@ -317,7 +320,7 @@ func webToolOptionsFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnio
 	}
 
 	userLocation := types.ObjectNull(agentUserLocationAttrTypes)
-	if c.JSON.UserLocation.Valid() {
+	if loc := c.UserLocation; c.JSON.UserLocation.Valid() && loc.Country+loc.City+loc.Region+loc.Timezone != "" {
 		obj, d := types.ObjectValue(agentUserLocationAttrTypes, map[string]attr.Value{
 			"country":  tfvalue.StringOrNull(c.UserLocation.Country),
 			"city":     tfvalue.StringOrNull(c.UserLocation.City),

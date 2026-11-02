@@ -407,6 +407,69 @@ func TestMapAgentToolsetToState_webOptionsImport(t *testing.T) {
 	}
 }
 
+// A user_location the API returns with no field set maps to null, like an
+// empty domain list: on Read a configuration without one plans no change, an
+// untracked config that carries only that is not reported, and the data
+// sources show null.
+func TestMapAgentToolsetToState_emptyUserLocation(t *testing.T) {
+	t.Parallel()
+
+	const emptyLocation = `{"type":"approximate","country":null,"city":"","region":null}`
+	search := toolCfg("web_search")
+	search.BlockedDomains = strSet("ads.example.com")
+
+	t.Run("tracked", func(t *testing.T) {
+		t.Parallel()
+		agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+			"default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}},
+			"configs":[{"type":"web_search","name":"web_search","enabled":true,"permission_policy":{"type":"always_ask"},
+				"blocked_domains":["ads.example.com"],"user_location":`+emptyLocation+`}]}]`)
+		data := AgentResourceModel{AgentToolset: agentToolsetObj(t, toolCfgObj(t, search))}
+		if diags := mapAgentResponseToState(context.Background(), agent, &data, readMapping); diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		got := agentToolConfigsFromToolset(t, data.AgentToolset)
+		if len(got) != 1 || !toolCfgObj(t, got[0]).Equal(toolCfgObj(t, search)) {
+			t.Errorf("got %+v, want %+v", got, search)
+		}
+	})
+
+	t.Run("untracked", func(t *testing.T) {
+		t.Parallel()
+		bash := toolCfg("bash")
+		bash.Enabled = types.BoolValue(false)
+		agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+			"default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}},
+			"configs":[
+				{"type":"bash","name":"bash","enabled":false,"permission_policy":{"type":"always_ask"}},
+				{"type":"web_search","name":"web_search","enabled":true,"permission_policy":{"type":"always_ask"},
+				 "user_location":`+emptyLocation+`}]}]`)
+		data := AgentResourceModel{AgentToolset: agentToolsetObj(t, toolCfgObj(t, bash))}
+		if diags := mapAgentResponseToState(context.Background(), agent, &data, readMapping); diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		if got := agentToolConfigsFromToolset(t, data.AgentToolset); len(got) != 1 {
+			t.Errorf("got %d configs, want only the tracked one: %+v", len(got), got)
+		}
+	})
+
+	t.Run("data source", func(t *testing.T) {
+		t.Parallel()
+		agent := parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+			"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},
+			"configs":[{"type":"web_search","name":"web_search","enabled":true,"permission_policy":{"type":"always_allow"},
+				"user_location":`+emptyLocation+`}]}]`)
+		var ds AgentDataSourceModel
+		if diags := mapAgentResponseToDataSource(agent, &ds); diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		got := agentToolConfigsFromToolset(t, ds.AgentToolset)
+		if len(got) != 1 || !got[0].UserLocation.IsNull() {
+			t.Errorf("user_location = %+v, want null", got)
+		}
+	})
+}
+
 // The API may store domain entries normalized and resolve values the
 // configuration leaves unset. Create and Update must still store the plan, or
 // Terraform fails the apply with "Provider produced inconsistent result after
