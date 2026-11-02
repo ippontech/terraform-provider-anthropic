@@ -408,11 +408,14 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 
 	// The update endpoint keeps an omitted description and clears a null one
 	// (https://platform.claude.com/docs/en/api/beta/environments/update), so
-	// a description removed from the configuration is sent as null.
-	if !data.Description.IsNull() && !data.Description.IsUnknown() {
-		params.Description = param.NewOpt(data.Description.ValueString())
-	} else if data.Description.IsNull() && !state.Description.IsNull() {
+	// a null description is always sent as null, not only when the prior
+	// state has one: a saved plan or -refresh=false applies over a state that
+	// may miss a description set outside Terraform, which the response would
+	// otherwise carry back where the plan has null.
+	if data.Description.IsNull() {
 		params.Description = param.Null[string]()
+	} else if !data.Description.IsUnknown() {
+		params.Description = param.NewOpt(data.Description.ValueString())
 	}
 
 	// metadata is a patch: keys removed from the configuration are sent as null.

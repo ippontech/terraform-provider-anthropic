@@ -123,8 +123,8 @@ func TestEnvironmentResource_metadataKeyRemoved(t *testing.T) {
 
 	srv.AssertCalled(routeCreateEnvironment, 1)
 	srv.AssertJSONBodies(routeUpdateEnvironment,
-		environmentUpdateBody(`"metadata":{"team":"a","env":null}`),
-		environmentUpdateBody(`"metadata":{"team":null}`))
+		environmentUpdateBody(`"description":null,"metadata":{"team":"a","env":null}`),
+		environmentUpdateBody(`"description":null,"metadata":{"team":null}`))
 	srv.assertRequestShape(t)
 }
 
@@ -185,6 +185,38 @@ func TestEnvironmentResource_metadataChangedAfterPlan(t *testing.T) {
 		},
 	})
 
-	srv.AssertJSONBodies(routeUpdateEnvironment, environmentUpdateBody(`"metadata":{"team":"a","env":"dev"}`))
+	srv.AssertJSONBodies(routeUpdateEnvironment, environmentUpdateBody(`"description":null,"metadata":{"team":"a","env":"dev"}`))
+	srv.assertRequestShape(t)
+}
+
+// A description set outside Terraform after the plan, on an environment
+// whose configuration has none, is cleared by the apply of that plan: the
+// update sends description null whenever the plan has none, where leaving
+// it out would keep the description and fail the apply with an
+// inconsistent result.
+func TestEnvironmentResource_descriptionSetAfterPlan(t *testing.T) {
+	t.Parallel()
+	srv := newEnvironmentsFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(srv.Server),
+		CheckDestroy:             checkEnvironmentsDeleted(srv),
+		Steps: []resource.TestStep{
+			{
+				Config:            environmentConfig("  metadata = { team = \"a\" }\n"),
+				ConfigPlanChecks:  expectEnvironmentAction(plancheck.ResourceActionCreate),
+				ConfigStateChecks: expectEnvironment("", map[string]string{"team": "a"}),
+			},
+			{
+				Config: environmentConfig("  metadata = { team = \"b\" }\n"),
+				ConfigPlanChecks: expectEnvironmentAction(plancheck.ResourceActionUpdate,
+					changeStoredEnvironment(srv, map[string]any{"description": "set outside Terraform"})),
+				ConfigStateChecks: expectEnvironment("", map[string]string{"team": "b"}),
+				Check:             expectStoredEnvironment(srv, nil, map[string]any{"team": "b"}),
+			},
+		},
+	})
+
+	srv.AssertJSONBodies(routeUpdateEnvironment, environmentUpdateBody(`"description":null,"metadata":{"team":"b"}`))
 	srv.assertRequestShape(t)
 }
