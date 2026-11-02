@@ -183,7 +183,7 @@ pre-commit run -a
 
 ### API key model
 
-The provider has three optional credentials, and a fourth way to obtain the third. At least one must be configured:
+The provider has three optional credentials, and two more ways to obtain the third. At least one must be configured:
 
 | Credential | Provider arg | Env var | Client field | Used by |
 |---|---|---|---|---|
@@ -191,6 +191,7 @@ The provider has three optional credentials, and a fourth way to obtain the thir
 | Admin | `admin_api_key` | `ANTHROPIC_ADMIN_API_KEY` | `pd.AdminClient` | Organization endpoints (`/v1/organizations/*`, e.g. workspaces) |
 | OAuth bearer (`org:admin`) | `auth_token` | `ANTHROPIC_AUTH_TOKEN` | `pd.OAuthClient` | Endpoints that reject API keys and require `Authorization: Bearer` (Workload Identity Federation, [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137)) |
 | OAuth bearer, minted by WIF | `federation` block | `ANTHROPIC_FEDERATION_RULE_ID` etc. fill it, never enable it | `pd.OAuthClient` | Same endpoints as `auth_token`, which it conflicts with; it wins over `ANTHROPIC_AUTH_TOKEN` |
+| OAuth bearer, from an `ant auth login` profile | `cli` block | `ANTHROPIC_PROFILE` etc. fill it, never enable it | `pd.OAuthClient` | Same endpoints; used only when `auth_token` and `federation` are both absent |
 
 Each is resolved by `resolveCredential` (`internal/provider/provider.go`): the provider argument wins when set, the env var otherwise, and an Unknown value (an unresolved reference at plan time) counts as unset.
 
@@ -206,6 +207,12 @@ Two details are load-bearing:
   - **It conflicts with `auth_token`, and wins over `ANTHROPIC_AUTH_TOKEN`.** Both would fill `pd.OAuthClient`. The check reads the configuration (`!IsNull()`), so an `auth_token` unknown at plan still conflicts (`TestConfigureFederationConflictsWithAuthToken`, `TestConfigureFederationConflictsWithUnknownAuthToken`). The variable gives way to the block, as the environment does to every provider argument, with a warning because the SDKs rank it above their own federation (`TestConfigureFederationIgnoresAuthTokenEnvironment`).
   - **The client still goes through `newSDKClient`**, so `WithoutEnvironmentDefaults` keeps profiles and env credentials out of it.
   - **Unknown at plan is an error, per attribute.** `resolveCredential` reads an Unknown as unset, which for this block would configure a different identity source or report a value as missing that the configuration does set (`TestConfigureFederationRejectsUnknownAttributes`).
+- **The `cli` block reads one `ant auth login` profile on purpose** (`internal/provider/cli.go`), and passes it to `option.WithConfigQuiet`, so the SDK refreshes the login with the profile's refresh token and writes the rotated tokens back. It is the exception to the ambient-profile rule above, kept narrow by these rules, each tested in `cli_test.go`:
+  - **Fallback, not conflict.** It is evaluated only when `auth_token` and `federation` are both absent, so CI's token wins and a runner's profiles are never read. The gate reads the configuration, like the federation conflict check: an `auth_token` unknown at plan still counts as present (`TestConfigureCLIDefersToAuthToken`, `TestConfigureCLIDefersToUnknownAuthToken`, `TestConfigureCLIDefersToFederation`). Skipping it for an exported `ANTHROPIC_AUTH_TOKEN` is logged, not warned, so CI stays quiet.
+  - **Unknown attributes are errors**, per attribute, as for `federation`: `resolveCredential` would otherwise read them as unset and pick a profile from the environment (`TestConfigureCLIRejectsUnknownAttributes`).
+  - **Discovery reads profiles raw.** `config.LoadProfile` fills a profile's missing `organization_id` from `ANTHROPIC_ORGANIZATION_ID`, which would make every profile match; `readCLIProfile` decodes the files itself, preferring what the credentials file says the token was minted for. Only usable `org:admin` profiles are candidates, because the recommended layout keeps an everyday profile in the same organization, and a stale login beside a working one must not make the search ambiguous (`TestConfigureCLIFindsProfileByOrganization`, `TestConfigureCLISkipsUnusableCandidates`). `cli.workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the federation variable and would only filter out the login (`TestConfigureCLIIgnoresWorkspaceEnvironment`). A non-`org:admin` profile from `ANTHROPIC_PROFILE` is an error, since that is usually the everyday login; one named by `cli.profile` only warns (`TestConfigureCLIRejectsEnvironmentProfileWithoutAdminScope`, `TestConfigureCLIWarnsWithoutAdminScope`).
+  - **The profile's settings don't leak.** A `base_url` that differs from the provider's is an error, and `workspace_id` is cleared before `WithConfig` sees it (`TestConfigureCLIRejectsProfileBaseURL`, `TestConfigureCLIUsesNamedProfile`).
+  - **Logged-out and unrefreshable logins fail at configure time**, naming the `ant auth login` command, instead of as a 401 on the first request.
 
 ### Configure method pattern
 
