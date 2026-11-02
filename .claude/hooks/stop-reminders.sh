@@ -5,7 +5,8 @@
 # its own: it prints at most one systemMessage, shown to the user, when
 #   1. Go sources, docs templates or examples changed or were deleted after
 #      docs/ was last generated (run `make`, which includes `make generate`),
-#      on any branch, main and a detached HEAD included;
+#      whether the change is uncommitted or was committed without running
+#      make, on any branch, main and a detached HEAD included;
 #   2. the branch has an open PR and commits newer than the last
 #      /update-pr-description or /ship run on this machine;
 #   3. the branch changes Go or Terraform files and has a commit of its own
@@ -35,25 +36,54 @@ finish() {
   exit 0
 }
 
-# 1. Docs generation: an uncommitted change to a non-test Go file, a template
-#    or an example that is newer than docs/index.md (make generate rewrites
-#    every file under docs/). A deleted file has no time of its own: the
-#    nearest directory still there changed when the entry went away.
+# Modification time in seconds since the epoch (GNU stat, then BSD stat).
+mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}
+
+# True when a non-test Go file, template or example ($1) is newer than
+# docs/index.md (make generate rewrites every file under docs/). A deleted
+# file has no time of its own: the nearest directory still there changed when
+# the entry went away.
+newer_than_docs() {
+  local path=$1
+  case "$path" in
+    *_test.go) return 1 ;;
+  esac
+  while [ ! -e "$path" ]; do path=$(dirname "$path"); done
+  [ ! -f docs/index.md ] || [ "$path" -nt docs/index.md ]
+}
+
+# 1. Docs generation: an uncommitted change newer than docs/index.md, or one
+#    the branch committed (origin/main..HEAD) without running make since:
+#    both the file and its commit are newer than docs/index.md. The commit
+#    time leaves out a fresh checkout, which writes the files after
+#    docs/index.md but after their commits too.
 docs_stale=false
 while IFS= read -r line; do
   path=${line:3}
   path=${path##* -> }
-  case "$path" in
-    *_test.go) continue ;;
-  esac
-  while [ ! -e "$path" ]; do path=$(dirname "$path"); done
-  if [ ! -f docs/index.md ] || [ "$path" -nt docs/index.md ]; then
+  if newer_than_docs "$path"; then
     docs_stale=true
     break
   fi
 done < <(git status --porcelain --untracked-files=all -- '*.go' templates examples 2>/dev/null)
+if [ "$docs_stale" = false ]; then
+  docs_generated=$(mtime docs/index.md)
+  commit_time=0
+  while IFS= read -r line; do
+    case "$line" in
+      "") continue ;;
+      @*) commit_time=${line#@}; continue ;;
+    esac
+    if [ "$commit_time" -ge "$docs_generated" ] && newer_than_docs "$line"; then
+      docs_stale=true
+      break
+    fi
+  done < <(git log --no-merges --format=@%ct --name-only origin/main..HEAD -- '*.go' templates examples 2>/dev/null)
+fi
 if [ "$docs_stale" = true ]; then
-  reminders+=("Go sources, templates or examples changed after docs/ was last generated: run \`make\` (it includes \`make generate\`) before committing.")
+  reminders+=("Go sources, templates or examples changed after docs/ was last generated: run \`make\` (it includes \`make generate\`) and commit what it changes in docs/.")
 fi
 
 # 2 and 3 are about a work branch: none on main or a detached HEAD.
@@ -66,11 +96,6 @@ last_commit=$(git log -1 --format=%ct 2>/dev/null) || finish
 # The branch's own last commit touching Go or Terraform files: not the main
 # commits a merge brings in, nor the merge itself. Empty without origin/main.
 last_code_commit=$(git log -1 --format=%ct --no-merges origin/main..HEAD -- '*.go' '*.tf' 2>/dev/null || true)
-
-# Modification time in seconds since the epoch (GNU stat, then BSD stat).
-mtime() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
-}
 
 # True when the sentinel ($1) is missing or older than the commit time $2.
 older_than() {
