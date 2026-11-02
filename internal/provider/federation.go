@@ -136,12 +136,7 @@ func resolveFederation(ctx context.Context, obj types.Object) (*federationSettin
 		return nil, diags
 	}
 
-	// A slice, not a map, so several unknown attributes are reported in the
-	// same order on every plan.
-	for _, a := range []struct {
-		name  string
-		value attr.Value
-	}{
+	diags.Append(rejectUnknownAttributes("federation", "Unknown Federation Configuration", []namedAttribute{
 		{"organization_id", m.OrganizationID},
 		{"federation_rule_id", m.FederationRuleID},
 		{"service_account_id", m.ServiceAccountID},
@@ -149,12 +144,7 @@ func resolveFederation(ctx context.Context, obj types.Object) (*federationSettin
 		{"identity_token", m.IdentityToken},
 		{"identity_token_file", m.IdentityTokenFile},
 		{"identity_token_command", m.IdentityTokenCommand},
-	} {
-		if containsUnknown(a.value) {
-			diags.AddAttributeError(path.Root("federation").AtName(a.name), "Unknown Federation Configuration",
-				fmt.Sprintf("federation.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
-		}
-	}
+	})...)
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -232,6 +222,29 @@ func identityTokenSource(ctx context.Context, m federationModel) (option.Identit
 }
 
 // containsUnknown reports whether v, or any element of a list v, is unknown.
+// namedAttribute is one attribute of a provider block, for
+// rejectUnknownAttributes.
+type namedAttribute struct {
+	name  string
+	value attr.Value
+}
+
+// rejectUnknownAttributes reports each attribute of the root block that is
+// unknown at plan time. resolveCredential reads an Unknown as unset and falls
+// back to the environment, which for these blocks would configure a different
+// credential than the one written in the configuration. A slice, not a map,
+// so several unknown attributes are reported in the same order on every plan.
+func rejectUnknownAttributes(root, summary string, attrs []namedAttribute) diag.Diagnostics {
+	var diags diag.Diagnostics
+	for _, a := range attrs {
+		if containsUnknown(a.value) {
+			diags.AddAttributeError(path.Root(root).AtName(a.name), summary,
+				fmt.Sprintf("%s.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", root, a.name))
+		}
+	}
+	return diags
+}
+
 func containsUnknown(v attr.Value) bool {
 	if v.IsUnknown() {
 		return true

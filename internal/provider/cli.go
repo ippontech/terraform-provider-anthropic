@@ -9,14 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/config"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
@@ -27,6 +30,17 @@ const defaultBaseURL = "https://api.anthropic.com"
 
 // adminScope is the OAuth scope the endpoints behind pd.OAuthClient require.
 const adminScope = "org:admin"
+
+// mandatoryRefreshThreshold mirrors the SDK's internal/auth
+// MandatoryRefreshThreshold: a token with this little left counts as expired
+// and must be refreshed before use. Unexported in the SDK, so copied here.
+const mandatoryRefreshThreshold = 30 * time.Second
+
+// profileNamePattern mirrors the SDK's config.validateProfileName, which
+// config.LoadProfile applies and readCLIProfile, reading the files itself,
+// must apply too: a name with a path separator or ".." would read a file
+// outside the profile directories.
+var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // cliModel is the provider's cli block.
 type cliModel struct {
@@ -53,6 +67,7 @@ func cliSchema() schema.SingleNestedAttribute {
 			},
 			"workspace_id": schema.StringAttribute{
 				Optional:    true,
+				Validators:  []validator.String{stringvalidator.RegexMatches(workspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits)")},
 				Description: "Workspace (`wrkspc_...`) the profile was logged in to, used to narrow the search when none is named. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.",
 			},
 		},
@@ -115,22 +130,11 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 		return nil, diags
 	}
 
-	// resolveCredential reads an Unknown as unset and falls back to the
-	// environment, which here would pick a different profile than the
-	// configuration names.
-	for _, a := range []struct {
-		name  string
-		value types.String
-	}{
+	diags.Append(rejectUnknownAttributes("cli", "Unknown CLI Configuration", []namedAttribute{
 		{"profile", m.Profile},
 		{"organization_id", m.OrganizationID},
 		{"workspace_id", m.WorkspaceID},
-	} {
-		if a.value.IsUnknown() {
-			diags.AddAttributeError(path.Root("cli").AtName(a.name), "Unknown CLI Configuration",
-				fmt.Sprintf("cli.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
-		}
-	}
+	})...)
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -156,8 +160,11 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 		if errors.Is(err, os.ErrNotExist) {
 			err = fmt.Errorf("profile %q does not exist in %s. %s", name, dir, loginHint(name))
 		}
-		if err == nil && orgID != "" && p.organizationID() != "" && p.organizationID() != orgID {
-			err = fmt.Errorf("profile %q is for organization %s, not %s", name, p.organizationID(), orgID)
+		// Only the configured organization is checked against a named
+		// profile: ANTHROPIC_ORGANIZATION_ID is often left exported from a
+		// federation setup and must not reject the profile the operator chose.
+		if configured := m.OrganizationID.ValueString(); err == nil && configured != "" && p.organizationID() != "" && p.organizationID() != configured {
+			err = fmt.Errorf("profile %q is for organization %s, not %s", name, p.organizationID(), configured)
 		}
 	} else {
 		p, err = findCLIProfile(dir, orgID, workspaceID)
@@ -174,17 +181,16 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 	// missing scope is only a warning. One taken from ANTHROPIC_PROFILE is
 	// usually their everyday login, exported for other tools, and would make
 	// every request fail.
-	if !p.hasAdminScope() && m.Profile.IsNull() {
-		diags.AddAttributeError(path.Root("cli"), "Unusable Anthropic CLI Profile",
-			fmt.Sprintf("Profile %q from ANTHROPIC_PROFILE was granted scope %q, not %s. Name an org:admin profile with cli.profile, "+
-				"or unset ANTHROPIC_PROFILE so the provider can find one by organization. %s",
-				p.name, p.scope(), adminScope, loginHint(p.name)))
-		return nil, diags
-	}
 	if !p.hasAdminScope() {
-		diags.AddAttributeWarning(path.Root("cli"), "Anthropic CLI Profile Lacks org:admin",
-			fmt.Sprintf("Profile %q was granted scope %q. The endpoints that use this token require org:admin. %s",
-				p.name, p.scope(), loginHint(p.name)))
+		detail := fmt.Sprintf("Profile %q was granted scope %q, but the endpoints that use this token require %s. %s",
+			p.name, p.scope(), adminScope, loginHint(p.name))
+		if !m.Profile.IsNull() {
+			diags.AddAttributeWarning(path.Root("cli"), "Anthropic CLI Profile Lacks org:admin", detail)
+		} else {
+			diags.AddAttributeError(path.Root("cli"), "Unusable Anthropic CLI Profile",
+				detail+" It came from ANTHROPIC_PROFILE: name an org:admin profile with cli.profile, or unset the variable so the provider can find one by organization.")
+			return nil, diags
+		}
 	}
 
 	// The profile's base_url was checked against the provider's own, and its
@@ -273,9 +279,13 @@ func checkCLIProfile(p *cliProfile) error {
 	if p.creds == nil || p.creds.AccessToken == "" {
 		return fmt.Errorf("profile %q is not logged in. %s", p.name, loginHint(p.name))
 	}
-	expired := p.creds.ExpiresAt != nil && time.Now().After(*p.creds.ExpiresAt)
-	canRefresh := p.creds.RefreshToken != "" && p.config.AuthenticationInfo.UserOAuth != nil &&
-		p.config.AuthenticationInfo.UserOAuth.ClientID != ""
+	hasClientID := p.config.AuthenticationInfo.UserOAuth != nil && p.config.AuthenticationInfo.UserOAuth.ClientID != ""
+	// The SDK refuses this shape on every request, refresh needed or not.
+	if hasClientID && p.creds.RefreshToken == "" {
+		return fmt.Errorf("profile %q has a client_id but no refresh token. %s", p.name, loginHint(p.name))
+	}
+	expired := p.creds.ExpiresAt != nil && time.Until(*p.creds.ExpiresAt) <= mandatoryRefreshThreshold
+	canRefresh := p.creds.RefreshToken != "" && hasClientID
 	if expired && !canRefresh {
 		return fmt.Errorf("profile %q's login has expired and cannot be refreshed. %s", p.name, loginHint(p.name))
 	}
@@ -287,6 +297,9 @@ func checkCLIProfile(p *cliProfile) error {
 // lacks one, which would make every profile match). A missing credentials
 // file is not an error here; it means the profile is logged out.
 func readCLIProfile(dir, name string) (*cliProfile, error) {
+	if !profileNamePattern.MatchString(name) {
+		return nil, fmt.Errorf("profile name %q may contain only letters, digits, '_', '.' and '-'", name)
+	}
 	data, err := os.ReadFile(config.ProfilePath(dir, name))
 	if err != nil {
 		return nil, err

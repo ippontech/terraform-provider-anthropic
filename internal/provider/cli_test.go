@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
@@ -510,4 +511,76 @@ func TestConfigureCLIReportsOnlyUnusableCandidates(t *testing.T) {
 	writeCLIProfile(t, cliConfigDir(t), "admin", stale)
 
 	wantContains(t, cliError(t, map[string]string{"organization_id": testOrg}), "no usable org:admin profile", `"admin"`, "cannot be refreshed")
+}
+
+// TestConfigureCLIRejectsClientIDWithoutRefreshToken: the SDK refuses this
+// shape on every request, so Configure must refuse it first.
+func TestConfigureCLIRejectsClientIDWithoutRefreshToken(t *testing.T) {
+	clearCredentialEnv(t)
+	login := adminLogin(testOrg, "sk-ant-oat01-admin")
+	login.clientID = "client"
+	writeCLIProfile(t, cliConfigDir(t), "admin", login)
+
+	wantContains(t, cliError(t, map[string]string{"profile": "admin"}), "no refresh token", "ant auth login --profile admin")
+}
+
+// TestConfigureCLIRejectsLoginInsideRefreshThreshold: the SDK treats a token
+// with less than 30s left as expired.
+func TestConfigureCLIRejectsLoginInsideRefreshThreshold(t *testing.T) {
+	clearCredentialEnv(t)
+	login := adminLogin(testOrg, "sk-ant-oat01-admin")
+	login.expiresAt = time.Now().Add(20 * time.Second)
+	writeCLIProfile(t, cliConfigDir(t), "admin", login)
+
+	wantContains(t, cliError(t, map[string]string{"profile": "admin"}), "cannot be refreshed")
+}
+
+// TestConfigureCLIRejectsProfileNameOutsideTheDirectory: names are validated
+// as the SDK's LoadProfile does, before any path is built.
+func TestConfigureCLIRejectsProfileNameOutsideTheDirectory(t *testing.T) {
+	clearCredentialEnv(t)
+	cliConfigDir(t)
+
+	wantContains(t, cliError(t, map[string]string{"profile": "../admin"}), "may contain only")
+}
+
+// TestConfigureCLINamedProfileIgnoresOrganizationEnvironment: an
+// ANTHROPIC_ORGANIZATION_ID left over from a federation setup must not reject
+// the profile the configuration names.
+func TestConfigureCLINamedProfileIgnoresOrganizationEnvironment(t *testing.T) {
+	clearCredentialEnv(t)
+	writeCLIProfile(t, cliConfigDir(t), "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
+	t.Setenv("ANTHROPIC_ORGANIZATION_ID", otherTestOrg)
+
+	resp := configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, map[string]string{"profile": "admin"})})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Configure returned errors: %v", resp.Diagnostics)
+	}
+}
+
+// TestConfigureCLIAcceptsProductionBaseURL covers the unset
+// ANTHROPIC_BASE_URL branch: a profile that names the production URL is
+// accepted, and defaultBaseURL is where newSDKClient sends requests.
+func TestConfigureCLIAcceptsProductionBaseURL(t *testing.T) {
+	clearCredentialEnv(t)
+	login := adminLogin(testOrg, "sk-ant-oat01-admin")
+	login.baseURL = defaultBaseURL + "/"
+	writeCLIProfile(t, cliConfigDir(t), "admin", login)
+
+	resp := configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, map[string]string{"profile": "admin"})})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Configure returned errors: %v", resp.Diagnostics)
+	}
+
+	var sent string
+	errStop := fmt.Errorf("stop")
+	client := newSDKClient(option.WithAPIKey("unused"), option.WithMaxRetries(0),
+		option.WithMiddleware(func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
+			sent = r.URL.Scheme + "://" + r.URL.Host
+			return nil, errStop
+		}))
+	_ = client.Get(context.Background(), "/v1/models", nil, nil)
+	if sent != defaultBaseURL {
+		t.Errorf("default client sent to %q, want defaultBaseURL %q", sent, defaultBaseURL)
+	}
 }
