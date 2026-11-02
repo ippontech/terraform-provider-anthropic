@@ -59,7 +59,7 @@ func TestEnvironmentResource_allowedHostsEmptied(t *testing.T) {
 	packages := `"packages": {"apt": [], "cargo": [], "gem": [], "go": [], "npm": [], "pip": []}`
 	srv.AssertJSONBodies(routeCreateEnvironment, `{"name": "test-environment", "config": {"type": "cloud",
 		"networking": {"type": "limited", "allowed_hosts": ["a.example.com"]}, `+packages+`}}`)
-	srv.AssertJSONBodies(routeUpdateEnvironment, `{"name": "test-environment", "config": {"type": "cloud",
+	srv.AssertJSONBodies(routeUpdateEnvironment, `{"name": "test-environment", "description": null, "config": {"type": "cloud",
 		"networking": {"type": "limited", "allowed_hosts": []}, `+packages+`}}`)
 	srv.assertRequestShape(t)
 }
