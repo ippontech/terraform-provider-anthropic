@@ -1,9 +1,20 @@
 name: Acceptance Tests
 
 on:
-  push:
-    branches:
-      - main
+  # Called by semantic-release.yml on every push to main, which releases only when these jobs pass
+  # (RELEASE.md, "How a release is cut"). The caller must pass each secret by name, even one that
+  # exists only in the acctest environment of the jobs below, which then receive that environment's
+  # value (GitHub docs, "Reuse workflows"). Not `required`: that only checks that the caller passes
+  # the secret, not its value (same page), and a missing key already fails the tests
+  # (acctest.PreCheck stops on an empty key).
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      ANTHROPIC_ADMIN_API_KEY:
+        required: false
+      ANTHROPIC_MULTI_WORKSPACE_API_KEY:
+        required: false
   workflow_dispatch:
 
 permissions: {}
