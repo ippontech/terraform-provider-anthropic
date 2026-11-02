@@ -1,3 +1,9 @@
+## [1.63.5](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.4...v1.63.5) (2026-11-02)
+
+### 🐛 Bug Fixes
+
+* **organization-members:** skip the API call when only remove_on_destroy changes ([#492](https://github.com/ippontech/terraform-provider-anthropic/issues/492)) ([d78a456](https://github.com/ippontech/terraform-provider-anthropic/commit/d78a4563ee28a193c899aaa699ea7c0de3ecbc28))
+
 ## [1.63.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.3...v1.63.4) (2026-10-30)
 
 ### 🐛 Bug Fixes
