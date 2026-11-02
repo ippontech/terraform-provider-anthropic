@@ -141,7 +141,7 @@ func TestMapMultiagentToState_correlatesByKeyNotIndex(t *testing.T) {
 		multiagentEntryObj(t, "self", types.StringNull(), types.Int64Unknown(), types.StringNull()),
 		multiagentEntryObj(t, "agent", types.StringValue("agent_b"), types.Int64Value(4), types.StringNull()),
 	)
-	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior, readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -169,7 +169,7 @@ func TestMapMultiagentToState_explicitOwnerReferenceIsNotSelf(t *testing.T) {
 	t.Parallel()
 	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"coordinator","agents":[{"type":"agent","id":"agent_owner","version":2}]}`)
 	prior := multiagentObj(t, multiagentEntryObj(t, "agent", types.StringValue("agent_owner"), types.Int64Unknown(), types.StringNull()))
-	got, _ := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	got, _ := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior, readMapping)
 	e := decodeEntries(t, got)
 	if len(e) != 1 || e[0].Type.ValueString() != "agent" || e[0].ID.ValueString() != "agent_owner" || e[0].Version.ValueInt64() != 2 {
 		t.Fatalf("explicit owner reference must stay an agent entry: %+v", e)
@@ -185,7 +185,7 @@ func TestMapMultiagentToState_driftAndRemoval(t *testing.T) {
 		multiagentEntryObj(t, "agent", types.StringValue("agent_gone"), types.Int64Null(), types.StringNull()),
 		multiagentEntryObj(t, "agent", types.StringValue("agent_a"), types.Int64Null(), types.StringNull()),
 	)
-	got, _ := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	got, _ := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior, readMapping)
 	e := decodeEntries(t, got)
 	if len(e) != 4 {
 		t.Fatalf("expected agent_a + 3 drift entries, got %+v", e)
@@ -201,7 +201,7 @@ func TestMapMultiagentToState_driftAndRemoval(t *testing.T) {
 func TestMapMultiagentToState_importMapsVerbatim(t *testing.T) {
 	t.Parallel()
 	agent := apiAgentWithMultiagent(t, multiagentAPIRoster)
-	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes), readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -360,7 +360,7 @@ const multiagent20261001Roster = `,"multiagent":{
 func TestMapMultiagentToState_multiagent20261001Import(t *testing.T) {
 	t.Parallel()
 	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
-	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes), readMapping)
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diagnostics: %+v", diags)
 	}
@@ -375,7 +375,7 @@ func TestMapMultiagentToState_multiagent20261001Import(t *testing.T) {
 	agent = apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001","advisor":{"type":"disabled"},
 		"subagents":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]},
 		"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]}}`)
-	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes), readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -424,7 +424,7 @@ func TestMapMultiagentToObject_multiagent20261001Disabled(t *testing.T) {
 	}
 	requireMultiagentEqual(t, got, want)
 
-	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes))
+	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, types.ObjectNull(agentMultiagentAttrTypes), readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -544,7 +544,7 @@ func TestMapMultiagentToState_multiagent20261001Drift(t *testing.T) {
 		"subagents":{"type":"disabled"},
 		"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[{"type":"agent","id":"agent_w","version":1}]}}`)
 	prior := multiagent20261001Obj(t, noMember, memberObj(t, types.BoolValue(false), boolNull), "")
-	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior, readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -554,6 +554,94 @@ func TestMapMultiagentToState_multiagent20261001Drift(t *testing.T) {
 		"claude-opus-4-6"))
 }
 
+// On Create and Update the plan's unset fields, settings and advisor stay null
+// whatever the API echoes, and a configured predefined_agents list gains no
+// entry the plan lacks: none of them is Computed, so anything else fails the
+// apply as an inconsistent result. Read reports the same response as drift.
+func TestMapAgentResponseToState_multiagent20261001ApplyKeepsPlan(t *testing.T) {
+	t.Parallel()
+	const raw = `,"multiagent":{"type":"multiagent_20261001",
+		"advisor":{"type":"enabled","model":"claude-opus-4-6"},
+		"subagents":{"type":"enabled","inline_agents":{"type":"disabled"},
+			"predefined_agents":[{"type":"agent","id":"agent_x","version":1}]},
+		"workflows":{"type":"disabled"}}`
+	plan := multiagent20261001Obj(t, memberObj(t, boolNull, boolNull), noMember, "")
+
+	data := AgentResourceModel{Multiagent: plan}
+	if d := mapAgentResponseToState(context.Background(), apiAgentWithMultiagent(t, raw), &data, applyMapping); d.HasError() {
+		t.Fatalf("diags: %+v", d)
+	}
+	requireMultiagentEqual(t, data.Multiagent, plan)
+
+	data = AgentResourceModel{Multiagent: plan}
+	if d := mapAgentResponseToState(context.Background(), apiAgentWithMultiagent(t, raw), &data, readMapping); d.HasError() {
+		t.Fatalf("diags: %+v", d)
+	}
+	requireMultiagentEqual(t, data.Multiagent, multiagent20261001Obj(t,
+		memberObj(t, boolNull, types.BoolValue(false), predefinedObj(t, "agent", types.StringValue("agent_x"), types.Int64Value(1))),
+		memberObj(t, types.BoolValue(false), boolNull),
+		"claude-opus-4-6"))
+}
+
+// A predefined agent the plan lacks is appended on Read only.
+func TestMapMultiagentToState_multiagent20261001UnplannedPredefinedAgent(t *testing.T) {
+	t.Parallel()
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001","advisor":{"type":"disabled"},
+		"subagents":{"type":"enabled","inline_agents":{"type":"enabled"},
+			"predefined_agents":[{"type":"agent","id":"agent_a","version":3},{"type":"agent","id":"agent_x","version":1}]},
+		"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]}}`)
+	plan := multiagent20261001Obj(t,
+		memberObj(t, boolNull, boolNull, predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Unknown())), noMember, "")
+	agentA := predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(3))
+
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, plan, applyMapping)
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, multiagent20261001Obj(t, memberObj(t, boolNull, boolNull, agentA), noMember, ""))
+
+	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, plan, readMapping)
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, multiagent20261001Obj(t,
+		memberObj(t, boolNull, boolNull, agentA, predefinedObj(t, "agent", types.StringValue("agent_x"), types.Int64Value(1))), noMember, ""))
+}
+
+// The API resolves self into an agent entry carrying the owner's ID; if it
+// echoed a literal self instead, the configured order must hold all the same,
+// in a predefined_agents list and in a coordinator roster.
+func TestMapMultiagentToState_literalSelfEcho(t *testing.T) {
+	t.Parallel()
+	self := predefinedObj(t, "self", strNull, int64Null)
+	plan := multiagent20261001Obj(t, memberObj(t, boolNull, types.BoolValue(false),
+		self, predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Unknown())), noMember, "")
+	agent := apiAgentWithMultiagent(t, `,"multiagent":{"type":"multiagent_20261001","advisor":{"type":"disabled"},
+		"subagents":{"type":"enabled","inline_agents":{"type":"disabled"},
+			"predefined_agents":[{"type":"agent","id":"agent_a","version":3},{"type":"self"}]},
+		"workflows":{"type":"enabled","inline_agents":{"type":"enabled"},"predefined_agents":[]}}`)
+	want := multiagent20261001Obj(t, memberObj(t, boolNull, types.BoolValue(false),
+		self, predefinedObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(3))), noMember, "")
+	for _, mode := range []mappingMode{applyMapping, readMapping} {
+		got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, plan, mode)
+		if diags.HasError() {
+			t.Fatalf("diags: %+v", diags)
+		}
+		requireMultiagentEqual(t, got, want)
+	}
+
+	coordinator := apiAgentWithMultiagent(t, `,"multiagent":{"type":"coordinator","agents":[
+		{"type":"agent","id":"agent_a","version":7},{"type":"self"}]}`)
+	selfEntry := multiagentEntryObj(t, "self", strNull, int64Null, strNull)
+	got, diags := mapMultiagentToState(context.Background(), coordinator.Multiagent, coordinator.ID, multiagentObj(t,
+		selfEntry, multiagentEntryObj(t, "agent", types.StringValue("agent_a"), types.Int64Unknown(), strNull)), applyMapping)
+	if diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	requireMultiagentEqual(t, got, multiagentObj(t,
+		selfEntry, multiagentEntryObj(t, "agent", types.StringValue("agent_a"), types.Int64Value(7), strNull)))
+}
+
 // A type switched out of band reads as the API type: a coordinator
 // configuration reading a multiagent_20261001 agent shows its settings, and
 // the reverse maps the roster verbatim.
@@ -561,7 +649,7 @@ func TestMapMultiagentToState_typeSwitch(t *testing.T) {
 	t.Parallel()
 	agent := apiAgentWithMultiagent(t, multiagent20261001Roster)
 	prior := multiagentObj(t, multiagentEntryObj(t, "self", types.StringNull(), types.Int64Null(), types.StringNull()))
-	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior)
+	got, diags := mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, prior, readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -574,7 +662,7 @@ func TestMapMultiagentToState_typeSwitch(t *testing.T) {
 	}
 
 	agent = apiAgentWithMultiagent(t, multiagentAPIRoster)
-	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, multiagent20261001Obj(t, noMember, noMember, ""))
+	got, diags = mapMultiagentToState(context.Background(), agent.Multiagent, agent.ID, multiagent20261001Obj(t, noMember, noMember, ""), readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}

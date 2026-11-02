@@ -1345,7 +1345,7 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	}
 
 	// Multiagent: correlate with the planned/prior roster (see mapMultiagentToState).
-	multiagent, d := mapMultiagentToState(ctx, agent.Multiagent, agent.ID, data.Multiagent)
+	multiagent, d := mapMultiagentToState(ctx, agent.Multiagent, agent.ID, data.Multiagent, mode)
 	diags.Append(d...)
 	data.Multiagent = multiagent
 

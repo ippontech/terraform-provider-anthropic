@@ -795,7 +795,7 @@ func predefinedAgentAPIValue(a multiagentRosterEntry) (attr.Value, diag.Diagnost
 // reference here.
 func mapMultiagentToObject(ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string) (types.Object, diag.Diagnostics) {
 	if ma.Type == multiagentType20261001 {
-		return mapMultiagent20261001(context.Background(), ma, ownerID, types.ObjectNull(agentMultiagentAttrTypes), true)
+		return mapMultiagent20261001(context.Background(), ma, ownerID, types.ObjectNull(agentMultiagentAttrTypes), true, readMapping)
 	}
 	roster, present, diags := multiagentRosterFromAPI(ma, ownerID)
 	if !present {
@@ -835,11 +835,11 @@ func multiagentObject(typ string, vals []attr.Value, diags diag.Diagnostics) (ty
 // config order and entry kinds survive the API's normalisation: "self" comes
 // back as an "agent" reference to the owner and the "advisor" entry is echoed
 // last (see correlateRoster). multiagent_20261001 goes through
-// mapMultiagent20261001. Without a prior roster (import, first read) the API
-// roster is mapped verbatim.
-func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string, prior types.Object) (types.Object, diag.Diagnostics) {
+// mapMultiagent20261001, which depends on mode. Without a prior roster (import,
+// first read) the API roster is mapped verbatim.
+func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string, prior types.Object, mode mappingMode) (types.Object, diag.Diagnostics) {
 	if ma.Type == multiagentType20261001 {
-		return mapMultiagent20261001(ctx, ma, ownerID, prior, false)
+		return mapMultiagent20261001(ctx, ma, ownerID, prior, false, mode)
 	}
 	roster, present, rosterDiags := multiagentRosterFromAPI(ma, ownerID)
 	if !present {
@@ -863,7 +863,7 @@ func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMul
 	}
 	diags.Append(rosterDiags...)
 
-	vals, d := correlateRoster(priorEntries, roster.Agents, ownerID, multiagentAPIEntryValue, func() (attr.Value, diag.Diagnostics) {
+	vals, d := correlateRoster(priorEntries, roster.Agents, ownerID, true, multiagentAPIEntryValue, func() (attr.Value, diag.Diagnostics) {
 		return multiagentEntryValue(multiagentEntrySelf, types.StringNull(), types.Int64Null(), types.StringNull())
 	})
 	diags.Append(d...)
@@ -871,16 +871,16 @@ func mapMultiagentToState(ctx context.Context, ma anthropic.BetaManagedAgentsMul
 }
 
 // correlateRoster maps API entries onto the prior (planned or state) entries
-// by key, never by index:
-//   - agent: the API agent entry with the same id;
-//   - advisor: the API advisor entry;
-//   - self: the API agent entry whose id is ownerID, not claimed by an explicit agent entry.
+// by key, never by index (see rosterMatcher).
 //
 // Prior entries with no API counterpart are dropped (the plan then shows the
-// diff), and API entries claimed by no prior entry are appended with their API
-// type (drift). apiValue and selfValue build the entry objects, so the
+// diff). API entries claimed by no prior entry are appended with their API
+// type (drift) when appendUnclaimed is set; Create and Update of a
+// predefined_agents list leave it unset, since the list is not Computed and an
+// entry the plan lacks would fail the apply as an inconsistent result (the next
+// Read appends it). apiValue and selfValue build the entry objects, so the
 // coordinator roster and the predefined_agents lists share the algorithm.
-func correlateRoster(priorEntries []agentMultiagentEntryModel, apiEntries []multiagentRosterEntry, ownerID string,
+func correlateRoster(priorEntries []agentMultiagentEntryModel, apiEntries []multiagentRosterEntry, ownerID string, appendUnclaimed bool,
 	apiValue func(multiagentRosterEntry) (attr.Value, diag.Diagnostics), selfValue func() (attr.Value, diag.Diagnostics),
 ) ([]attr.Value, diag.Diagnostics) {
 	var diags diag.Diagnostics
@@ -900,34 +900,21 @@ func correlateRoster(priorEntries []agentMultiagentEntryModel, apiEntries []mult
 	// to the owner's own ID is never claimed by a self entry.
 	for pass := 1; pass <= 2; pass++ {
 		for i, p := range priorEntries {
-			typ := p.Type.ValueString()
-			var idx int
-			switch {
-			case pass == 1 && typ == multiagentEntryAgent:
-				idx = find(func(a multiagentRosterEntry) bool {
-					return a.Type == multiagentEntryAgent && a.ID == p.ID.ValueString()
-				})
-			case pass == 1 && typ == multiagentEntryAdvisor:
-				idx = find(func(a multiagentRosterEntry) bool { return a.Type == multiagentEntryAdvisor })
-			case pass == 2 && typ == multiagentEntrySelf:
-				idx = find(func(a multiagentRosterEntry) bool {
-					return a.Type == multiagentEntryAgent && a.ID == ownerID
-				})
-			default:
+			match := rosterMatcher(pass, p, ownerID)
+			if match == nil {
 				continue
 			}
+			idx := find(match)
 			if idx < 0 {
 				continue
 			}
-			var v attr.Value
 			var d diag.Diagnostics
-			if typ == multiagentEntrySelf {
-				v, d = selfValue()
+			if p.Type.ValueString() == multiagentEntrySelf {
+				slots[i], d = selfValue()
 			} else {
-				v, d = apiValue(apiEntries[idx])
+				slots[i], d = apiValue(apiEntries[idx])
 			}
 			diags.Append(d...)
-			slots[i] = v
 		}
 	}
 
@@ -938,7 +925,7 @@ func correlateRoster(priorEntries []agentMultiagentEntryModel, apiEntries []mult
 		}
 	}
 	for i, a := range apiEntries {
-		if used[i] {
+		if used[i] || !appendUnclaimed {
 			continue
 		}
 		v, d := apiValue(a)
@@ -946,6 +933,28 @@ func correlateRoster(priorEntries []agentMultiagentEntryModel, apiEntries []mult
 		vals = append(vals, v)
 	}
 	return vals, diags
+}
+
+// rosterMatcher returns how a prior entry finds its API counterpart in a pass
+// of correlateRoster, or nil when the entry is matched in the other pass:
+//   - agent (pass 1): the API agent entry with the same id;
+//   - advisor (pass 1): the API advisor entry;
+//   - self (pass 2): the API agent entry whose id is ownerID, not claimed by an
+//     explicit agent entry, which is how the API resolves self; an entry the API
+//     echoes as self is accepted too, so config order holds either way.
+func rosterMatcher(pass int, p agentMultiagentEntryModel, ownerID string) func(multiagentRosterEntry) bool {
+	switch typ := p.Type.ValueString(); {
+	case pass == 1 && typ == multiagentEntryAgent:
+		id := p.ID.ValueString()
+		return func(a multiagentRosterEntry) bool { return a.Type == multiagentEntryAgent && a.ID == id }
+	case pass == 1 && typ == multiagentEntryAdvisor:
+		return func(a multiagentRosterEntry) bool { return a.Type == multiagentEntryAdvisor }
+	case pass == 2 && typ == multiagentEntrySelf:
+		return func(a multiagentRosterEntry) bool {
+			return a.Type == multiagentEntrySelf || (a.Type == multiagentEntryAgent && a.ID == ownerID)
+		}
+	}
+	return nil
 }
 
 // multiagentMemberAPI is a `subagents` or `workflows` setting as the API
@@ -971,17 +980,23 @@ func newMultiagentMemberAPI(typ, inlineType string, refs []anthropic.BetaManaged
 
 // mapMultiagent20261001 maps a multiagent_20261001 configuration. With
 // verbatim (data sources) every setting is mapped as the API returns it. For
-// the resource, a field the configuration leaves unset (current: plan or prior
-// state) stays null while the API value equals its default, and a whole
-// setting the configuration leaves unset stays null while it holds only
-// defaults, so an echoed default causes no diff and anything else shows up as
-// drift, which the next apply reverts. predefined_agents correlate with the
-// configured entries like the coordinator roster.
-func mapMultiagent20261001(ctx context.Context, ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string, current types.Object, verbatim bool) (types.Object, diag.Diagnostics) {
+// the resource, on Read (readMapping), a field the configuration leaves unset
+// (current: prior state) stays null while the API value equals its default,
+// and a whole setting the configuration leaves unset stays null while it holds
+// only defaults, so an echoed default causes no diff and anything else shows
+// up as drift, which the next apply reverts. On Create and Update
+// (applyMapping, current: the plan), a field, setting or advisor the plan
+// leaves unset stays null whatever the API answers, and no predefined agent
+// the plan lacks is added: none of them is Computed, so Terraform rejects any
+// other value as an inconsistent result after apply, and the next Read shows
+// the difference. predefined_agents correlate with the configured entries like
+// the coordinator roster.
+func mapMultiagent20261001(ctx context.Context, ma anthropic.BetaManagedAgentsMultiagentUnion, ownerID string, current types.Object, verbatim bool, mode mappingMode) (types.Object, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	cur := agentMultiagentModel{
 		Subagents: types.ObjectNull(agentMultiagentMemberAttrTypes),
 		Workflows: types.ObjectNull(agentMultiagentMemberAttrTypes),
+		Advisor:   types.ObjectNull(agentMultiagentAdvisorAttrTypes),
 	}
 	if !current.IsNull() && !current.IsUnknown() {
 		var decoded agentMultiagentModel
@@ -992,15 +1007,16 @@ func mapMultiagent20261001(ctx context.Context, ma anthropic.BetaManagedAgentsMu
 
 	sub, d := mapMultiagentMember(ctx,
 		newMultiagentMemberAPI(ma.Subagents.Type, ma.Subagents.InlineAgents.Type, ma.Subagents.PredefinedAgents),
-		cur.Subagents, ownerID, verbatim)
+		cur.Subagents, ownerID, verbatim, mode)
 	diags.Append(d...)
 	wf, d := mapMultiagentMember(ctx,
 		newMultiagentMemberAPI(ma.Workflows.Type, ma.Workflows.InlineAgents.Type, ma.Workflows.PredefinedAgents),
-		cur.Workflows, ownerID, verbatim)
+		cur.Workflows, ownerID, verbatim, mode)
 	diags.Append(d...)
 
 	advisor := types.ObjectNull(agentMultiagentAdvisorAttrTypes)
-	if ma.Advisor.Type == multiagentMemberEnabled {
+	keepUnsetAdvisor := !verbatim && mode == applyMapping && cur.Advisor.IsNull()
+	if ma.Advisor.Type == multiagentMemberEnabled && !keepUnsetAdvisor {
 		obj, d := types.ObjectValue(agentMultiagentAdvisorAttrTypes, map[string]attr.Value{"model": types.StringValue(ma.Advisor.Model)})
 		diags.Append(d...)
 		advisor = obj
@@ -1017,47 +1033,23 @@ func mapMultiagent20261001(ctx context.Context, ma anthropic.BetaManagedAgentsMu
 	return obj, diags
 }
 
-func mapMultiagentMember(ctx context.Context, api multiagentMemberAPI, current types.Object, ownerID string, verbatim bool) (types.Object, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	predefinedType := types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes}
-
-	verbatimList := func() types.List {
-		if len(api.agents) == 0 {
-			return types.ListNull(predefinedType)
-		}
-		vals := make([]attr.Value, 0, len(api.agents))
-		for _, a := range api.agents {
-			v, d := predefinedAgentAPIValue(a)
-			diags.Append(d...)
-			vals = append(vals, v)
-		}
-		list, d := types.ListValue(predefinedType, vals)
-		diags.Append(d...)
-		return list
-	}
-
+// mapMultiagentMember maps a `subagents` or `workflows` setting (see
+// mapMultiagent20261001 for the rules).
+func mapMultiagentMember(ctx context.Context, api multiagentMemberAPI, current types.Object, ownerID string, verbatim bool, mode mappingMode) (types.Object, diag.Diagnostics) {
 	if verbatim {
-		inline := types.BoolNull()
-		predefined := types.ListNull(predefinedType)
-		if api.enabled {
-			inline = types.BoolValue(api.inline)
-			predefined = verbatimList()
-		}
-		obj, d := types.ObjectValue(agentMultiagentMemberAttrTypes, map[string]attr.Value{
-			"enabled": types.BoolValue(api.enabled), "inline_agents_enabled": inline, "predefined_agents": predefined,
-		})
-		diags.Append(d...)
-		return obj, diags
+		return mapMultiagentMemberVerbatim(api)
 	}
 
+	apply := mode == applyMapping
 	configured := !current.IsNull() && !current.IsUnknown()
-	if !configured && api.isDefault() {
-		return types.ObjectNull(agentMultiagentMemberAttrTypes), diags
+	if !configured && (apply || api.isDefault()) {
+		return types.ObjectNull(agentMultiagentMemberAttrTypes), nil
 	}
+	var diags diag.Diagnostics
 	cur := agentMultiagentMemberModel{
 		Enabled:             types.BoolNull(),
 		InlineAgentsEnabled: types.BoolNull(),
-		PredefinedAgents:    types.ListNull(predefinedType),
+		PredefinedAgents:    types.ListNull(types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes}),
 	}
 	if configured {
 		var decoded agentMultiagentMemberModel
@@ -1067,28 +1059,18 @@ func mapMultiagentMember(ctx context.Context, api multiagentMemberAPI, current t
 	}
 
 	enabled := types.BoolValue(api.enabled)
-	if api.enabled && cur.Enabled.IsNull() {
+	if cur.Enabled.IsNull() && (apply || api.enabled) {
 		enabled = types.BoolNull()
 	}
 	inline := types.BoolNull()
-	predefined := types.ListNull(predefinedType)
+	predefined := types.ListNull(types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes})
 	if api.enabled {
-		if !api.inline || !cur.InlineAgentsEnabled.IsNull() {
+		if !cur.InlineAgentsEnabled.IsNull() || (!apply && !api.inline) {
 			inline = types.BoolValue(api.inline)
 		}
-		if cur.PredefinedAgents.IsNull() || cur.PredefinedAgents.IsUnknown() {
-			predefined = verbatimList()
-		} else if priorEntries, d := predefinedAgentEntries(ctx, cur.PredefinedAgents); d.HasError() {
-			predefined = verbatimList()
-		} else {
-			vals, d := correlateRoster(priorEntries, api.agents, ownerID, predefinedAgentAPIValue, func() (attr.Value, diag.Diagnostics) {
-				return predefinedAgentValue(multiagentEntrySelf, types.StringNull(), types.Int64Null())
-			})
-			diags.Append(d...)
-			list, d := types.ListValue(predefinedType, vals)
-			diags.Append(d...)
-			predefined = list
-		}
+		var d diag.Diagnostics
+		predefined, d = mapPredefinedAgents(ctx, api.agents, cur.PredefinedAgents, ownerID, apply)
+		diags.Append(d...)
 	}
 
 	obj, d := types.ObjectValue(agentMultiagentMemberAttrTypes, map[string]attr.Value{
@@ -1096,4 +1078,66 @@ func mapMultiagentMember(ctx context.Context, api multiagentMemberAPI, current t
 	})
 	diags.Append(d...)
 	return obj, diags
+}
+
+// mapMultiagentMemberVerbatim maps a setting as the API returns it (data
+// sources): inline agents and the list are null when the setting is off.
+func mapMultiagentMemberVerbatim(api multiagentMemberAPI) (types.Object, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	inline := types.BoolNull()
+	predefined := types.ListNull(types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes})
+	if api.enabled {
+		inline = types.BoolValue(api.inline)
+		var d diag.Diagnostics
+		predefined, d = predefinedAgentsVerbatim(api.agents)
+		diags.Append(d...)
+	}
+	obj, d := types.ObjectValue(agentMultiagentMemberAttrTypes, map[string]attr.Value{
+		"enabled": types.BoolValue(api.enabled), "inline_agents_enabled": inline, "predefined_agents": predefined,
+	})
+	diags.Append(d...)
+	return obj, diags
+}
+
+// mapPredefinedAgents maps a predefined_agents list for the resource. A list
+// the configuration (current) leaves unset is mapped verbatim on Read, and
+// stays null on apply; a configured list correlates with the API entries like
+// the coordinator roster, and on apply gains no entry the plan lacks.
+func mapPredefinedAgents(ctx context.Context, apiAgents []multiagentRosterEntry, current types.List, ownerID string, apply bool) (types.List, diag.Diagnostics) {
+	predefinedType := types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes}
+	if current.IsNull() && apply {
+		return types.ListNull(predefinedType), nil
+	}
+	if current.IsNull() || current.IsUnknown() {
+		return predefinedAgentsVerbatim(apiAgents)
+	}
+	priorEntries, d := predefinedAgentEntries(ctx, current)
+	if d.HasError() {
+		return predefinedAgentsVerbatim(apiAgents)
+	}
+	vals, diags := correlateRoster(priorEntries, apiAgents, ownerID, !apply, predefinedAgentAPIValue, func() (attr.Value, diag.Diagnostics) {
+		return predefinedAgentValue(multiagentEntrySelf, types.StringNull(), types.Int64Null())
+	})
+	list, d := types.ListValue(predefinedType, vals)
+	diags.Append(d...)
+	return list, diags
+}
+
+// predefinedAgentsVerbatim maps the API's predefined agents as returned, null
+// when there are none.
+func predefinedAgentsVerbatim(agents []multiagentRosterEntry) (types.List, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	predefinedType := types.ObjectType{AttrTypes: agentMultiagentPredefinedAgentAttrTypes}
+	if len(agents) == 0 {
+		return types.ListNull(predefinedType), diags
+	}
+	vals := make([]attr.Value, 0, len(agents))
+	for _, a := range agents {
+		v, d := predefinedAgentAPIValue(a)
+		diags.Append(d...)
+		vals = append(vals, v)
+	}
+	list, d := types.ListValue(predefinedType, vals)
+	diags.Append(d...)
+	return list, diags
 }
