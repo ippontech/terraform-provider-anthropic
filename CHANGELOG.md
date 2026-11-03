@@ -1,3 +1,9 @@
+## [1.64.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.12...v1.64.0) (2026-11-03)
+
+### ✨ Features
+
+* **workspaces:** include_default on the workspaces data source ([#429](https://github.com/ippontech/terraform-provider-anthropic/issues/429)) ([63562e1](https://github.com/ippontech/terraform-provider-anthropic/commit/63562e10ba9cff32a623ade1033ea9e057f3740a)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#375](https://github.com/ippontech/terraform-provider-anthropic/issues/375) [#431](https://github.com/ippontech/terraform-provider-anthropic/issues/431)
+
 ## [1.63.12](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.11...v1.63.12) (2026-11-03)
 
 ### 🐛 Bug Fixes
