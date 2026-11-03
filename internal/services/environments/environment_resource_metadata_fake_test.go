@@ -220,3 +220,56 @@ func TestEnvironmentResource_descriptionSetAfterPlan(t *testing.T) {
 	srv.AssertJSONBodies(routeUpdateEnvironment, environmentUpdateBody(`"description":null,"metadata":{"team":"b"}`))
 	srv.assertRequestShape(t)
 }
+
+// expectEmptyDescription checks that description is "" in state, not null.
+func expectEmptyDescription() []statecheck.StateCheck {
+	return []statecheck.StateCheck{
+		statecheck.ExpectKnownValue(environmentAddr, tfjsonpath.New("description"), knownvalue.StringExact("")),
+	}
+}
+
+// description = "" stays "" in state on create, update and refresh, although
+// the response carries the same "" an environment without a description
+// maps to null: turning the planned "" into null would be an inconsistent
+// result after apply. Removing it still clears it to null.
+func TestEnvironmentResource_emptyDescription(t *testing.T) {
+	t.Parallel()
+	srv := newEnvironmentsFake(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providertest.ProviderFactories(srv.Server),
+		CheckDestroy:             checkEnvironmentsDeleted(srv),
+		Steps: []resource.TestStep{
+			{
+				Config:            environmentConfig("  description = \"\"\n  metadata    = { team = \"a\" }\n"),
+				ConfigPlanChecks:  expectEnvironmentAction(plancheck.ResourceActionCreate),
+				ConfigStateChecks: expectEmptyDescription(),
+				Check:             expectStoredEnvironment(srv, "", map[string]any{"team": "a"}),
+			},
+			{
+				Config:            environmentConfig("  description = \"\"\n  metadata    = { team = \"b\" }\n"),
+				ConfigPlanChecks:  expectEnvironmentAction(plancheck.ResourceActionUpdate),
+				ConfigStateChecks: expectEmptyDescription(),
+				Check:             expectStoredEnvironment(srv, "", map[string]any{"team": "b"}),
+			},
+			{
+				Config:            environmentConfig("  metadata = { team = \"b\" }\n"),
+				ConfigPlanChecks:  expectEnvironmentAction(plancheck.ResourceActionUpdate),
+				ConfigStateChecks: expectEnvironment("", map[string]string{"team": "b"}),
+				Check:             expectStoredEnvironment(srv, nil, map[string]any{"team": "b"}),
+			},
+			{
+				Config:            environmentConfig("  description = \"\"\n  metadata    = { team = \"b\" }\n"),
+				ConfigPlanChecks:  expectEnvironmentAction(plancheck.ResourceActionUpdate),
+				ConfigStateChecks: expectEmptyDescription(),
+				Check:             expectStoredEnvironment(srv, "", map[string]any{"team": "b"}),
+			},
+		},
+	})
+
+	srv.AssertJSONBodies(routeUpdateEnvironment,
+		environmentUpdateBody(`"description":"","metadata":{"team":"b"}`),
+		environmentUpdateBody(`"description":null,"metadata":{"team":"b"}`),
+		environmentUpdateBody(`"description":"","metadata":{"team":"b"}`))
+	srv.assertRequestShape(t)
+}

@@ -607,9 +607,13 @@ func mapEnvironmentResponseToState(ctx context.Context, env *anthropic.BetaEnvir
 		data.ArchivedAt = types.StringValue(env.ArchivedAt)
 	}
 
+	// An empty description maps to null, except where data (the plan on
+	// create and update, the prior state on read) already holds "": a
+	// configured description = "" comes back as "", and turning it into null
+	// would be an inconsistent result after apply.
 	if env.Description != "" {
 		data.Description = types.StringValue(env.Description)
-	} else if !data.Description.IsNull() {
+	} else if !data.Description.Equal(types.StringValue("")) {
 		data.Description = types.StringNull()
 	}
 
