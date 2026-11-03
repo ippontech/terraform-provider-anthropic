@@ -451,6 +451,9 @@ func TestNewGoogleCloudClientDerivesTheURLs(t *testing.T) {
 func TestConfigureGoogleCloudRejects(t *testing.T) {
 	token := map[string]any{"project": gcTestProject, "access_token": gcTestToken}
 	ws := tfString(gcTestWorkspace)
+	oauthClientFile := filepath.Join(t.TempDir(), "client_secret.json")
+	writeFile(t, oauthClientFile, `{"installed":{"client_id":"x","client_secret":"y",`+
+		`"auth_uri":"http://127.0.0.1:9/auth","token_uri":"http://127.0.0.1:9/token","redirect_uris":["http://localhost"]}}`)
 	tests := []struct {
 		name        string
 		config      map[string]tftypes.Value
@@ -473,6 +476,11 @@ func TestConfigureGoogleCloudRejects(t *testing.T) {
 		// The attribute is validated at plan time, the variable at Configure.
 		{"workspace variable with a newline", map[string]tftypes.Value{"google_cloud": googleCloudValue(token)}, map[string]string{"ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID": gcTestWorkspace + "\n"}, "Invalid Workspace", "ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID"},
 		{"workspace variable not an ID", map[string]tftypes.Value{"google_cloud": googleCloudValue(token)}, map[string]string{"ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID": "production"}, "Invalid Workspace", `got "production"`},
+		// Application Default Credentials load this file unchecked: an OAuth
+		// client configuration would panic on the first request. It gets
+		// the type check of credentials; an unreadable one is the SDK's.
+		{"ADC file is an OAuth client configuration", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"project": gcTestProject})}, map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": oauthClientFile}, "Invalid Google Cloud Credentials", "GOOGLE_APPLICATION_CREDENTIALS"},
+		{"ADC file missing", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"project": gcTestProject})}, map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": filepath.Join(t.TempDir(), "absent.json")}, "Unable to Configure Claude Models on Google Cloud", "GOOGLE_APPLICATION_CREDENTIALS"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

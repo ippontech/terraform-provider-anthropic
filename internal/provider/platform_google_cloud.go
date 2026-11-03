@@ -33,7 +33,8 @@ const (
 	googleCloudScope = "https://www.googleapis.com/auth/cloud-platform"
 )
 
-// googleCloudCredentialTypes are the credential files `credentials` accepts.
+// googleCloudCredentialTypes are the credential files `credentials` accepts,
+// and the file GOOGLE_APPLICATION_CREDENTIALS names may hold.
 // google.CredentialsFromJSON also takes an OAuth client configuration, which
 // would start an interactive flow, so the type is checked first, as Google
 // asks of any credential configuration a program did not create itself.
@@ -82,8 +83,8 @@ func googleCloudSchema() schema.SingleNestedAttribute {
 				Description: "Contents of a Google credential file: a service account key, an authorized user, an " +
 					"external account (Workload Identity Federation) or an impersonated service account. Tokens are " +
 					"refreshed as they expire. Conflicts with access_token. Without either, Application Default " +
-					"Credentials apply (GOOGLE_APPLICATION_CREDENTIALS, gcloud's application default login, the " +
-					"metadata server of the workload).",
+					"Credentials apply (GOOGLE_APPLICATION_CREDENTIALS, which must name a file of one of these types, " +
+					"gcloud's application default login, the metadata server of the workload).",
 			},
 			"access_token": schema.StringAttribute{
 				Optional:  true,
@@ -196,6 +197,20 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*goog
 		if settings.config.Project == "" && os.Getenv("ANTHROPIC_GOOGLE_CLOUD_PROJECT") == "" && os.Getenv("GOOGLE_CLOUD_PROJECT") == "" {
 			settings.config.Project = creds.ProjectID
 		}
+	default:
+		// Application Default Credentials load the file this variable names
+		// without checking its type: an OAuth client configuration there
+		// gets an interactive flow with no handler, which panics on the
+		// first request. It gets the type check of credentials; a file that
+		// cannot be read is left to the SDK, which reports it.
+		if file := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); file != "" {
+			if contents, err := os.ReadFile(file); err == nil {
+				if _, err := googleCredentialsType("the GOOGLE_APPLICATION_CREDENTIALS file "+file, contents); err != nil {
+					diags.AddAttributeError(path.Root("google_cloud").AtName("credentials"), "Invalid Google Cloud Credentials", err.Error())
+					return nil, diags
+				}
+			}
+		}
 	}
 
 	// The workspace goes into the URL. Unset, the SDK still serves the
@@ -231,16 +246,26 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*goog
 // as Configure returns, so that request would fail with "context canceled".
 // WithoutCancel keeps ctx's values and drops its cancellation.
 func googleCredentialsFromJSON(ctx context.Context, contents string) (*google.Credentials, error) {
+	typ, err := googleCredentialsType("google_cloud.credentials", []byte(contents))
+	if err != nil {
+		return nil, err
+	}
+	return google.CredentialsFromJSONWithType(context.WithoutCancel(ctx), []byte(contents), google.CredentialsType(typ), googleCloudScope)
+}
+
+// googleCredentialsType returns the type of a credential file when it is one
+// of googleCloudCredentialTypes. source names the file in the error.
+func googleCredentialsType(source string, contents []byte) (string, error) {
 	var head struct {
 		Type string `json:"type"`
 	}
-	if err := json.Unmarshal([]byte(contents), &head); err != nil {
-		return nil, fmt.Errorf("google_cloud.credentials is not a JSON credential file: %w", err)
+	if err := json.Unmarshal(contents, &head); err != nil {
+		return "", fmt.Errorf("%s is not a JSON credential file: %w", source, err)
 	}
 	if !slices.Contains(googleCloudCredentialTypes, head.Type) {
-		return nil, fmt.Errorf("google_cloud.credentials has type %q; accepted types: %v", head.Type, googleCloudCredentialTypes)
+		return "", fmt.Errorf("%s has type %q; accepted types: %v", source, head.Type, googleCloudCredentialTypes)
 	}
-	return google.CredentialsFromJSONWithType(context.WithoutCancel(ctx), []byte(contents), google.CredentialsType(head.Type), googleCloudScope)
+	return head.Type, nil
 }
 
 // newGoogleCloudClient builds the single SDK client of a Claude Models on
