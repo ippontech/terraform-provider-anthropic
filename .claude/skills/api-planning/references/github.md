@@ -33,9 +33,7 @@ GitHub opens a PR only once a branch has a commit, so tell the user: "Branches a
 - One issue at a time: implement it in the main session with the `terraform-provider` skill.
 - Several independent issues: launch one `provider-implementer` agent per issue in one message, passing the issue body and the branch name as the spec. Each agent works in its own worktree and stops at a local commit.
 
-When the agents report back, run the `provider-reviewer` agent on each branch, fix what it finds, and ask the user before pushing; `/ship` then pushes each branch and opens its PR.
-
-An agent never checks out the issue's branch, so its kept worktree does not hold it: it commits on its worktree's own branch and names that branch and the commit in its report. Before pushing, create or fast-forward the issue's branch to that commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out).
+An agent never checks out the issue's branch, so its kept worktree does not hold it: it commits on its worktree's own branch and names that branch and the commit in its report. When the agents report back, create or fast-forward each issue's branch to the reported commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out). Then run the `provider-reviewer` agent on each branch, fix what it finds, and ask the user before pushing; `/ship` then pushes each branch and opens its PR.
 
 ## Example
 
