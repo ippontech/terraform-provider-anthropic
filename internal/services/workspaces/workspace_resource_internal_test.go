@@ -406,11 +406,13 @@ func TestBuildWorkspaceUpdateBodies(t *testing.T) {
 // accepts, merging tags as the API does (a null value removes the key). Like
 // the Claude Platform on AWS gateway, it rejects an empty tags object, and
 // with rejectCombinedTags, tags combined with another field; with failTags it
-// rejects every tags change.
+// rejects every tags change, and with failOthers every request that carries
+// a field other than tags.
 type fakeWorkspaceGateway struct {
 	t                  *testing.T
 	rejectCombinedTags bool
 	failTags           bool
+	failOthers         bool
 	name               string
 	tags               map[string]string
 	bodies             []string
@@ -440,6 +442,11 @@ func (g *fakeWorkspaceGateway) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"'tags' must not be combined with other fields"}}`))
 		return
 	}
+	if g.failOthers && (len(body) > 1 || !hasTags) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"default_inference_geo must be a member of allowed_inference_geos"}}`))
+		return
+	}
 	if raw, ok := body["name"]; ok {
 		_ = json.Unmarshal(raw, &g.name)
 	}
@@ -467,36 +474,38 @@ func tfTags(kv map[string]string) tftypes.Value {
 }
 
 // TestWorkspaceResourceUpdateTags runs Update against a fake gateway: on Claude
-// Platform on AWS a tags change is sent alone, and a failed tags request keeps
-// the other changes, already applied, in state.
+// Platform on AWS a tags change is sent alone, a failed tags request keeps the
+// other changes, already applied, in state, and a failed first request keeps
+// the prior state.
 func TestWorkspaceResourceUpdateTags(t *testing.T) {
 	tests := []struct {
 		name               string
 		p                  platform.Platform
 		rejectCombinedTags bool
 		failTags           bool
+		failOthers         bool
 		planName           string
 		planTags           map[string]string
 		wantBodies         []string
 		wantError          bool
 		wantName           string
 		wantTags           map[string]string
-		wantStateSet       bool
+		wantPrior          bool
 	}{
 		{
 			name: "AWS name and tags", p: platform.AWS, rejectCombinedTags: true, planName: "renamed",
 			wantBodies: []string{`{"name":"renamed"}`, `{"tags":{"env":"dev","team":null}}`},
-			wantName:   "renamed", wantTags: map[string]string{"env": "dev"}, wantStateSet: true,
+			wantName:   "renamed", wantTags: map[string]string{"env": "dev"},
 		},
 		{
 			name: "AWS tags only", p: platform.AWS, rejectCombinedTags: true, planName: "test-workspace",
 			wantBodies: []string{`{"tags":{"env":"dev","team":null}}`},
-			wantName:   "test-workspace", wantTags: map[string]string{"env": "dev"}, wantStateSet: true,
+			wantName:   "test-workspace", wantTags: map[string]string{"env": "dev"},
 		},
 		{
 			name: "first party name and tags", p: platform.FirstParty, planName: "renamed",
 			wantBodies: []string{`{"name":"renamed","tags":{"env":"dev","team":null}}`},
-			wantName:   "renamed", wantTags: map[string]string{"env": "dev"}, wantStateSet: true,
+			wantName:   "renamed", wantTags: map[string]string{"env": "dev"},
 		},
 		{
 			// A name-only change sends no tags request at all: the gateway
@@ -504,29 +513,40 @@ func TestWorkspaceResourceUpdateTags(t *testing.T) {
 			name: "AWS name only", p: platform.AWS, rejectCombinedTags: true, planName: "renamed",
 			planTags:   map[string]string{"env": "prod", "team": "platform"},
 			wantBodies: []string{`{"name":"renamed"}`},
-			wantName:   "renamed", wantTags: map[string]string{"env": "prod", "team": "platform"}, wantStateSet: true,
+			wantName:   "renamed", wantTags: map[string]string{"env": "prod", "team": "platform"},
 		},
 		{
 			// tags = {} removes every key, one null each.
 			name: "AWS remove every tag", p: platform.AWS, rejectCombinedTags: true, planName: "test-workspace",
 			planTags:   map[string]string{},
 			wantBodies: []string{`{"tags":{"env":null,"team":null}}`},
-			wantName:   "test-workspace", wantTags: map[string]string{}, wantStateSet: true,
+			wantName:   "test-workspace", wantTags: map[string]string{},
 		},
 		{
 			name: "AWS tags request fails after the rename", p: platform.AWS, rejectCombinedTags: true, failTags: true, planName: "renamed",
 			wantBodies: []string{`{"name":"renamed"}`, `{"tags":{"env":"dev","team":null}}`},
-			wantError:  true, wantName: "renamed", wantTags: map[string]string{"env": "prod", "team": "platform"}, wantStateSet: true,
+			wantError:  true, wantName: "renamed", wantTags: map[string]string{"env": "prod", "team": "platform"},
 		},
 		{
 			name: "AWS tags-only request fails", p: platform.AWS, rejectCombinedTags: true, failTags: true, planName: "test-workspace",
 			wantBodies: []string{`{"tags":{"env":"dev","team":null}}`},
-			wantError:  true,
+			wantError:  true, wantPrior: true,
+		},
+		{
+			// The tags request is never sent when the first one fails.
+			name: "AWS first request fails before the tags request", p: platform.AWS, rejectCombinedTags: true, failOthers: true, planName: "renamed",
+			wantBodies: []string{`{"name":"renamed"}`},
+			wantError:  true, wantPrior: true,
+		},
+		{
+			name: "first party request fails", p: platform.FirstParty, failOthers: true, planName: "renamed",
+			wantBodies: []string{`{"name":"renamed","tags":{"env":"dev","team":null}}`},
+			wantError:  true, wantPrior: true,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			g := &fakeWorkspaceGateway{t: t, rejectCombinedTags: tc.rejectCombinedTags, failTags: tc.failTags,
+			g := &fakeWorkspaceGateway{t: t, rejectCombinedTags: tc.rejectCombinedTags, failTags: tc.failTags, failOthers: tc.failOthers,
 				name: "test-workspace", tags: map[string]string{"env": "prod", "team": "platform"}}
 			srv := httptest.NewServer(g)
 			defer srv.Close()
@@ -546,8 +566,8 @@ func TestWorkspaceResourceUpdateTags(t *testing.T) {
 				"id": id, "name": tftypes.NewValue(tftypes.String, tc.planName),
 				"tags": tfTags(planTags),
 			})
-			// The framework starts an update with a null state (terraform-plugin-framework
-			// fwserver), which Terraform reads as "keep the prior state" on an error.
+			// terraform-plugin-framework starts the response from the prior state;
+			// a null start shows that Update sets the state itself on every path.
 			resp := &resource.UpdateResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(schematest.ResourceObjectType(t, r), nil)}}
 			r.Update(context.Background(), resource.UpdateRequest{
 				Plan:  tfsdk.Plan{Schema: sch, Raw: plan},
@@ -560,10 +580,13 @@ func TestWorkspaceResourceUpdateTags(t *testing.T) {
 			if resp.Diagnostics.HasError() != tc.wantError {
 				t.Fatalf("error = %v, want %v: %v", resp.Diagnostics.HasError(), tc.wantError, resp.Diagnostics)
 			}
-			if stateSet := !resp.State.Raw.IsNull(); stateSet != tc.wantStateSet {
-				t.Fatalf("state set = %v, want %v", stateSet, tc.wantStateSet)
+			if resp.State.Raw.IsNull() {
+				t.Fatal("Update left the state unset")
 			}
-			if !tc.wantStateSet {
+			if tc.wantPrior {
+				if !resp.State.Raw.Equal(prior) {
+					t.Errorf("state = %v, want the prior state %v", resp.State.Raw, prior)
+				}
 				return
 			}
 			var got WorkspaceResourceModel

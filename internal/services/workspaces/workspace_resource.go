@@ -426,7 +426,12 @@ func (r *WorkspaceResource) Update(ctx context.Context, req resource.UpdateReque
 	for i, b := range bodies {
 		next, summary, detail := r.postWorkspaceUpdate(ctx, state.ID.ValueString(), b)
 		if next == nil {
-			if i > 0 {
+			if i == 0 {
+				// Nothing was applied: keep the prior state. terraform-plugin-framework
+				// v1.19.0 already starts the response from it; setting it here keeps
+				// both failure paths alike and independent of that detail.
+				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+			} else {
 				// The earlier requests were applied: record them, so that state
 				// matches the workspace and the next plan retries only the rest.
 				detail += " The other changes of this update were applied and are recorded in state."
