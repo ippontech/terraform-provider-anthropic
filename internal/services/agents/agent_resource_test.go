@@ -280,7 +280,7 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.user_input", "all"),
 					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.client_tool_results.type", "none"),
-					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.client_tool_results.tools"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.client_tool_results.tools.#"),
 					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.server_tool_results.type", "only"),
 					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.server_tool_results.tools.*", "web_search"),
 				),
@@ -289,7 +289,7 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 			// a whole on update).
 			{
 				Config: testAccAgentResourceWithAutoPolicyConfig,
-				Check:  resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.url_sources"),
+				Check:  resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.url_sources.%"),
 			},
 		},
 	})
