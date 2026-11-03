@@ -308,15 +308,19 @@ func TestSkillResource_forceDestroyPagesThroughVersions(t *testing.T) {
 // TestSkillResource_toggleForceDestroy: force_destroy is the one attribute
 // that changes without a replacement, so switching it on is an in-place
 // update that must leave a consistent state (the attribute's documentation
-// requires that apply before a destroy can use it).
+// requires that apply before a destroy can use it). Update sends nothing, so
+// the plan keeps updated_at and latest_version as stored instead of showing
+// them as known after apply to whatever references them.
 func TestSkillResource_toggleForceDestroy(t *testing.T) {
-	t.Skip("bug: SkillResource.Update is a no-op, so the state keeps the prior force_destroy and " +
-		"Terraform fails the apply with \"Provider produced inconsistent result after apply: .force_destroy: " +
-		"was cty.True, but now cty.False\"; force_destroy cannot be switched on for an existing skill. " +
-		"Fix: Update writes the planned force_destroy to the state.")
 	t.Parallel()
 	srv := newSkillsFake(t, 0)
 	files := []string{hclPath(writeBundle(t, "toggled", "Toggled.")[0])}
+
+	toggle := expectAction(skillAddr, plancheck.ResourceActionUpdate)
+	toggle.PreApply = append(toggle.PreApply,
+		plancheck.ExpectKnownValue(skillAddr, tfjsonpath.New("updated_at"), knownvalue.StringExact(at(2))),
+		plancheck.ExpectKnownValue(skillAddr, tfjsonpath.New("latest_version"), knownvalue.StringExact(version(1))),
+	)
 
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: providertest.ProviderFactories(srv.Server),
@@ -325,7 +329,7 @@ func TestSkillResource_toggleForceDestroy(t *testing.T) {
 			{Config: skillConfig(files, ""), ConfigPlanChecks: expectAction(skillAddr, plancheck.ResourceActionCreate)},
 			{
 				Config:            skillConfig(files, "  force_destroy = true\n"),
-				ConfigPlanChecks:  expectAction(skillAddr, plancheck.ResourceActionUpdate),
+				ConfigPlanChecks:  toggle,
 				ConfigStateChecks: expectSkill(skillID(1), "", at(1), at(2), version(1), true, files),
 			},
 		},
