@@ -269,6 +269,9 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	body := apiKeyUpdateRequest{Status: "inactive"}
 	_, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/api_keys/"+data.ID.ValueString(), body)
 	if err != nil {
+		if admin.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to deactivate API key: %s", err))
 		return
 	}
