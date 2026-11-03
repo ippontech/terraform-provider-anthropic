@@ -12,8 +12,11 @@ lint:
 generate:
 	cd tools; go generate ./...
 
+# Hidden directories are skipped, as `./...` skips them for the other targets:
+# agent worktrees under .claude/worktrees/ and the per-worktree .gocache/ hold
+# Go files that are not this checkout's.
 fmt:
-	gofmt -s -w -e .
+	gofmt -s -w -e $$(find . -type d -name '.?*' -prune -o -type f -name '*.go' -print)
 
 # `-diff` reports what `go mod tidy` would change and exits non-zero, without
 # touching go.mod/go.sum — so the check is safe to run on a dirty worktree and
