@@ -536,9 +536,11 @@ func buildWorkspaceRateLimitPatch(planned map[string]int64, owned map[string]boo
 }
 
 // overridesToState returns the limits to store after a read: the stored
-// workspace overrides of the group, restricted to the managed types unless
-// importing (when every override is taken). A nil entry (no override left in
-// the group) yields an empty map.
+// workspace overrides of the group, restricted to the managed types, or on
+// import to the types the limits validator accepts (workspaceRateLimitTypes):
+// an override of another type, which the list can carry, could not be
+// declared in the configuration, and every later apply would clear it. A nil
+// entry (no override left in the group) yields an empty map.
 func overridesToState(entry *workspaceRateLimitAPIItem, managed map[string]int64, importing bool) map[string]int64 {
 	out := map[string]int64{}
 	if entry == nil {
@@ -549,7 +551,7 @@ func overridesToState(entry *workspaceRateLimitAPIItem, managed map[string]int64
 		if l.Source != nil && l.Source.Type != "workspace" {
 			continue
 		}
-		if _, ok := managed[l.Type]; ok || importing {
+		if _, ok := managed[l.Type]; ok || (importing && slices.Contains(workspaceRateLimitTypes, l.Type)) {
 			out[l.Type] = l.Value
 		}
 	}

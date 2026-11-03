@@ -689,6 +689,25 @@ func TestWorkspaceRateLimitResource_ReadImportTakesEveryOverride(t *testing.T) {
 	}
 }
 
+// An override of a type outside the ones limits accepts (here
+// enqueued_batch_requests, which the list can carry) is left out on import:
+// a configuration could not declare it, and every later apply would clear it.
+func TestWorkspaceRateLimitResource_ReadImportSkipsUndeclarableTypes(t *testing.T) {
+	list := `{"data":[` + rateLimitEntryJSON(testRateLimitID,
+		`[{"type":"requests_per_minute","value":150,"org_limit":4000,"source":{"type":"workspace"}},
+		  {"type":"enqueued_batch_requests","value":20,"org_limit":500000,"source":{"type":"workspace"}}]`) +
+		`],"next_page":null}`
+	resp, _ := runRateLimitRead(t, list, http.StatusOK, rateLimitModel(nil))
+
+	limits, isNull := stateLimits(t, resp.State)
+	if isNull {
+		t.Fatal("limits is null after an import read")
+	}
+	if len(limits) != 1 || limits["requests_per_minute"] != 150 {
+		t.Errorf("limits = %v, want only requests_per_minute = 150", limits)
+	}
+}
+
 func TestWorkspaceRateLimitResource_ReadImportWithoutOverridesRemoves(t *testing.T) {
 	resp, _ := runRateLimitRead(t, `{"data":[],"next_page":null}`, http.StatusOK, rateLimitModel(nil))
 	if !resp.State.Raw.IsNull() {
