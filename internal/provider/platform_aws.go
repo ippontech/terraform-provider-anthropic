@@ -66,9 +66,11 @@ func awsSchema() schema.SingleNestedAttribute {
 			"api_key": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
-				Description: "API key generated in the AWS Console (Claude Platform on AWS > API keys), sent instead of a " +
-					"SigV4 signature; the principal needs the aws-external-anthropic:CallWithBearerToken action. Not a " +
-					"Claude Console key. Conflicts with profile and access_key. Can also be set via the " +
+				Description: "Claude Platform on AWS API key, sent as x-api-key instead of a SigV4 signature: a short-term " +
+					"key from AWS's token generator, verified against the real gateway, or a long-term key generated in the " +
+					"AWS Console (Claude Platform on AWS > API keys), not verified yet. The principal needs the " +
+					"aws-external-anthropic:CallWithBearerToken action. Not a Claude Console key. Conflicts with profile " +
+					"and access_key. Can also be set via the " +
 					"ANTHROPIC_AWS_API_KEY environment variable, which is only read when the block sets no credential.",
 			},
 			"access_key": schema.StringAttribute{
