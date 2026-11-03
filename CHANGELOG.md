@@ -1,3 +1,9 @@
+## [1.63.9](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.8...v1.63.9) (2026-11-03)
+
+### 📚 Documentation
+
+* **release:** register the signing key on the OpenTofu Registry ([#491](https://github.com/ippontech/terraform-provider-anthropic/issues/491)) ([0cc5c0b](https://github.com/ippontech/terraform-provider-anthropic/commit/0cc5c0bbf57ad3930055e288e7784917451507f5)), closes [#490](https://github.com/ippontech/terraform-provider-anthropic/issues/490) [opentofu/registry#6283](https://github.com/opentofu/registry/issues/6283)
+
 ## [1.63.8](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.7...v1.63.8) (2026-11-02)
 
 ### 📚 Documentation
