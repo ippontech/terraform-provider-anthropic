@@ -94,7 +94,9 @@ provider "anthropic" {
 
 ~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` block below when it needs to.
 
-The `auth_token` is optional — you only need it for federation resources.
+The `auth_token` is optional — you only need it for federation resources and MCP tunnels.
+
+MCP tunnels (`anthropic_tunnel`, `anthropic_tunnel_certificate`, and the `anthropic_tunnel` / `anthropic_tunnels` data sources) reject API keys too, but need a bearer token with the `workspace:manage_tunnels` scope instead of `org:admin`. One provider block carries one bearer token, so give the tunnel resources their own aliased provider block; see [`anthropic_tunnel`](resources/tunnel).
 
 For the end-to-end setup (the one Console-only bootstrap rule, a complete GitHub Actions example, how the workload consumes the rule, importing wizard-created objects), see the [Workload Identity Federation guide](guides/workload_identity_federation).
 
@@ -125,7 +127,7 @@ The command is stopped after 30 seconds. Its stderr is not shown in the error, s
 
 Give the rule a `token_lifetime_seconds` well above 120 (the default, 3600, is fine). The SDK refreshes within the last 120 seconds of an access token's life, so with a shorter lifetime every request refreshes, and runs the identity source, which can hit the identity provider's rate limit on a large plan.
 
-Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation.
+Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation. Only the block with `federation` ignores it: a provider block with neither `federation` nor `auth_token` still uses the variable, so with an `org:admin` block fed by `ANTHROPIC_AUTH_TOKEN` next to a federated tunnels alias, the warning on the alias is expected and the variable must stay set.
 
 Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 

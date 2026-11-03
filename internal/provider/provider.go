@@ -32,6 +32,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/tunnels"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/workspaces"
@@ -78,8 +79,9 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 			"auth_token": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
-				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
-					"such as the Workload Identity Federation admin endpoints. " +
+				Description: "An OAuth bearer token for endpoints that reject API keys: an org:admin token (`sk-ant-oat01-...`) " +
+					"for the Workload Identity Federation admin endpoints, or a workspace:manage_tunnels token for MCP tunnels " +
+					"(configure each in its own, aliased provider block). " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
 			"federation": federationSchema(),
@@ -140,15 +142,20 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	if federation != nil {
 		if !data.AuthToken.IsNull() {
 			resp.Diagnostics.AddAttributeError(path.Root("federation"), "Conflicting OAuth Credentials",
-				"federation and auth_token both supply the org:admin bearer token. Configure one.")
+				"federation and auth_token both supply the OAuth bearer token. Configure one.")
 			return
 		}
 		// The SDKs give ANTHROPIC_AUTH_TOKEN precedence over their own
 		// federation, so an operator used to them would expect the reverse.
+		// The warning must not tell them to unset it: Configure cannot see
+		// the other provider blocks, and one without federation or
+		// auth_token (the org:admin block next to a tunnels alias) still
+		// reads it.
 		if authToken != "" {
 			resp.Diagnostics.AddAttributeWarning(path.Root("federation"), "ANTHROPIC_AUTH_TOKEN Ignored",
-				"ANTHROPIC_AUTH_TOKEN is set, but the federation block supplies the org:admin bearer token, so the variable is not used. "+
-					"Unset it to silence this warning.")
+				"ANTHROPIC_AUTH_TOKEN is set, but this provider block takes its OAuth bearer token from its federation block, "+
+					"so it does not use the variable. A provider block with neither federation nor auth_token still does: "+
+					"keep the variable if another block relies on it, unset it otherwise.")
 			authToken = ""
 		}
 	}
@@ -158,7 +165,8 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
-				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token.",
+				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an OAuth bearer token: "+
+				"org:admin scope for the Workload Identity Federation endpoints, workspace:manage_tunnels scope for MCP tunnels.",
 		)
 		return
 	}
@@ -262,6 +270,8 @@ func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Res
 		serviceaccounts.NewServiceAccountWorkspaceResource,
 		skills.NewSkillResource,
 		skills.NewSkillVersionResource,
+		tunnels.NewTunnelResource,
+		tunnels.NewTunnelCertificateResource,
 		userprofiles.NewUserProfileResource,
 		vaults.NewVaultResource,
 		vaults.NewVaultCredentialResource,
@@ -305,6 +315,8 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 		skills.NewSkillVersionDataSource,
 		skills.NewSkillVersionsDataSource,
 		skills.NewSkillsDataSource,
+		tunnels.NewTunnelDataSource,
+		tunnels.NewTunnelsDataSource,
 		userprofiles.NewUserProfileDataSource,
 		userprofiles.NewUserProfilesDataSource,
 		workspaces.NewWorkspaceDataSource,
