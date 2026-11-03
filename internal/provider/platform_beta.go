@@ -13,18 +13,21 @@ import (
 const providerIssuesURL = "https://github.com/ippontech/terraform-provider-anthropic/issues"
 
 // platformBeta describes the beta warning of each cloud platform: the
-// provider block that activates it, and the guide that lists what remains
-// unverified there.
-var platformBeta = map[platform.Platform]struct{ block, guide string }{
+// provider block that activates it, the guide that lists what remains
+// unverified there, and how far the support was checked against the real
+// gateway (the end of the warning's first sentence).
+var platformBeta = map[platform.Platform]struct{ block, guide, gateway string }{
 	platform.AWS: {
-		block: "aws",
-		guide: "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws",
+		block:   "aws",
+		guide:   "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws",
+		gateway: "and in part against the real gateway, so some requests, errors or routes may still behave differently there.",
 	},
 }
 
 // addPlatformBetaWarning adds, on the platform block, the warning that the
 // platform's support is in beta: it is covered by tests against local fakes,
-// and little or not at all against the real gateway. Configure calls it once,
+// and in part or not at all against the real gateway, depending on the
+// platform. Configure calls it once,
 // after the block configured the alias, so every alias on a cloud platform
 // prints it once per run, and a first-party alias never does.
 func addPlatformBetaWarning(diags *diag.Diagnostics, p platform.Platform) {
@@ -36,8 +39,7 @@ func addPlatformBetaWarning(diags *diag.Diagnostics, p platform.Platform) {
 	// trailing punctuation for part of it.
 	diags.AddAttributeWarning(path.Root(beta.block), p.DisplayName()+" support is in beta",
 		p.DisplayName()+" support in this provider is verified with offline tests, against local fakes of the "+
-			"gateway, and has had little or no testing against the real gateway, so requests, errors or routes may "+
-			"behave differently there.\n\n"+
+			"gateway, "+beta.gateway+"\n\n"+
 			"The guide lists what remains unverified: "+beta.guide+"\n\n"+
 			"Please report what works and what does not: "+providerIssuesURL)
 }

@@ -55,6 +55,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 		block   string // the block the warning is on; empty for no warning
 		summary string
 		guide   string
+		gateway string // the part of the detail that says how far the real gateway was checked
 	}{
 		{
 			name: "aws, signed, us-west-2",
@@ -67,7 +68,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "aws", summary: "Claude Platform on AWS support is in beta", guide: awsGuide,
+			block: "aws", summary: "Claude Platform on AWS support is in beta", guide: awsGuide, gateway: "in part against the real gateway",
 		},
 		{
 			name: "aws, console key, eu-west-3",
@@ -80,7 +81,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "aws", summary: "Claude Platform on AWS support is in beta", guide: awsGuide,
+			block: "aws", summary: "Claude Platform on AWS support is in beta", guide: awsGuide, gateway: "in part against the real gateway",
 		},
 		{
 			name: "first party, api_key",
@@ -146,7 +147,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 			if want := tftypes.NewAttributePath().WithAttributeName(alias.block); !w.Attribute.Equal(want) {
 				t.Errorf("attribute = %v, want %v", w.Attribute, want)
 			}
-			for _, part := range []string{"verified with offline tests", "little or no testing against the real gateway", "report what works and what does not"} {
+			for _, part := range []string{"verified with offline tests", alias.gateway, "report what works and what does not"} {
 				if !strings.Contains(w.Detail, part) {
 					t.Errorf("detail %q lacks %q", w.Detail, part)
 				}
