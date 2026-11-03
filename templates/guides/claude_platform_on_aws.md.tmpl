@@ -88,7 +88,7 @@ A resource the gateway does not serve (`anthropic_invite`, `anthropic_api_key`, 
 
 ## 3. IAM permissions of the Terraform principal
 
-The gateway maps every route to an action of the `aws-external-anthropic` namespace ([IAM actions](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions)). Workspace creation and listing, user profiles, telemetry destinations and encryption key registrations are account-scoped and need `"Resource": "*"`; everything inside a workspace can be scoped to the workspace ARN, `arn:aws:aws-external-anthropic:<region>:<account-id>:workspace/<workspace-id>`. The managed policy `AnthropicFullAccess` grants everything; the policy below grants what this provider's resources call.
+The gateway maps every route to an action of the `aws-external-anthropic` namespace ([IAM actions](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions)). Workspace creation and listing, user profiles, telemetry destinations and encryption key registrations are account-scoped and need `"Resource": "*"`; everything inside a workspace can be scoped to the workspace ARN, `arn:aws:aws-external-anthropic:<region>:<account-id>:workspace/<workspace-id>`. The managed policy `AnthropicFullAccess` grants everything. The policy below grants the actions that page maps to the routes this provider's resources call. On that page a sub-resource route maps to its parent's actions: skill versions to `GetSkill` and `UpdateSkill`, vault credentials to `GetVault` and `UpdateVault`, memories to `GetMemoryStore` and `UpdateMemoryStore`. Scheduled deployments are the exception: the gateway serves their routes, but that page lists no action for them and which one the gateway checks is not verified, so the policy does not cover `anthropic_deployment` and `anthropic_deployment_runs`. A principal that manages them needs a broader grant, such as `AnthropicFullAccess` (`aws-external-anthropic:*`).
 
 ```hcl
 data "aws_caller_identity" "current" {}
@@ -351,6 +351,7 @@ Not verified yet:
 2. Attaching a KMS key to a workspace: the signature of the path is accepted, but no key was attached.
 3. Whether reading a workspace fails without `ListTagsForResource`, which CloudTrail records on every read.
 4. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
+5. Which IAM action authorizes the deployment routes, which the IAM actions page does not list ([section 3](#3-iam-permissions-of-the-terraform-principal)).
 
 ## See also
 
