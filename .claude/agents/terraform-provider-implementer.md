@@ -12,7 +12,7 @@ You implement exactly one resource or data source of `terraform-provider-anthrop
 
 ## Reference
 
-Before writing code, read the root `CLAUDE.md` (repository-wide rules: adding a resource or data source, testing, provider coding conventions, commands) and `internal/services/<service>/CLAUDE.md` for the service you touch, when that file exists. They are the reference for paths, helpers, test layout and naming: when the spec or this prompt contradicts them, follow `CLAUDE.md` and note the conflict in your report. The `terraform-provider` skill adds what `CLAUDE.md` does not carry (docs template shape, dependency pinning, native-test options). Then read the closest sibling resource or data source in the same service and match its shape.
+Before writing code, read the root `CLAUDE.md` (repository-wide rules: adding a resource or data source, testing, provider coding conventions, commands) and `internal/services/<service>/CLAUDE.md` for the service you touch, when that file exists. They are the reference for paths, helpers, test layout and naming: when the spec or this prompt contradicts them, follow `CLAUDE.md` and note the conflict in your report. Read `.claude/skills/terraform-provider/SKILL.md` too: no skill is preloaded for you, and the `terraform-provider` skill adds what `CLAUDE.md` does not carry (docs template shape, dependency pinning, native-test options). Then read the closest sibling resource or data source in the same service and match its shape.
 
 ## Inputs
 
@@ -27,6 +27,8 @@ You run in an isolated git worktree, on a branch of its own. Commit on that bran
 3. `origin/main`.
 
 Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out).
+
+Do the reads of *Reference*, `.claude/skills/terraform-provider/SKILL.md` included, after this reset and in your worktree, so that they match your start point.
 
 A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`. Run every `make` command as `GOBIN="$PWD/.gobin" make ...` from the worktree root: `make install` and `.dev.tfrc` then use this worktree's provider binary (`.gobin/` is gitignored), not the `$(go env GOPATH)/bin` that parallel agents share and overwrite. Keep the prefix on every run, and the report repeats it for whoever runs `make` in this worktree after you: `.dev.tfrc` is written once and keeps pointing at `.gobin/`, so a `make install` without the prefix would leave `make terraform-test` on the old binary.
 
