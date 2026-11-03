@@ -4,11 +4,14 @@
 package providertest
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
@@ -56,4 +59,24 @@ func TestProviderFactoriesReachTheFake(t *testing.T) {
 		}},
 	})
 	srv.AssertCredential("GET /v1/models/{id}", sdktest.APIKey)
+}
+
+// ChangeAfterPlan runs its change once per check and fails the check with
+// the change's error.
+func TestChangeAfterPlan(t *testing.T) {
+	calls := 0
+	failure := errors.New("edit refused")
+	for _, want := range []error{nil, failure} {
+		resp := plancheck.CheckPlanResponse{}
+		ChangeAfterPlan(func() error {
+			calls++
+			return want
+		}).CheckPlan(context.Background(), plancheck.CheckPlanRequest{}, &resp)
+		if !errors.Is(resp.Error, want) {
+			t.Errorf("CheckPlan error = %v, want %v", resp.Error, want)
+		}
+	}
+	if calls != 2 {
+		t.Errorf("change ran %d times, want 2", calls)
+	}
 }
