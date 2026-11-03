@@ -28,7 +28,7 @@ You run in an isolated git worktree, on a branch of its own. Commit on that bran
 
 Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out).
 
-A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`. Run every `make` command as `GOBIN="$PWD/.gobin" make ...` from the worktree root: `make install` and `.dev.tfrc` then use this worktree's provider binary (`.gobin/` is gitignored), not the `$(go env GOPATH)/bin` that parallel agents share and overwrite.
+A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`. Run every `make` command as `GOBIN="$PWD/.gobin" make ...` from the worktree root: `make install` and `.dev.tfrc` then use this worktree's provider binary (`.gobin/` is gitignored), not the `$(go env GOPATH)/bin` that parallel agents share and overwrite. Keep the prefix on every run, and the report repeats it for whoever runs `make` in this worktree after you: `.dev.tfrc` is written once and keeps pointing at `.gobin/`, so a `make install` without the prefix would leave `make terraform-test` on the old binary.
 
 ## Scope
 
@@ -55,6 +55,7 @@ Blocked means a check still fails after you fixed what is in scope, or the spec 
 ## anthropic_<name> (<resource | data source>): done | blocked
 - Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <short sha, or none>
 - Files: <paths>
+- make in this worktree: always `GOBIN=<path>/.gobin make ...` (`.dev.tfrc` points at `.gobin/`)
 - make: pass | fail (<target and error>)
 - pre-commit run -a: pass | fail (<hook>)
 - make terraform-test: pass | fail | skipped (<reason>)
