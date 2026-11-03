@@ -42,7 +42,7 @@ A worktree has no `.env`, so live credentials are unavailable: do not read, prin
 
 Done means all of the following:
 1. `make` passes (format, lint, unit tests, install, docs generation);
-2. `pre-commit run -a` passes (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
+2. `pre-commit run -a` passes with your files staged by path, since it skips untracked files (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
 3. `make terraform-test` passes, or you report it as skipped because the credentials it needs are absent;
 4. the regenerated page under `docs/` has a non-empty `subcategory`;
 5. one local commit on your worktree's branch (see *Setup*), staging your files by path (never `git add -A`), with a conventional commit message such as `feat: add anthropic_<name> resource`.

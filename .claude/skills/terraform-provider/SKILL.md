@@ -91,4 +91,4 @@ When writing the test:
 
 ## Done
 
-The change is ready to commit when `make` passes (it formats, lints, tests, installs and regenerates docs), `make terraform-test` passes (or you state which tests could not run for lack of credentials), `pre-commit run -a` passes, and `docs/` shows the regenerated page with a non-empty `subcategory`.
+The change is ready to commit when `make` passes (it formats, lints, tests, installs and regenerates docs), `make terraform-test` passes (or you state which tests could not run for lack of credentials), `pre-commit run -a` passes with the new files staged (it skips untracked files), and `docs/` shows the regenerated page with a non-empty `subcategory`.

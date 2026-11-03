@@ -173,7 +173,7 @@ run "<name>_resource_creates_<name>" {
 ```
 Admin API and OAuth resources plan only (`command = plan`, dummy credential in a `provider "anthropic"` block of the test file) and assert on configured values, since computed ones such as `id` are unknown at plan; self-contained list data sources use `mock_provider "anthropic" {}`. Details in `CLAUDE.md`, *Terraform native tests*.
 
-Run `make` after implementation, then `make terraform-test` and `pre-commit run -a`.
+Run `make` after implementation, then `make terraform-test`, then stage the new files and run `pre-commit run -a` (it skips untracked files).
 ````
 
 ## Example invocation
