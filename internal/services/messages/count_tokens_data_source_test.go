@@ -83,6 +83,48 @@ data "anthropic_count_tokens" "test_system" {
 }
 `
 
+// An empty cache_control block (no ttl) is sent as {"type":"ephemeral"}: the live API must accept
+// it at the top level of a count_tokens request and still return a count.
+func TestAccCountTokensDataSource_emptyCacheControl(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCountTokensDataSourceEmptyCacheControlConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("data.anthropic_count_tokens.test_cache_control", "cache_control.ttl"),
+					resource.TestCheckResourceAttrWith("data.anthropic_count_tokens.test_cache_control", "input_tokens", func(v string) error {
+						n, err := strconv.ParseInt(v, 10, 64)
+						if err != nil {
+							return err
+						}
+						if n <= 0 {
+							return fmt.Errorf("expected input_tokens > 0, got %d", n)
+						}
+						return nil
+					}),
+				),
+			},
+		},
+	})
+}
+
+const testAccCountTokensDataSourceEmptyCacheControlConfig = `
+data "anthropic_count_tokens" "test_cache_control" {
+  model = "claude-haiku-4-5-20251001"
+
+  cache_control = {}
+
+  messages = [
+    {
+      role    = "user"
+      content = "Hello, Claude"
+    }
+  ]
+}
+`
+
 func TestAccCountTokensDataSource_withThinking(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },

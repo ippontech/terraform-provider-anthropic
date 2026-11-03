@@ -8,7 +8,81 @@ on:
 permissions: {}
 
 jobs:
+  # Runs before the approval that releases the GPG key, with no secret (only the read-only job
+  # token): it writes on the run's summary page the go.mod lines that changed since the last
+  # release users received signed, which the approver checks before approving (RELEASE.md,
+  # "Approve a release"). A maintainer merged each module update; this approval is the last human
+  # check before they ship signed, with every change since the last signed release in one list.
+  dependency-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # the previous release tag and its go.mod
+          persist-credentials: false
+
+      # The baseline is the newest earlier tag whose GitHub release carries the signed checksums.
+      # A version tagged but never signed (approval rejected, signing failed, release deleted) is
+      # skipped, so its module changes are listed again here rather than shipping unseen. A failed
+      # API call also counts as unsigned: it widens the comparison, never narrows it.
+      - name: List the go.mod changes since the last signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t tags < <(git tag --merged "${GITHUB_SHA}^" --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname)
+          previous=""
+          unsigned=()
+          for tag in "${tags[@]:0:20}"; do
+            assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq '.assets[].name' 2>/dev/null || true)
+            if grep -q '_SHA256SUMS\.sig$' <<< "${assets}"; then
+              previous="${tag}"
+              break
+            fi
+            unsigned+=("${tag}")
+          done
+          if [ -z "${previous}" ]; then
+            if [ "${#tags[@]}" -eq 0 ]; then
+              echo "No previous release tag: nothing to compare." >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "No release with signed binaries among the ${#unsigned[@]} most recent tags: compare \`go.mod\` by hand before approving." >> "${GITHUB_STEP_SUMMARY}"
+            fi
+            exit 0
+          fi
+          changes=$(git diff --unified=0 "${previous}" "${GITHUB_SHA}" -- go.mod | grep -E '^[-+][^-+]' || true)
+          {
+            echo "## go.mod changes from ${previous} to ${GITHUB_REF_NAME}"
+            echo
+            if [ "${#unsigned[@]}" -gt 0 ]; then
+              echo "${previous} is the last release with signed binaries. Tagged but never signed, so included here: ${unsigned[*]}."
+              echo
+            fi
+            if [ -z "${changes}" ]; then
+              echo "None: this release compiles the same modules as ${previous}."
+            else
+              echo "\`go.mod\` lists every module compiled into the provider. Check each change before approving the signing job (RELEASE.md, \"Approve a release\")."
+              echo
+              echo '```diff'
+              echo "${changes}"
+              echo '```'
+            fi
+            echo
+            echo "Full diff: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${previous}...${GITHUB_REF_NAME}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
   goreleaser-release:
+    needs: dependency-changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # The GPG key and its passphrase are secrets of this environment only, whose deployment
