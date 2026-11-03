@@ -6,12 +6,15 @@ package agents_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"testing"
+	"time"
 
 	acctest "github.com/ippontech/terraform-provider-anthropic/internal/acctest"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
@@ -185,6 +188,105 @@ func TestAccAgentResource_withMetadata(t *testing.T) {
 			},
 		},
 	})
+}
+
+// Removing metadata keys deletes them server-side, not only from state: the
+// API applies metadata as a patch and keeps an omitted key, so the update
+// sends a removed key as null
+// (https://platform.claude.com/docs/en/api/beta/agents/update), and
+// `metadata = {}` stays an empty map in state although the API answers {}
+// with or without metadata. The live counterpart of the fake-API
+// TestAgentResource_metadataKeyRemoved, plus the removal of the attribute;
+// the post-apply plan of every step must be empty (the default check).
+func TestAccAgentResource_metadataKeyRemoved(t *testing.T) {
+	name := fmt.Sprintf("tf-acc-test-agent-metadata-%d", time.Now().UnixNano())
+	// In place, never a replacement: the out-of-band reads must all see the
+	// agent the first step created.
+	updateInPlace := resource.ConfigPlanChecks{
+		PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(agentAddr, plancheck.ResourceActionUpdate)},
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceMetadataConfig(name, `metadata = { team = "platform", env = "test" }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(agentAddr, "metadata.%", "2"),
+					resource.TestCheckResourceAttr(agentAddr, "metadata.team", "platform"),
+					resource.TestCheckResourceAttr(agentAddr, "metadata.env", "test"),
+					testAccCheckAgentStoredMetadata(map[string]string{"team": "platform", "env": "test"}),
+				),
+			},
+			// Remove one key: sent as null, deleted server-side.
+			{
+				Config:           testAccAgentResourceMetadataConfig(name, `metadata = { team = "platform" }`),
+				ConfigPlanChecks: updateInPlace,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(agentAddr, "metadata.%", "1"),
+					resource.TestCheckResourceAttr(agentAddr, "metadata.team", "platform"),
+					resource.TestCheckNoResourceAttr(agentAddr, "metadata.env"),
+					testAccCheckAgentStoredMetadata(map[string]string{"team": "platform"}),
+				),
+			},
+			// metadata = {}: the last key is deleted and the empty map stays in
+			// state (the `metadata.%` check accepts a null map too, but
+			// Terraform fails the step unless the state is the configured
+			// empty map).
+			{
+				Config:           testAccAgentResourceMetadataConfig(name, `metadata = {}`),
+				ConfigPlanChecks: updateInPlace,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(agentAddr, "metadata.%", "0"),
+					resource.TestCheckNoResourceAttr(agentAddr, "metadata.team"),
+					testAccCheckAgentStoredMetadata(map[string]string{}),
+				),
+			},
+			// Remove the attribute: metadata goes back to null in state.
+			{
+				Config:           testAccAgentResourceMetadataConfig(name, ""),
+				ConfigPlanChecks: updateInPlace,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(agentAddr, "metadata.%"),
+					testAccCheckAgentStoredMetadata(map[string]string{}),
+				),
+			},
+		},
+	})
+}
+
+// testAccAgentResourceMetadataConfig is an agent named name, on the cheapest
+// model the tests use, with extra appended to its attributes.
+func testAccAgentResourceMetadataConfig(name, extra string) string {
+	return fmt.Sprintf(`
+resource "anthropic_agent" "test" {
+  model = "claude-haiku-4-5-20251001"
+  name  = %q
+  %s
+}
+`, name, extra)
+}
+
+// testAccCheckAgentStoredMetadata reads the agent at agentAddr (fake_test.go)
+// through the API, outside the provider, and checks that its metadata is
+// exactly want: a key removed from the configuration must be gone
+// server-side, not only from state.
+func testAccCheckAgentStoredMetadata(want map[string]string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[agentAddr]
+		if !ok {
+			return fmt.Errorf("%s not found in state", agentAddr)
+		}
+		agent, err := acctest.NewAPIKeyClient().Beta.Agents.Get(context.Background(), rs.Primary.ID, anthropic.BetaAgentGetParams{})
+		if err != nil {
+			return fmt.Errorf("reading agent %s: %w", rs.Primary.ID, err)
+		}
+		if !maps.Equal(agent.Metadata, want) {
+			return fmt.Errorf("agent %s has metadata %v on the API, want %v", rs.Primary.ID, agent.Metadata, want)
+		}
+		return nil
+	}
 }
 
 func TestAccAgentResource_withAgentToolset(t *testing.T) {

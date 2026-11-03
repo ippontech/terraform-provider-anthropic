@@ -348,14 +348,15 @@ func (r *VaultResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	if data.ArchiveOnDestroy.ValueBool() {
 		_, err := r.client.Beta.Vaults.Archive(ctx, data.ID.ValueString(), anthropic.BetaVaultArchiveParams{})
-		if err != nil {
+		if err != nil && !providerrors.IsNotFound(err) {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive vault: %s", err))
 		}
 		return
 	}
 
+	// A 404 means the vault is already gone, which is what destroy wants.
 	_, err := r.client.Beta.Vaults.Delete(ctx, data.ID.ValueString(), anthropic.BetaVaultDeleteParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete vault: %s", err))
 	}
 }

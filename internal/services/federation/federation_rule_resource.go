@@ -182,7 +182,7 @@ func (r *FederationRuleResource) Schema(_ context.Context, _ resource.SchemaRequ
 					"service_account_name": schema.StringAttribute{
 						Computed:            true,
 						MarkdownDescription: "Service account's display name at read time. Ignored on writes; never set this, it is populated from the API response.",
-						PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+						PlanModifiers:       []planmodifier.String{serviceAccountNameFollowsID()},
 					},
 				},
 			},
@@ -544,9 +544,10 @@ func isTerminalFederationRuleReadError(err error) bool {
 // as new as writtenAt, the updated_at returned by the write itself. Mirrors
 // awaitVaultUpdateVisible (vault_resource.go): probed on 2026-09-08, GET
 // /v1/organizations/federation_rules/{id} returned the pre-update rule in 1 of
-// 9 trials, converging 556ms after the write (see the read-after-write section
-// of CLAUDE.md). Left alone, Terraform's post-apply refresh lands inside that
-// window and the next plan shows a phantom in-place update.
+// 9 trials, converging 556ms after the write (see
+// internal/services/federation/CLAUDE.md). Left alone, Terraform's post-apply
+// refresh lands inside that window and the next plan shows a phantom in-place
+// update.
 //
 // It is deliberately best-effort: on a read error, a timeout, or a cancelled
 // context it returns without reporting a diagnostic. The write has already
@@ -555,8 +556,8 @@ func isTerminalFederationRuleReadError(err error) bool {
 // trying to avoid. The timestamp comparison is non-strict: an updated_at equal
 // to the write's counts as visible, or the loop would always time out.
 //
-// It returns the first read that reflects the write, or nil when it gave up
-// (see federationRuleAfterUpdate for why Update maps that read).
+// It returns the first read that reflects the write, which Update maps into
+// state (see federationRuleAfterUpdate), or nil when it gave up.
 func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.OAuthClient, id string, writtenAt time.Time, timeout, interval time.Duration) *anthropic.BetaFederationRule {
 	deadline := time.Now().Add(timeout)
 
@@ -592,29 +593,43 @@ func awaitFederationRuleUpdateVisible(ctx context.Context, client *providerdata.
 }
 
 // federationRuleAfterUpdate returns the rule Update maps into state: the
-// write response, completed with target.service_account_name from the read
-// that confirms the write. The update response
-// (POST /v1/organizations/federation_rules/{id}) leaves that name empty,
-// while GET returns it; mapped as is, the planned name (carried by
-// UseStateForUnknown) becomes null and Terraform reports an inconsistent
-// result after apply. Same family as the create response's issuer_name
-// (#243), which completeFederationRuleIssuerName handles.
+// write response, completed with target.service_account_name. The update
+// response (POST /v1/organizations/federation_rules/{id}) can leave that name
+// empty, which the reference allows ("optional string or null",
+// https://platform.claude.com/docs/en/api/beta/organization/federation/rules/update),
+// while GET returns it (#349); mapped as is, the name kept in the plan becomes
+// null and Terraform reports an inconsistent result after apply. Same family
+// as the create response's issuer_name (#243), which
+// completeFederationRuleIssuerName handles.
 //
-// Only the name is copied, never the whole read: the wait accepts any read
-// whose updated_at is not older than the write's, so a concurrent write by
-// another actor (the Console, another configuration) would pass too, and
-// mapping it would turn that edit into an inconsistent result instead of the
-// drift the next plan reports. The name is copied only when the read still
-// carries the written service account, for the same reason. When the wait
-// gives up, the write response is returned as is.
-func federationRuleAfterUpdate(ctx context.Context, client *providerdata.OAuthClient, written *anthropic.BetaFederationRule, timeout, interval time.Duration) *anthropic.BetaFederationRule {
+// The name comes from the read that confirms the write. Only the name is
+// copied, never the whole read: the wait accepts any read whose updated_at is
+// not older than the write's, so a concurrent write by another actor (the
+// Console, another configuration) would pass too, and mapping it would turn
+// that edit into an inconsistent result instead of the drift the next plan
+// reports. The name is copied only when the read still carries the written
+// service account, for the same reason. When the wait gives up, the write
+// response is kept, with the planned name if it has none for the same
+// service account.
+func federationRuleAfterUpdate(ctx context.Context, client *providerdata.OAuthClient, written *anthropic.BetaFederationRule, plannedTarget types.Object, timeout, interval time.Duration) *anthropic.BetaFederationRule {
 	fresh := awaitFederationRuleUpdateVisible(ctx, client, written.ID, written.UpdatedAt, timeout, interval)
-	if fresh == nil || fresh.Target.ServiceAccountID != written.Target.ServiceAccountID {
+	if fresh != nil && fresh.Target.ServiceAccountID == written.Target.ServiceAccountID {
+		completed := *written
+		completed.Target.ServiceAccountName = fresh.Target.ServiceAccountName
+		return &completed
+	}
+	if written.Target.ServiceAccountName != "" {
 		return written
 	}
 
+	var planned federationRuleTargetModel
+	if diags := plannedTarget.As(ctx, &planned, basetypes.ObjectAsOptions{}); diags.HasError() ||
+		planned.ServiceAccountName.IsNull() || planned.ServiceAccountName.IsUnknown() ||
+		planned.ServiceAccountID.ValueString() != written.Target.ServiceAccountID {
+		return written
+	}
 	completed := *written
-	completed.Target.ServiceAccountName = fresh.Target.ServiceAccountName
+	completed.Target.ServiceAccountName = planned.ServiceAccountName.ValueString()
 	return &completed
 }
 
@@ -707,7 +722,7 @@ func (r *FederationRuleResource) Update(ctx context.Context, req resource.Update
 		return
 	}
 
-	rule = federationRuleAfterUpdate(ctx, r.client, rule, federationRuleConsistencyTimeout, federationRuleConsistencyInterval)
+	rule = federationRuleAfterUpdate(ctx, r.client, rule, plan.Target, federationRuleConsistencyTimeout, federationRuleConsistencyInterval)
 
 	resp.Diagnostics.Append(mapFederationRuleToState(ctx, rule, &plan)...)
 	if resp.Diagnostics.HasError() {

@@ -236,7 +236,8 @@ func (r *FederationRuleWorkspaceResource) Delete(ctx context.Context, req resour
 	_, err := r.client.Beta.Organization.Federation.Rules.Workspaces.Remove(ctx, data.WorkspaceID.ValueString(), anthropic.BetaOrganizationFederationRuleWorkspaceRemoveParams{
 		FederationRuleID: data.FederationRuleID.ValueString(),
 	})
-	if err != nil {
+	// A 404 means the rule or its workspace binding is already gone.
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to disable federation rule for workspace: %s", err))
 	}
 }
@@ -266,7 +267,7 @@ func (r *FederationRuleWorkspaceResource) ImportState(ctx context.Context, req r
 // whole window has passed without a match. Probed on 2026-09-08: GET
 // /v1/organizations/federation_rules/{id}/workspaces did not yet list a
 // workspace just added by POST in 1 of 9 trials, converging 1.07s after the
-// Add (see the read-after-write section of CLAUDE.md). Read treats an absent
+// Add (see internal/services/federation/CLAUDE.md). Read treats an absent
 // entry as an authoritative out-of-band removal, so a single stale list right
 // after Create would drop the resource from state; the bounded wait turns
 // that into a sub-second delay. The cost is symmetric: a Read of an entry that

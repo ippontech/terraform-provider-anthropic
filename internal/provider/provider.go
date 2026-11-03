@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"slices"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -20,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
@@ -46,6 +48,26 @@ type AnthropicProvider struct {
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
 	version string
+
+	// baseURL, when set by WithBaseURL, replaces the API host of every
+	// client Configure builds. Empty in every binary users run.
+	baseURL string
+}
+
+// Option changes how New builds the provider. Options are for tests only:
+// main.go calls New without any, and none of them is reachable from a
+// Terraform configuration.
+type Option func(*AnthropicProvider)
+
+// WithBaseURL points every client the provider builds at baseURL: the
+// standard API key client, the Admin API client, the OAuth client and the
+// federation token exchange behind it. It wins over ANTHROPIC_BASE_URL, so a
+// test runs the provider against an httptest fake without t.Setenv and can
+// call t.Parallel (internal/providertest wraps it).
+func WithBaseURL(baseURL string) Option {
+	return func(p *AnthropicProvider) {
+		p.baseURL = baseURL
+	}
 }
 
 // AnthropicProviderModel describes the provider data model.
@@ -166,27 +188,34 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	// Each client carries exactly the credential resolved above and nothing
 	// the environment contributed on its own — see newSDKClient.
 	pd := &providerdata.ProviderData{}
+	var override []option.RequestOption
+	if p.baseURL != "" {
+		override = append(override, option.WithBaseURL(p.baseURL))
+	}
 	if apiKey != "" {
 		// Only the standard client is workspace-scoped by header: the Admin
 		// API is organization-wide, and a federated bearer selects its
 		// workspace at exchange time.
-		opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+		standard := slices.Clone(override)
 		if workspaceID != "" {
-			opts = append(opts, option.WithHeader("anthropic-workspace-id", workspaceID))
+			standard = append(standard, option.WithHeader("anthropic-workspace-id", workspaceID))
 		}
-		pd.Client = newSDKClient(opts...)
+		pd.Client = newSDKClient(option.WithAPIKey(apiKey), standard...)
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
+		if p.baseURL != "" {
+			pd.AdminClient.BaseURL = p.baseURL
+		}
 	}
 	if authToken != "" {
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken))}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken), override...)}
 	}
 	if federation != nil {
 		// The SDK caches the exchanged token and exchanges again shortly
 		// before it expires, calling the identity source each time.
 		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(
-			option.WithFederationTokenProvider(federation.identity, federation.options),
+			option.WithFederationTokenProvider(federation.identity, federation.options), override...,
 		)}
 	}
 
@@ -232,11 +261,22 @@ func resolveCredential(configValue types.String, envVar string) string {
 // still worth honouring is ANTHROPIC_BASE_URL, which the marker option also
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
-func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
-	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
+//
+// Retries follow provretry.DefaultPolicy instead of the SDK's: a POST that
+// creates something, sends a message or updates with a precondition is
+// replayed only on 429, 529 or a connection error before it got a
+// connection, so another 5xx or a dropped connection after a write that
+// landed cannot create a duplicate.
+//
+// override is applied last, so the base URL of WithBaseURL wins over the
+// variable.
+func newSDKClient(credential option.RequestOption, override ...option.RequestOption) *anthropic.Client {
+	opts := []option.RequestOption{option.WithoutEnvironmentDefaults(), credential}
+	opts = append(opts, provretry.SDKOptions(provretry.DefaultPolicy)...)
 	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
+	opts = append(opts, override...)
 
 	client := anthropic.NewClient(opts...)
 
@@ -315,10 +355,14 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 	}
 }
 
-func New(version string) func() provider.Provider {
+func New(version string, opts ...Option) func() provider.Provider {
 	return func() provider.Provider {
-		return &AnthropicProvider{
+		p := &AnthropicProvider{
 			version: version,
 		}
+		for _, opt := range opts {
+			opt(p)
+		}
+		return p
 	}
 }
