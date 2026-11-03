@@ -24,7 +24,7 @@ For each planned issue whose GitHub issue does not exist yet, in one parallel me
    gh api repos/ippontech/terraform-provider-anthropic/git/refs -f ref="refs/heads/<branch>" -f sha="$sha"
    ```
 
-   Creating a branch needs write access to the repository. Without it, skip this step: the implementing agent creates the branch locally from `origin/main`, and `ship` pushes it to the contributor's fork.
+   Creating a branch needs write access to the repository. Without it, skip this step: the implementing agent starts from `origin/main`, you create the branch at its commit (see below), and `ship` pushes it to the contributor's fork.
 
 GitHub opens a PR only once a branch has a commit, so tell the user: "Branches are created; each PR opens when its first commit is pushed (`/ship`)."
 
@@ -35,7 +35,7 @@ GitHub opens a PR only once a branch has a commit, so tell the user: "Branches a
 
 When the agents report back, run the `provider-reviewer` agent on each branch, fix what it finds, and ask the user before pushing; `/ship` then pushes each branch and opens its PR.
 
-An agent rerun on a branch that already existed locally commits on its worktree's own branch and names it in its report: fast-forward the spec's branch to that commit (`git merge --ff-only <commit>` where the spec's branch is checked out) before pushing.
+An agent never checks out the issue's branch, so its kept worktree does not hold it: it commits on its worktree's own branch and names that branch and the commit in its report. Before pushing, create or fast-forward the issue's branch to that commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out).
 
 ## Example
 

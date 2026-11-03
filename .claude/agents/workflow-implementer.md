@@ -1,6 +1,6 @@
 ---
 name: "workflow-implementer"
-description: "Implements or modifies one GitHub Actions workflow in .github/workflows/ in an isolated git worktree, applying the repository's security rules (SHA pinning, permissions, harden-runner, secret handling), and stops at a local commit. Use when adding or updating a workflow; the caller passes the full spec (branch, workflow file name, triggers, jobs, Makefile targets) because the agent starts with no context. Not for auditing workflows (workflow-reviewer)."
+description: "Implements or modifies one GitHub Actions workflow in .github/workflows/ in an isolated git worktree, applying the repository's security rules (SHA pinning, permissions, harden-runner, secret handling), and stops at a local commit. Use when adding or updating a workflow; the caller passes the full spec (branch, its base branch when the change is stacked on an unmerged one, workflow file name, triggers, jobs, Makefile targets) because the agent starts with no context. Not for auditing workflows (workflow-reviewer)."
 tools: Bash, Glob, Grep, Read, Write, Edit, mcp__ide__getDiagnostics
 model: sonnet
 color: yellow
