@@ -138,7 +138,7 @@ GitHub Issue: <url>
 ## Files to create / modify
 From `CLAUDE.md`, *Adding a resource or data source* (for a data source: `_data_source.go`, `DataSources()`, `examples/data-sources/<name>/data_source.tf`, `templates/data-sources/`, `docs/data-sources/`).
 - `internal/services/<service>/<name>_resource.go`: `package <service>`
-- `internal/services/<service>/<name>_resource_test.go`: Go acceptance tests, `package <service>_test` (standard key only, see *Go tests*)
+- `internal/services/<service>/<name>_resource_test.go`: Go acceptance tests, `package <service>_test` (standard-key objects and read-only Admin API data sources, see *Go tests*)
 - `internal/services/<service>/<name>_resource_internal_test.go`: unit tests against an `httptest` server, `package <service>`, when they need unexported symbols, and always for an Admin API or OAuth resource
 - `internal/provider/provider.go`: register the factory in `Resources()`
 - `examples/resources/<name>/resource.tf`: resource blocks and outputs only (embedded in the Registry docs)
