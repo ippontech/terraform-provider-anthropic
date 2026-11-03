@@ -147,10 +147,15 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		}
 		// The SDKs give ANTHROPIC_AUTH_TOKEN precedence over their own
 		// federation, so an operator used to them would expect the reverse.
+		// The warning must not tell them to unset it: Configure cannot see
+		// the other provider blocks, and one without federation or
+		// auth_token (the org:admin block next to a tunnels alias) still
+		// reads it.
 		if authToken != "" {
 			resp.Diagnostics.AddAttributeWarning(path.Root("federation"), "ANTHROPIC_AUTH_TOKEN Ignored",
-				"ANTHROPIC_AUTH_TOKEN is set, but the federation block supplies the OAuth bearer token, so the variable is not used. "+
-					"Unset it to silence this warning.")
+				"ANTHROPIC_AUTH_TOKEN is set, but this provider block takes its OAuth bearer token from its federation block, "+
+					"so it does not use the variable. A provider block with neither federation nor auth_token still does: "+
+					"keep the variable if another block relies on it, unset it otherwise.")
 			authToken = ""
 		}
 	}
