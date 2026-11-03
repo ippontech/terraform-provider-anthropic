@@ -1,3 +1,9 @@
+## [1.63.10](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.9...v1.63.10) (2026-11-03)
+
+### 📚 Documentation
+
+* **release:** explain why the signing key never expires ([#530](https://github.com/ippontech/terraform-provider-anthropic/issues/530)) ([1b4bf58](https://github.com/ippontech/terraform-provider-anthropic/commit/1b4bf5874c3b87c6b1aed408d7e024b8058ec79b)), closes [#491](https://github.com/ippontech/terraform-provider-anthropic/issues/491) [#491](https://github.com/ippontech/terraform-provider-anthropic/issues/491)
+
 ## [1.63.9](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.8...v1.63.9) (2026-11-03)
 
 ### 📚 Documentation
