@@ -357,7 +357,10 @@ func buildCountTokensParams(ctx context.Context, data CountTokensDataSourceModel
 		if diags.HasError() {
 			return params, diags
 		}
-		cc := anthropic.CacheControlEphemeralParam{}
+		// Type is set explicitly: a zero-valued CacheControlEphemeralParam is
+		// dropped by the SDK's omitzero, so `cache_control = {}` (no ttl) would
+		// otherwise never reach the API (same trap as anthropic_message).
+		cc := anthropic.CacheControlEphemeralParam{Type: "ephemeral"}
 		if !c.TTL.IsNull() {
 			cc.TTL = anthropic.CacheControlEphemeralTTL(c.TTL.ValueString())
 		}

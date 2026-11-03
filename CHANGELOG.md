@@ -1,3 +1,57 @@
+## [1.63.12](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.11...v1.63.12) (2026-11-03)
+
+### 🐛 Bug Fixes
+
+* **count_tokens:** send cache_control when ttl is unset ([#430](https://github.com/ippontech/terraform-provider-anthropic/issues/430)) ([865c5fd](https://github.com/ippontech/terraform-provider-anthropic/commit/865c5fda714a78c27348b1befab05d822a3f9309)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405)
+
+## [1.63.11](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.10...v1.63.11) (2026-11-03)
+
+### 🐛 Bug Fixes
+
+* **agent:** revert out-of-band changes to toolset defaults and per-tool configs ([#510](https://github.com/ippontech/terraform-provider-anthropic/issues/510)) ([6e7b5be](https://github.com/ippontech/terraform-provider-anthropic/commit/6e7b5be078577e6e70413c81b89940c54e413d21)), closes [#412](https://github.com/ippontech/terraform-provider-anthropic/issues/412) [#413](https://github.com/ippontech/terraform-provider-anthropic/issues/413) [#443](https://github.com/ippontech/terraform-provider-anthropic/issues/443) [#448](https://github.com/ippontech/terraform-provider-anthropic/issues/448) [#463](https://github.com/ippontech/terraform-provider-anthropic/issues/463) [#486](https://github.com/ippontech/terraform-provider-anthropic/issues/486) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#499](https://github.com/ippontech/terraform-provider-anthropic/issues/499) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#508](https://github.com/ippontech/terraform-provider-anthropic/issues/508) [#499](https://github.com/ippontech/terraform-provider-anthropic/issues/499) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#499](https://github.com/ippontech/terraform-provider-anthropic/issues/499) [#509](https://github.com/ippontech/terraform-provider-anthropic/issues/509) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#499](https://github.com/ippontech/terraform-provider-anthropic/issues/499) [#508](https://github.com/ippontech/terraform-provider-anthropic/issues/508)
+
+## [1.63.10](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.9...v1.63.10) (2026-11-03)
+
+### 📚 Documentation
+
+* **release:** explain why the signing key never expires ([#530](https://github.com/ippontech/terraform-provider-anthropic/issues/530)) ([1b4bf58](https://github.com/ippontech/terraform-provider-anthropic/commit/1b4bf5874c3b87c6b1aed408d7e024b8058ec79b)), closes [#491](https://github.com/ippontech/terraform-provider-anthropic/issues/491) [#491](https://github.com/ippontech/terraform-provider-anthropic/issues/491)
+
+## [1.63.9](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.8...v1.63.9) (2026-11-03)
+
+### 📚 Documentation
+
+* **release:** register the signing key on the OpenTofu Registry ([#491](https://github.com/ippontech/terraform-provider-anthropic/issues/491)) ([0cc5c0b](https://github.com/ippontech/terraform-provider-anthropic/commit/0cc5c0bbf57ad3930055e288e7784917451507f5)), closes [#490](https://github.com/ippontech/terraform-provider-anthropic/issues/490) [opentofu/registry#6283](https://github.com/opentofu/registry/issues/6283)
+
+## [1.63.8](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.7...v1.63.8) (2026-11-02)
+
+### 📚 Documentation
+
+* **license:** replace LICENSE with the official MPL-2.0 text ([#496](https://github.com/ippontech/terraform-provider-anthropic/issues/496)) ([91ce79e](https://github.com/ippontech/terraform-provider-anthropic/commit/91ce79efe769ecf204f2f86986872f61da2d6d78)), closes [#493](https://github.com/ippontech/terraform-provider-anthropic/issues/493) [#4](https://github.com/ippontech/terraform-provider-anthropic/issues/4)
+
+## [1.63.7](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.6...v1.63.7) (2026-11-02)
+
+### 🐛 Bug Fixes
+
+* **deps:** update module golang.org/x/net to v0.62.0 [security] ([#515](https://github.com/ippontech/terraform-provider-anthropic/issues/515)) ([98708d8](https://github.com/ippontech/terraform-provider-anthropic/commit/98708d8c8c5dec84b12900621300ec4617ac2a01))
+
+## [1.63.6](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.5...v1.63.6) (2026-11-02)
+
+### 📚 Documentation
+
+* **readme:** credit contributors with a contrib.rocks widget ([#528](https://github.com/ippontech/terraform-provider-anthropic/issues/528)) ([db04063](https://github.com/ippontech/terraform-provider-anthropic/commit/db0406301fdae58c711d6b1613c29984a1f879cd))
+
+## [1.63.5](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.4...v1.63.5) (2026-11-02)
+
+### 🐛 Bug Fixes
+
+* **organization-members:** skip the API call when only remove_on_destroy changes ([#492](https://github.com/ippontech/terraform-provider-anthropic/issues/492)) ([d78a456](https://github.com/ippontech/terraform-provider-anthropic/commit/d78a4563ee28a193c899aaa699ea7c0de3ecbc28))
+
+## [1.63.4](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.3...v1.63.4) (2026-10-30)
+
+### 🐛 Bug Fixes
+
+* **deps:** update go toolchain directive to v1.27.3 ([#509](https://github.com/ippontech/terraform-provider-anthropic/issues/509)) ([f6f3b0b](https://github.com/ippontech/terraform-provider-anthropic/commit/f6f3b0bf24136736f6df7a1d7a56458c926ab4a5))
+
 ## [1.63.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.2...v1.63.3) (2026-10-29)
 
 ### 🐛 Bug Fixes

@@ -103,7 +103,7 @@ Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set (some 
 1. Create your MR and add reviewers. Owners or contributors of this repository must be added as reviewers.
 2. Run `make` (formats, lints, tests, installs, and regenerates docs in one step).
 3. Run pre-commit hooks `pre-commit run -a`.
-4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG).
+4. Once all comments and checklist items have been addressed, your contribution will be merged! Merged MRs will be included in the next release. [Semantic release](https://github.com/semantic-release/semantic-release) will be in charge to construct the Release automatically (Tag, CHANGELOG), once the acceptance tests pass on `main` (see `RELEASE.md`, "How a release is cut").
 
 ## Commit Signing
 
@@ -152,7 +152,7 @@ We do Squash Merge during the MRs merge. The title of the MR is the commit title
 
 ## Dependency Updates
 
-Dependencies are updated automatically by [Renovate](https://docs.renovatebot.com/), run as the Mend-hosted app at the `ippontech` organization level (nothing runs in this repository's CI). It opens grouped pull requests (one per manager: Go modules, GitHub Actions, mise tools, pre-commit hooks, and tool versions pinned in workflow inputs), and auto-merges `minor` / `patch` / `pin` / `digest` updates once required checks pass, three days after a release is published. Updates to the release tooling (anything declared in `goreleaser-release.yml` or `semantic-release.yml`) are the exception: they are grouped in a `release tooling` PR that a maintainer must review and merge.
+Dependencies are updated automatically by [Renovate](https://docs.renovatebot.com/), run as the Mend-hosted app at the `ippontech` organization level (nothing runs in this repository's CI). It opens grouped pull requests (one per manager: Go modules, GitHub Actions, mise tools, pre-commit hooks, and tool versions pinned in workflow inputs), and auto-merges `minor` / `patch` / `pin` / `digest` updates once required checks pass, three days after a release is published. Updates to the release tooling (anything declared in `goreleaser-release.yml` or `semantic-release.yml`) and to the actions and the Terraform CLI of `testacc.yml`, which runs with the acceptance-test keys, are the exception: they are grouped in a `release tooling` PR that a maintainer must review and merge. Updates of the root `go.mod`, which the acceptance tests compile, are not auto-merged either: a maintainer merges the `Go dependencies` PR.
 
 Its behaviour is driven by `renovate.json` at the repository root. See [`.github/renovate.md`](.github/renovate.md) for the full configuration reference and how to validate a change to it. Maintainers can inspect recent runs, their logs, and trigger an on-demand scan from the [Mend dashboard for this repository](https://developer.mend.io/github/ippontech/terraform-provider-anthropic) (requires access to the `ippontech` organization on Mend).
 
