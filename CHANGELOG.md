@@ -1,3 +1,9 @@
+## [1.63.12](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.11...v1.63.12) (2026-11-03)
+
+### 🐛 Bug Fixes
+
+* **count_tokens:** send cache_control when ttl is unset ([#430](https://github.com/ippontech/terraform-provider-anthropic/issues/430)) ([865c5fd](https://github.com/ippontech/terraform-provider-anthropic/commit/865c5fda714a78c27348b1befab05d822a3f9309)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405)
+
 ## [1.63.11](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.63.10...v1.63.11) (2026-11-03)
 
 ### 🐛 Bug Fixes
