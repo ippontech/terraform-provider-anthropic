@@ -198,7 +198,7 @@ Those defaults are also the provider's: a toolset that leaves `default_permissio
 
 ## Execution identity
 
-`execution_identity` names the principal the agent's runs act as. By default they use the Anthropic-managed service account (`type = "service_account"`), which carries no identifier. The API returns that default for every agent, and the provider keeps the attribute null while it is unset; removing the attribute from the configuration restores the default on the next update.
+`execution_identity` names the principal the agent's runs act as. By default they use the Anthropic-managed service account (`type = "service_account"`), which carries no identifier. The API returns that default for every agent, and the provider keeps the attribute null while it is unset; removing the attribute from the configuration restores the default on the next update. After an import, a configuration that sets `type = "service_account"` plans one update that only resends the default, since the imported state keeps that default null; leaving the attribute unset avoids it.
 
 On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws), each run of a scheduled deployment creates its session as an IAM role in your AWS account, so the agent needs an `aws_role` identity before an `anthropic_deployment` can use it: creating a deployment for an agent without one returns a 400 error ([Scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)).
 

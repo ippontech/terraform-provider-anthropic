@@ -429,11 +429,15 @@ func TestAccAgentResource_executionIdentity(t *testing.T) {
 					resource.TestCheckNoResourceAttr(name, "execution_identity.role_arn"),
 				),
 			},
-			// Import cannot tell an explicit default from an unset attribute.
 			{
-				ResourceName:            name,
-				ImportState:             true,
-				ImportStateVerify:       true,
+				ResourceName:      name,
+				ImportState:       true,
+				ImportStateVerify: true,
+				// Import has no configuration to tell an explicit service_account
+				// from an unset attribute, so Read keeps the echoed default null:
+				// with this configuration, the plan after an import resends the
+				// default once. Mapping the default instead would make every
+				// configuration without the attribute plan an update after import.
 				ImportStateVerifyIgnore: []string{"execution_identity"},
 			},
 			{
