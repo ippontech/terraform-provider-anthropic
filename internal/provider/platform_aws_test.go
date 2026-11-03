@@ -440,7 +440,7 @@ func TestConfigureAWSEnvironmentFillsTheBlock(t *testing.T) {
 	t.Setenv("AWS_REGION", awsTestRegion)
 	t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
 	t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
-	t.Setenv("ANTHROPIC_AWS_WORKSPACE_ID", "wrkspc_from_aws_env")
+	t.Setenv("ANTHROPIC_AWS_WORKSPACE_ID", "wrkspc_01FromAwsEnv")
 	t.Setenv("ANTHROPIC_AWS_BASE_URL", gw.srv.URL)
 
 	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{"aws": awsValue(nil)}))
@@ -451,7 +451,7 @@ func TestConfigureAWSEnvironmentFillsTheBlock(t *testing.T) {
 	if r.sigErr != nil {
 		t.Error(r.sigErr)
 	}
-	if got := r.header.Get("Anthropic-Workspace-Id"); got != "wrkspc_from_aws_env" {
+	if got := r.header.Get("Anthropic-Workspace-Id"); got != "wrkspc_01FromAwsEnv" {
 		t.Errorf("anthropic-workspace-id = %q, want the ANTHROPIC_AWS_WORKSPACE_ID value", got)
 	}
 }
@@ -522,6 +522,9 @@ func TestConfigureAWSRejects(t *testing.T) {
 		{"unknown secret", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"secret_key": tftypes.UnknownValue}))}, nil, "Unknown AWS Configuration", "aws.secret_key"},
 		{"unknown workspace", map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue), "aws": awsValue(keys)}, nil, "Unknown Workspace Configuration", "workspace_id"},
 		{"no workspace", map[string]tftypes.Value{"aws": awsValue(keys)}, map[string]string{"ANTHROPIC_WORKSPACE_ID": "wrkspc_first_party"}, "Missing Workspace", "ANTHROPIC_AWS_WORKSPACE_ID"},
+		// The attribute is validated at plan time, the variable at Configure.
+		{"workspace variable with a newline", map[string]tftypes.Value{"aws": awsValue(keys)}, map[string]string{"ANTHROPIC_AWS_WORKSPACE_ID": awsTestWorkspace + "\n"}, "Invalid Workspace", "ANTHROPIC_AWS_WORKSPACE_ID"},
+		{"workspace variable not an ID", map[string]tftypes.Value{"aws": awsValue(keys)}, map[string]string{"ANTHROPIC_AWS_WORKSPACE_ID": "production"}, "Invalid Workspace", `got "production"`},
 		{"no region", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"access_key": awsTestAccessKey, "secret_key": awsTestSecretKey})}, nil, "Missing AWS Region", "aws.region"},
 		// With base_url set, only signing needs a region. A configured
 		// credential signs although ANTHROPIC_AWS_API_KEY is exported.

@@ -192,6 +192,14 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 	workspaceID := data.WorkspaceID.ValueString()
 	if workspaceID == "" {
 		workspaceID = os.Getenv(awsWorkspaceIDEnv)
+		// The attribute's shape is checked at plan time, the variable's here:
+		// a stray newline or a wrong value would otherwise reach the header,
+		// where net/http rejects every request with an error naming nothing.
+		if workspaceID != "" && !workspaceIDPattern.MatchString(workspaceID) {
+			diags.AddAttributeError(path.Root("workspace_id"), "Invalid Workspace",
+				fmt.Sprintf("The %s environment variable must be a workspace ID (wrkspc_ followed by letters and "+
+					"digits), got %q.", awsWorkspaceIDEnv, workspaceID))
+		}
 	}
 	if workspaceID == "" {
 		diags.AddAttributeError(path.Root("workspace_id"), "Missing Workspace",
