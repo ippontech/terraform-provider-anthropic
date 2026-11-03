@@ -220,6 +220,8 @@ The role must be in the same AWS account and needs:
 - **Role permissions:** allow `aws-external-anthropic:CreateSession`, `sts:GetWebIdentityToken` and `sts:TagGetWebIdentityToken`.
 - **Caller permissions:** the IAM principal that sets the role on the agent, the one Terraform applies with, needs `iam:PassRole` on that role. No managed policy grants `iam:PassRole`.
 
+An identity set outside Terraform shows as a change on the next plan, and the apply restores the one in the configuration. If an agent's `aws_role` was set outside Terraform, add the matching `execution_identity` block to its configuration before the next apply: without it, the apply restores the service account and the agent's scheduled deployments lose the role.
+
 ## Web tool restrictions
 
 The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `url_sources`, and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
