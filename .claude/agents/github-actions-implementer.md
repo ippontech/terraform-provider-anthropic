@@ -64,7 +64,7 @@ Then stop at this local commit. Do not push or start another agent: the main age
 ## Done: .github/workflows/<filename>.yml
 - Spec branch / Triggers / Jobs: ...
 - actionlint/poutine/semgrep/checkov: ✅/❌
-- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <short sha, or none>
+- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <full sha from `git rev-parse HEAD`, or none>
 - Left to the main agent: review, push, PR
 ```
 
