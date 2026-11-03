@@ -71,7 +71,7 @@ Then paste it in your Terraform Registry namespace:
 A key added there is permanent: the Registry offers no way to delete or replace it, and it rejects a second import of the same key ID (checked on 2026-11-03). HashiCorp keeps every key on purpose so that the versions it signed stay verifiable ([Terraform Registry FAQ](https://developer.hashicorp.com/terraform/registry/faq)). Two consequences:
 
 - the Registry serves the copy it received, so a change made to the key afterwards (adding an expiration, say) is invisible to `terraform init` and has no effect: the only way to change what the Registry verifies with is a new key, see [Rotate the key](#rotate-the-key);
-- GnuPG refuses to sign with an expired key, which would break the release workflow at the expiration date for no benefit, so the key is generated without expiration (`Expiry: 0` above).
+- the key is generated without expiration (`Expiry: 0` above) because an expired key invalidates the versions it signed: the OpenPGP library both tools use (ProtonMail go-crypto) checks the key's expiration against the current time, not the signature date. Terraform only logs a warning in that case ([`checkDetachedSignature`](https://github.com/hashicorp/terraform/blob/main/internal/getproviders/package_authentication.go)), and OpenTofu prints one and warns that a future version will fail, failing already under `OPENTOFU_ENFORCE_GPG_EXPIRATION=true` ([`findSigningKey`](https://github.com/opentofu/opentofu/blob/main/internal/getproviders/package_authentication.go)); both checked on 2026-11-03. GnuPG also refuses to sign with an expired key, which would break the release workflow at the expiration date.
 
 ## Register the public key in the OpenTofu Registry
 
