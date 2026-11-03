@@ -475,11 +475,16 @@ func apiKeyConfig(t *testing.T, r *APIKeyResource, name, status string) tfsdk.Co
 // status is Optional+Computed, so a configuration that leaves it unset plans
 // the state value, "expired" included once the key has expired: Update leaves
 // an unset status out of the body, since the endpoint accepts only active,
-// archived and inactive. A configured status is always sent, even when it
-// equals state: over a stale state (-refresh=false, a saved plan) the key may
-// have been deactivated outside Terraform, and the response must match the
-// plan, or the apply fails as an inconsistent result.
-func TestAPIKeyResource_UpdateSendsConfiguredStatus(t *testing.T) {
+// archived and inactive. When the configuration sets status, the planned
+// value is sent, even when it equals state: over a stale state
+// (-refresh=false, a saved plan) the key may have been deactivated outside
+// Terraform, and the response must match the plan, or the apply fails as an
+// inconsistent result. The planned value, not the configured one:
+// ignore_changes = [status] plans the state value while the configuration
+// still says active (simulated here by a plan status equal to state), and
+// sending the configuration would switch a deactivated key back on. A
+// planned "expired" is never sent.
+func TestAPIKeyResource_UpdateSendsPlannedStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		// configStatus is the configured status, "" when unset. serverStatus
@@ -492,6 +497,9 @@ func TestAPIKeyResource_UpdateSendsConfiguredStatus(t *testing.T) {
 		{name: "rename an active key", stateStatus: "active", planStatus: "active", serverStatus: "active", wantStatus: nil},
 		{name: "deactivate", configStatus: "inactive", stateStatus: "active", planStatus: "inactive", serverStatus: "active", wantStatus: "inactive"},
 		{name: "configured status over a stale state", configStatus: "active", stateStatus: "active", planStatus: "active", serverStatus: "inactive", wantStatus: "active"},
+		{name: "ignore_changes keeps a key deactivated outside Terraform", configStatus: "active", stateStatus: "inactive", planStatus: "inactive", serverStatus: "inactive", wantStatus: "inactive"},
+		{name: "ignore_changes over a stale state", configStatus: "active", stateStatus: "inactive", planStatus: "inactive", serverStatus: "active", wantStatus: "inactive"},
+		{name: "ignore_changes over an expired key", configStatus: "active", stateStatus: "expired", planStatus: "expired", serverStatus: "expired", wantStatus: nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body map[string]any

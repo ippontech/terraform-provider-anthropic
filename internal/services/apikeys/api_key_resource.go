@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -346,20 +347,12 @@ func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	body := apiKeyUpdateRequest{Name: plan.Name.ValueString()}
-	// status is Optional+Computed: left unset, it plans the state value, which
-	// can be the read-only "expired" the endpoint does not accept, so only a
-	// configured status is sent (the validator limits it to the updatable
-	// values). It is sent even when it equals state: a stale state
-	// (-refresh=false, a saved plan) can hide a change made outside Terraform,
-	// and the response must still match the plan.
 	var configStatus types.String
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("status"), &configStatus)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !configStatus.IsNull() && !configStatus.IsUnknown() {
-		body.Status = configStatus.ValueString()
-	}
+	body.Status = apiKeyStatusToSend(configStatus, plan.Status)
 
 	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/api_keys/"+state.ID.ValueString(), body)
 	if err != nil {
@@ -409,6 +402,26 @@ func (r *APIKeyResource) ImportState(ctx context.Context, req resource.ImportSta
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// apiKeyStatusToSend returns the status Update sends, or "" to leave it out
+// of the body. status is Optional+Computed: left unset, it plans the state
+// value, which can be the read-only "expired", so it is sent only when the
+// configuration sets it. The planned value is sent, not the configured one:
+// ignore_changes = [status] plans the state value over the configuration, and
+// sending the configured "active" would switch back on a key deactivated
+// outside Terraform. It is sent even when it equals state, since a stale
+// state (-refresh=false, a saved plan) can hide such a change and the
+// response must still match the plan. A planned value the endpoint does not
+// accept (the "expired" that ignore_changes keeps from state) is left out.
+func apiKeyStatusToSend(configured, planned types.String) string {
+	if configured.IsNull() || planned.IsNull() || planned.IsUnknown() {
+		return ""
+	}
+	if !slices.Contains(apiKeyUpdatableStatuses, planned.ValueString()) {
+		return ""
+	}
+	return planned.ValueString()
+}
 
 // mapAPIKeyToState maps an API key response to the Terraform state model.
 // Nullable fields (workspace_id, expires_at, principal, partial_key_hint,
