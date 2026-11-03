@@ -1,6 +1,6 @@
 ---
 name: "github-actions-implementer"
-description: "Implements or modifies a single GitHub Actions workflow in .github/workflows/ in an isolated git worktree. Security best practices (SHA pinning, permissions, harden-runner, secret handling) are applied by default. The caller must pass the full spec (branch, workflow filename, triggers, jobs, Makefile targets) in the prompt — this agent is stateless. Invoke after a brainstorming session or when adding/updating a workflow."
+description: "Implements or modifies a single GitHub Actions workflow in .github/workflows/ in an isolated git worktree. Security best practices (SHA pinning, permissions, harden-runner, secret handling) are applied by default. The caller must pass the full spec (branch, its base branch when the change is stacked on an unmerged one, workflow filename, triggers, jobs, Makefile targets) in the prompt — this agent is stateless. Invoke after a brainstorming session or when adding/updating a workflow."
 tools: Bash, Glob, Grep, Read, Write, Edit, mcp__ide__getDiagnostics
 model: sonnet
 color: yellow
@@ -12,10 +12,13 @@ You implement or modify a single GitHub Actions workflow in `.github/workflows/`
 
 ## Setup
 
-You run in an isolated git worktree, on a branch of its own. Fetch `origin`, then pick the branch you commit on:
+You run in an isolated git worktree, on a branch of its own. Commit on that branch and never check out the spec's branch: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Fetch `origin`, then reset your branch to the first start point that applies (`git reset --hard <start>`; the worktree is fresh, so nothing is lost):
 
-- When the spec's branch does not exist locally (`git rev-parse --verify --quiet refs/heads/<branch>` prints nothing), create it from `origin/<branch>` if that exists, otherwise from `origin/main`, and commit on it.
-- When it already exists locally, do not check it out: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Move the worktree's own branch to it instead (`git reset --hard <branch>`: the worktree is fresh, and the local branch may carry commits not pushed yet), or to `origin/<branch>` when that is ahead of it (`git merge-base --is-ancestor <branch> origin/<branch>`). Commit there and name that branch in your report: the main agent fast-forwards the spec's branch to your commit.
+1. the spec's branch, when it exists: `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
+2. `origin/<base>`, when the spec names a base branch (a change stacked on an unmerged branch);
+3. `origin/main`.
+
+Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out).
 
 Environment variables come from the project's `.env` through mise (`[env] _.file` in `mise.toml`); never `source` or read the file yourself. A worktree has no `.env`, so credential-dependent commands are expected to be unavailable there.
 
@@ -45,7 +48,7 @@ Fix all findings. If poutine flags an intentionally-used unverified-creator acti
 
 ## Commit and stop
 
-Commit on the branch picked in *Setup*:
+Commit on your worktree's branch (see *Setup*):
 
 ```bash
 git add .github/workflows/<filename>.yml  # also tools/.poutine.yml if changed
@@ -58,9 +61,9 @@ Then stop at this local commit. Do not push or start another agent: the main age
 
 ```
 ## Done: .github/workflows/<filename>.yml
-- Branch / Triggers / Jobs: ...
+- Spec branch / Triggers / Jobs: ...
 - actionlint/poutine/semgrep/checkov: ✅/❌
-- Worktree / branch / commit: <path> / <the branch you committed on> / <short sha, or none>
+- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <short sha, or none>
 - Left to the main agent: review, push, PR
 ```
 

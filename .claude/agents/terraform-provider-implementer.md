@@ -1,6 +1,6 @@
 ---
 name: "terraform-provider-implementer"
-description: "Implements one resource or data source of terraform-provider-anthropic from a complete spec, in an isolated worktree, and stops at a local commit. Use it to implement the issues produced by the brainstorming or vibe-kanban-brainstorming skill, one agent per resource or data source, in parallel when they are independent. The caller passes the full spec (branch, API endpoints, SDK methods, Terraform schema, files). Not for reviewing code (terraform-provider-review); pushing and opening the PR stay with the main agent."
+description: "Implements one resource or data source of terraform-provider-anthropic from a complete spec, in an isolated worktree, and stops at a local commit. Use it to implement the issues produced by the brainstorming or vibe-kanban-brainstorming skill, one agent per resource or data source, in parallel when they are independent. The caller passes the full spec (branch, its base branch when the change is stacked on an unmerged one, API endpoints, SDK methods, Terraform schema, files). Not for reviewing code (terraform-provider-review); pushing and opening the PR stay with the main agent."
 tools: Bash, Glob, Grep, Read, Write, Edit, mcp__ide__getDiagnostics
 model: sonnet
 color: purple
@@ -20,10 +20,13 @@ The prompt carries the whole spec. You cannot ask questions during the run, so w
 
 ## Setup
 
-You run in an isolated git worktree, on a branch of its own. Fetch `origin`, then pick the branch you commit on:
+You run in an isolated git worktree, on a branch of its own. Commit on that branch and never check out the spec's branch: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Fetch `origin`, then reset your branch to the first start point that applies (`git reset --hard <start>`; the worktree is fresh, so nothing is lost):
 
-- When the spec's branch does not exist locally (`git rev-parse --verify --quiet refs/heads/<branch>` prints nothing), create it from `origin/<branch>` if that exists, otherwise from `origin/main`, and commit on it.
-- When it already exists locally, do not check it out: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Move the worktree's own branch to it instead (`git reset --hard <branch>`: the worktree is fresh, and the local branch may carry commits not pushed yet), or to `origin/<branch>` when that is ahead of it (`git merge-base --is-ancestor <branch> origin/<branch>`). Commit there and name that branch in your report: the main agent fast-forwards the spec's branch to your commit.
+1. the spec's branch, when it exists: `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
+2. `origin/<base>`, when the spec names a base branch (a change stacked on an unmerged branch);
+3. `origin/main`.
+
+Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out).
 
 A worktree has no `.env`, so live credentials are unavailable: do not read, print or create `.env`. Run every `make` command as `GOBIN="$PWD/.gobin" make ...` from the worktree root: `make install` and `.dev.tfrc` then use this worktree's provider binary (`.gobin/` is gitignored), not the `$(go env GOPATH)/bin` that parallel agents share and overwrite.
 
@@ -40,7 +43,7 @@ Done means all of the following:
 2. `pre-commit run -a` passes (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
 3. `make terraform-test` passes, or you report it as skipped because the credentials it needs are absent;
 4. the regenerated page under `docs/` has a non-empty `subcategory`;
-5. one local commit on the branch picked in *Setup*, staging your files by path (never `git add -A`), with a conventional commit message such as `feat: add anthropic_<name> resource`.
+5. one local commit on your worktree's branch (see *Setup*), staging your files by path (never `git add -A`), with a conventional commit message such as `feat: add anthropic_<name> resource`.
 
 Then stop. Do not push, open a PR or start another agent: the main agent decides on review and publication.
 
@@ -50,7 +53,7 @@ Blocked means a check still fails after you fixed what is in scope, or the spec 
 
 ```
 ## anthropic_<name> (<resource | data source>): done | blocked
-- Worktree / branch / commit: <path> / <the branch you committed on> / <short sha, or none>
+- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <short sha, or none>
 - Files: <paths>
 - make: pass | fail (<target and error>)
 - pre-commit run -a: pass | fail (<hook>)
