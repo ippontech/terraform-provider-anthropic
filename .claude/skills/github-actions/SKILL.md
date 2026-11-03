@@ -67,14 +67,17 @@ Never interpolate these directly in `run:` steps:
 
 # Harden runner
 
-Every job's **first** step must be `step-security/harden-runner`, SHA-pinned, with `egress-policy: audit`. This intercepts all outbound network calls and logs unexpected egress (e.g., a compromised action exfiltrating secrets).
+Every job's **first** step must be `step-security/harden-runner`, SHA-pinned, with `egress-policy: block` and an `allowed-endpoints` list. The list names the hosts this job needs, as `host:port`, one per line; any other outbound call is blocked, so a compromised action cannot exfiltrate secrets. Start from the list of the most similar existing job, and add a comment above the step for a host whose purpose is not obvious.
 
 ```yaml
 steps:
   - name: Harden runner
     uses: step-security/harden-runner@<full-sha> # <version tag>
     with:
-      egress-policy: audit
+      egress-policy: block
+      allowed-endpoints: >
+        <host the job needs>:443
+        <another host the job needs>:443
 ```
 
 # Secret handling
