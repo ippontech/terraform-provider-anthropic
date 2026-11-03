@@ -10,7 +10,7 @@ A Terraform provider on the [Terraform Plugin Framework](https://developer.hashi
 - `internal/services/<service>/`: resources and data sources, one directory per Anthropic service.
 - `internal/admin/`: client for the Admin API (`/v1/organizations/*`), which the SDK does not cover.
 - `internal/providerdata/`: `ProviderData`, passed to every `Configure`, and the `OAuthClient` wrapper.
-- `internal/errors/` (import alias `providerrors`): nil-client guards for `Configure`.
+- `internal/errors/` (import alias `providerrors`): nil-client guards for `Configure`, and `IsNotFound(err)` for SDK errors (see [404 handling](#404-handling)).
 - `internal/tfvalue/`: `StringOrNull` / `TimeOrNull` map the SDK zero values of absent API fields (`""`, the zero time) to null. Use them in every state mapping instead of a per-package helper.
 - `internal/retry/` (import alias `provretry`): multipart bundle upload with 5xx retry.
 - `internal/sdkpage/`: `Cursor` walks an SDK `next_page` list (`pagination.PageCursor`) like `ListAutoPaging`, but a cursor the API already returned, or more than `MaxPages` pages, is an error instead of an endless loop. Use it for new cursor-paginated list data sources; the older ones still call `ListAutoPaging`.
@@ -172,6 +172,17 @@ r.client = pd.Client
 // admin:       RequireAdminResourceClient / RequireAdminDataSourceClient(pd.AdminClient, ...)
 // OAuth:       RequireOAuthResourceClient / RequireOAuthDataSourceClient(pd.OAuthClient, ...)
 ```
+
+### 404 handling
+
+A 404 that answers for the object means the object is gone, and every resource treats it the same way:
+
+- `Read` calls `resp.State.RemoveResource(ctx)` and returns without a diagnostic, so an object deleted outside Terraform is re-created by the next apply instead of failing every refresh.
+- `Delete` (and the archive call of `archive_on_destroy`) returns without a diagnostic: the object is already gone, which is what destroy wants. This covers a destroy run with `-refresh=false` and an object deleted between the refresh and the delete.
+
+Test the error with `providerrors.IsNotFound(err)` for the SDK clients (standard and OAuth; the Go SDK has one error type, `*anthropic.Error`, for every status) and `admin.IsNotFound(err)` for `internal/admin`. Some older resources still inline `errors.As(err, &apierr) && apierr.StatusCode == 404`, which takes any 404 for the object, the workspace 404 below included; converting them is part of [#296](https://github.com/ippontech/terraform-provider-anthropic/issues/296) PR 2. Any other error still produces a diagnostic. Only Terraform shows a refresh that fails, so test both cases with a fake-API test (see [Go tests](#go-tests)): remove the object from the fake between two steps, and `srv.FailNext(route, 404, 1)` before a `Destroy` step.
+
+Not every 404 answers for the object. `providerrors.IsNotFound` requires the API's `not_found_error` envelope (`apiErr.Type()`), so a 404 from a proxy or a wrong base URL stays an error, and it rejects a workspace 404: a request that carried `anthropic-workspace-id` and got a 404 whose message is about a workspace. A single-workspace key answers `Workspace not found` to any such header (see [Credentials and clients](#credentials-and-clients)), while the object may still exist, so dropping it would duplicate it on the next apply and a destroy would forget objects it never reached. Read and Delete report it and keep the state (`TestAgentResource_workspaceNotFoundFails*`, `TestEnvironmentResource_workspaceNotFoundFails*`). The response cannot tell a deleted object from one that lives outside the workspace a key reaches without a header, so that case still reads as gone. The Admin client is organization-wide and sends no workspace header, so `admin.IsNotFound` needs no such rule.
 
 ### Admin client retries
 
