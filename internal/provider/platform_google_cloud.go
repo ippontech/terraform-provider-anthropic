@@ -67,8 +67,9 @@ func googleCloudSchema() schema.SingleNestedAttribute {
 			"federation and aws, and the first-party ANTHROPIC_* variables are ignored. Requests carry a Google " +
 			"access token (cloud-platform scope) from credentials, access_token or Application Default Credentials. " +
 			"workspace_id goes into the request URL, never into a header, and may be left unset only for an alias " +
-			"limited to organization routes. Resources the gateway does not serve fail at plan time. Support for " +
-			"this platform is verified with offline tests only, and the provider prints a warning saying so.",
+			"limited to organization routes. A type the gateway does not serve fails at plan, or at apply for a data " +
+			"source that Terraform reads only then. Support for this platform is verified with offline tests only, " +
+			"and the provider prints a warning saying so.",
 		Attributes: map[string]schema.Attribute{
 			"project": schema.StringAttribute{
 				Optional: true,
