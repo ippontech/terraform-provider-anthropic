@@ -14,7 +14,7 @@ You implement or modify a single GitHub Actions workflow in `.github/workflows/`
 
 You run in an isolated git worktree, on a branch of its own. Commit on that branch and never check out the spec's branch: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Fetch `origin`, then reset your branch to the first start point that applies (`git reset --hard <start>`; the worktree is fresh, so nothing is lost):
 
-1. the spec's branch, when it exists: `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
+1. the spec's branch, when it holds commits that neither `origin/main` nor the spec's base branch has (a branch just created from `main` holds none): `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
 2. `origin/<base>`, when the spec names a base branch (a change stacked on an unmerged branch);
 3. `origin/main`.
 
