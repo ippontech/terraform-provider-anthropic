@@ -454,25 +454,32 @@ func TestConfigureGoogleCloudRejects(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      map[string]tftypes.Value
+		env         map[string]string
 		wantSummary string
 		wantDetail  string
 	}{
-		{"aws", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "aws": awsValue(map[string]any{"region": awsTestRegion})}, "Conflicting Platform Configuration", "aws and google_cloud"},
-		{"api_key", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "api_key": tfString("k")}, "Conflicting Platform Configuration", "google_cloud and api_key"},
-		{"admin_api_key", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "admin_api_key": tfString("k")}, "Conflicting Platform Configuration", "google_cloud and admin_api_key"},
-		{"auth_token", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "auth_token": tfString("t")}, "Conflicting Platform Configuration", "google_cloud and auth_token"},
-		{"federation", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "federation": federationValue(t, nil)}, "Conflicting Platform Configuration", "google_cloud and federation"},
-		{"unknown block", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": tftypes.NewValue(tftypes.Object{AttributeTypes: gcAttrTypes}, tftypes.UnknownValue)}, "Unknown Google Cloud Configuration", "google_cloud block"},
-		{"unknown access_token", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"project": gcTestProject, "access_token": tftypes.UnknownValue})}, "Unknown Google Cloud Configuration", "google_cloud.access_token"},
-		{"unknown project", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"project": tftypes.UnknownValue, "access_token": gcTestToken})}, "Unknown Google Cloud Configuration", "google_cloud.project"},
-		{"credentials and access_token", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"access_token": gcTestToken, "credentials": authorizedUserJSON("http://127.0.0.1:9/token")})}, "Conflicting Google Cloud Credentials", "at most one"},
-		{"credentials not json", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"credentials": "not json"})}, "Invalid Google Cloud Credentials", "not a JSON credential file"},
-		{"oauth client configuration", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"credentials": `{"installed":{"client_id":"x"}}`})}, "Invalid Google Cloud Credentials", "accepted types"},
-		{"no project", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"access_token": gcTestToken})}, "Unable to Configure Claude Models on Google Cloud", "no project found"},
+		{"aws", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "aws": awsValue(map[string]any{"region": awsTestRegion})}, nil, "Conflicting Platform Configuration", "aws and google_cloud"},
+		{"api_key", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "api_key": tfString("k")}, nil, "Conflicting Platform Configuration", "google_cloud and api_key"},
+		{"admin_api_key", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "admin_api_key": tfString("k")}, nil, "Conflicting Platform Configuration", "google_cloud and admin_api_key"},
+		{"auth_token", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "auth_token": tfString("t")}, nil, "Conflicting Platform Configuration", "google_cloud and auth_token"},
+		{"federation", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(token), "federation": federationValue(t, nil)}, nil, "Conflicting Platform Configuration", "google_cloud and federation"},
+		{"unknown block", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": tftypes.NewValue(tftypes.Object{AttributeTypes: gcAttrTypes}, tftypes.UnknownValue)}, nil, "Unknown Google Cloud Configuration", "google_cloud block"},
+		{"unknown access_token", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"project": gcTestProject, "access_token": tftypes.UnknownValue})}, nil, "Unknown Google Cloud Configuration", "google_cloud.access_token"},
+		{"unknown project", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"project": tftypes.UnknownValue, "access_token": gcTestToken})}, nil, "Unknown Google Cloud Configuration", "google_cloud.project"},
+		{"credentials and access_token", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"access_token": gcTestToken, "credentials": authorizedUserJSON("http://127.0.0.1:9/token")})}, nil, "Conflicting Google Cloud Credentials", "at most one"},
+		{"credentials not json", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"credentials": "not json"})}, nil, "Invalid Google Cloud Credentials", "not a JSON credential file"},
+		{"oauth client configuration", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"credentials": `{"installed":{"client_id":"x"}}`})}, nil, "Invalid Google Cloud Credentials", "accepted types"},
+		{"no project", map[string]tftypes.Value{"workspace_id": ws, "google_cloud": googleCloudValue(map[string]any{"access_token": gcTestToken})}, nil, "Unable to Configure Claude Models on Google Cloud", "no project found"},
+		// The attribute is validated at plan time, the variable at Configure.
+		{"workspace variable with a newline", map[string]tftypes.Value{"google_cloud": googleCloudValue(token)}, map[string]string{"ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID": gcTestWorkspace + "\n"}, "Invalid Workspace", "ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID"},
+		{"workspace variable not an ID", map[string]tftypes.Value{"google_cloud": googleCloudValue(token)}, map[string]string{"ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID": "production"}, "Invalid Workspace", `got "production"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateGoogleEnv(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
 			p := &AnthropicProvider{version: "test"}
 			resp := configureProviderInstance(t, p, tt.config)
 			if !resp.Diagnostics.HasError() {

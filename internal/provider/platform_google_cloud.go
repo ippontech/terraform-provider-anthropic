@@ -204,6 +204,15 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*goog
 	settings.config.WorkspaceID = data.WorkspaceID.ValueString()
 	if settings.config.WorkspaceID == "" {
 		settings.config.WorkspaceID = os.Getenv(googleCloudWorkspaceIDEnv)
+		// The attribute's shape is checked at plan time, the variable's here:
+		// a stray newline or a wrong value would otherwise reach the URL,
+		// where every workspace request fails with an error naming nothing.
+		if id := settings.config.WorkspaceID; id != "" && !workspaceIDPattern.MatchString(id) {
+			diags.AddAttributeError(path.Root("workspace_id"), "Invalid Workspace",
+				fmt.Sprintf("The %s environment variable must be a workspace ID (wrkspc_ followed by letters and "+
+					"digits), got %q.", googleCloudWorkspaceIDEnv, id))
+			return nil, diags
+		}
 	}
 	settings.workspace = settings.config.WorkspaceID != ""
 
