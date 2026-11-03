@@ -347,10 +347,18 @@ func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	body := apiKeyUpdateRequest{Name: plan.Name.ValueString()}
 	// status is Optional+Computed: left unset, it plans the state value, which
-	// can be the read-only "expired" the endpoint does not accept. Send it only
-	// when it changes.
-	if !plan.Status.Equal(state.Status) {
-		body.Status = plan.Status.ValueString()
+	// can be the read-only "expired" the endpoint does not accept, so only a
+	// configured status is sent (the validator limits it to the updatable
+	// values). It is sent even when it equals state: a stale state
+	// (-refresh=false, a saved plan) can hide a change made outside Terraform,
+	// and the response must still match the plan.
+	var configStatus types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("status"), &configStatus)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !configStatus.IsNull() && !configStatus.IsUnknown() {
+		body.Status = configStatus.ValueString()
 	}
 
 	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/api_keys/"+state.ID.ValueString(), body)

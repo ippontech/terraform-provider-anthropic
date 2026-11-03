@@ -434,8 +434,10 @@ func TestAPIKeyResource_UpdateKeepsLegacyEmptyValues(t *testing.T) {
 	vals["name"] = tftypes.NewValue(tftypes.String, "Renamed")
 	plan := tfsdk.Plan{Raw: tftypes.NewValue(objType, vals), Schema: s}
 
+	config := apiKeyConfig(t, r, "Renamed", "")
+
 	resp := resource.UpdateResponse{State: tfsdk.State{Raw: plan.Raw, Schema: s}}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
+	r.Update(context.Background(), resource.UpdateRequest{Config: config, Plan: plan, State: state}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Update returned errors: %v", resp.Diagnostics)
 	}
@@ -457,18 +459,39 @@ func TestAPIKeyResource_UpdateKeepsLegacyEmptyValues(t *testing.T) {
 	}
 }
 
+// apiKeyConfig returns the configuration of an anthropic_api_key that sets
+// name and, unless it is empty, status. Every Computed-only attribute is null,
+// as in a real configuration.
+func apiKeyConfig(t *testing.T, r *APIKeyResource, name, status string) tfsdk.Config {
+	t.Helper()
+	vals := schematest.NullValues(t, r)
+	vals["name"] = tftypes.NewValue(tftypes.String, name)
+	if status != "" {
+		vals["status"] = tftypes.NewValue(tftypes.String, status)
+	}
+	return tfsdk.Config{Raw: tftypes.NewValue(schematest.ResourceObjectType(t, r), vals), Schema: schematest.ResourceSchema(t, r)}
+}
+
 // status is Optional+Computed, so a configuration that leaves it unset plans
-// the state value, "expired" included once the key has expired. Update sends
-// status only when it changes: the endpoint accepts active, archived and
-// inactive, so renaming an expired key must not send "expired" back.
-func TestAPIKeyResource_UpdateSendsStatusOnlyWhenChanged(t *testing.T) {
+// the state value, "expired" included once the key has expired: Update leaves
+// an unset status out of the body, since the endpoint accepts only active,
+// archived and inactive. A configured status is always sent, even when it
+// equals state: over a stale state (-refresh=false, a saved plan) the key may
+// have been deactivated outside Terraform, and the response must match the
+// plan, or the apply fails as an inconsistent result.
+func TestAPIKeyResource_UpdateSendsConfiguredStatus(t *testing.T) {
 	for _, tc := range []struct {
-		name, stateStatus, planStatus string
-		wantStatus                    any
+		name string
+		// configStatus is the configured status, "" when unset. serverStatus
+		// is the status the key really has, which the stub returns unless
+		// the body sets one.
+		configStatus, stateStatus, planStatus, serverStatus string
+		wantStatus                                          any
 	}{
-		{name: "rename an expired key", stateStatus: "expired", planStatus: "expired", wantStatus: nil},
-		{name: "rename an active key", stateStatus: "active", planStatus: "active", wantStatus: nil},
-		{name: "deactivate", stateStatus: "active", planStatus: "inactive", wantStatus: "inactive"},
+		{name: "rename an expired key", stateStatus: "expired", planStatus: "expired", serverStatus: "expired", wantStatus: nil},
+		{name: "rename an active key", stateStatus: "active", planStatus: "active", serverStatus: "active", wantStatus: nil},
+		{name: "deactivate", configStatus: "inactive", stateStatus: "active", planStatus: "inactive", serverStatus: "active", wantStatus: "inactive"},
+		{name: "configured status over a stale state", configStatus: "active", stateStatus: "active", planStatus: "active", serverStatus: "inactive", wantStatus: "active"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body map[string]any
@@ -481,9 +504,13 @@ func TestAPIKeyResource_UpdateSendsStatusOnlyWhenChanged(t *testing.T) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
+				status := tc.serverStatus
+				if sent, ok := body["status"].(string); ok {
+					status = sent
+				}
 				w.Header().Set("content-type", "application/json")
 				_, _ = io.WriteString(w, `{
-					"id": "apikey_01ABC", "name": "Renamed", "status": "`+tc.planStatus+`", "workspace_id": "wrkspc_01WS",
+					"id": "apikey_01ABC", "name": "Renamed", "status": "`+status+`", "workspace_id": "wrkspc_01WS",
 					"scope": {"type": "workspace", "workspace_id": "wrkspc_01WS"},
 					"principal": {"type": "user_actor", "user_id": "user_01XYZ"},
 					"expires_at": "2026-10-01T00:00:00Z", "created_at": "2026-01-01T00:00:00Z",
@@ -505,9 +532,10 @@ func TestAPIKeyResource_UpdateSendsStatusOnlyWhenChanged(t *testing.T) {
 			vals["name"] = tftypes.NewValue(tftypes.String, "Renamed")
 			vals["status"] = tftypes.NewValue(tftypes.String, tc.planStatus)
 			plan := tfsdk.Plan{Raw: tftypes.NewValue(objType, vals), Schema: s}
+			config := apiKeyConfig(t, r, "Renamed", tc.configStatus)
 
 			resp := resource.UpdateResponse{State: tfsdk.State{Raw: plan.Raw, Schema: s}}
-			r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
+			r.Update(context.Background(), resource.UpdateRequest{Config: config, Plan: plan, State: state}, &resp)
 			if resp.Diagnostics.HasError() {
 				t.Fatalf("Update returned errors: %v", resp.Diagnostics)
 			}
@@ -519,6 +547,14 @@ func TestAPIKeyResource_UpdateSendsStatusOnlyWhenChanged(t *testing.T) {
 				t.Errorf("body status = %v, want no status", got)
 			} else if tc.wantStatus != nil && got != tc.wantStatus {
 				t.Errorf("body status = %v, want %v", got, tc.wantStatus)
+			}
+
+			var data APIKeyResourceModel
+			if diags := resp.State.Get(context.Background(), &data); diags.HasError() {
+				t.Fatalf("state: %v", diags)
+			}
+			if got := data.Status.ValueString(); got != tc.planStatus {
+				t.Errorf("state status = %q, want the planned %q", got, tc.planStatus)
 			}
 		})
 	}
