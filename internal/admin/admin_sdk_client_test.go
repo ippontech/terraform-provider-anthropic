@@ -320,3 +320,54 @@ func TestSDKClient_gateway404IsNotADeletion(t *testing.T) {
 		t.Errorf("calls = %d, want 1", got)
 	}
 }
+
+// TestSDKClient_treatsATruncatedBodyAsADroppedConnection: the status line
+// arrives, then the connection dies mid-payload. The SDK reports that with the
+// response it read the status from, but a status whose body never landed is
+// no verdict: as with the direct client, GET and DELETE replay it and POST
+// does not. An x-should-retry header on that response still counts.
+func TestSDKClient_treatsATruncatedBodyAsADroppedConnection(t *testing.T) {
+	tests := []struct {
+		name      string
+		method    string
+		header    string
+		wantCalls int32
+		wantErr   bool
+	}{
+		{"GET is retried", "GET", "", 2, false},
+		{"DELETE is retried", "DELETE", "", 2, false},
+		{"POST is not replayed", "POST", "", 1, true},
+		{"x-should-retry false still applies", "GET", "x-should-retry: false\r\n", 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					hijackAndClose(t, w, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"+tt.header+
+						"Content-Length: 64\r\n\r\n{\"id\":\"wrkspc_")
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"wrkspc_ok"}`))
+			}))
+			defer srv.Close()
+
+			var body any
+			if tt.method == "POST" {
+				body = map[string]string{"name": "x"}
+			}
+			got, err := newRetryingSDKTestClient(srv.URL, 2).DoRequest(
+				context.Background(), tt.method, "/v1/organizations/workspaces/wrkspc_1", body)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("err = %v, want error %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && string(got) != `{"id":"wrkspc_ok"}` {
+				t.Errorf("body = %q, want the second response", got)
+			}
+			if n := calls.Load(); n != tt.wantCalls {
+				t.Errorf("calls = %d, want %d", n, tt.wantCalls)
+			}
+		})
+	}
+}

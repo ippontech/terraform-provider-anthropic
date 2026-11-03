@@ -262,10 +262,9 @@ func (c *Client) attempt(template *http.Request, reqBody []byte) ([]byte, *http.
 // sdkAttempt is attempt through c.sdk. The template's method, path, query and
 // headers go out as they are, except anthropic-version, which the SDK sets to
 // the same value, and the body is sent verbatim. It returns what attempt does:
-// an *APIError built from the same body on an error status, and the response
-// behind any error so that shouldRetry sees its status and x-should-retry
-// header. That covers platform.NotFoundGuard's error, whose response says not
-// to retry; a transport error has no response, as with HTTPClient.
+// an *APIError built from the same body on an error status, with the response
+// so that shouldRetry sees its status and x-should-retry header, and no
+// response for a transport error, as with HTTPClient; see transportResponse.
 func (c *Client) sdkAttempt(template *http.Request, reqBody []byte) ([]byte, *http.Response, error) {
 	var res *http.Response
 	opts := []option.RequestOption{option.WithMaxRetries(0), option.WithResponseInto(&res)}
@@ -300,9 +299,25 @@ func (c *Client) sdkAttempt(template *http.Request, reqBody []byte) ([]byte, *ht
 		if errors.As(err, &apiErr) {
 			return nil, apiErr.Response, newAPIError(apiErr.StatusCode, []byte(apiErr.RawJSON()))
 		}
-		return nil, res, err
+		return nil, transportResponse(res), err
 	}
 	return body, res, nil
+}
+
+// transportResponse is the response sdkAttempt reports with an error that is
+// not an *anthropic.Error. When the body stops arriving after the status line,
+// the SDK returns its read error with the response it read the status from.
+// That status is no verdict, since its body never landed: as in attempt, the
+// failure is reported without the response, so that GET and DELETE replay it
+// and POST does not. A response marked x-should-retry is kept, since shouldRetry
+// then reads only that header, and the SDK honours it on a dropped body too.
+// That keeps the response of platform.NotFoundGuard's error, which says not to
+// retry.
+func transportResponse(res *http.Response) *http.Response {
+	if res == nil || res.Header.Get("x-should-retry") == "" {
+		return nil
+	}
+	return res
 }
 
 func newAPIError(statusCode int, respBody []byte) *APIError {
