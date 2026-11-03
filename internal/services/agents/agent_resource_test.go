@@ -12,7 +12,10 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func testAccCheckAgentDestroyed(s *terraform.State) error {
@@ -213,6 +216,100 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.enabled"),
 				),
 			},
+			// Removing `configs` sends an empty list on update (#508). The
+			// post-apply plan must be empty: the refresh would report the bash
+			// override as drift if the API had kept it.
+			{
+				Config: testAccAgentResourceWithToolsetConfig,
+				Check:  resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.#"),
+			},
+		},
+	})
+}
+
+// The toolset defaults the provider plans when the configuration leaves them
+// unset come from the documentation, not from a live call (#499). This test
+// checks them against the API: once the agent is applied, its toolsets are
+// removed and added back out of band without `default_config`, so the API
+// resolves its own defaults, and the plan must stay empty; a documented default
+// that differs from the API's shows here as an update. Then crm's policy is
+// switched to `always_allow` out of band, as from the Console: the plan must
+// show an update, and the apply must revert it.
+func TestAccAgentResource_toolsetDefaults(t *testing.T) {
+	const name = "anthropic_agent.test_toolset_defaults"
+	acctest.PreCheck(t)
+	client := acctest.NewAPIKeyClient()
+	var agentID string
+	crm := anthropic.BetaManagedAgentsURLMCPServerParams{
+		Name: "crm", Type: anthropic.BetaManagedAgentsURLMCPServerParamsTypeURL, URL: "https://mcp.example.com/sse",
+	}
+	update := func(params anthropic.BetaAgentUpdateParams) {
+		t.Helper()
+		if _, err := client.Beta.Agents.Update(context.Background(), agentID, params); err != nil {
+			t.Fatalf("out-of-band update of %s: %s", agentID, err)
+		}
+	}
+	toolsets := func(mcpDefault anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParams) []anthropic.BetaAgentUpdateParamsToolUnion {
+		return []anthropic.BetaAgentUpdateParamsToolUnion{
+			{OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
+				Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
+			}},
+			{OfMCPToolset: &anthropic.BetaManagedAgentsMCPToolsetParams{
+				MCPServerName: "crm", Type: anthropic.BetaManagedAgentsMCPToolsetParamsTypeMCPToolset, DefaultConfig: mcpDefault,
+			}},
+		}
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckAgentDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAgentResourceToolsetDefaultsConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "agent_toolset.default_enabled", "true"),
+					resource.TestCheckResourceAttr(name, "agent_toolset.default_permission_policy", "always_allow"),
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.default_enabled", "true"),
+					resource.TestCheckResourceAttr(name, "mcp_toolsets.0.default_permission_policy", "always_ask"),
+					func(s *terraform.State) error {
+						agentID = s.RootModule().Resources[name].Primary.ID
+						return nil
+					},
+				),
+			},
+			// Removed, then added back without default_config: nothing stored is
+			// left to preserve, so the API applies its own defaults.
+			{
+				PreConfig: func() {
+					update(anthropic.BetaAgentUpdateParams{
+						Tools:      []anthropic.BetaAgentUpdateParamsToolUnion{},
+						MCPServers: []anthropic.BetaManagedAgentsURLMCPServerParams{},
+					})
+					update(anthropic.BetaAgentUpdateParams{
+						Tools:      toolsets(anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParams{}),
+						MCPServers: []anthropic.BetaManagedAgentsURLMCPServerParams{crm},
+					})
+				},
+				Config:   testAccAgentResourceToolsetDefaultsConfig,
+				PlanOnly: true,
+			},
+			{
+				PreConfig: func() {
+					update(anthropic.BetaAgentUpdateParams{Tools: toolsets(anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParams{
+						PermissionPolicy: anthropic.BetaManagedAgentsMCPToolsetDefaultConfigParamsPermissionPolicyUnion{
+							OfAlwaysAllow: &anthropic.BetaManagedAgentsAlwaysAllowPolicyParam{Type: anthropic.BetaManagedAgentsAlwaysAllowPolicyTypeAlwaysAllow},
+						},
+					})})
+				},
+				Config: testAccAgentResourceToolsetDefaultsConfig,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction(name, plancheck.ResourceActionUpdate),
+					plancheck.ExpectKnownValue(name,
+						tfjsonpath.New("mcp_toolsets").AtSliceIndex(0).AtMapKey("default_permission_policy"), knownvalue.StringExact("always_ask")),
+				}},
+				Check: resource.TestCheckResourceAttr(name, "mcp_toolsets.0.default_permission_policy", "always_ask"),
+			},
 		},
 	})
 }
@@ -318,6 +415,28 @@ resource "anthropic_agent" "test_toolset" {
       }
     ]
   }
+}
+`
+
+const testAccAgentResourceToolsetDefaultsConfig = `
+resource "anthropic_agent" "test_toolset_defaults" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset-defaults"
+
+  mcp_servers = [
+    {
+      name = "crm"
+      url  = "https://mcp.example.com/sse"
+    }
+  ]
+
+  agent_toolset = {}
+
+  mcp_toolsets = [
+    {
+      mcp_server_name = "crm"
+    }
+  ]
 }
 `
 
