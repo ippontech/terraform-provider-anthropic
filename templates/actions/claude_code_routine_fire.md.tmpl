@@ -1,0 +1,36 @@
+---
+page_title: "anthropic_claude_code_routine_fire Action - anthropic"
+subcategory: "Claude Code"
+description: |-
+  Starts a run of an existing Claude Code routine through its API trigger.
+---
+
+# anthropic_claude_code_routine_fire (Action)
+
+Starts a run of an existing [Claude Code routine](https://code.claude.com/docs/en/routines) through its API trigger, for example to run an agent after an apply. A routine is a saved Claude Code configuration (prompt, repositories, connectors) created at [claude.ai/code/routines](https://claude.ai/code/routines); it is a Claude Code product, not a Managed Agents `anthropic_deployment`.
+
+Each invocation creates a new Claude Code session and reports its URL as progress output. The endpoint has no idempotency key, so the action never retries a fire: a failed request is reported as an error, and a network error or 5xx may still have started the routine.
+
+> **API**: `POST /v1/claude_code/routines/{routine_id}/fire` (Claude Code, [experimental](https://platform.claude.com/docs/en/api/claude-code/routines-fire)).
+> **Auth**: The routine's own bearer token (`token`), not the provider's credentials. The provider still needs one of its credentials to configure.
+> **Requires**: Terraform 1.14 or later; a claude.ai Pro, Max, Team or Enterprise plan with Claude Code on the web.
+> **Limits**: 30 fires per routine and 100 API fires per account per hour.
+> **Cost**: Each run draws on the claude.ai subscription's Claude Code usage.
+
+## Before you begin
+
+Routines and their tokens can only be created in the web UI: open the routine for editing, add an **API** trigger and click **Generate token**. The dialog shows the routine's URL, which contains its ID (`trig_...`), and the token, which is shown once. Generating a new token revokes the previous one.
+
+The routine receives `text` wrapped as untrusted data, so its saved prompt must say what to do with it.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/actions/claude_code_routine_fire/action.tf" }}
+
+To fire the routine outside a lifecycle event:
+
+```shell
+terraform apply -invoke=action.anthropic_claude_code_routine_fire.after_deploy
+```
+
+{{ .SchemaMarkdown | trimspace }}
