@@ -23,8 +23,9 @@ var platformBeta = map[platform.Platform]struct{ block, guide, gateway string }{
 		gateway: "and in part against the real gateway, so some requests, errors or routes may still behave differently there.",
 	},
 	platform.GoogleCloud: {
-		block: "google_cloud",
-		guide: "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud",
+		block:   "google_cloud",
+		guide:   "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud",
+		gateway: "and has had little or no testing against the real gateway, so requests, errors or routes may behave differently there.",
 	},
 }
 

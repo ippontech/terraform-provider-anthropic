@@ -98,7 +98,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "google_cloud", summary: gcBeta, guide: gcGuide,
+			block: "google_cloud", summary: gcBeta, guide: gcGuide, gateway: "little or no testing against the real gateway",
 		},
 		{
 			name: "google_cloud, organization routes only",
@@ -110,7 +110,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "google_cloud", summary: gcBeta, guide: gcGuide,
+			block: "google_cloud", summary: gcBeta, guide: gcGuide, gateway: "little or no testing against the real gateway",
 		},
 		{
 			name: "first party, api_key",
