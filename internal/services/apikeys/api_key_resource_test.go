@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -453,6 +454,73 @@ func TestAPIKeyResource_UpdateKeepsLegacyEmptyValues(t *testing.T) {
 	}
 	if got := data.Name.ValueString(); got != "Renamed" {
 		t.Errorf("name = %q, want Renamed", got)
+	}
+}
+
+// status is Optional+Computed, so a configuration that leaves it unset plans
+// the state value, "expired" included once the key has expired. Update sends
+// status only when it changes: the endpoint accepts active, archived and
+// inactive, so renaming an expired key must not send "expired" back.
+func TestAPIKeyResource_UpdateSendsStatusOnlyWhenChanged(t *testing.T) {
+	for _, tc := range []struct {
+		name, stateStatus, planStatus string
+		wantStatus                    any
+	}{
+		{name: "rename an expired key", stateStatus: "expired", planStatus: "expired", wantStatus: nil},
+		{name: "rename an active key", stateStatus: "active", planStatus: "active", wantStatus: nil},
+		{name: "deactivate", stateStatus: "active", planStatus: "inactive", wantStatus: "inactive"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/organizations/api_keys/apikey_01ABC" {
+					http.Error(w, "unexpected request", http.StatusBadRequest)
+					return
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("content-type", "application/json")
+				_, _ = io.WriteString(w, `{
+					"id": "apikey_01ABC", "name": "Renamed", "status": "`+tc.planStatus+`", "workspace_id": "wrkspc_01WS",
+					"scope": {"type": "workspace", "workspace_id": "wrkspc_01WS"},
+					"principal": {"type": "user_actor", "user_id": "user_01XYZ"},
+					"expires_at": "2026-10-01T00:00:00Z", "created_at": "2026-01-01T00:00:00Z",
+					"created_by": {"id": "user_01XYZ", "type": "user"}, "partial_key_hint": "abcd", "type": "api_key"
+				}`)
+			}))
+			defer srv.Close()
+
+			r := &APIKeyResource{adminClient: admintest.NewClient(t, srv)}
+			s := schematest.ResourceSchema(t, r)
+			objType := schematest.ResourceObjectType(t, r)
+			vals := schematest.NullValues(t, r)
+			vals["id"] = tftypes.NewValue(tftypes.String, "apikey_01ABC")
+			vals["name"] = tftypes.NewValue(tftypes.String, "Old name")
+			vals["status"] = tftypes.NewValue(tftypes.String, tc.stateStatus)
+			// tftypes.NewValue keeps the map it is given: clone it before
+			// changing the planned values.
+			state := tfsdk.State{Raw: tftypes.NewValue(objType, maps.Clone(vals)), Schema: s}
+			vals["name"] = tftypes.NewValue(tftypes.String, "Renamed")
+			vals["status"] = tftypes.NewValue(tftypes.String, tc.planStatus)
+			plan := tfsdk.Plan{Raw: tftypes.NewValue(objType, vals), Schema: s}
+
+			resp := resource.UpdateResponse{State: tfsdk.State{Raw: plan.Raw, Schema: s}}
+			r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Update returned errors: %v", resp.Diagnostics)
+			}
+
+			if got := body["name"]; got != "Renamed" {
+				t.Errorf("body name = %v, want Renamed", got)
+			}
+			if got, sent := body["status"]; tc.wantStatus == nil && sent {
+				t.Errorf("body status = %v, want no status", got)
+			} else if tc.wantStatus != nil && got != tc.wantStatus {
+				t.Errorf("body status = %v, want %v", got, tc.wantStatus)
+			}
+		})
 	}
 }
 

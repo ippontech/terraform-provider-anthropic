@@ -345,9 +345,12 @@ func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	body := apiKeyUpdateRequest{
-		Name:   plan.Name.ValueString(),
-		Status: plan.Status.ValueString(),
+	body := apiKeyUpdateRequest{Name: plan.Name.ValueString()}
+	// status is Optional+Computed: left unset, it plans the state value, which
+	// can be the read-only "expired" the endpoint does not accept. Send it only
+	// when it changes.
+	if !plan.Status.Equal(state.Status) {
+		body.Status = plan.Status.ValueString()
 	}
 
 	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/api_keys/"+state.ID.ValueString(), body)
