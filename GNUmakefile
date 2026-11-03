@@ -14,9 +14,11 @@ generate:
 
 # Hidden directories are skipped, as `./...` skips them for the other targets:
 # agent worktrees under .claude/worktrees/ and the per-worktree .gocache/ hold
-# Go files that are not this checkout's.
+# Go files that are not this checkout's. `-exec ... {} +` hands the paths to
+# gofmt unsplit (names with spaces or glob characters survive), and find exits
+# non-zero when gofmt does, so a file that does not parse still fails the target.
 fmt:
-	gofmt -s -w -e $$(find . -type d -name '.?*' -prune -o -type f -name '*.go' -print)
+	find . -type d -name '.?*' -prune -o -type f -name '*.go' -exec gofmt -s -w -e {} +
 
 # `-diff` reports what `go mod tidy` would change and exits non-zero, without
 # touching go.mod/go.sum — so the check is safe to run on a dirty worktree and
