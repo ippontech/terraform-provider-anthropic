@@ -46,8 +46,9 @@ func awsSchema() schema.SingleNestedAttribute {
 			"and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and " +
 			"ANTHROPIC_BASE_URL variables are ignored: no first-party credential is valid there. workspace_id is " +
 			"required. Requests are signed with AWS SigV4 (service aws-external-anthropic), with credentials from " +
-			"access_key/secret_key, profile or the AWS default chain, unless api_key is set. Resources the gateway " +
-			"does not serve fail at plan time. Support for this platform is in beta, verified mostly with offline tests, " +
+			"access_key/secret_key, profile or the AWS default chain, unless api_key is set. A type the gateway does " +
+			"not serve fails at plan, or at apply for a data source that Terraform reads only then. Support for this " +
+			"platform is in beta, verified mostly with offline tests, " +
 			"and the provider prints a warning saying so.",
 		Attributes: map[string]schema.Attribute{
 			"region": schema.StringAttribute{
