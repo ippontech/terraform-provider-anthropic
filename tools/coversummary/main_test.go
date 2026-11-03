@@ -52,6 +52,10 @@ func TestParseProfileErrors(t *testing.T) {
 		"bad count":  "mode: set\nexample.com/m/a.go:1.1,2.2 1 x\n",
 		"no colon":   "mode: set\nexample.com/m/a.go 1 1\n",
 		"empty name": "mode: set\n:1.1,2.2 1 1\n",
+		"no comma":   "mode: set\nexample.com/m/a.go:1.1 1 1\n",
+		"no column":  "mode: set\nexample.com/m/a.go:1,2.2 1 1\n",
+		"bad end":    "mode: set\nexample.com/m/a.go:1.1,x.2 1 1\n",
+		"backwards":  "mode: set\nexample.com/m/a.go:5.1,2.2 1 1\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseProfile(strings.NewReader(input)); err == nil {
@@ -67,7 +71,7 @@ func TestWriteSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	if err := writeSummary(&b, files, regexp.MustCompile(`_(resource|data_source)\.go$`), "example.com/m/"); err != nil {
+	if err := writeSummary(&b, files, regexp.MustCompile(`_(resource|data_source)\.go$`), "example.com/m/", nil); err != nil {
 		t.Fatal(err)
 	}
 	got := b.String()
