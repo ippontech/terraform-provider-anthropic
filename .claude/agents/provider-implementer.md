@@ -55,7 +55,7 @@ Blocked means a check still fails after you fixed what is in scope, or the spec 
 
 ```
 ## anthropic_<name> (<resource | data source>): done | blocked
-- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <short sha, or none>
+- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <full sha from `git rev-parse HEAD`, or none>
 - Files: <paths>
 - make in this worktree: always `GOBIN=<path>/.gobin make ...` (`.dev.tfrc` points at `.gobin/`)
 - make: pass | fail (<target and error>)
