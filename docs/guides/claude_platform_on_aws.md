@@ -184,7 +184,7 @@ resource "aws_iam_policy" "terraform_anthropic" {
 }
 ```
 
-Workspace tags are AWS resource tags: they work with IAM conditions (`aws:ResourceTag/<key>`) and cost allocation ([workspaces](https://docs.aws.amazon.com/claude-platform/latest/userguide/workspaces.html)). Changing them is authorized by `TagResource` (keys added or changed) and `UntagResource` (keys removed), not `UpdateWorkspace`; tags set at creation need only `CreateWorkspace`. Every workspace read also records `ListTagsForResource` in CloudTrail, so the policy grants it, although a policy without it was not tried. The provider sends a tags change in a request of its own, since the gateway rejects tags combined with any other field.
+Workspace tags are AWS resource tags: they work with IAM conditions (`aws:ResourceTag/<key>`) and cost allocation ([workspaces](https://docs.aws.amazon.com/claude-platform/latest/userguide/workspaces.html)). Changing them is authorized by `TagResource` and `UntagResource`, not `UpdateWorkspace`, which authorizes a `name` or `data_residency` change; tags set at creation need only `CreateWorkspace`. The provider sends a tags change in a request of its own, since the gateway rejects tags combined with any other field, and that request carries every configured key, unchanged ones included: a key left out would keep a value changed outside Terraform between plan and apply, and the apply would fail as an inconsistent result. So a change that removes a tag while other tags remain needs both `TagResource` and `UntagResource`, a change that only adds or changes keys needs `TagResource`, and `tags = {}` needs only `UntagResource`. Every workspace read also records `ListTagsForResource` in CloudTrail, so the policy grants it, although a policy without it was not tried.
 
 With `aws.api_key` instead of SigV4, the principal also needs `aws-external-anthropic:CallWithBearerToken` on `"Resource": "*"`. Mind the IAM wildcard pitfalls the IAM page describes: `Delete*` does not match `Archive*` actions, and `*File` also matches the user profile actions.
 
@@ -335,15 +335,14 @@ Verified against the real gateway:
 - a route the gateway does not serve answers 404 with an empty body, and an IAM deny answers 403 with a `permission_error` body naming the denied action;
 - the signature of a path holding an encoded KMS key ARN, and `?beta=true` on beta routes, are accepted;
 - Admin API requests need no `anthropic-workspace-id` header;
-- `workspace_geo` accepts `us` or no value; tags merge as on the Claude API, but only in a request of their own, and CloudTrail records them as `TagResource` and `UntagResource`.
+- `workspace_geo` accepts `us` or no value; tags merge as on the Claude API, but only in a request of their own, which CloudTrail records as `TagResource` and `UntagResource` as [section 3](#3-iam-permissions-of-the-terraform-principal) describes; a `name` or `data_residency` update is recorded as `UpdateWorkspace`, and one that changes no tag sends no tags request.
 
 Not verified yet, each needing a Claude Platform on AWS organization:
 
 1. That an AWS Console key is accepted as `x-api-key`, as SDK v1.84 sends it; the current platform page documents `Authorization: Bearer`.
 2. Attaching a KMS key to a workspace: the signature of the path is accepted, but no key was attached.
 3. Whether reading a workspace fails without `ListTagsForResource`, which CloudTrail records on every read.
-4. That a name or `data_residency` update is authorized by `UpdateWorkspace`: none was sent yet.
-5. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
+4. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
 
 ## See also
 
