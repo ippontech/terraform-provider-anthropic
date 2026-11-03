@@ -132,12 +132,12 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 	if !data.GoogleCloud.IsNull() {
-		settings, diags := resolveGoogleCloud(ctx, data)
+		settings, diags := resolveGoogleCloud(ctx, data, googleTokenTimeout)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		client, err := newGoogleCloudClient(ctx, settings.config)
+		client, err := newGoogleCloudClient(ctx, settings.config, googleTokenTimeout)
 		if err != nil {
 			resp.Diagnostics.AddAttributeError(path.Root("google_cloud"), "Unable to Configure Claude Models on Google Cloud", err.Error())
 			return

@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/googlecloud"
@@ -31,6 +33,9 @@ const (
 	googleCloudWorkspaceIDEnv = "ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID"
 	// googleCloudScope is the OAuth scope the gateway requires.
 	googleCloudScope = "https://www.googleapis.com/auth/cloud-platform"
+	// googleTokenTimeout bounds each request of a Google token source, as
+	// the Admin API client bounds each attempt: see googleTokenContext.
+	googleTokenTimeout = 60 * time.Second
 )
 
 // googleCloudCredentialTypes are the credential files `credentials` accepts,
@@ -116,7 +121,8 @@ type googleCloudSettings struct {
 // resolveGoogleCloud checks the configuration of a provider alias whose
 // google_cloud block is set and returns the SDK's client configuration for
 // it. data.WorkspaceID is known: Configure rejects an unknown one first.
-func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*googleCloudSettings, diag.Diagnostics) {
+// tokenTimeout bounds each token request of credentials (googleTokenContext).
+func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel, tokenTimeout time.Duration) (*googleCloudSettings, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	// Configured values: see resolveAWS. aws is checked by Configure.
@@ -187,7 +193,7 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*goog
 	case m.AccessToken.ValueString() != "":
 		settings.config.TokenSource = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: m.AccessToken.ValueString(), TokenType: "Bearer"})
 	case m.Credentials.ValueString() != "":
-		creds, err := googleCredentialsFromJSON(ctx, m.Credentials.ValueString())
+		creds, err := googleCredentialsFromJSON(ctx, m.Credentials.ValueString(), tokenTimeout)
 		if err != nil {
 			diags.AddAttributeError(path.Root("google_cloud").AtName("credentials"), "Invalid Google Cloud Credentials", err.Error())
 			return nil, diags
@@ -238,19 +244,33 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*goog
 // type is checked against googleCloudCredentialTypes, then passed to the
 // typed loader, which refuses a file whose type differs from it.
 //
-// The token source is built on context.WithoutCancel(ctx). The authorized
-// user, external account and impersonated service account sources keep the
-// context they are built with and send every token request under it, and the
-// first token is only fetched on the first API call, in a later RPC; ctx is
-// the ConfigureProvider RPC's, which Terraform's gRPC server cancels as soon
-// as Configure returns, so that request would fail with "context canceled".
-// WithoutCancel keeps ctx's values and drops its cancellation.
-func googleCredentialsFromJSON(ctx context.Context, contents string) (*google.Credentials, error) {
+// The token source is built on googleTokenContext(ctx, tokenTimeout).
+func googleCredentialsFromJSON(ctx context.Context, contents string, tokenTimeout time.Duration) (*google.Credentials, error) {
 	typ, err := googleCredentialsType("google_cloud.credentials", []byte(contents))
 	if err != nil {
 		return nil, err
 	}
-	return google.CredentialsFromJSONWithType(context.WithoutCancel(ctx), []byte(contents), google.CredentialsType(typ), googleCloudScope)
+	return google.CredentialsFromJSONWithType(googleTokenContext(ctx, tokenTimeout), []byte(contents), google.CredentialsType(typ), googleCloudScope)
+}
+
+// googleTokenContext is the context to build a Google token source on. The
+// authorized user, external account and impersonated service account sources
+// keep the context they are built with and send every token request under it,
+// and the first token is only fetched on the first API call, in a later RPC.
+//
+// ctx is the ConfigureProvider RPC's, which Terraform's gRPC server cancels as
+// soon as Configure returns, so that request would fail with "context
+// canceled": context.WithoutCancel keeps ctx's values and drops its
+// cancellation. Nothing else would then bound a token request: the SDK gets
+// the token through oauth2.TokenSource.Token, which takes no context, so
+// neither a per-request timeout nor Terraform's cancellation reaches it, and
+// golang.org/x/oauth2 sends it through http.DefaultClient, which has none.
+// The context therefore carries, as oauth2.HTTPClient, a client whose timeout
+// bounds each token request, so a token endpoint that never answers fails the
+// request instead of hanging the run. (The metadata server's token source
+// uses its own client, which has a timeout.)
+func googleTokenContext(ctx context.Context, timeout time.Duration) context.Context {
+	return context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, &http.Client{Timeout: timeout})
 }
 
 // googleCredentialsType returns the type of a credential file when it is one
@@ -282,12 +302,12 @@ func googleCredentialsType(source string, contents []byte) (string, error) {
 //
 // The SDK hands ctx to the Application Default Credentials it finds, and a
 // credential file found that way (gcloud's application default login is an
-// authorized user) keeps it as googleCredentialsFromJSON describes, so ctx
-// goes in without its cancellation here too.
+// authorized user) keeps it, so ctx goes in as googleTokenContext makes it,
+// tokenTimeout bounding each token request, here too.
 //
 // extra are request options for tests (an HTTP client).
-func newGoogleCloudClient(ctx context.Context, cfg googlecloud.ClientConfig, extra ...option.RequestOption) (*anthropic.Client, error) {
-	gc, err := googlecloud.NewClient(context.WithoutCancel(ctx), cfg)
+func newGoogleCloudClient(ctx context.Context, cfg googlecloud.ClientConfig, tokenTimeout time.Duration, extra ...option.RequestOption) (*anthropic.Client, error) {
+	gc, err := googlecloud.NewClient(googleTokenContext(ctx, tokenTimeout), cfg)
 	if err != nil {
 		return nil, err
 	}

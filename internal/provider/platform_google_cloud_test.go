@@ -257,14 +257,14 @@ func TestConfigureGoogleCloudCredentials(t *testing.T) {
 		settings, diags := resolveGoogleCloud(context.Background(), AnthropicProviderModel{
 			WorkspaceID: types.StringValue(gcTestWorkspace),
 			GoogleCloud: types.ObjectValueMust(attrTypes, block),
-		})
+		}, googleTokenTimeout)
 		if diags.HasError() {
 			t.Fatal(diags)
 		}
 		if settings.config.Project != "sa-project" {
 			t.Fatalf("project = %q, want the service account's", settings.config.Project)
 		}
-		client, err := newGoogleCloudClient(context.Background(), settings.config, option.WithHTTPClient(&http.Client{Transport: capture}))
+		client, err := newGoogleCloudClient(context.Background(), settings.config, googleTokenTimeout, option.WithHTTPClient(&http.Client{Transport: capture}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -378,6 +378,72 @@ func TestGoogleCloudTokenOutlivesConfigure(t *testing.T) {
 	}
 }
 
+// TestGoogleCloudTokenRequestIsBounded: a token endpoint that accepts the
+// request and never answers fails it after the token timeout, for a
+// credentials file and for Application Default Credentials, instead of
+// hanging the run. The SDK asks the token source for a token without a
+// context, so only the HTTP client of the source's own context can bound it.
+func TestGoogleCloudTokenRequestIsBounded(t *testing.T) {
+	const timeout = 200 * time.Millisecond
+	for _, adc := range []bool{false, true} {
+		name := "credentials"
+		if adc {
+			name = "application default credentials"
+		}
+		t.Run(name, func(t *testing.T) {
+			isolateGoogleEnv(t)
+			release := make(chan struct{})
+			stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case <-release:
+				case <-r.Context().Done():
+				}
+			}))
+			t.Cleanup(stalled.Close)
+			t.Cleanup(func() { close(release) }) // before Close, which waits for the handler
+
+			block := map[string]attr.Value{}
+			attrTypes := map[string]attr.Type{}
+			for name := range gcAttrTypes {
+				block[name] = types.StringNull()
+				attrTypes[name] = types.StringType
+			}
+			block["project"] = types.StringValue(gcTestProject)
+			if adc {
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", writeADCFile(t, stalled.URL+"/token"))
+			} else {
+				block["credentials"] = types.StringValue(authorizedUserJSON(stalled.URL + "/token"))
+			}
+			settings, diags := resolveGoogleCloud(context.Background(), AnthropicProviderModel{
+				WorkspaceID: types.StringValue(gcTestWorkspace),
+				GoogleCloud: types.ObjectValueMust(attrTypes, block),
+			}, timeout)
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			client, err := newGoogleCloudClient(context.Background(), settings.config, timeout,
+				option.WithHTTPClient(&http.Client{Transport: &capturingTransport{}}), option.WithMaxRetries(0))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			done := make(chan error, 1)
+			go func() {
+				_, err := client.Models.Get(context.Background(), "claude-opus-5-5", anthropic.ModelGetParams{})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil || !strings.Contains(err.Error(), "Client.Timeout") {
+					t.Fatalf("request error = %v, want the token request's timeout", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the token request was still pending after 10s: nothing bounds it")
+			}
+		})
+	}
+}
+
 func mustJSON(t *testing.T, v any) string {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -419,7 +485,7 @@ func TestNewGoogleCloudClientDerivesTheURLs(t *testing.T) {
 			client, err := newGoogleCloudClient(context.Background(), googlecloud.ClientConfig{
 				Project: gcTestProject, Location: tt.location, WorkspaceID: tt.workspace,
 				TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: gcTestToken}),
-			}, option.WithHTTPClient(&http.Client{Transport: capture}), option.WithMaxRetries(0))
+			}, googleTokenTimeout, option.WithHTTPClient(&http.Client{Transport: capture}), option.WithMaxRetries(0))
 			if err != nil {
 				t.Fatal(err)
 			}
