@@ -61,7 +61,8 @@ func awsSchema() schema.SingleNestedAttribute {
 				Optional: true,
 				Description: "Named profile of the AWS shared configuration files to take credentials from (SSO, " +
 					"credential_process and role assumption included). Conflicts with access_key and api_key. Without " +
-					"profile, access_key or api_key, the AWS default credential chain applies.",
+					"profile, access_key, api_key or an exported ANTHROPIC_AWS_API_KEY, the AWS default credential " +
+					"chain applies.",
 			},
 			"api_key": schema.StringAttribute{
 				Optional:  true,

@@ -378,6 +378,19 @@ func TestConfigureAWSCredentialSources(t *testing.T) {
 			setup: func(t *testing.T) { t.Setenv("ANTHROPIC_AWS_API_KEY", "aws-console-key-env") },
 		},
 		{
+			// With no credential in the block, the exported key is used
+			// before the default chain, as the SDK ranks them.
+			name:  "ANTHROPIC_AWS_API_KEY over the default chain",
+			block: map[string]any{},
+			setup: func(t *testing.T) {
+				t.Setenv("AWS_REGION", awsTestRegion)
+				t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
+				t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
+				t.Setenv("ANTHROPIC_AWS_API_KEY", "aws-console-key-env")
+			},
+			wantKey: "aws-console-key-env",
+		},
+		{
 			name:  "default chain",
 			block: map[string]any{},
 			setup: func(t *testing.T) {
