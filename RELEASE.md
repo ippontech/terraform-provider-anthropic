@@ -77,13 +77,13 @@ Submit the same public key with the [Submit new Provider Signing Key](https://gi
 | Field | Value |
 |-------|-------|
 | Provider Namespace | `ippontech` |
-| Provider Name | empty, so the key covers every provider of the namespace |
+| Provider Name | `anthropic`, so the key validates this provider only: each provider of the organization signs with its own key, which confines a leaked key to one provider |
 | Public Membership | the submitter must be a member of the `ippontech` GitHub organization, with the membership set to public |
 | Provider GPG Key | the output of `gpg --armor --export YOUR_KEY_ID` |
 
-Fill in the form in the GitHub web UI: the registry's automated validation reads the form's fields, and it rejects issues opened through the API or `gh`.
+Fill in the form in the GitHub web UI: the registry's automated validation parses the structured body the form generates, and it cannot read an issue opened through the API or `gh`.
 
-When the key is rotated, update it in both registries.
+When the key is rotated, update it in both registries. The Terraform Registry has no per-provider scope: every key registered for the `ippontech` namespace there validates every provider of the namespace.
 
 # GitHub App Setup (Semantic Release)
 
