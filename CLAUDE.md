@@ -77,6 +77,7 @@ What runs live depends on the credential:
 - Start the file with `test { parallel = true }`, which covers every `run` block. Check computed values with `assert` blocks.
 - Plan-only resource tests (Admin API, OAuth) declare a dummy credential in the test file, `provider "anthropic" { admin_api_key = "dummy-admin-api-key" }` (or `auth_token = "dummy-auth-token"`): under `command = plan` a resource never calls the API and `Configure` only needs a non-empty string. Assert on the module's resources (`anthropic_workspace.example.name == ...`) rather than adding outputs. A data source is read during plan once its arguments are known, so this does not hold for data sources.
 - Data sources CI cannot read live use `mock_provider "anthropic" {}` (plan and apply, no credentials); a single-object example takes a constant well-formed ID and `override_data` (`tests/federation_issuer_data_source.tftest.hcl`). `override_data` cannot add elements to a computed `list(object)`, so an example that indexes `list[0].id` reads the live API, as the Admin API `invite` and `organization_member` data sources do under `command = plan`.
+- On every pull request, `terraform.yml` runs `make terraform-fmt-check`, `make terraform-validate` and `make terraform-test-mock`, with no credentials and an egress list without `registry.terraform.io` or `api.anthropic.com` (dev_overrides: neither `init` nor `validate` downloads the provider). `terraform-test-mock` picks every test file containing `mock_provider` by grep, so such a file must never need a credential or the live API; a file that mixes a mock with a live run breaks every pull request. The live native tests still run only after merge (`testacc.yml`).
 
 ## Environment
 
@@ -97,6 +98,9 @@ make lint           # Run golangci-lint (.golangci.yml: only code that differs f
 make test           # Run unit tests (120s timeout, 10 parallel workers)
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
+make terraform-fmt-check  # terraform fmt -check -diff -recursive (offline)
+make terraform-validate   # terraform validate in all 63 example directories against the provider just built (offline)
+make terraform-test-mock  # Only the native test files with a mock_provider block (offline, no credentials)
 make generate       # Regenerate docs and format examples
 make complexity     # Cognitive complexity ratchet of the CI complexity job, against origin/main (COMPLEXITY_BASE=<ref>)
 make                # Default: fmt tidy-check lint complexity test install generate
