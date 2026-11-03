@@ -59,7 +59,7 @@ run "<name>_resource_creates_<name>" {
 Admin API and OAuth resources plan only (`command = plan`, dummy credential in a `provider "anthropic"` block of the test file) and assert on configured values, since computed ones such as `id` are unknown at plan; self-contained list data sources use `mock_provider "anthropic" {}`. Details in `CLAUDE.md`, *Terraform native tests*.
 
 ## Implementation
-Conventions: the root `CLAUDE.md`, `internal/services/<service>/CLAUDE.md` when it exists, and the `terraform-provider` skill. Done when `make`, `make terraform-test` (or a stated reason it could not run) and `pre-commit run -a` pass.
+Conventions: the root `CLAUDE.md`, `internal/services/<service>/CLAUDE.md` when it exists, and the `terraform-provider` skill. Done when `make`, `make terraform-test` (or a stated reason it could not run) and `pre-commit run -a` pass, the last with the new files staged since it skips untracked files.
 ````
 
 Remove the lines and sections that do not apply rather than leaving them empty, because the implementing agent treats every listed file as work to do.

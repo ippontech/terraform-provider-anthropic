@@ -42,7 +42,7 @@ A worktree has no `.env`, so live credentials are unavailable: do not read, prin
 
 Done means all of the following:
 1. `make` passes (format, lint, unit tests, install, docs generation);
-2. `pre-commit run -a` passes (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
+2. `pre-commit run -a` passes with your files staged by path, since it skips untracked files (run `mise trust` once in the worktree if the `poutine` hook reports an untrusted `mise.toml`);
 3. `make terraform-test` passes; run it only when both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` are set in your environment (it applies the examples against the live API, and the Admin API data source tests fail without the admin key), otherwise report it as skipped, naming the missing variable, without running it;
 4. the regenerated page under `docs/` has a non-empty `subcategory`;
 5. one local commit on your worktree's branch (see *Setup*), staging your files by path (never `git add -A`), with a conventional commit message such as `feat: add anthropic_<name> resource`.
