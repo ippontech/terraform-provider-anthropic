@@ -105,7 +105,14 @@ Nothing is committed: the functions above 20 are simply those above it on `main`
 make test
 ```
 
-`make cover` runs the same tests, then prints the coverage of every resource and data source file, least covered first (`tools/coversummary`). The CI `test` job publishes that table in its job summary and the profile as the `coverage` artifact; coverage is reported, never enforced.
+`make cover` runs the same tests, then the coverage gate of the CI `coverage` job (`tools/coversummary`, thresholds and exclusions in `.coverage.json`), followed by the coverage of every resource and data source file, least covered first. The gate is a required check with three blocking rules and one monitored one, measured on the Go files of the module outside the test-helper packages, `main.go` and `tools/`:
+
+- **Diff**: at least 75% of the executable statements a pull request adds or changes (non-test Go files) are covered by unit tests. Write the tests with the code; `httptest` fakes and `resource.UnitTest` need no credential.
+- **Ratchet**: the total stays at or above `.coverage-baseline` minus 0.5 point. When a pull request raises the total, the job summary gives the new value to commit in `.coverage-baseline`. Lowering it is possible in the pull request that needs it, with a reason reviewers accept.
+- **Floor**: once the baseline reaches 80%, the total never drops under 80% and the baseline cannot go back under it.
+- **Packages** (monitored, not yet enforced): the job summary lists every package with its coverage and its distance to 80%, least covered first. `package_min` in `.coverage.json` is `null` for now; the last pull request of the coverage effort sets it to 80, and from then on every package must stay at 80% or more, not only the total.
+
+Locally, `make cover` compares the working tree, as the tests profile it, with its merge base with `origin/main` (`COVER_BASE=<ref>` to change it): committed and uncommitted changes count, in tracked files only (`git add -N` a new file for the diff rule to see it). `go test -cover` needs Go's `covdata` tool, missing from the toolchains `GOTOOLCHAIN` downloads (`go: no such tool "covdata"`); see the `covdata` note in CLAUDE.md.
 
 ### Run acceptance tests
 
