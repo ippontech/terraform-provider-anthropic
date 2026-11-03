@@ -105,6 +105,28 @@ func (s *protocolServer) validateResource(typeName string, set map[string]tftype
 	return resp.Diagnostics
 }
 
+func (s *protocolServer) validateProvider(set map[string]tftypes.Value) []*tfprotov6.Diagnostic {
+	s.t.Helper()
+	resp, err := s.server.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{
+		Config: s.dynamicValue(s.schema.Provider.ValueType(), set),
+	})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return resp.Diagnostics
+}
+
+func (s *protocolServer) validateDataSource(typeName string, set map[string]tftypes.Value) []*tfprotov6.Diagnostic {
+	s.t.Helper()
+	resp, err := s.server.ValidateDataResourceConfig(context.Background(), &tfprotov6.ValidateDataResourceConfigRequest{
+		TypeName: typeName, Config: s.dynamicValue(s.schema.DataSourceSchemas[typeName].ValueType(), set),
+	})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return resp.Diagnostics
+}
+
 func (s *protocolServer) readDataSource(typeName string, set map[string]tftypes.Value) []*tfprotov6.Diagnostic {
 	s.t.Helper()
 	resp, err := s.server.ReadDataSource(context.Background(), &tfprotov6.ReadDataSourceRequest{
@@ -135,9 +157,51 @@ func summaries(diags []*tfprotov6.Diagnostic) []string {
 	return out
 }
 
+// TestAWSGateAtValidation: Terraform validates a provider configuration before
+// the resources and data sources that use it, on the same instance, which is
+// not configured yet. With an aws block, even one whose attributes are not
+// known yet, a type the gateway does not serve fails there. That is what
+// stops, at plan time, a data source whose arguments are unknown until apply:
+// Terraform defers its read, and its Configure, to the apply.
+func TestAWSGateAtValidation(t *testing.T) {
+	isolateAWSEnv(t)
+	unknownWorkspace := map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)}
+
+	s := newProtocolServer(t)
+	awsType := s.schema.Provider.ValueType().(tftypes.Object).AttributeTypes["aws"]
+	block := map[string]tftypes.Value{}
+	for name, attrType := range awsType.(tftypes.Object).AttributeTypes {
+		block[name] = tftypes.NewValue(attrType, nil)
+	}
+	block["region"] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	if diags := s.validateProvider(map[string]tftypes.Value{"aws": tftypes.NewValue(awsType, block)}); hasProtocolError(diags) {
+		t.Fatalf("ValidateProviderConfig: %v", summaries(diags))
+	}
+	assertProtocolUnavailable(t, s.validateDataSource("anthropic_workspace_members", unknownWorkspace),
+		"anthropic_workspace_members", "Claude Platform on AWS")
+	if diags := s.validateDataSource("anthropic_workspaces", nil); hasProtocolError(diags) {
+		t.Errorf("a type the gateway serves was refused at validation: %v", summaries(diags))
+	}
+
+	// A first-party configuration, or a block not known yet, refuses nothing.
+	for name, aws := range map[string]tftypes.Value{
+		"first party":   tftypes.NewValue(awsType, nil),
+		"unknown block": tftypes.NewValue(awsType, tftypes.UnknownValue),
+	} {
+		s := newProtocolServer(t)
+		if diags := s.validateProvider(map[string]tftypes.Value{"aws": aws}); hasProtocolError(diags) {
+			t.Fatalf("%s: ValidateProviderConfig: %v", name, summaries(diags))
+		}
+		if diags := s.validateDataSource("anthropic_workspace_members", unknownWorkspace); hasProtocolError(diags) {
+			t.Errorf("%s: refused at validation: %v", name, summaries(diags))
+		}
+	}
+}
+
 // TestAWSGateThroughTheProtocol plays Terraform's sequence for a plan against
-// an aws alias: validation before the provider is configured (nothing is
-// refused), then ConfigureProvider, then planning. A type the gateway does not
+// an aws alias: a type validated before any provider configuration is seen
+// (nothing is refused: the platform is not known yet), then
+// ConfigureProvider, then planning. A type the gateway does not
 // serve fails at plan time with the platform's diagnostic; a type it serves
 // plans without sending anything (the base URL is a closed local port).
 //
