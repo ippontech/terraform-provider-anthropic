@@ -24,7 +24,7 @@ For a data source, replace `_resource` with `_data_source`, `Resources()` with `
 
 ## Files to create / modify
 - `internal/services/<service>/<name>_resource.go`: `package <service>`
-- `internal/services/<service>/<name>_resource_test.go`: Go acceptance tests, `package <service>_test` (standard key only, see *Go tests*)
+- `internal/services/<service>/<name>_resource_test.go`: Go acceptance tests, `package <service>_test` (standard-key objects and read-only Admin API data sources, see *Go tests*)
 - `internal/services/<service>/<name>_resource_internal_test.go`: unit tests against an `httptest` server, `package <service>`, when they need unexported symbols, and for every Admin API or OAuth resource
 - `internal/provider/provider.go`: register the factory in `Resources()`
 - `examples/resources/<name>/resource.tf`: resource blocks and outputs only (embedded in the Registry docs)
