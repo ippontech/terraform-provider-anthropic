@@ -589,6 +589,11 @@ func (r *AgentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	agent, err := r.client.Beta.Agents.Get(ctx, data.ID.ValueString(), anthropic.BetaAgentGetParams{})
 	if err != nil {
+		// Deleted out of band: drop it from state so the next plan re-creates it.
+		if providerrors.IsNotFound(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read agent: %s", err))
 		return
 	}
@@ -739,6 +744,9 @@ func (r *AgentResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	_, err := r.client.Beta.Agents.Archive(ctx, data.ID.ValueString(), anthropic.BetaAgentArchiveParams{})
 	if err != nil {
+		if providerrors.IsNotFound(err) {
+			return // already gone
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive agent: %s", err))
 		return
 	}
