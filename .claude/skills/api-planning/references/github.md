@@ -24,7 +24,7 @@ For each planned issue whose GitHub issue does not exist yet, in one parallel me
    gh api repos/ippontech/terraform-provider-anthropic/git/refs -f ref="refs/heads/<branch>" -f sha="$sha"
    ```
 
-   Creating a branch needs write access to the repository. Without it, skip this step: the implementing agent starts from `origin/main`, you create the branch at its commit (see below), and `ship` pushes it to the contributor's fork.
+   Creating a branch needs write access to the repository. Without it, skip this step: you create the branch at the implementing agent's commit (see below), and `ship` pushes it to `origin`, which must then be the contributor's fork, its `main` in sync with upstream, since the agent starts from `origin/main`.
 
 GitHub opens a PR only once a branch has a commit, so tell the user: "Branches are created; each PR opens when its first commit is pushed (`/ship`)."
 
