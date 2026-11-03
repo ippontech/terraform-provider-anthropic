@@ -303,3 +303,15 @@ func parseRetryAfter(resp *http.Response) (time.Duration, bool) {
 	}
 	return 0, false
 }
+
+// NextAfterID returns the after_id of the next page of an Admin API list, to
+// call when a page requested with afterID ("" for the first one) says
+// has_more. That page's last_id is the next cursor; a has_more page with a
+// null last_id, or with the cursor just sent, would make the caller request
+// the same page again, forever, so it is an error.
+func NextAfterID(afterID, lastID string) (string, error) {
+	if lastID == "" || lastID == afterID {
+		return "", fmt.Errorf("the API reported more results (has_more) without a new last_id cursor (after_id %q, last_id %q), so the next page cannot be requested", afterID, lastID)
+	}
+	return lastID, nil
+}
