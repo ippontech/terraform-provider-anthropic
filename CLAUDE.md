@@ -88,7 +88,7 @@ internal/
 - `anthropic_skill_version` (`internal/services/skills/skill_version_data_source.go`) — fetches a single skill version
 - `anthropic_skill_versions` (`internal/services/skills/skill_versions_data_source.go`) — lists all skill versions
 - `anthropic_workspace` (`internal/services/workspaces/workspace_data_source.go`) — fetches a single workspace by ID (admin API)
-- `anthropic_workspaces` (`internal/services/workspaces/workspaces_data_source.go`) — lists all workspaces (admin API, transparent pagination)
+- `anthropic_workspaces` (`internal/services/workspaces/workspaces_data_source.go`) — lists all workspaces (admin API, transparent pagination); `include_archived` and `include_default` (the Default Workspace is listed only on request, and its real ID is what the Admin API reports in the `scope.workspace_id` of the API keys bound to it, whose `workspace_id` is null; the example finds it as the one workspace only the `include_default` list holds, since another workspace can be named "Default") are sent only when true, query built by `buildWorkspacesListQuery`
 - `anthropic_workspace_member` (`internal/services/workspaces/workspace_member_data_source.go`) — fetches a single workspace member by workspace ID and user ID (admin API)
 - `anthropic_workspace_members` (`internal/services/workspaces/workspace_members_data_source.go`) — lists all members of a workspace (admin API), with transparent pagination
 - `anthropic_workspace_rate_limits` (`internal/services/workspaces/workspace_rate_limits_data_source.go`) — lists workspace-level rate-limit overrides for a workspace (admin API), with transparent pagination and an optional `group_type` filter; only entries with at least one override are returned
