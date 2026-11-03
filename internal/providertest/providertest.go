@@ -26,11 +26,13 @@
 package providertest
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 
 	"github.com/ippontech/terraform-provider-anthropic/internal/provider"
 	"github.com/ippontech/terraform-provider-anthropic/internal/sdktest"
@@ -72,4 +74,19 @@ func ProviderConfig(creds ...sdktest.Credential) string {
 	}
 	b.WriteString("}\n")
 	return b.String()
+}
+
+// ChangeAfterPlan is a pre-apply plan check that runs change, such as an edit
+// of the fake's stored object, between the plan and the apply of a step. A
+// step applies its saved plan without refreshing, so change plays an edit
+// made outside Terraform after `terraform plan -out`: the update starts from
+// the state the plan was made with. An error from change fails the step.
+func ChangeAfterPlan(change func() error) plancheck.PlanCheck {
+	return changeAfterPlan(change)
+}
+
+type changeAfterPlan func() error
+
+func (c changeAfterPlan) CheckPlan(_ context.Context, _ plancheck.CheckPlanRequest, resp *plancheck.CheckPlanResponse) {
+	resp.Error = c()
 }
