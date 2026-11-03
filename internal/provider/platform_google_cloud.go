@@ -213,6 +213,14 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel) (*goog
 // googleCredentialsFromJSON parses a credential file of an accepted type. The
 // type is checked against googleCloudCredentialTypes, then passed to the
 // typed loader, which refuses a file whose type differs from it.
+//
+// The token source is built on context.WithoutCancel(ctx). The authorized
+// user, external account and impersonated service account sources keep the
+// context they are built with and send every token request under it, and the
+// first token is only fetched on the first API call, in a later RPC; ctx is
+// the ConfigureProvider RPC's, which Terraform's gRPC server cancels as soon
+// as Configure returns, so that request would fail with "context canceled".
+// WithoutCancel keeps ctx's values and drops its cancellation.
 func googleCredentialsFromJSON(ctx context.Context, contents string) (*google.Credentials, error) {
 	var head struct {
 		Type string `json:"type"`
@@ -223,7 +231,7 @@ func googleCredentialsFromJSON(ctx context.Context, contents string) (*google.Cr
 	if !slices.Contains(googleCloudCredentialTypes, head.Type) {
 		return nil, fmt.Errorf("google_cloud.credentials has type %q; accepted types: %v", head.Type, googleCloudCredentialTypes)
 	}
-	return google.CredentialsFromJSONWithType(ctx, []byte(contents), google.CredentialsType(head.Type), googleCloudScope)
+	return google.CredentialsFromJSONWithType(context.WithoutCancel(ctx), []byte(contents), google.CredentialsType(head.Type), googleCloudScope)
 }
 
 // newGoogleCloudClient builds the single SDK client of a Claude Models on
@@ -238,9 +246,14 @@ func googleCredentialsFromJSON(ctx context.Context, contents string) (*google.Cr
 // organization endpoint for /v1/organizations routes. No option here sets a
 // base URL or an anthropic-workspace-id header, which this gateway forbids.
 //
+// The SDK hands ctx to the Application Default Credentials it finds, and a
+// credential file found that way (gcloud's application default login is an
+// authorized user) keeps it as googleCredentialsFromJSON describes, so ctx
+// goes in without its cancellation here too.
+//
 // extra are request options for tests (an HTTP client).
 func newGoogleCloudClient(ctx context.Context, cfg googlecloud.ClientConfig, extra ...option.RequestOption) (*anthropic.Client, error) {
-	gc, err := googlecloud.NewClient(ctx, cfg)
+	gc, err := googlecloud.NewClient(context.WithoutCancel(ctx), cfg)
 	if err != nil {
 		return nil, err
 	}

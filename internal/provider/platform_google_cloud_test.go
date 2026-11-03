@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/googlecloud"
@@ -292,6 +293,94 @@ func serviceAccountJSON(t *testing.T, project, tokenURI string) string {
 		"type": "service_account", "project_id": project, "private_key_id": "k1", "private_key": string(pemKey),
 		"client_email": "terraform@" + project + ".iam.gserviceaccount.com", "client_id": "1", "token_uri": tokenURI,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestGoogleCloudTokenOutlivesConfigure: the first token is fetched on the
+// first request, after Configure has returned and its context has been
+// cancelled (configureProvider cancels it as Terraform's gRPC server does).
+// The credential types whose token source keeps the context it was built
+// with must still get their token: an authorized user, an external account
+// (Workload Identity Federation), an impersonated service account, and an
+// authorized user found by Application Default Credentials.
+func TestGoogleCloudTokenOutlivesConfigure(t *testing.T) {
+	const issued = "ya29.from-token-endpoint"
+	tests := []struct {
+		name string
+		// credentials returns the block's credentials for a token endpoint,
+		// and the token the gateway must receive. Nil leaves the block
+		// without credentials, for Application Default Credentials.
+		credentials func(t *testing.T, tokenURL string) (string, string)
+	}{
+		{"authorized_user", func(_ *testing.T, tokenURL string) (string, string) {
+			return authorizedUserJSON(tokenURL), issued
+		}},
+		{"external_account", func(t *testing.T, tokenURL string) (string, string) {
+			subject := filepath.Join(t.TempDir(), "subject-token")
+			writeFile(t, subject, "fake-oidc-token")
+			return mustJSON(t, map[string]any{
+				"type":               "external_account",
+				"audience":           "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/ci/providers/oidc",
+				"subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+				"token_url":          tokenURL,
+				"credential_source":  map[string]string{"file": subject},
+			}), issued
+		}},
+		{"impersonated_service_account", func(t *testing.T, tokenURL string) (string, string) {
+			const impersonated = "ya29.impersonated"
+			iam := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get("Authorization"); got != "Bearer "+issued {
+					jsonResponse(w, 401, fmt.Sprintf(`{"error":"source token %q"}`, got))
+					return
+				}
+				jsonResponse(w, 200, fmt.Sprintf(`{"accessToken":%q,"expireTime":%q}`,
+					impersonated, time.Now().Add(time.Hour).UTC().Format(time.RFC3339)))
+			}))
+			t.Cleanup(iam.Close)
+			var source map[string]any
+			if err := json.Unmarshal([]byte(authorizedUserJSON(tokenURL)), &source); err != nil {
+				t.Fatal(err)
+			}
+			return mustJSON(t, map[string]any{
+				"type": "impersonated_service_account",
+				"service_account_impersonation_url": iam.URL +
+					"/v1/projects/-/serviceAccounts/terraform@my-project.iam.gserviceaccount.com:generateAccessToken",
+				"source_credentials": source,
+			}), impersonated
+		}},
+		{"application default credentials", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateGoogleEnv(t)
+			gw := newFakeGoogleGateway(t)
+			tokens, hits, _ := fakeTokenEndpoint(t, issued)
+			block := map[string]any{"project": gcTestProject, "base_url": gw.srv.URL}
+			want := issued
+			if tt.credentials != nil {
+				block["credentials"], want = tt.credentials(t, tokens.URL+"/token")
+			} else {
+				t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", writeADCFile(t, tokens.URL+"/token"))
+			}
+
+			pd := configureGoogleCloud(t, block, gcTestWorkspace)
+			if hits.Load() != 0 {
+				t.Fatal("a token was fetched during Configure: this test needs the first fetch to come after it")
+			}
+			if _, err := pd.Client.Models.Get(context.Background(), "claude-opus-5-5", anthropic.ModelGetParams{}); err != nil {
+				t.Fatalf("request after Configure returned: %v", err)
+			}
+			assertGoogleRequest(t, gw.requests()[0], want)
+		})
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
