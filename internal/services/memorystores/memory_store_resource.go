@@ -299,15 +299,16 @@ func (r *MemoryStoreResource) Delete(ctx context.Context, req resource.DeleteReq
 	if data.ArchiveOnDestroy.ValueBool() {
 		if data.ArchivedAt.IsNull() || data.ArchivedAt.ValueString() == "" {
 			_, err := r.client.Beta.MemoryStores.Archive(ctx, data.ID.ValueString(), anthropic.BetaMemoryStoreArchiveParams{})
-			if err != nil {
+			if err != nil && !providerrors.IsNotFound(err) {
 				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive memory store: %s", err))
 			}
 		}
 		return
 	}
 
+	// A 404 means the store is already gone, which is what destroy wants.
 	_, err := r.client.Beta.MemoryStores.Delete(ctx, data.ID.ValueString(), anthropic.BetaMemoryStoreDeleteParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete memory store: %s", err))
 	}
 }
