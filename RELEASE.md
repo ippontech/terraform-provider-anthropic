@@ -68,6 +68,11 @@ gpg --armor --export YOUR_KEY_ID
 Then paste it in your Terraform Registry namespace:
 `registry.terraform.io > Settings > GPG Keys > Add a GPG key`
 
+A key added there is permanent: the Registry offers no way to delete or replace it, and it rejects a second import of the same key ID (checked on 2026-11-03). HashiCorp keeps every key on purpose so that the versions it signed stay verifiable ([Terraform Registry FAQ](https://developer.hashicorp.com/terraform/registry/faq)). Two consequences:
+
+- the Registry serves the copy it received, so a change made to the key afterwards (adding an expiration, say) is invisible to `terraform init` and has no effect: the only way to change what the Registry verifies with is a new key, see [Rotate the key](#rotate-the-key);
+- GnuPG refuses to sign with an expired key, which would break the release workflow at the expiration date for no benefit, so the key is generated without expiration (`Expiry: 0` above).
+
 ## Register the public key in the OpenTofu Registry
 
 The OpenTofu Registry also lists the provider (`registry.opentofu.org/ippontech/anthropic`) and serves the same GitHub release assets. It checks their signature only when it holds the signing key: without one, `tofu init` installs the provider without verifying it, and a user who enforces verification with `OPENTOFU_ENFORCE_GPG_VALIDATION=true` cannot install it ([OpenTofu: provider signing](https://opentofu.org/docs/cli/plugins/signing)).
@@ -83,7 +88,27 @@ Submit the same public key with the [Submit new Provider Signing Key](https://gi
 
 Fill in the form in the GitHub web UI: the registry's automated validation parses the structured body the form generates, and it cannot read an issue opened through the API or `gh`.
 
-When the key is rotated, update it in both registries. The Terraform Registry has no per-provider scope: every key registered for the `ippontech` namespace there validates every provider of the namespace.
+When the key is rotated, add the new one to both registries, see [Rotate the key](#rotate-the-key). The Terraform Registry has no per-provider scope: every key registered for the `ippontech` namespace there validates every provider of the namespace.
+
+## Rotate the key
+
+Rotate the key when its private part may have leaked (a compromised laptop, a secret printed in a log, a Vaultwarden access that should not have existed) or when the maintainer who holds it leaves. The procedure adds a new key next to the old one: the old key is never removed from the Terraform Registry, since the versions it signed must stay verifiable, and the leaked key cannot be used to publish a release anyway, because publishing requires pushing a tag through the `release` environment, not only signing.
+
+1. Generate a new key as in [Generate a GPG key](#generate-a-gpg-key) and store its private part, passphrase and revocation certificate in Vaultwarden, in the same folder as the old one, without deleting the old entry: it stays the record of which key signed the versions published so far.
+2. Replace the `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` secrets of the `release` environment with the new key, from a file rather than the clipboard, so that no whitespace is altered:
+
+   ```bash
+   gpg --armor --export-secret-keys NEW_KEY_ID > private.asc
+   gh secret set GPG_PRIVATE_KEY --env release --repo ippontech/terraform-provider-anthropic < private.asc
+   shred -u private.asc
+   ```
+
+   Export outside the repository, or delete the file right after: `.asc` files are not ignored by git.
+3. Add the new public key to the Terraform Registry as in [Register the public key in the Terraform Registry](#register-the-public-key-in-the-terraform-registry). The old key stays listed.
+4. Submit the new public key to the OpenTofu Registry as in [Register the public key in the OpenTofu Registry](#register-the-public-key-in-the-opentofu-registry). Every registered key stays valid there too, so the old one still validates the versions it signed.
+5. Publish a release (any `fix:` or `feat:` merge does) and check that `terraform init` and `tofu init` install it: the new key validates it on both registries.
+6. If the private key leaked, publish its revocation certificate so that other users of OpenPGP stop trusting it, with `gpg --import <FINGERPRINT>.rev` followed by `gpg --send-keys OLD_KEY_ID` on a key server. The registries ignore revocations, so the versions already published keep installing; the revocation only protects uses of the key outside the registries.
+7. Note the rotation date and its reason in the Vaultwarden entry of the old key.
 
 # GitHub App Setup (Semantic Release)
 
