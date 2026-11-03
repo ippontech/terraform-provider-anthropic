@@ -11,7 +11,7 @@ It allows you to manage and query Anthropic resources such as models.
 
 ## Authentication
 
-The provider accepts three distinct credentials, depending on which resources you manage. At least one must be configured; they are independent, and configuring one never substitutes for another.
+The provider accepts three distinct credentials, depending on which resources you manage. At least one must be configured; they are independent, and configuring one never substitutes for another. Two of them, the API key and the OAuth bearer token, can also be minted by the provider itself through [Workload Identity Federation](#workload-identity-federation-federation), so a workload stores no credential at all.
 
 ### API Key (`api_key` / `ANTHROPIC_API_KEY`)
 
@@ -33,6 +33,8 @@ provider "anthropic" {
 }
 ```
 
+A workload with Workload Identity Federation needs no key: the [`api_federation` block](#workload-identity-federation-for-the-standard-client-api_federation) mints the standard client's credential from the workload's own identity token.
+
 ### Workspace (`workspace_id`)
 
 API keys are [personal or service account keys](https://platform.claude.com/docs/en/manage-claude/authentication#key-types), bound to an identity rather than to a workspace. A key created for a single workspace needs nothing more. A key that is not must say which workspace each request acts in, or the API answers `400 anthropic-workspace-id is required when authenticating with an identity-linked API key`. Set `workspace_id` and the provider sends that header on every request of the standard client, so one key serves one provider alias per workspace:
@@ -49,7 +51,7 @@ provider "anthropic" {
 }
 ```
 
-Leave it unset with a single-workspace key: the API answers `404 Workspace not found` to any `anthropic-workspace-id` header on such a key, even one naming the key's own workspace. For the same reason `workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the Anthropic SDKs' federation variable, often exported for other tools in the same job, and it is read by `federation.workspace_id` only. The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time. An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
+Leave it unset with a single-workspace key: the API answers `404 Workspace not found` to any `anthropic-workspace-id` header on such a key, even one naming the key's own workspace. For the same reason `workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the Anthropic SDKs' federation variable, often exported for other tools in the same job, and it is read by `federation.workspace_id` and `api_federation.workspace_id` only. The header goes on the standard client only: the Admin API is organization-wide, and a federated `org:admin` bearer selects its workspace at exchange time. When the standard client is itself federated (`api_federation`), `workspace_id` selects the workspace of the exchange instead of becoming a header, see that block. An SDK profile's `workspace_id` is never read. A `workspace_id` unknown at plan time (a reference to a workspace created in the same run) is an error, as for the `federation` block: use a separate configuration or a known ID.
 
 ### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
 
@@ -111,21 +113,55 @@ provider "anthropic" {
 
     # One identity token source:
     identity_token_file = "/var/run/secrets/anthropic.com/token"
+    # github_actions = {} # on GitHub Actions, in a job with permissions: id-token: write
     # identity_token_command = ["az", "account", "get-access-token", "--resource", "<app-client-id>", "--query", "accessToken", "-o", "tsv"]
     # identity_token = "eyJ..."
   }
 }
 ```
 
+- `github_actions` requests a token from GitHub Actions' OIDC endpoint on every exchange, with nothing else on the runner (no shell, `curl` or `jq`). GitHub sets the two variables it reads, `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, only in a job with `permissions: id-token: write`; without them the plan fails with a diagnostic that names the permission. `audience` defaults to `https://api.anthropic.com`, the audience a federation rule expects when its `match.audience` is unset; set it to the rule's `match.audience` otherwise: `github_actions = { audience = "..." }`.
 - `identity_token_file` is re-read on every exchange, for tokens a platform rotates on disk. The platform must have rotated the file by the next exchange: if it still holds a token with a `jti` the exchange has already accepted, that exchange fails with `jti_reused`.
 - `identity_token_command` runs a program on every exchange and reads the token from its stdout. Use it for tokens fetched from a CLI or an endpoint. The program is run directly, not through a shell, so a pipe or `$VARIABLE` expansion needs the shell as the program: `["sh", "-c", "..."]`.
 - `identity_token` is a literal and cannot be refreshed.
 
-The command is stopped after 30 seconds. Its stderr is not shown in the error, since a failing CLI may echo the token there (`curl -v`, `az --debug`, `set -x`); it is logged at `TF_LOG=DEBUG`.
+The command, and the `github_actions` request, are stopped after 30 seconds. The command's stderr is not shown in the error, since a failing CLI may echo the token there (`curl -v`, `az --debug`, `set -x`), nor is the body of a failed `github_actions` request; both are logged at `TF_LOG=DEBUG`.
 
 Give the rule a `token_lifetime_seconds` well above 120 (the default, 3600, is fine). The SDK refreshes within the last 120 seconds of an access token's life, so with a shorter lifetime every request refreshes, and runs the identity source, which can hit the identity provider's rate limit on a large plan.
 
 Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation.
+
+### Workload Identity Federation for the standard client (`api_federation`)
+
+The same exchange, against a rule whose OAuth scope is `workspace:developer` or `workspace:inference`, yields a workspace-scoped token that backs the standard client in place of `api_key`: every standard resource and data source (agents, skills, environments, vaults, memory stores, files, deployments, messages...) then runs on a token minted from the workload's own identity, and the pipeline stores no API key. The `api_federation` block takes the same attributes and environment variables as `federation`, so in a job set up as in the [guide's workload section](guides/workload_identity_federation#4-how-the-workload-consumes-the-rule), the whole configuration is:
+
+```hcl
+provider "anthropic" {
+  # ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_FEDERATION_RULE_ID,
+  # ANTHROPIC_SERVICE_ACCOUNT_ID and ANTHROPIC_IDENTITY_TOKEN_FILE fill it.
+  api_federation = {}
+}
+```
+
+Or, with the rule written out and an identity token fetched per exchange:
+
+```hcl
+provider "anthropic" {
+  api_federation = {
+    organization_id     = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id  = "fdrl_..." # oauth_scope = "workspace:developer"
+    service_account_id  = "svac_..."
+    identity_token_file = "/var/run/secrets/anthropic.com/token"
+  }
+}
+```
+
+- **It replaces `api_key`.** Configuring both is an error, and an exported `ANTHROPIC_API_KEY` is ignored with a warning, as `federation` does with `auth_token`.
+- **The token is scoped to one workspace at exchange time**, and the `anthropic-workspace-id` header does not apply to it, so the provider never sends that header on a federated standard client. The workspace is `api_federation.workspace_id`, else the provider-level `workspace_id`, else `ANTHROPIC_WORKSPACE_ID`; the two attributes must name the same workspace when both are set. A rule enabled for a single workspace needs none of them. One workspace per provider alias, as with an identity-linked key.
+- **A rule carries a single scope**, so managing both WIF (`org:admin`) and the workspace's resources from one configuration takes two rules and both blocks: `federation` for the admin endpoints, `api_federation` for everything else; the same rule in both is rejected at plan time. Each block exchanges on its own, so an identity token carrying a `jti` (GitHub Actions, Kubernetes, Entra) must be fetched fresh for each: give both blocks `github_actions` or an `identity_token_command`, or distinct files. One file, or `ANTHROPIC_IDENTITY_TOKEN_FILE` filling both blocks, presents the same assertion twice and the second exchange fails with `jti_reused`.
+- The Admin API has no federated counterpart: `admin_api_key` stays a stored key.
+
+Everything said of `federation` applies: the identity token source is re-read or re-run per exchange, the block alone enables it (the environment variables never do), and every attribute must be known at plan time.
 
 Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 
@@ -161,10 +197,34 @@ provider "anthropic" {}
 ### Optional
 
 - `admin_api_key` (String, Sensitive) The Anthropic Admin API key for organization management endpoints (workspaces, members). Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.
+- `api_federation` (Attributes) Obtain the standard client's credential through Workload Identity Federation instead of `api_key`, from a federation rule whose OAuth scope is `workspace:developer` or `workspace:inference`. The exchange is the same as for `federation`, with the same attributes and environment variables, and the minted token backs every standard resource and data source (agents, skills, environments, vaults, memory stores, files, messages...), so a workload manages its workspace with no stored API key. Conflicts with `api_key`; an exported ANTHROPIC_API_KEY is ignored, with a warning. The token is scoped to one workspace at exchange time: the provider-level `workspace_id` selects it when `api_federation.workspace_id` is unset, and the two must agree when both are set; no `anthropic-workspace-id` header is sent. (see [below for nested schema](#nestedatt--api_federation))
 - `api_key` (String, Sensitive) The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.
 - `auth_token` (String, Sensitive) An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, such as the Workload Identity Federation admin endpoints. Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.
 - `federation` (Attributes) Obtain the org:admin OAuth bearer token through Workload Identity Federation instead of `auth_token`. The provider exchanges an identity token from your platform (a CI OIDC token, a Kubernetes projected service account token, an Entra token...) for an Anthropic access token, and exchanges again before it expires, fetching a fresh identity token each time. Every attribute falls back to the environment variable the Anthropic SDKs read. Conflicts with `auth_token`; an exported ANTHROPIC_AUTH_TOKEN is ignored, with a warning. Give the federation rule a `token_lifetime_seconds` well above 120: the SDK refreshes within the last 120 seconds of a token's life, so a shorter lifetime refreshes, and fetches an identity token, on nearly every request. (see [below for nested schema](#nestedatt--federation))
-- `workspace_id` (String) Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header on every request of the standard client. Required with a personal or service account key that is not scoped to a single workspace; must be left unset with a single-workspace key, which the API rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.
+- `workspace_id` (String) Workspace (`wrkspc_...`) the standard client acts in. With `api_key`, it is sent as the `anthropic-workspace-id` header on every request of the standard client: required with a personal or service account key that is not scoped to a single workspace; must be left unset with a single-workspace key, which the API rejects with a 404 when the header names any workspace, its own included. With `api_federation`, it scopes the token at exchange time instead (same as `api_federation.workspace_id`, which must agree with it when both are set), and no header is sent. Not sent on the Admin API or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` and `api_federation.workspace_id` only.
+
+<a id="nestedatt--api_federation"></a>
+### Nested Schema for `api_federation`
+
+Optional:
+
+- `federation_rule_id` (String) Federation rule (`fdrl_...`) to exchange against. Can also be set via the ANTHROPIC_FEDERATION_RULE_ID environment variable.
+- `github_actions` (Attributes) Fetch the identity token from GitHub Actions' OIDC endpoint, with no shell, `curl` or `jq` on the runner: one request per exchange to ACTIONS_ID_TOKEN_REQUEST_URL, authenticated with ACTIONS_ID_TOKEN_REQUEST_TOKEN, so the single-use token is never presented twice. GitHub sets both variables only in a job with `permissions: id-token: write`; without them the plan fails. `github_actions = {}` requests the default audience. The request is stopped after 30 seconds. (see [below for nested schema](#nestedatt--api_federation--github_actions))
+- `identity_token` (String, Sensitive) A literal identity token (JWT). It cannot be refreshed, so applies that outlive it fail; prefer `github_actions`, `identity_token_file` or `identity_token_command`. Can also be set via the ANTHROPIC_IDENTITY_TOKEN environment variable.
+- `identity_token_command` (List of String) Command (program and arguments) that prints an identity token on stdout. The program is run directly, not through a shell: for a pipe or `$VARIABLE` expansion, make the shell the program (`["sh", "-c", "..."]`). It runs on every exchange, so short-lived tokens, and tokens with a `jti` claim that the exchange accepts only once, are fetched fresh each time. It is stopped after 30 seconds. Its stderr is not shown in diagnostics, since a failing CLI may echo the token there; it is logged at TF_LOG=DEBUG. On GitHub Actions, `github_actions` needs no command.
+- `identity_token_file` (String) Path to a file holding the identity token, re-read on every exchange so a rotating file (such as a Kubernetes projected token) stays current. The file must have been rotated by the next exchange if its token carries a `jti`, which the exchange accepts only once. Can also be set via the ANTHROPIC_IDENTITY_TOKEN_FILE environment variable.
+- `organization_id` (String) UUID of the Anthropic organization. Can also be set via the ANTHROPIC_ORGANIZATION_ID environment variable.
+- `service_account_id` (String) Service account (`svac_...`) the rule targets; the exchange fails if the rule targets another. Can also be set via the ANTHROPIC_SERVICE_ACCOUNT_ID environment variable.
+- `workspace_id` (String) Workspace (`wrkspc_...`) to scope the token to at exchange time. Required only when the rule is enabled for more than one workspace. Falls back to the provider-level `workspace_id`, then to the ANTHROPIC_WORKSPACE_ID environment variable, which the SDKs' own federation reads the same way.
+
+<a id="nestedatt--api_federation--github_actions"></a>
+### Nested Schema for `api_federation.github_actions`
+
+Optional:
+
+- `audience` (String) Audience (`aud` claim) to request. Defaults to `https://api.anthropic.com`, the audience a federation rule expects when its `match.audience` is unset; set it to the rule's `match.audience` otherwise.
+
+
 
 <a id="nestedatt--federation"></a>
 ### Nested Schema for `federation`
@@ -172,9 +232,17 @@ provider "anthropic" {}
 Optional:
 
 - `federation_rule_id` (String) Federation rule (`fdrl_...`) to exchange against. Can also be set via the ANTHROPIC_FEDERATION_RULE_ID environment variable.
-- `identity_token` (String, Sensitive) A literal identity token (JWT). It cannot be refreshed, so applies that outlive it fail; prefer `identity_token_file` or `identity_token_command`. Can also be set via the ANTHROPIC_IDENTITY_TOKEN environment variable.
-- `identity_token_command` (List of String) Command (program and arguments) that prints an identity token on stdout. The program is run directly, not through a shell: for a pipe or `$VARIABLE` expansion, make the shell the program (`["sh", "-c", "..."]`). It runs on every exchange, so short-lived tokens, and tokens with a `jti` claim that the exchange accepts only once, are fetched fresh each time. It is stopped after 30 seconds. Its stderr is not shown in diagnostics, since a failing CLI may echo the token there; it is logged at TF_LOG=DEBUG.
+- `github_actions` (Attributes) Fetch the identity token from GitHub Actions' OIDC endpoint, with no shell, `curl` or `jq` on the runner: one request per exchange to ACTIONS_ID_TOKEN_REQUEST_URL, authenticated with ACTIONS_ID_TOKEN_REQUEST_TOKEN, so the single-use token is never presented twice. GitHub sets both variables only in a job with `permissions: id-token: write`; without them the plan fails. `github_actions = {}` requests the default audience. The request is stopped after 30 seconds. (see [below for nested schema](#nestedatt--federation--github_actions))
+- `identity_token` (String, Sensitive) A literal identity token (JWT). It cannot be refreshed, so applies that outlive it fail; prefer `github_actions`, `identity_token_file` or `identity_token_command`. Can also be set via the ANTHROPIC_IDENTITY_TOKEN environment variable.
+- `identity_token_command` (List of String) Command (program and arguments) that prints an identity token on stdout. The program is run directly, not through a shell: for a pipe or `$VARIABLE` expansion, make the shell the program (`["sh", "-c", "..."]`). It runs on every exchange, so short-lived tokens, and tokens with a `jti` claim that the exchange accepts only once, are fetched fresh each time. It is stopped after 30 seconds. Its stderr is not shown in diagnostics, since a failing CLI may echo the token there; it is logged at TF_LOG=DEBUG. On GitHub Actions, `github_actions` needs no command.
 - `identity_token_file` (String) Path to a file holding the identity token, re-read on every exchange so a rotating file (such as a Kubernetes projected token) stays current. The file must have been rotated by the next exchange if its token carries a `jti`, which the exchange accepts only once. Can also be set via the ANTHROPIC_IDENTITY_TOKEN_FILE environment variable.
 - `organization_id` (String) UUID of the Anthropic organization. Can also be set via the ANTHROPIC_ORGANIZATION_ID environment variable.
 - `service_account_id` (String) Service account (`svac_...`) the rule targets; the exchange fails if the rule targets another. Can also be set via the ANTHROPIC_SERVICE_ACCOUNT_ID environment variable.
 - `workspace_id` (String) Workspace (`wrkspc_...`) to scope the token to at exchange time. Required only when the rule is enabled for more than one workspace. Can also be set via the ANTHROPIC_WORKSPACE_ID environment variable, which the SDKs' own federation reads the same way.
+
+<a id="nestedatt--federation--github_actions"></a>
+### Nested Schema for `federation.github_actions`
+
+Optional:
+
+- `audience` (String) Audience (`aud` claim) to request. Defaults to `https://api.anthropic.com`, the audience a federation rule expects when its `match.audience` is unset; set it to the rule's `match.audience` otherwise.
