@@ -7,7 +7,7 @@ description: |-
 
 # Claude Platform on AWS
 
-[Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws) is the Claude API operated by Anthropic and reached through an AWS gateway, `https://aws-external-anthropic.<region>.api.aws`. AWS authenticates every request (SigV4 or a key generated in the AWS Console), IAM authorizes it, and AWS Marketplace bills it. Signing up creates a new Anthropic organization tied to the AWS account: an existing organization cannot be converted, and nothing in it carries over.
+[Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws) is the Claude API operated by Anthropic and reached through an AWS gateway, `https://aws-external-anthropic.<region>.api.aws`. AWS authenticates every request (SigV4 or an API key), IAM authorizes it, and AWS Marketplace bills it. Signing up creates a new Anthropic organization tied to the AWS account: an existing organization cannot be converted, and nothing in it carries over.
 
 The provider reaches that organization through its `aws` block, documented with its rules in the "Cloud platforms" section of the [provider page](https://registry.terraform.io/providers/ippontech/anthropic/latest/docs). This guide covers what surrounds it: the AWS-side setup, how to split provider aliases, the IAM permissions Terraform needs, execution roles for scheduled deployments, and customer-managed keys.
 
@@ -186,7 +186,7 @@ resource "aws_iam_policy" "terraform_anthropic" {
 
 Workspace tags are AWS resource tags: they work with IAM conditions (`aws:ResourceTag/<key>`) and cost allocation ([workspaces](https://docs.aws.amazon.com/claude-platform/latest/userguide/workspaces.html)). Changing them is authorized by `TagResource` and `UntagResource`, not `UpdateWorkspace`, which authorizes a `name` or `data_residency` change; tags set at creation need only `CreateWorkspace`. The provider sends a tags change in a request of its own, since the gateway rejects tags combined with any other field, and that request carries every configured key, unchanged ones included: a key left out would keep a value changed outside Terraform between plan and apply, and the apply would fail as an inconsistent result. So a change that removes a tag while other tags remain needs both `TagResource` and `UntagResource`, a change that only adds or changes keys needs `TagResource`, and `tags = {}` needs only `UntagResource`. Every workspace read also records `ListTagsForResource` in CloudTrail, so the policy grants it, although a policy without it was not tried.
 
-With `aws.api_key` instead of SigV4, the principal also needs `aws-external-anthropic:CallWithBearerToken` on `"Resource": "*"`. Mind the IAM wildcard pitfalls the IAM page describes: `Delete*` does not match `Archive*` actions, and `*File` also matches the user profile actions.
+With `aws.api_key` instead of SigV4, the principal also needs `aws-external-anthropic:CallWithBearerToken` on `"Resource": "*"`. With a short-term key from AWS's token generator, CloudTrail logs each call under the IAM identity that minted the key, with the same event names as signed calls, so the policy above applies unchanged. Mind the IAM wildcard pitfalls the IAM page describes: `Delete*` does not match `Archive*` actions, and `*File` also matches the user profile actions.
 
 ## 4. Execution role for scheduled deployments
 
@@ -335,11 +335,12 @@ Verified against the real gateway:
 - a route the gateway does not serve answers 404 with an empty body, and an IAM deny answers 403 with a `permission_error` body naming the denied action;
 - the signature of a path holding an encoded KMS key ARN, and `?beta=true` on beta routes, are accepted;
 - Admin API requests need no `anthropic-workspace-id` header;
+- API key authentication (`aws.api_key` and `ANTHROPIC_AWS_API_KEY`) with short-term keys from AWS's token generator: the gateway accepts the key as `x-api-key`, which the provider sends, and as `Authorization: Bearer`, which the platform page documents; CloudTrail logs each call under the IAM identity that minted the key, with the same event names as with SigV4, so the same IAM permissions apply;
 - `workspace_geo` accepts `us` or no value; tags merge as on the Claude API, but only in a request of their own, which CloudTrail records as `TagResource` and `UntagResource` as [section 3](#3-iam-permissions-of-the-terraform-principal) describes; a `name` or `data_residency` update is recorded as `UpdateWorkspace`, and one that changes no tag sends no tags request.
 
-Not verified yet, each needing a Claude Platform on AWS organization:
+Not verified yet:
 
-1. That an AWS Console key is accepted as `x-api-key`, as SDK v1.84 sends it; the current platform page documents `Authorization: Bearer`.
+1. Long-term API keys generated in the AWS Console: the gateway has rejected them with `401 authentication_error` (`The security token included in the request is invalid.`), in either header and with plain `curl` as well, and the cause is under investigation with AWS Support.
 2. Attaching a KMS key to a workspace: the signature of the path is accepted, but no key was attached.
 3. Whether reading a workspace fails without `ListTagsForResource`, which CloudTrail records on every read.
 4. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
