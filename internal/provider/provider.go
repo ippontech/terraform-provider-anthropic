@@ -25,10 +25,7 @@ import (
 )
 
 // Ensure AnthropicProvider satisfies various provider interfaces.
-var (
-	_ provider.Provider                   = &AnthropicProvider{}
-	_ provider.ProviderWithValidateConfig = &AnthropicProvider{}
-)
+var _ provider.Provider = &AnthropicProvider{}
 
 // AnthropicProvider defines the provider implementation.
 type AnthropicProvider struct {
@@ -37,8 +34,7 @@ type AnthropicProvider struct {
 	// testing.
 	version string
 
-	// platform holds the platform.Platform that Configure resolved, or that
-	// ValidateConfig read from a platform block before it (see gate.go). The
+	// platform holds the platform.Platform that Configure resolved. The
 	// resource and data source factories read it (see gate.go), on other
 	// RPCs' goroutines, hence the atomic.
 	platform atomic.Value
@@ -98,23 +94,6 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 			},
 			"aws": awsSchema(),
 		},
-	}
-}
-
-// ValidateConfig records the platform a platform block selects, for the
-// factory gate (gate.go), when the block is known. Terraform validates a
-// provider configuration before the resources and data sources that use it,
-// on the same instance, and the framework calls Configure on each of them
-// while validating it: the stand-in of a type the platform does not serve
-// then fails there. That is what reports, at plan time, a data source whose
-// arguments are not known until apply: Terraform defers its read, and with it
-// every other call for it, to the apply. Configure, which follows on a
-// planning instance, records the platform again.
-func (p *AnthropicProvider) ValidateConfig(ctx context.Context, req provider.ValidateConfigRequest, resp *provider.ValidateConfigResponse) {
-	var aws types.Object
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("aws"), &aws)...)
-	if !aws.IsNull() && !aws.IsUnknown() {
-		p.platform.Store(platform.AWS)
 	}
 }
 

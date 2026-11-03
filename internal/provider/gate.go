@@ -16,8 +16,7 @@ import (
 const providerTypeName = "anthropic"
 
 // configuredPlatform is the platform the last successful Configure resolved,
-// or that ValidateConfig read from a platform block before it, first party
-// until then.
+// first party until then.
 func (p *AnthropicProvider) configuredPlatform() platform.Platform {
 	if pl, ok := p.platform.Load().(platform.Platform); ok {
 		return pl
@@ -30,12 +29,13 @@ func (p *AnthropicProvider) configuredPlatform() platform.Platform {
 // run (MoveResourceState is the one RPC without a Configure call, and no type
 // here implements it). So the factory is where a type the configured platform
 // does not serve can be swapped for a stand-in whose Configure fails, without
-// a line in any resource. Until a platform block is seen (schema RPCs, and
-// every RPC of a first-party configuration) the platform is first party and
-// every factory returns the real type. The stand-in exists once ValidateConfig
-// or Configure has seen one; the framework calls Configure while validating a
-// type too, so the stand-in fails at validation already. It carries the real
-// type's Metadata and Schema, so nothing but Configure changes.
+// a line in any resource. Before the provider is configured (schema and
+// validation RPCs) the platform is first party and every factory returns the
+// real type; the stand-in only ever exists after Configure, and it carries the
+// real type's Metadata and Schema, so even then nothing but Configure changes.
+// Validation must stay ungated: Terraform validates every block whatever its
+// count, so a block a module turns off with count = 0 would fail
+// (TestAWSValidationRefusesNothing).
 //
 // Unverified and undeclared types get the real type: they are allowed, and a
 // gateway 404 that is not the API's own is turned into an error by
