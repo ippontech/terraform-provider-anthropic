@@ -88,8 +88,8 @@ output "environment_networking_type" {
 
 - `archive_on_destroy` (Boolean) If `true`, destroying this resource archives the environment instead of permanently deleting it. Default: `false`.
 - `config` (Attributes) Cloud environment configuration including networking and packages. (see [below for nested schema](#nestedatt--config))
-- `description` (String) Optional description of the environment.
-- `metadata` (Map of String) User-provided metadata key-value pairs.
+- `description` (String) Optional description of the environment. Removing it from the configuration clears it.
+- `metadata` (Map of String) User-provided metadata key-value pairs. Keys removed from the configuration are deleted; removing the attribute deletes every key.
 
 ### Read-Only
 
