@@ -17,7 +17,7 @@ Read `GNUmakefile` and all `.github/workflows/`. Produce a table mapping each qu
 
 | Severity | Check |
 |---|---|
-| Critical | Every `uses:` SHA-pinned to a full commit SHA with version tag comment |
+| Critical | Every `uses:` SHA-pinned to a full commit SHA with version tag comment (a `docker://` image: by `@sha256:` digest after its tag) |
 | Critical | No attacker-controlled values (`github.event.pull_request.*`, `github.event.inputs.*`, branch names, commit messages) interpolated directly in `run:` |
 | Critical | Jobs using secrets not triggered by `pull_request`/`pull_request_target` from forks |
 | Critical | `permissions: {}` at workflow level; explicit `permissions:` block per job |
@@ -35,7 +35,7 @@ Verify `.github/workflows/security.yml` has all four jobs triggered on `pull_req
 |-----|------|---------|
 | `actionlint` | `rhysd/actionlint` (SHA-pinned) | Workflow syntax and hazardous patterns |
 | `poutine` | Binary; `poutine analyze_local . --config tools/.poutine.yml --fail-on-violation` | Unpinned actions, script injections |
-| `semgrep` | `semgrep/semgrep-action` (SHA-pinned); `config: tools/semgrep.yml` | `pull_request_target` misuse |
+| `semgrep` | `docker://semgrep/semgrep:<version>@sha256:<digest>` (pinned by digest), run as a step rather than the job container so that harden-runner applies; `args: semgrep scan --config tools/semgrep.yml --error --metrics=off --disable-version-check` | `pull_request_target` misuse |
 | `checkov` | `bridgecrewio/checkov-action` (SHA-pinned); `framework: github_actions` | Permissions, unsecure commands |
 
 Verify `.pre-commit-config.yaml` has matching hooks for all four tools.

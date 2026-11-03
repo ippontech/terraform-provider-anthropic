@@ -16,6 +16,7 @@ A Terraform provider on the [Terraform Plugin Framework](https://developer.hashi
 - `internal/sdkpage/`: `Cursor` walks an SDK `next_page` list (`pagination.PageCursor`) like `ListAutoPaging`, but a cursor the API already returned, or more than `MaxPages` pages, is an error instead of an endless loop. Use it for new cursor-paginated list data sources; the older ones still call `ListAutoPaging`.
 - `internal/acctest/`, `admintest/`, `oauthtest/`, `schematest/`, `wifprobetest/`: test helpers, see [Testing](#testing).
 - `examples/` (`provider/`, `resources/<name>/`, `data-sources/<name>/`): configs embedded in the docs and sourced by the native tests. `templates/`: doc templates that `make generate` renders to `docs/`. `tests/`: native tests. `tools/tools.go`: build-time tool imports only.
+- `tools/` is its own Go module. `tools/coversummary/` is the standard-library-only program that turns a coverage profile into the Markdown table of the CI test job.
 
 ### Anthropic Go SDK pin
 
@@ -97,6 +98,7 @@ make fmt            # Format Go code
 make tidy-check     # Fail if go.mod/go.sum are not tidy (go mod tidy -diff)
 make lint           # Run golangci-lint (.golangci.yml: only code that differs from origin/main), then the standard linters on the whole tree
 make test           # Run unit tests (120s timeout, 10 parallel workers)
+make cover          # make test with a coverage profile, then the coverage of each resource and data source file
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
 make terraform-fmt-check  # terraform fmt -check -diff -recursive (offline)
@@ -214,5 +216,7 @@ Leave user PII attributes (`email`, `name`) without `Sensitive: true` in schemas
 ## Conventions
 
 Commit messages and PR titles follow [conventional commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:` (documentation and examples), `refactor:`, `test:`, `ci:`, `chore:` (maintenance). PRs are squash-merged, and the PR title becomes the commit message.
+
+The `pr-title` check (`.github/workflows/pr-title.yml`) enforces this on the PR title and description, and again in the merge queue on the squash commit the queue built (`merge_group.head_commit.message`), so an edit made after the PR check cannot slip through: `<type>[(scope)][!]: <subject>` with a type among `feat`, `fix`, `perf`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build` and `ci` (the conventionalcommits preset types semantic-release reads, without the `feature` alias, which no release rule matches), or GitHub's `Revert "<title>"`. A revert (`Revert "<title>"`, or `revert: <subject>` without a scope) needs a `This reverts commit <sha>.` line in the description: the preset's `revertPattern` reads a revert only with it, GitHub's revert PR description (`Reverts <owner>/<repo>#<n>`) has none, and without it the revert publishes nothing. On PRs to `main` (except the `major/<version>` release PR, merged with a merge commit, outside the queue) it refuses a `!` before `: `, after the type or after any later `)` (the parser's `breakingHeaderPattern` has a greedy scope, so `chore(ci): refuse feat(api)!: titles` is breaking), and a `BREAKING CHANGE` line in the description (the parser's rule: `BREAKING CHANGE` or `BREAKING-CHANGE` at the start of any line, any case, after spaces or `*`, then `:` or a space), either of which would publish a major release. Only `feat`, `fix`, `perf`, `build`, `refactor`, `docs`, reverts and breaking changes publish a release (`.releaserc`); `chore`, `ci`, `test` and `style` do not, so a change that must reach users (a dependency security fix, say) needs `fix(deps):` or `build:`.
 
 Breaking changes (`feat!:`, a `BREAKING CHANGE:` footer) target the long-lived staging branch of the next major (`major/2.0.0` for the first one), not `main`, and reach `main` in a single merge commit at release time. `.releaserc` pins `branches` to `["main"]` so no staging branch can become a semantic-release release branch. Procedure: `RELEASE.md`, section "Major versions".
