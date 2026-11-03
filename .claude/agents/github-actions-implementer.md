@@ -18,7 +18,7 @@ You run in an isolated git worktree, on a branch of its own. Commit on that bran
 2. `origin/<base>`, when the spec names a base branch (a change stacked on an unmerged branch);
 3. `origin/main`.
 
-Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out). After start point 2 that fast-forward is refused when the spec's branch holds `main` commits the base lacks; the branch has no commits of its own then, so the main agent moves it anyway (`git fetch . +<commit>:<branch>`, or `git reset --keep <commit>` where it is checked out) and pushes it with `--force-with-lease`.
+Name your branch, the start point and your commit in the report: the main agent creates or fast-forwards the spec's branch to your commit (`git fetch . <commit>:<branch>`, or `git merge --ff-only <commit>` where that branch is checked out). When that fast-forward is refused, the main agent does not force it: it stops and asks the person, because the spec's branch or its base has moved (for example, the base was merged).
 
 Environment variables come from the project's `.env` through mise (`[env] _.file` in `mise.toml`); never `source` or read the file yourself. A worktree has no `.env`, so credential-dependent commands are expected to be unavailable there.
 
