@@ -251,6 +251,8 @@ The documented key policy can restrict the key to the workspaces it lists, throu
 2. Apply with `compartment_id` set to that output: the key is created with the restricted policy. Register its ARN with Anthropic.
 3. Apply with `attach_key = true`: the key is attached, in place.
 
+Keep both values set after the third apply, in a `terraform.tfvars` file next to the configuration rather than on the command line. Without `compartment_id`, the key's `count` drops to zero and the plan would destroy the key the workspace's data is encrypted with, while the workspace keeps it attached. `prevent_destroy` on the key makes such a plan fail instead.
+
 ```hcl
 variable "compartment_id" {
   type        = string
@@ -307,6 +309,11 @@ resource "aws_kms_key" "regulated" {
       },
     ]
   })
+
+  # Attached for good: a plan that would destroy the key fails instead.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 output "regulated_compartment_id" {
