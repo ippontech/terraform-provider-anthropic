@@ -86,6 +86,19 @@ make lint
 
 The pre-commit configuration runs `golangci-lint fmt` (gofmt, plus imports grouped with this module's packages last) on the Go files that differ from `origin/main`: the staged ones on commit, and with `pre-commit run -a` the files your branch changed, never the others. It also runs `golangci-lint run` and `go mod tidy -diff`, at the versions pinned in `mise.toml`.
 
+### Complexity
+
+```bash
+make complexity
+```
+
+The cognitive complexity of a function is capped at 20, in the non-test Go files under `internal/` (tests and the test-helper packages are left out: table-driven tests read better long). The `complexity` job compares every function with the merge base of your branch and `origin/main` (`make complexity COMPLEXITY_BASE=upstream/main` when `origin` is your fork):
+
+- a new function, or one that scored 20 or less there, must score 20 or less;
+- a function that already scored more there may change, as long as its score does not rise. When you have to change one, put the new logic in a helper.
+
+Nothing is committed: the functions above 20 are simply those above it on `main`, so once none is left, the cap is absolute. The job summary lists the functions your change concerns, with their scores before and after. Scores are those of gocognit as golangci-lint computes them; `//gocognit:ignore` and `//nolint` do not exempt a function.
+
 ### Run unit tests
 
 ```bash
