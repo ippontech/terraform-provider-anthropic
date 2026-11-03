@@ -37,13 +37,22 @@ tidy-check:
 
 # COVERPROFILE=<file> also writes a coverage profile (the CI test job does).
 test:
-	go test -v -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=120s -parallel=10 ./...
+	go test -v -cover$(if $(COVERPROFILE), -coverprofile=$(COVERPROFILE)) -timeout=300s -parallel=10 ./...
 
-# Unit tests, then the coverage of each resource and data source file, as the
-# CI job summary shows it (tools/coversummary).
+# Unit tests, then the coverage gate of the CI coverage job (.coverage.json,
+# tools/coversummary): the diff rule against the merge base with COVER_BASE,
+# the ratchet and the floor, followed by the coverage of each resource and
+# data source file. Fails like the CI job does. The tests profile the working
+# tree, so the diff goes from the merge base to the working tree too:
+# committed and uncommitted changes to tracked files (git add -N a new file).
+# The git diff options pin the format the gate parses, whatever the local git
+# configuration says.
+COVER_BASE ?= origin/main
 cover: COVERPROFILE := coverage.out
 cover: test
-	go run -C tools ./coversummary $(abspath $(COVERPROFILE))
+	base=$$(git merge-base $(COVER_BASE) HEAD) && \
+		git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --unified=0 --no-color "$$base" > coverage-diff.out
+	go run -C tools ./coversummary -config $(abspath .coverage.json) -diff $(abspath coverage-diff.out) $(abspath $(COVERPROFILE))
 
 .PHONY: cover
 
