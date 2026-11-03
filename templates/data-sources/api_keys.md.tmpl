@@ -2,14 +2,16 @@
 page_title: "anthropic_api_keys Data Source - anthropic"
 subcategory: "Organization"
 description: |-
-  Lists Anthropic API keys via the Admin API, with optional filtering by status and workspace.
+  Lists Anthropic API keys via the Admin API, with optional filtering by status, workspace and creator.
 ---
 
 # anthropic_api_keys (Data Source)
 
 Lists Anthropic API keys via the Admin API. All pages are fetched automatically.
 
-Results can optionally be filtered by `status` (`active` or `inactive`) and by `workspace_id`.
+Results can optionally be filtered by `status` (`active`, `inactive`, `archived` or `expired`), by `workspace_id` and by `created_by_user_id`.
+
+Each key's `workspace_id` is deprecated: it is null both for organization-scoped keys and for keys in the Default Workspace, and Admin API version 2026-10-21 removes it. Read `scope.workspace_id` instead, which carries the real workspace ID in both cases.
 
 > **API**: `GET /v1/organizations/api_keys` (Admin API).
 > **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
