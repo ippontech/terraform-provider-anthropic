@@ -23,7 +23,7 @@ output "effective_rate_limit_groups" {
   description = "Rate-limit groups that apply to the workspace, with the ID an override for each one takes."
   value = [
     for rl in data.anthropic_workspace_rate_limits.effective.rate_limits : {
-      group         = rl.group.type == "model_group" ? rl.group.display_name : rl.group.type
+      group         = rl.group == null ? null : (rl.group.type == "model_group" ? rl.group.display_name : rl.group.type)
       rate_limit_id = rl.rate_limit_id
     }
   ]
