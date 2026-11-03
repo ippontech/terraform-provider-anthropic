@@ -483,7 +483,8 @@ func apiKeyConfig(t *testing.T, r *APIKeyResource, name, status string) tfsdk.Co
 // ignore_changes = [status] plans the state value while the configuration
 // still says active (simulated here by a plan status equal to state), and
 // sending the configuration would switch a deactivated key back on. A
-// planned "expired" is never sent.
+// planned "expired" is never sent, configured or not: generated
+// configuration copies it from an expired key's state.
 func TestAPIKeyResource_UpdateSendsPlannedStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -500,6 +501,7 @@ func TestAPIKeyResource_UpdateSendsPlannedStatus(t *testing.T) {
 		{name: "ignore_changes keeps a key deactivated outside Terraform", configStatus: "active", stateStatus: "inactive", planStatus: "inactive", serverStatus: "inactive", wantStatus: "inactive"},
 		{name: "ignore_changes over a stale state", configStatus: "active", stateStatus: "inactive", planStatus: "inactive", serverStatus: "active", wantStatus: "inactive"},
 		{name: "ignore_changes over an expired key", configStatus: "active", stateStatus: "expired", planStatus: "expired", serverStatus: "expired", wantStatus: nil},
+		{name: "configured expired matching state", configStatus: "expired", stateStatus: "expired", planStatus: "expired", serverStatus: "expired", wantStatus: nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body map[string]any
@@ -716,8 +718,10 @@ func TestAPIKeyResource_ReadExpiredKey(t *testing.T) {
 	}
 }
 
-// expired is read-only: the API sets it, and POST /v1/organizations/api_keys/{id}
-// accepts only active, archived and inactive.
+// The validator accepts every status the API reports, expired included:
+// terraform plan -generate-config-out writes an expired key's status into the
+// generated configuration. A change to expired is rejected at plan time
+// instead (TestAPIKeyResource_statusPlanRejectsExpiredChange).
 func TestAPIKeyResource_statusValidator(t *testing.T) {
 	r := &APIKeyResource{}
 	s := schematest.ResourceSchema(t, r)
@@ -730,7 +734,7 @@ func TestAPIKeyResource_statusValidator(t *testing.T) {
 		"active":   false,
 		"inactive": false,
 		"archived": false,
-		"expired":  true,
+		"expired":  false,
 		"deleted":  true,
 	} {
 		var resp validator.StringResponse
@@ -740,6 +744,87 @@ func TestAPIKeyResource_statusValidator(t *testing.T) {
 		if got := resp.Diagnostics.HasError(); got != wantErr {
 			t.Errorf("status %q: error = %v, want %v", value, got, wantErr)
 		}
+	}
+}
+
+// planStatus runs the schema plan modifiers of status over state (null on
+// create) with the configured value config, as Terraform plans it: a null
+// configuration of an Optional+Computed attribute is unknown before the
+// modifiers.
+func planStatus(t *testing.T, r *APIKeyResource, stateStatus *string, config types.String) planmodifier.StringResponse {
+	t.Helper()
+	ctx := context.Background()
+	s := schematest.ResourceSchema(t, r)
+	objType := schematest.ResourceObjectType(t, r)
+	state := tfsdk.State{Raw: tftypes.NewValue(objType, nil), Schema: s}
+	stateValue := types.StringNull()
+	if stateStatus != nil {
+		vals := schematest.NullValues(t, r)
+		vals["id"] = tftypes.NewValue(tftypes.String, "apikey_01ABC")
+		vals["status"] = tftypes.NewValue(tftypes.String, *stateStatus)
+		state.Raw = tftypes.NewValue(objType, vals)
+		stateValue = types.StringValue(*stateStatus)
+	}
+	planValue := config
+	if config.IsNull() {
+		planValue = types.StringUnknown()
+	}
+	a, ok := s.Attributes["status"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("status is %T", s.Attributes["status"])
+	}
+	req := planmodifier.StringRequest{
+		Path: path.Root("status"), State: state, Plan: tfsdk.Plan{Raw: state.Raw, Schema: s},
+		StateValue: stateValue, ConfigValue: config, PlanValue: planValue,
+	}
+	resp := planmodifier.StringResponse{PlanValue: req.PlanValue}
+	for _, m := range a.PlanModifiers {
+		m.PlanModifyString(ctx, req, &resp)
+		if resp.Diagnostics.HasError() {
+			break
+		}
+		req.PlanValue = resp.PlanValue
+	}
+	return resp
+}
+
+// expired is read-only: the API sets it once expires_at has passed, and POST
+// /v1/organizations/api_keys/{id} does not accept it. A configured expired
+// that matches the state plans no change (generated configuration of an
+// expired key holds it) and is never sent, but a change to it, on create
+// included, fails the plan instead of ending in an inconsistent result.
+func TestAPIKeyResource_statusPlanRejectsExpiredChange(t *testing.T) {
+	expired, active := "expired", "active"
+	for _, tc := range []struct {
+		name        string
+		stateStatus *string
+		config      types.String
+		wantErr     bool
+		wantPlan    types.String
+	}{
+		{name: "expired in config matching an expired state", stateStatus: &expired, config: types.StringValue("expired"), wantPlan: types.StringValue("expired")},
+		{name: "unset over an expired state", stateStatus: &expired, config: types.StringNull(), wantPlan: types.StringValue("expired")},
+		{name: "expired in config over an active state", stateStatus: &active, config: types.StringValue("expired"), wantErr: true},
+		{name: "expired on create", config: types.StringValue("expired"), wantErr: true},
+		{name: "deactivate an active key", stateStatus: &active, config: types.StringValue("inactive"), wantPlan: types.StringValue("inactive")},
+		{name: "reactivate an expired key", stateStatus: &expired, config: types.StringValue("active"), wantPlan: types.StringValue("active")},
+		{name: "unknown in config", stateStatus: &active, config: types.StringUnknown(), wantPlan: types.StringUnknown()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := planStatus(t, &APIKeyResource{}, tc.stateStatus, tc.config)
+			if got := resp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Fatalf("error = %v, want %v: %v", got, tc.wantErr, resp.Diagnostics)
+			}
+			if tc.wantErr {
+				if summary := resp.Diagnostics.Errors()[0].Summary(); summary != "Invalid API Key Status" {
+					t.Errorf("summary = %q, want Invalid API Key Status", summary)
+				}
+				return
+			}
+			if !resp.PlanValue.Equal(tc.wantPlan) {
+				t.Errorf("planned %v, want %v", resp.PlanValue, tc.wantPlan)
+			}
+		})
 	}
 }
 
