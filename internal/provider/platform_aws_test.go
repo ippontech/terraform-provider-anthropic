@@ -362,6 +362,22 @@ func TestConfigureAWSCredentialSources(t *testing.T) {
 			},
 		},
 		{
+			// A configured credential wins over the environment: the exported
+			// key, meant for another tool, is not sent.
+			name:  "profile over ANTHROPIC_AWS_API_KEY",
+			block: map[string]any{"region": awsTestRegion, "profile": "platform-admin"},
+			setup: func(t *testing.T) {
+				t.Setenv("ANTHROPIC_AWS_API_KEY", "aws-console-key-env")
+				writeFile(t, os.Getenv("AWS_SHARED_CREDENTIALS_FILE"), fmt.Sprintf(
+					"[platform-admin]\naws_access_key_id = %s\naws_secret_access_key = %s\n", awsTestAccessKey, awsTestSecretKey))
+			},
+		},
+		{
+			name:  "access_key over ANTHROPIC_AWS_API_KEY",
+			block: map[string]any{"region": awsTestRegion, "access_key": awsTestAccessKey, "secret_key": awsTestSecretKey},
+			setup: func(t *testing.T) { t.Setenv("ANTHROPIC_AWS_API_KEY", "aws-console-key-env") },
+		},
+		{
 			name:  "default chain",
 			block: map[string]any{},
 			setup: func(t *testing.T) {
@@ -507,6 +523,10 @@ func TestConfigureAWSRejects(t *testing.T) {
 		{"unknown workspace", map[string]tftypes.Value{"workspace_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue), "aws": awsValue(keys)}, nil, "Unknown Workspace Configuration", "workspace_id"},
 		{"no workspace", map[string]tftypes.Value{"aws": awsValue(keys)}, map[string]string{"ANTHROPIC_WORKSPACE_ID": "wrkspc_first_party"}, "Missing Workspace", "ANTHROPIC_AWS_WORKSPACE_ID"},
 		{"no region", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"access_key": awsTestAccessKey, "secret_key": awsTestSecretKey})}, nil, "Missing AWS Region", "aws.region"},
+		// With base_url set, only signing needs a region. A configured
+		// credential signs although ANTHROPIC_AWS_API_KEY is exported.
+		{"no region, profile and ANTHROPIC_AWS_API_KEY", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"profile": "p", "base_url": "https://gateway.invalid"})}, map[string]string{"ANTHROPIC_AWS_API_KEY": "k"}, "Missing AWS Region", "aws.region"},
+		{"no region, access_key and ANTHROPIC_AWS_API_KEY", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"access_key": awsTestAccessKey, "secret_key": awsTestSecretKey, "base_url": "https://gateway.invalid"})}, map[string]string{"ANTHROPIC_AWS_API_KEY": "k"}, "Missing AWS Region", "aws.region"},
 		{"api_key and access_key", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"api_key": "k"}))}, nil, "Conflicting AWS Credentials", "at most one"},
 		{"profile and access_key", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"profile": "p"}))}, nil, "Conflicting AWS Credentials", "at most one"},
 		{"access_key alone", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "access_key": awsTestAccessKey})}, nil, "Incomplete AWS Credentials", "together"},

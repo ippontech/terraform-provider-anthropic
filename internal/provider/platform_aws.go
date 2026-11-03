@@ -201,10 +201,19 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 				"needs one too: any workspace of the same region.")
 	}
 
+	// ANTHROPIC_AWS_API_KEY fills api_key only when the block sets no
+	// credential of its own: a configured argument wins over the environment.
+	// Decided once and handed to the SDK as is, so that the region check
+	// below and the SDK agree on whether requests are signed.
+	apiKey := m.APIKey.ValueString()
+	if sources == 0 {
+		apiKey = os.Getenv("ANTHROPIC_AWS_API_KEY")
+	}
+
 	// The SDK falls back to these variables itself; checking them here puts
 	// the error on the attribute instead of in an SDK message.
 	region := firstNonEmpty(m.Region.ValueString(), os.Getenv("AWS_REGION"), os.Getenv("AWS_DEFAULT_REGION"))
-	signs := m.APIKey.ValueString() == "" && os.Getenv("ANTHROPIC_AWS_API_KEY") == ""
+	signs := apiKey == ""
 	derivesURL := firstNonEmpty(m.BaseURL.ValueString(), os.Getenv("ANTHROPIC_AWS_BASE_URL")) == ""
 	if region == "" && (signs || derivesURL) {
 		diags.AddAttributeError(path.Root("aws").AtName("region"), "Missing AWS Region",
@@ -216,7 +225,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 	}
 
 	return &anthropicaws.ClientConfig{
-		APIKey:             m.APIKey.ValueString(),
+		APIKey:             apiKey,
 		AWSAccessKey:       m.AccessKey.ValueString(),
 		AWSSecretAccessKey: m.SecretKey.ValueString(),
 		AWSSessionToken:    m.SessionToken.ValueString(),
