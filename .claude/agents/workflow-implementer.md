@@ -14,7 +14,7 @@ You implement or modify a single GitHub Actions workflow in `.github/workflows/`
 
 You run in an isolated git worktree, on a branch of its own. Commit on that branch and never check out the spec's branch: the main checkout or the kept worktree of an earlier run may hold it, and git refuses a branch checked out elsewhere. Fetch `origin`, then reset your branch to the first start point that applies (`git reset --hard <start>`; the worktree is fresh, so nothing is lost):
 
-1. the spec's branch, when it holds commits that neither `origin/main` nor the spec's base branch has (a branch just created from `main` holds none): `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
+1. the spec's branch, when it exists: `origin/<branch>`, or the local `<branch>` when `origin/<branch>` is missing or an ancestor of it (`git merge-base --is-ancestor origin/<branch> <branch>`), so that a rerun keeps the commits not pushed yet; when the two have diverged, stop without committing and report it;
 2. `origin/<base>`, when the spec names a base branch (a change stacked on an unmerged branch);
 3. `origin/main`.
 
@@ -64,9 +64,12 @@ Then stop at this local commit. Do not push or start another agent: the main age
 ## Done: .github/workflows/<filename>.yml
 - Spec branch / Triggers / Jobs: ...
 - actionlint/poutine/semgrep/checkov: ✅/❌
-- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <full sha from `git rev-parse HEAD`, or none>
+- Worktree / branch / start / commit: <path> / <your worktree's branch> / <the start point from *Setup*> / <short sha, or none>
+- Memory: <the notes you wrote in your agent-memory directory (see *Memory*), or none>
 - Left to the main agent: review, push, PR
 ```
+
+Your memory notes stay uncommitted in your worktree, outside the workflow commit (and nothing is committed when a finding remains): the *Memory* line of the report is how the main agent learns of them and carries them to `main`.
 
 ## Memory
 
