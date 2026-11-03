@@ -15,4 +15,4 @@ Load-bearing details for `internal/services/workspaces/`: the `anthropic_workspa
 
 ## Testing
 
-- `internal/services/workspaces/workspacetest.go` defines workspaces-specific shared helpers (`workspaceFixture`, `pageData`, `fetchAllPages`, plus a thin `newTestAdminClient` that delegates to `admintest.NewClient`); reuse them in any new workspaces unit test instead of duplicating pagination loops
+- `internal/services/workspaces/helpers_test.go` defines workspaces-specific shared helpers (`workspaceFixture`, `pageData`, `fetchAllPages`, plus a thin `newTestAdminClient` that delegates to `admintest.NewClient`); reuse them in any new workspaces unit test instead of duplicating pagination loops. It must stay a `_test.go` file: as `workspacetest.go` it compiled `net/http/httptest` and `internal/admintest` into the provider binary, which depguard now rejects

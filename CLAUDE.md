@@ -93,7 +93,7 @@ make build          # Compile the provider
 make install        # Build and install locally
 make fmt            # Format Go code
 make tidy-check     # Fail if go.mod/go.sum are not tidy (go mod tidy -diff)
-make lint           # Run golangci-lint
+make lint           # Run golangci-lint (.golangci.yml: only code that differs from origin/main), then the standard linters on the whole tree
 make test           # Run unit tests (120s timeout, 10 parallel workers)
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
@@ -101,6 +101,8 @@ make generate       # Regenerate docs and format examples
 make                # Default: fmt tidy-check lint test install generate
 go test -run TestName -v ./internal/services/agents/  # One service
 ```
+
+`.golangci.yml` (v2) enables the standard linters plus errorlint, gosec, depguard, gocognit (20, production code only: `_test.go` files and the test-helper packages are excluded) and 15 others, with gofmt and goimports (this module's imports in their own last group). The existing code has about 250 findings under it, so `issues.new-from-merge-base: origin/main` limits reports to code that differs from `origin/main`: keep `origin/main` fetched, and if the ref is missing golangci-lint silently reports everything (the CI lint job checks out the full history for that reason). Do not fix findings in lines a change does not otherwise touch; the catch-up is one mechanical PR, after which the setting goes. That setting filters every linter, so `make lint` and the CI lint job also run `golangci-lint run --no-config`: the standard linters on the whole tree, which has no finding there and must stay so. depguard keeps `acctest`, `admintest`, `oauthtest`, `providertest`, `schematest`, `sdktest`, `wifprobetest` and `net/http/httptest` out of non-test files, and `internal/provider` out of the services. CI pins golangci-lint in `provider.yml` (`version:` with a Renovate annotation); keep it in step with `mise.toml`. The pre-commit hooks run `golangci-lint fmt` on the Go files that differ from `origin/main` (the staged ones on commit; never an untouched file, even with `pre-commit run -a`), `golangci-lint run` and `go mod tidy -diff` through mise.
 
 Before committing a feature or a fix, run `make`, then `pre-commit run -a`.
 

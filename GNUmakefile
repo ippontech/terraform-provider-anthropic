@@ -6,8 +6,11 @@ build:
 install: build
 	go install -v ./...
 
+# .golangci.yml reports only code that differs from origin/main; the second
+# run keeps the standard linters on the whole tree.
 lint:
 	golangci-lint run
+	golangci-lint run --no-config
 
 generate:
 	cd tools; go generate ./...
