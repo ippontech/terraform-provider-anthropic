@@ -85,7 +85,7 @@ The layout of `tests/` (root module, `../examples/...` sources, the file-level `
 
 When writing the test:
 - assert exact values when they are deterministic (an input echoed back, a fixed enum) and presence (`!= ""`, `length(...) > 0`) for live API data;
-- assert on computed attributes or compare a data source with the resource that created its object, because an assertion on a required input only echoes the configuration back;
+- assert on computed attributes or compare a data source with the resource that created its object, because an assertion on a required input only echoes the configuration back; under `command = plan` a resource's computed attributes are unknown, so a plan-only test asserts on configured values;
 - order `run` blocks so that what a run references was created by an earlier one; destruction runs in reverse order;
 - keep real credentials out of test files: they come from the environment (mise loads `.env`), and a test file only ever holds the dummy credential of a plan-only test.
 
