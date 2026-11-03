@@ -39,6 +39,7 @@ Read the existing workflows (`ls .github/workflows/`) and the most similar one b
 
 ```bash
 pre-commit run actionlint --files .github/workflows/<filename>.yml
+mise trust  # once per worktree: the poutine hook runs through mise, which refuses an untrusted mise.toml
 pre-commit run poutine
 pre-commit run semgrep --files .github/workflows/<filename>.yml
 pre-commit run checkov --files .github/workflows/<filename>.yml
