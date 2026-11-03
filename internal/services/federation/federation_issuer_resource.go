@@ -509,7 +509,7 @@ func (r *FederationIssuerResource) Delete(ctx context.Context, req resource.Dele
 	}
 
 	_, err := r.client.Beta.Organization.Federation.Issuers.Archive(ctx, data.ID.ValueString(), anthropic.BetaOrganizationFederationIssuerArchiveParams{})
-	if err != nil {
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to archive federation issuer: %s", err))
 	}
 }
