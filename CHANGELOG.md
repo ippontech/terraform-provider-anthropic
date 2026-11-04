@@ -1,3 +1,9 @@
+## [1.81.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.80.0...v1.81.0) (2026-11-04)
+
+### ✨ Features
+
+* **federation_issuer:** expose poll_status and jwks_polling_disabled ([#441](https://github.com/ippontech/terraform-provider-anthropic/issues/441)) ([3bdf737](https://github.com/ippontech/terraform-provider-anthropic/commit/3bdf73752d85c31af72b7e973adeef287e55fd19)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#282](https://github.com/ippontech/terraform-provider-anthropic/issues/282)
+
 ## [1.80.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.79.0...v1.80.0) (2026-11-04)
 
 ### ✨ Features
