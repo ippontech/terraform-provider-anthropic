@@ -1,3 +1,9 @@
+## [1.71.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.70.0...v1.71.0) (2026-11-04)
+
+### ✨ Features
+
+* **agent:** support the auto permission policy ([#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444)) ([a71f966](https://github.com/ippontech/terraform-provider-anthropic/commit/a71f966d7be8518fa3bf179f40f8fc3ac7722067)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#443](https://github.com/ippontech/terraform-provider-anthropic/issues/443) [#510](https://github.com/ippontech/terraform-provider-anthropic/issues/510) [#510](https://github.com/ippontech/terraform-provider-anthropic/issues/510) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#273](https://github.com/ippontech/terraform-provider-anthropic/issues/273) [#510](https://github.com/ippontech/terraform-provider-anthropic/issues/510) [#510](https://github.com/ippontech/terraform-provider-anthropic/issues/510)
+
 ## [1.70.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.69.2...v1.70.0) (2026-11-04)
 
 ### ✨ Features
