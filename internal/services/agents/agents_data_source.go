@@ -254,28 +254,7 @@ func (d *AgentsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 								},
 							},
 						},
-						"multiagent": schema.SingleNestedAttribute{
-							Computed:            true,
-							MarkdownDescription: "Coordinator topology, null when the agent has none. A `self` roster entry is resolved by the API into an `agent` entry carrying the agent's own ID.",
-							Attributes: map[string]schema.Attribute{
-								"type": schema.StringAttribute{
-									Computed:            true,
-									MarkdownDescription: "Topology type (`coordinator`).",
-								},
-								"agents": schema.ListNestedAttribute{
-									Computed:            true,
-									MarkdownDescription: "Resolved roster of agents the coordinator may spawn.",
-									NestedObject: schema.NestedAttributeObject{
-										Attributes: map[string]schema.Attribute{
-											"type":    schema.StringAttribute{Computed: true, MarkdownDescription: "Entry type: `agent` or `advisor`."},
-											"id":      schema.StringAttribute{Computed: true, MarkdownDescription: "Referenced agent ID (`agent` entries)."},
-											"version": schema.Int64Attribute{Computed: true, MarkdownDescription: "Resolved version of the referenced agent (`agent` entries)."},
-											"model":   schema.StringAttribute{Computed: true, MarkdownDescription: "Advisor model ID (`advisor` entries)."},
-										},
-									},
-								},
-							},
-						},
+						"multiagent":         multiagentDataSourceSchema(),
 						"execution_identity": executionIdentityDataSourceSchema(),
 						"version": schema.Int64Attribute{
 							Computed:            true,

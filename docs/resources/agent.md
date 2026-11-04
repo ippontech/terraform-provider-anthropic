@@ -163,6 +163,35 @@ resource "anthropic_agent" "coordinator" {
   }
 }
 
+# Agent of the multiagent_20261001 type: it may delegate only to the support
+# agent and to copies of itself (inline agents off), and dynamic workflows are
+# turned off. Both settings are on by default with this type; an advisor
+# model can be added with advisor = { model = "..." }.
+resource "anthropic_agent" "orchestrator" {
+  model       = "claude-sonnet-4-6"
+  name        = "Support Orchestrator"
+  description = "Delegates support inquiries to the support agent only"
+
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      inline_agents_enabled = false
+      predefined_agents = [
+        {
+          type = "agent"
+          id   = anthropic_agent.assistant.id
+        },
+        {
+          type = "self"
+        },
+      ]
+    }
+    workflows = {
+      enabled = false
+    }
+  }
+}
+
 output "simple_agent_id" {
   description = "ID of the minimal agent."
   value       = anthropic_agent.simple.id
@@ -195,6 +224,15 @@ output "coordinator_roster_size" {
 Those defaults are also the provider's: a toolset that leaves `default_permission_policy` unset plans its default, and the apply sends it. Removing the attribute from an existing toolset therefore plans the default, which reverts `auto` or any other policy set before.
 
 `auto` is not a human checkpoint: a call the server judges safe runs before anyone sees it, and its effects might not be reversible. Keep `always_ask` on the tools whose calls a person must review. The server reads what your client posts in `user.message` events as your intent, so relaying untrusted end-user input there can get a call allowed. Permission policies do not apply to `custom_tools`, which your application runs.
+
+## Multiagent orchestration
+
+`multiagent` takes one of two types ([Multiagent orchestration](https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration)):
+
+- `coordinator`: the agent delegates to the agents listed in `agents`, which can also hold `self` (copies of the agent) and one `advisor` model.
+- `multiagent_20261001`: three settings, each turned on or off on its own. `subagents` lets the agent delegate to subagents in their own session threads, `workflows` lets it write dynamic workflows that the server runs in the background with many agents, and `advisor` gives the session's primary thread a model to consult mid-turn. `subagents` and `workflows` are on by default, each with inline agents (agents defined on the fly, never saved) besides the agents listed in its own `predefined_agents`; the advisor is off by default. To allow only the agents you list, set `inline_agents_enabled = false` under both settings and list at least one agent in each. Every agent in a run uses tokens, so set a session budget when you create sessions for an agent with workflows on.
+
+The provider sends the whole `multiagent_20261001` object on every create and update, defaults included, so the API's level-by-level merge of an update into the stored configuration always leaves exactly what the configuration says. A setting left out of the configuration stays null in state while the API holds its default, and shows as a change when it was modified outside Terraform. To move an agent from `coordinator` to `multiagent_20261001`, list its agents in `subagents.predefined_agents` and its advisor in `advisor`: the API replaces the whole object when the type changes.
 
 ## Execution identity
 
@@ -253,7 +291,7 @@ These lists are not the only restrictions applied to the two tools:
 - `model_effort` (String) How hard Claude works on each turn: `low`, `medium`, `high`, `xhigh` or `max`. `xhigh` and `max` spend noticeably more tokens, so they are cost-relevant. When omitted on create, the API resolves a per-model default and it is stored here. Effort follows the model: changing `model` without setting `model_effort` resolves the new model's default (known after apply). With an unchanged `model`, removing the attribute from the configuration keeps the last value rather than resetting it to the default.
 - `model_inference_geo` (String) Geographic region that serves the agent's model requests (for example `us` or `global`). The value is not validated locally because the data residency documentation does not state that these are the only values. When unset, requests follow the workspace's default inference geo. Removing the attribute clears the pin on the next update.
 - `model_speed` (String) Inference speed mode. `fast` provides faster output at premium pricing. Not all models support `fast`.
-- `multiagent` (Attributes) Coordinator topology (beta): the agent orchestrates work by spawning session threads, each running an agent from the roster. Entries must reference distinct agents, referenced agents must not have their own `multiagent` roster (depth limit 1), and `inference_geo` must match across the coordinator and all members. The roster is snapshotted on create/update: to pick up a newer version of a member, change its `version`. The API resolves a `self` entry into an `agent` reference carrying the coordinator's own ID and echoes the `advisor` entry last; state keeps the configured order and `self` entries as configured. When imported (no configuration to correlate with), a `self` entry is therefore read back as an `agent` entry whose `id` is the agent's own ID. (see [below for nested schema](#nestedatt--multiagent))
+- `multiagent` (Attributes) Multiagent orchestration (beta), of type `coordinator` or `multiagent_20261001` (see the Multiagent orchestration section). Referenced agents must not have their own `multiagent` (depth limit 1), and `inference_geo` must match across the agent and every agent it references. Agent references are snapshotted on create/update: to pick up a newer version of a referenced agent, change its `version`. The API resolves a `self` entry into an `agent` reference carrying the agent's own ID (and echoes a coordinator `advisor` entry last); state keeps the configured order and `self` entries as configured. When imported (no configuration to correlate with), a `self` entry is therefore read back as an `agent` entry whose `id` is the agent's own ID. (see [below for nested schema](#nestedatt--multiagent))
 - `skills` (Attributes List) Skills available to the agent. Maximum 20. (see [below for nested schema](#nestedatt--skills))
 - `system` (String) System prompt for the agent. Up to 100,000 characters.
 
@@ -404,8 +442,22 @@ Optional:
 
 Required:
 
-- `agents` (Attributes List) Roster of agents the coordinator may spawn. 1-20 entries, at most one `self` and one `advisor`. (see [below for nested schema](#nestedatt--multiagent--agents))
-- `type` (String) Topology type. Only `coordinator` is supported.
+- `type` (String) `coordinator` (a roster in `agents`) or `multiagent_20261001` (`subagents`, `workflows` and `advisor`, each turned on or off on its own).
+
+Optional:
+
+- `advisor` (Attributes) `multiagent_20261001` only. An advisor model the session's primary thread can consult mid-turn. Omitted, the agent has no advisor (the API default). For `coordinator`, use an `advisor` entry in `agents` instead. (see [below for nested schema](#nestedatt--multiagent--advisor))
+- `agents` (Attributes List) `coordinator` only, and required there. Roster of agents the coordinator may spawn. 1-20 entries referencing distinct agents, at most one `self` and one `advisor`. (see [below for nested schema](#nestedatt--multiagent--agents))
+- `subagents` (Attributes) `multiagent_20261001` only. Delegation to subagents, each running in its own session thread (one level deep, at most 25 child threads at a time). Omitted, it takes the API default: enabled, with inline agents. (see [below for nested schema](#nestedatt--multiagent--subagents))
+- `workflows` (Attributes) `multiagent_20261001` only. Dynamic workflows: programs the agent writes, which the server runs in the background with many agents. Omitted, it takes the API default: enabled, with inline agents. (see [below for nested schema](#nestedatt--multiagent--workflows))
+
+<a id="nestedatt--multiagent--advisor"></a>
+### Nested Schema for `multiagent.advisor`
+
+Required:
+
+- `model` (String) Advisor model ID. It must be at least as capable as the agent's model, or the API rejects the pairing.
+
 
 <a id="nestedatt--multiagent--agents"></a>
 ### Nested Schema for `multiagent.agents`
@@ -419,6 +471,52 @@ Optional:
 - `id` (String) ID of the referenced agent. Required when `type` is `agent`, forbidden otherwise.
 - `model` (String) Advisor model ID. Required when `type` is `advisor`, forbidden otherwise.
 - `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.
+
+
+<a id="nestedatt--multiagent--subagents"></a>
+### Nested Schema for `multiagent.subagents`
+
+Optional:
+
+- `enabled` (Boolean) Whether the setting is on. Defaults to `true`. When `false`, the other two attributes must be unset.
+- `inline_agents_enabled` (Boolean) Whether inline agents, which are defined on the fly and never saved, are allowed besides `predefined_agents`. Defaults to `true`. When `false`, `predefined_agents` must list at least one agent: set it to `false` under both `subagents` and `workflows` to allow only the agents you list.
+- `predefined_agents` (Attributes List) Saved agents the setting can use, 1-20 entries referencing distinct agents and at most one `self`. Separate from the other setting's list: an agent in one list is not added to the other. Omitted, the list is empty. (see [below for nested schema](#nestedatt--multiagent--subagents--predefined_agents))
+
+<a id="nestedatt--multiagent--subagents--predefined_agents"></a>
+### Nested Schema for `multiagent.subagents.predefined_agents`
+
+Required:
+
+- `type` (String) Entry type: `agent` (another agent) or `self` (copies of this agent).
+
+Optional:
+
+- `id` (String) ID of the referenced agent. Required when `type` is `agent`, forbidden otherwise.
+- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.
+
+
+
+<a id="nestedatt--multiagent--workflows"></a>
+### Nested Schema for `multiagent.workflows`
+
+Optional:
+
+- `enabled` (Boolean) Whether the setting is on. Defaults to `true`. When `false`, the other two attributes must be unset.
+- `inline_agents_enabled` (Boolean) Whether inline agents, which are defined on the fly and never saved, are allowed besides `predefined_agents`. Defaults to `true`. When `false`, `predefined_agents` must list at least one agent: set it to `false` under both `subagents` and `workflows` to allow only the agents you list.
+- `predefined_agents` (Attributes List) Saved agents the setting can use, 1-20 entries referencing distinct agents and at most one `self`. Separate from the other setting's list: an agent in one list is not added to the other. Omitted, the list is empty. (see [below for nested schema](#nestedatt--multiagent--workflows--predefined_agents))
+
+<a id="nestedatt--multiagent--workflows--predefined_agents"></a>
+### Nested Schema for `multiagent.workflows.predefined_agents`
+
+Required:
+
+- `type` (String) Entry type: `agent` (another agent) or `self` (copies of this agent).
+
+Optional:
+
+- `id` (String) ID of the referenced agent. Required when `type` is `agent`, forbidden otherwise.
+- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.
+
 
 
 

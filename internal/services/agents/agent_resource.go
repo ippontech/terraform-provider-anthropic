@@ -529,23 +529,42 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 
 			"multiagent": schema.SingleNestedAttribute{
 				Optional: true,
-				MarkdownDescription: "Coordinator topology (beta): the agent orchestrates work by spawning session threads, each running an agent from the roster. " +
-					"Entries must reference distinct agents, referenced agents must not have their own `multiagent` roster (depth limit 1), " +
-					"and `inference_geo` must match across the coordinator and all members. " +
-					"The roster is snapshotted on create/update: to pick up a newer version of a member, change its `version`. " +
-					"The API resolves a `self` entry into an `agent` reference carrying the coordinator's own ID and echoes the `advisor` entry last; " +
+				MarkdownDescription: "Multiagent orchestration (beta), of type `coordinator` or `multiagent_20261001` (see the Multiagent orchestration section). " +
+					"Referenced agents must not have their own `multiagent` (depth limit 1), and `inference_geo` must match across the agent and every agent it references. " +
+					"Agent references are snapshotted on create/update: to pick up a newer version of a referenced agent, change its `version`. " +
+					"The API resolves a `self` entry into an `agent` reference carrying the agent's own ID (and echoes a coordinator `advisor` entry last); " +
 					"state keeps the configured order and `self` entries as configured. " +
 					"When imported (no configuration to correlate with), a `self` entry is therefore read back as an `agent` entry whose `id` is the agent's own ID.",
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
-						Required:            true,
-						MarkdownDescription: "Topology type. Only `coordinator` is supported.",
-						Validators:          []validator.String{stringvalidator.OneOf("coordinator")},
+						Required: true,
+						MarkdownDescription: "`coordinator` (a roster in `agents`) or `multiagent_20261001` " +
+							"(`subagents`, `workflows` and `advisor`, each turned on or off on its own).",
+						Validators: []validator.String{stringvalidator.OneOf(multiagentTypeCoordinator, multiagentType20261001)},
+					},
+					"subagents": multiagentMemberSchema("subagents",
+						"`multiagent_20261001` only. Delegation to subagents, each running in its own session thread (one level deep, at most 25 child threads at a time). "+
+							"Omitted, it takes the API default: enabled, with inline agents."),
+					"workflows": multiagentMemberSchema("workflows",
+						"`multiagent_20261001` only. Dynamic workflows: programs the agent writes, which the server runs in the background with many agents. "+
+							"Omitted, it takes the API default: enabled, with inline agents."),
+					"advisor": schema.SingleNestedAttribute{
+						Optional: true,
+						MarkdownDescription: "`multiagent_20261001` only. An advisor model the session's primary thread can consult mid-turn. " +
+							"Omitted, the agent has no advisor (the API default). For `coordinator`, use an `advisor` entry in `agents` instead.",
+						Attributes: map[string]schema.Attribute{
+							"model": schema.StringAttribute{
+								Required: true,
+								MarkdownDescription: "Advisor model ID. It must be at least as capable as the agent's model, " +
+									"or the API rejects the pairing.",
+							},
+						},
 					},
 					"agents": schema.ListNestedAttribute{
-						Required:            true,
-						MarkdownDescription: "Roster of agents the coordinator may spawn. 1-20 entries, at most one `self` and one `advisor`.",
-						Validators:          []validator.List{listvalidator.SizeBetween(1, 20)},
+						Optional: true,
+						MarkdownDescription: "`coordinator` only, and required there. Roster of agents the coordinator may spawn. " +
+							"1-20 entries referencing distinct agents, at most one `self` and one `advisor`.",
+						Validators: []validator.List{listvalidator.SizeBetween(1, 20)},
 						NestedObject: schema.NestedAttributeObject{
 							Attributes: map[string]schema.Attribute{
 								"type": schema.StringAttribute{
@@ -1326,7 +1345,7 @@ func mapAgentResponseToState(ctx context.Context, agent *anthropic.BetaManagedAg
 	}
 
 	// Multiagent: correlate with the planned/prior roster (see mapMultiagentToState).
-	multiagent, d := mapMultiagentToState(ctx, agent.Multiagent, agent.ID, data.Multiagent)
+	multiagent, d := mapMultiagentToState(ctx, agent.Multiagent, agent.ID, data.Multiagent, mode)
 	diags.Append(d...)
 	data.Multiagent = multiagent
 

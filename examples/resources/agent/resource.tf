@@ -144,6 +144,35 @@ resource "anthropic_agent" "coordinator" {
   }
 }
 
+# Agent of the multiagent_20261001 type: it may delegate only to the support
+# agent and to copies of itself (inline agents off), and dynamic workflows are
+# turned off. Both settings are on by default with this type; an advisor
+# model can be added with advisor = { model = "..." }.
+resource "anthropic_agent" "orchestrator" {
+  model       = "claude-sonnet-4-6"
+  name        = "Support Orchestrator"
+  description = "Delegates support inquiries to the support agent only"
+
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      inline_agents_enabled = false
+      predefined_agents = [
+        {
+          type = "agent"
+          id   = anthropic_agent.assistant.id
+        },
+        {
+          type = "self"
+        },
+      ]
+    }
+    workflows = {
+      enabled = false
+    }
+  }
+}
+
 output "simple_agent_id" {
   description = "ID of the minimal agent."
   value       = anthropic_agent.simple.id
