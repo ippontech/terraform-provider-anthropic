@@ -22,6 +22,8 @@ Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable)
 
 > **Warning:** With `remove_on_destroy = true`, destroy removes the user's organization membership. This is **irreversible**; there is no archive or deactivate alternative. Apply the setting before removing the resource block or running `terraform destroy`: destroy uses the value stored in state, not unapplied configuration changes.
 
+> **Note on roles:** The API can set only `user`, `developer`, `billing` or `claude_code_user` in a Claude Console organization, and `user` or `managed` in a Claude Enterprise organization. A member can also hold `admin` or a Claude Enterprise administrative role (`owner`, `membership_admin`, `primary_owner`), granted outside the API; set `role` to the role they hold to manage them. The API cannot remove such a member: even with `remove_on_destroy = true`, destroying the resource fails and the membership stays. It cannot change the role of a member holding a Claude Enterprise administrative role either. See [Organization roles](https://platform.claude.com/docs/en/manage-claude/user-management#organization-roles).
+
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/organization_member/resource.tf" }}
