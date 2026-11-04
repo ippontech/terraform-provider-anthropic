@@ -172,6 +172,8 @@ Every attribute falls back to the environment variable the Anthropic SDKs read f
 
 ### `ant` CLI login (`cli`)
 
+~> **Experimental.** This block depends on the `ant` CLI's profile and credentials layout, read through the Anthropic Go SDK's `config` package. If Anthropic changes `ant` or that package, the block may have to change or be removed in a minor release rather than wait for the next major version.
+
 On an operator's workstation, the provider can use the `org:admin` login that the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) stores, and refresh it with the profile's refresh token, so an apply never outlives the login:
 
 ```bash
