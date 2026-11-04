@@ -52,7 +52,7 @@ type cliModel struct {
 func cliSchema() schema.SingleNestedAttribute {
 	return schema.SingleNestedAttribute{
 		Optional: true,
-		Description: "Obtain the org:admin OAuth bearer token from a profile written by `ant auth login`, refreshing it " +
+		Description: "Experimental: may change or be removed in a minor release if the `ant` CLI's profile layout changes. Obtain the org:admin OAuth bearer token from a profile written by `ant auth login`, refreshing it " +
 			"with the profile's refresh token. Used only when neither `auth_token` nor `federation` supplies the token, " +
 			"so the same configuration runs locally as the operator and in CI as a workload. Without `profile`, the " +
 			"provider looks for the one org:admin profile that matches `organization_id` (and `workspace_id`, when set).",
