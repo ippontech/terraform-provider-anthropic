@@ -25,6 +25,10 @@ The `govulncheck` CI job fails a pull request that brings in a known vulnerabili
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 ```
 
+### Secret scanning
+
+[gitleaks](https://github.com/gitleaks/gitleaks) scans the commits of every pull request (the `gitleaks` job of `.github/workflows/gitleaks.yml`) and, every week, the whole history. `.gitleaks.toml` adds a rule for Claude Enterprise scoped keys (`sk-ant-api01-`) to the default rules, which already cover `sk-ant-api03-` and `sk-ant-admin01-` keys. The pre-commit hooks run the same rules, with the gitleaks version `mise install` installs, on what your next push would publish: your staged and unstaged changes (not the untracked files, until `git add`), and the commits on no remote branch. `pre-commit install` installs a pre-commit and a pre-push hook (run it again if your clone has only the first): the changes are scanned before every commit, the commits before every push, so a commit holding a finding can still be amended. By hand, `pre-commit run -a` scans the changes and `pre-commit run -a --hook-stage pre-push` the commits. A test fixture that has to look like a secret (a truncated PEM block, a fake key) takes a `gitleaks:allow` comment at the end of its line, in the commit that adds the line: the job scans every commit of the pull request, so a comment added by a later commit leaves the check red (amend or rebase that commit, then force-push). A real secret that reached a commit must be revoked first, then removed from the history.
+
 ### Build and install the provider
 
 ```bash
@@ -74,11 +78,45 @@ Do not export `ANTHROPIC_AUTH_TOKEN` in your shell or keep it in `.env`. Set it 
 
 A `.env` file at the project root (gitignored) can hold the two API keys and other machine-specific values, but not `ANTHROPIC_AUTH_TOKEN`. `mise.toml` declares it under `[env] _.file = ".env"`, so [mise](https://mise.jdx.dev/environments/) exports its variables automatically when you enter the directory; nothing to source by hand.
 
+### Lint
+
+```bash
+make lint
+```
+
+`.golangci.yml` reports only code that differs from `origin/main` (`new-from-merge-base`), so code you did not touch never fails your pull request. This relies on `origin` pointing at `ippontech/terraform-provider-anthropic` and being fetched recently: when `origin` is your fork, run `golangci-lint run --new-from-merge-base=upstream/main` (or whatever the upstream remote is called) instead, otherwise the comparison starts from a stale point. If the ref does not exist at all, golangci-lint silently reports every finding in the repository.
+
+`make lint` then runs `golangci-lint run --no-config`, as the CI lint job does: the standard linters (errcheck, govet, ineffassign, staticcheck, unused) on the whole tree. The tree has no finding there, so a change that causes one, even on a line it does not edit (a helper left without callers, for instance), fails.
+
+The pre-commit configuration runs `golangci-lint fmt` (gofmt, plus imports grouped with this module's packages last) on the Go files that differ from `origin/main`: the staged ones on commit, and with `pre-commit run -a` the files your branch changed, never the others. It also runs `golangci-lint run` and `go mod tidy -diff`, at the versions pinned in `mise.toml`.
+
+### Complexity
+
+```bash
+make complexity
+```
+
+The cognitive complexity of a function is capped at 20, in the non-test Go files under `internal/` (tests and the test-helper packages are left out: table-driven tests read better long). The `complexity` job compares every function with the merge base of your branch and `origin/main` (`make complexity COMPLEXITY_BASE=upstream/main` when `origin` is your fork):
+
+- a new function, or one that scored 20 or less there, must score 20 or less;
+- a function that already scored more there may change, as long as its score does not rise. When you have to change one, put the new logic in a helper.
+
+Nothing is committed: the functions above 20 are simply those above it on `main`, so once none is left, the cap is absolute. The job summary lists the functions your change concerns, with their scores before and after. Scores are those of gocognit as golangci-lint computes them; `//gocognit:ignore` and `//nolint` do not exempt a function.
+
 ### Run unit tests
 
 ```bash
 make test
 ```
+
+`make cover` runs the same tests, then the coverage gate of the CI `coverage` job (`tools/coversummary`, thresholds and exclusions in `.coverage.json`), followed by the coverage of every resource and data source file, least covered first. The gate is a required check with three blocking rules and one monitored one, measured on the Go files of the module outside the test-helper packages, `main.go` and `tools/`:
+
+- **Diff**: at least 75% of the executable statements a pull request adds or changes (non-test Go files) are covered by unit tests. Write the tests with the code; `httptest` fakes and `resource.UnitTest` need no credential.
+- **Ratchet**: the total stays at or above `.coverage-baseline` minus 0.5 point. When a pull request raises the total, the job summary gives the new value to commit in `.coverage-baseline`. Lowering it is possible in the pull request that needs it, with a reason reviewers accept.
+- **Floor**: once the baseline reaches 80%, the total never drops under 80% and the baseline cannot go back under it.
+- **Packages** (monitored, not yet enforced): the job summary lists every package with its coverage and its distance to 80%, least covered first. `package_min` in `.coverage.json` is `null` for now; the last pull request of the coverage effort sets it to 80, and from then on every package must stay at 80% or more, not only the total.
+
+Locally, `make cover` compares the working tree, as the tests profile it, with its merge base with `origin/main` (`COVER_BASE=<ref>` to change it): committed and uncommitted changes count, in tracked files only (`git add -N` a new file for the diff rule to see it). `go test -cover` needs Go's `covdata` tool, missing from the toolchains `GOTOOLCHAIN` downloads (`go: no such tool "covdata"`); see the `covdata` note in CLAUDE.md.
 
 ### Run acceptance tests
 
@@ -99,6 +137,16 @@ make terraform-test
 ```
 
 Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set (some tests exercise Admin API resources).
+
+Three Terraform checks need no credentials and no network beyond downloading Go modules. They run on every pull request (`.github/workflows/terraform.yml`):
+
+```bash
+make terraform-fmt-check   # terraform fmt -check -diff -recursive
+make terraform-validate    # terraform validate in every example directory, against the provider just built
+make terraform-test-mock   # the native test files that use mock_provider
+```
+
+`make terraform-test-mock` selects every test file containing a `mock_provider` block, so such a file must not need credentials.
 
 ## Pull Request Process
 
@@ -130,27 +178,30 @@ For GitHub to show **Verified**, add the key's public half under your account *S
 
 ## Checklists for contributions
 
-- [ ] Add [semantics prefix](#semantic-pull-requests) to your commits
+- [ ] PR title follows [Conventional Commits](#conventional-commits) (checked by CI)
 - [ ] PR title and description written in English
 - [ ] Run `make` (fmt + lint + test + install + generate)
 - [ ] Run pre-commit hooks `pre-commit run -a`
 - [ ] CI is passing
 
-## Semantic Pull Requests
+## Conventional Commits
 
-To generate changelog, Pull Requests and Commit messages must follow [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) specs below:
+Pull requests are squash-merged: the PR title becomes the subject of the commit on `main`, and the PR description its body. [semantic-release](https://semantic-release.gitbook.io/semantic-release/) reads that commit to choose the next version and write the release notes, so the PR title must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>[(scope)]: <subject>`, for example `feat(agents): add execution_identity`. The `pr-title` check enforces it on every pull request, and again in the merge queue on the squash commit, so an edit made to the title or description after the check is caught there. The commits inside a pull request do not reach `main`; the optional `commit-msg` hook below keeps them in the same format anyway.
 
-- `feat:` for new features
-- `fix:` for bug fixes
-- `docs:` for documentation and examples
-- `refactor:` for code refactoring
-- `test:` for tests
-- `ci:` for CI purpose
-- `chore:` for chores stuff
+| Type | Use it for | Release |
+|---|---|---|
+| `feat` | a new resource, data source, attribute or behaviour | minor |
+| `fix` | a bug fix; Renovate also uses `fix(deps)` for Go module and Go toolchain updates, which change the shipped binary | patch |
+| `perf`, `refactor`, `build` | performance, refactoring, build changes | patch |
+| `docs` | documentation and examples: the Terraform Registry only shows the docs of a released version | patch |
+| `test`, `ci`, `style`, `chore` | tests, CI, formatting, tooling; Renovate uses `chore(deps)` for CI actions, pre-commit hooks and mise tools | none |
+| `Revert "<title>"` (GitHub's revert button), `revert: <subject>` | undoing a merged pull request; the description needs a `This reverts commit <sha>.` line, with the hash of the commit reverted on `main` (the commit of GitHub's revert branch carries it), or semantic-release reads no revert | patch |
 
-We use the `chore` prefix to generate a new release and for changelog generation (the label '[skip ci]' allows us to skip CI). It can be used for `chore: update changelog` commit message by example.
+`build`, `refactor` and `docs` release by choice of this repository (`releaseRules` in `.releaserc`); the others follow the defaults of `@semantic-release/commit-analyzer`. The `chore(release): <version>` commits on `main` are written by semantic-release itself after each release, to update `CHANGELOG.md`: a `chore` commit never triggers a release.
 
-We squash-merge PRs. The title of the PR is the commit title (commit type + scope + short description) and the description of the PR is the commit body.
+A breaking change, marked by `!` after the type or a `BREAKING CHANGE:` footer, publishes a major version. semantic-release reads such a footer on any line of the description that starts with `BREAKING CHANGE` or `BREAKING-CHANGE`, in any case and after spaces or `*`, so `Breaking change: none` counts too. It also takes a `!` before `: ` that follows any later `)` of the title as the breaking mark, so `chore(ci): refuse feat(api)!: titles` is breaking. The `pr-title` check refuses both on pull requests to `main`, except the `major/<version>` release PR, which is merged with a merge commit: breaking changes go through the staging branch described in [RELEASE.md](RELEASE.md#major-versions).
+
+To check your own commit messages locally, `pre-commit install` also installs a `commit-msg` hook ([conventional-pre-commit](https://github.com/compilerla/conventional-pre-commit)) that rejects a message outside these types.
 
 ## Dependency Updates
 
