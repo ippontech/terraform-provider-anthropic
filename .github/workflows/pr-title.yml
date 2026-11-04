@@ -1,0 +1,122 @@
+name: PR Title
+
+# Pull requests are squash-merged and the commit takes the PR title, which
+# semantic-release then reads to choose the next version and write the release
+# notes (.releaserc). A title it cannot parse silently produces no release.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  merge_group:
+
+permissions: {}
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # The check makes no network call.
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ''
+
+      # On a pull request, the check reads its title and description, which
+      # the squash merge turns into the commit's subject and body. In the merge
+      # queue, it reads the squash commit the queue built, which is what lands
+      # on main: the PR title and description as they stood then, with any edit
+      # made since the pull request was checked. Each queue entry is
+      # checked on its own commit only, so the merge queue must keep requiring
+      # all queue entries to pass the required checks.
+      - name: Check the PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          QUEUE_BASE_REF: ${{ github.event.merge_group.base_ref }}
+          QUEUE_MESSAGE: ${{ github.event.merge_group.head_commit.message }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == merge_group ]]; then
+            # The subject is the PR title followed by " (#<number>)", the body
+            # the PR description.
+            TITLE="${QUEUE_MESSAGE%%$'\n'*}"
+            TITLE="${TITLE%$'\r'}"
+            BODY=""
+            if [[ "${QUEUE_MESSAGE}" == *$'\n'* ]]; then
+              BODY="${QUEUE_MESSAGE#*$'\n'}"
+            fi
+            if [[ "${TITLE}" =~ ^(.*)\ \(#[0-9]+\)$ ]]; then
+              TITLE="${BASH_REMATCH[1]}"
+            fi
+            BASE_REF="${QUEUE_BASE_REF#refs/heads/}"
+          fi
+          # The breaking-change guards below apply to pull requests to main,
+          # except the major/<version> release PR of this repository (RELEASE.md,
+          # "Cutting the release"): it is merged with a merge commit, outside the
+          # merge queue, so neither its title nor its description becomes a
+          # commit semantic-release parses; the commits it brings carry the
+          # breaking changes.
+          guard_breaking=false
+          if [[ "${BASE_REF}" == "main" && ! ( "${HEAD_REPO}" == "${REPO}" && "${HEAD_REF}" == major/* ) ]]; then
+            guard_breaking=true
+          fi
+          # The types semantic-release acts on or knows (.releaserc and the
+          # commit-analyzer default rules, table in CONTRIBUTING.md). `feature`,
+          # an alias in the conventionalcommits preset, is left out: no release
+          # rule matches it, so it would silently publish nothing.
+          types='feat|fix|perf|revert|docs|style|chore|refactor|test|build|ci'
+          pattern="^(${types})(\([^()]+\))?(!)?: [^[:space:]]"
+          revert=false
+          if [[ "${TITLE}" =~ ^Revert\ \".+\"$ ]]; then
+            # GitHub's revert button titles the PR 'Revert "<original title>"'.
+            revert=true
+          elif [[ ! "${TITLE}" =~ ${pattern} ]]; then
+            echo "::error title=PR title::Expected '<type>[(scope)][!]: <subject>' with type one of ${types//|/, } (Conventional Commits, see CONTRIBUTING.md)."
+            exit 1
+          elif [[ "${BASH_REMATCH[1]}" == revert ]]; then
+            # The preset's revertPattern starts with `revert:`: a scope makes
+            # the commit neither a revert nor a type that releases.
+            if [[ -n "${BASH_REMATCH[2]}" ]]; then
+              echo "::error title=PR title::A revert takes no scope: semantic-release reads 'revert(<scope>):' as no revert, and publishes nothing. Write 'revert: <subject>'."
+              exit 1
+            fi
+            revert=true
+          fi
+          # semantic-release reads a revert only when the whole commit matches
+          # the preset's revertPattern, ^(?:Revert|revert:)\s"?([\s\S]+?)"?\s*This
+          # reverts commit (\w*)\., case-insensitive. GitHub writes that line in
+          # the commit of its revert branch, not in the PR description (it
+          # writes 'Reverts <owner>/<repo>#<number>'), and the description is
+          # what becomes the squash commit body.
+          if [[ "${revert}" == true ]] && ! grep -qiE 'This reverts commit [[:alnum:]_]+\.' <<< "${BODY}"; then
+            echo "::error title=PR description::A revert needs a line 'This reverts commit <sha>.' in the description, with the commit reverted on main (the commit of GitHub's revert branch carries it): without it semantic-release reads no revert, and publishes nothing."
+            exit 1
+          fi
+          # feat! / fix! on main would publish a major release. Breaking changes
+          # go to the major/<version> staging branch (RELEASE.md). The pattern is
+          # the preset's breakingHeaderPattern, ^(\w*)(?:\((.*)\))?!: (.*)$: its
+          # scope is greedy, so a later ')!: ' marks the commit as breaking too,
+          # as in 'chore(ci): refuse feat(api)!: titles'.
+          if [[ "${guard_breaking}" == true && "${TITLE}" =~ ^[[:alnum:]_]*(\(.*\))?!:\  ]]; then
+            echo "::error title=PR title::'!' before ': ', after the type or after any later ')', marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
+            exit 1
+          fi
+          # The PR description becomes the squash commit body, where a
+          # BREAKING CHANGE footer would publish a major release just the same.
+          # The pattern is the notes rule of conventional-commits-parser, which
+          # semantic-release applies to every line of the body:
+          # ^[\s|*]*(BREAKING CHANGE|BREAKING-CHANGE)[:\s]+, case-insensitive.
+          if [[ "${guard_breaking}" == true ]] && grep -qiE '^[[:space:]|*]*BREAKING[ -]CHANGE[:[:space:]]' <<< "${BODY}"; then
+            echo "::error title=PR description::A line starting with 'BREAKING CHANGE' or 'BREAKING-CHANGE' (any case, after spaces or '*', followed by ':' or a space) marks a breaking change, which must target the major/<version> staging branch, not main (see RELEASE.md, section Major versions)."
+            exit 1
+          fi
+          if [[ "${revert}" == true ]]; then
+            echo "PR title is a revert semantic-release reads."
+          else
+            echo "PR title follows Conventional Commits."
+          fi
