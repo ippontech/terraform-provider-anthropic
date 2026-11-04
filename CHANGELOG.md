@@ -1,3 +1,9 @@
+## [1.74.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.74.0...v1.74.1) (2026-11-04)
+
+### 🐛 Bug Fixes
+
+* **agent:** send every input_schema keyword of custom tools ([#448](https://github.com/ippontech/terraform-provider-anthropic/issues/448)) ([e438417](https://github.com/ippontech/terraform-provider-anthropic/commit/e43841764fb8048b2c43ac9ba297f4c3bc26a347)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#443](https://github.com/ippontech/terraform-provider-anthropic/issues/443) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#447](https://github.com/ippontech/terraform-provider-anthropic/issues/447) [#412](https://github.com/ippontech/terraform-provider-anthropic/issues/412) [#412](https://github.com/ippontech/terraform-provider-anthropic/issues/412) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#376](https://github.com/ippontech/terraform-provider-anthropic/issues/376)
+
 ## [1.74.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.73.0...v1.74.0) (2026-11-04)
 
 ### ✨ Features
