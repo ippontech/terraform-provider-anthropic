@@ -28,6 +28,31 @@ Anthropic issues several kinds of keys, and each endpoint accepts only some of t
 - A key acts on the organization it was created in: the provider sends no organization selector. A Claude Enterprise key created for all linked organizations adds the group scopes, `write:rbac_groups` included, since groups belong to the enterprise as a whole; the documentation does not say which organization its member and invite calls act on. If your company uses both Claude Console and Claude Enterprise, create a key in each and configure one [provider alias](https://developer.hashicorp.com/terraform/language/providers/configuration#alias-multiple-provider-configurations) per organization.
 - The Admin API accepts the `org:admin` OAuth token on its other endpoints too, but the provider sends `auth_token` only to the service account and federation endpoints: the other organization resources need `admin_api_key`.
 
+For example, a company with one Claude Console organization and one Claude Enterprise organization gives each its own key, and each resource names the configuration it uses (the default one when it names none):
+
+```hcl
+# Claude Console organization: the default configuration.
+provider "anthropic" {
+  admin_api_key = var.console_admin_key # sk-ant-admin01-...
+}
+
+# Claude Enterprise organization: a second configuration, under an alias.
+provider "anthropic" {
+  alias         = "enterprise"
+  admin_api_key = var.enterprise_key # sk-ant-api01-..., with the write:members scope
+}
+
+resource "anthropic_workspace" "data" {
+  name = "Data"
+}
+
+resource "anthropic_invite" "new_hire" {
+  provider = anthropic.enterprise
+  email    = "new.hire@example.com"
+  role     = "user"
+}
+```
+
 ### API Key (`api_key` / `ANTHROPIC_API_KEY`)
 
 Required for all inference resources: `anthropic_message`, `anthropic_agent`, `anthropic_skill`, models, token counting, etc.
