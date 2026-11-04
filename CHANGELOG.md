@@ -1,3 +1,9 @@
+## [1.69.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.68.0...v1.69.0) (2026-11-04)
+
+### ✨ Features
+
+* add anthropic_workspace_rate_limit resource ([#433](https://github.com/ippontech/terraform-provider-anthropic/issues/433)) ([ab065cf](https://github.com/ippontech/terraform-provider-anthropic/commit/ab065cfd42549f3f719cee952b35addfe4f98d8d)), closes [#432](https://github.com/ippontech/terraform-provider-anthropic/issues/432) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#362](https://github.com/ippontech/terraform-provider-anthropic/issues/362)
+
 ## [1.68.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.67.0...v1.68.0) (2026-11-04)
 
 ### ✨ Features
