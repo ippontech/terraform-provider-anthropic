@@ -1,3 +1,9 @@
+## [1.66.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.65.0...v1.66.0) (2026-11-04)
+
+### ✨ Features
+
+* **vault_credential:** add injection_location to environment_variable ([#439](https://github.com/ippontech/terraform-provider-anthropic/issues/439)) ([bf1d461](https://github.com/ippontech/terraform-provider-anthropic/commit/bf1d4611c01c5b2ab81c92dcc346d7613f6bf0b4)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#419](https://github.com/ippontech/terraform-provider-anthropic/issues/419) [#281](https://github.com/ippontech/terraform-provider-anthropic/issues/281)
+
 ## [1.65.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.64.1...v1.65.0) (2026-11-04)
 
 ### ✨ Features
