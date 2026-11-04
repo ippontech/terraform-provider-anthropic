@@ -539,8 +539,17 @@ func (r *FederationIssuerResource) Update(ctx context.Context, req resource.Upda
 		return
 	}
 
+	// On an error Terraform saves the state the response holds. Framework
+	// v1.19.0 already starts it as the prior state, but its doc comment says the
+	// plan, whose polling attributes are unknown here: set it explicitly, so a
+	// refused re-enable with nothing else to send keeps polling shown as paused.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	id := state.ID.ValueString()
-	var issuer *anthropic.BetaFederationIssuer
+	var issuer, toggled *anthropic.BetaFederationIssuer
 	var err error
 	if update.send {
 		issuer, err = r.client.Beta.Organization.Federation.Issuers.Update(ctx, id, update.params)
@@ -571,7 +580,11 @@ func (r *FederationIssuerResource) Update(ctx context.Context, req resource.Upda
 			resp.Diagnostics.AddError(summary, detail)
 			return
 		}
-		issuer = reenabled
+		if issuer == nil {
+			issuer = reenabled
+		} else {
+			toggled = reenabled
+		}
 	}
 	if issuer == nil {
 		// Only jwks_polling_disabled changed in configuration and polling is
@@ -588,6 +601,21 @@ func (r *FederationIssuerResource) Update(ctx context.Context, req resource.Upda
 	resp.Diagnostics.Append(mapFederationIssuerToState(ctx, issuer, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if toggled != nil {
+		// The toggle's response may come from data that lags the first write
+		// (the WIF endpoints served stale reads, see CLAUDE.md): take from it
+		// only what the toggle changes, and every other attribute from the
+		// response of the write that set it.
+		polled := plan
+		resp.Diagnostics.Append(mapFederationIssuerToState(ctx, toggled, &polled)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		plan.JWKSPollingDisabledAt = polled.JWKSPollingDisabledAt
+		plan.PollStatus = polled.PollStatus
+		plan.UpdatedAt = polled.UpdatedAt
+		plan.UpdatedByActorID = polled.UpdatedByActorID
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)

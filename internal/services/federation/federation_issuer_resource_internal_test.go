@@ -1072,6 +1072,88 @@ func TestFederationIssuerUpdate_ReenableRefusedKeepsOtherChanges(t *testing.T) {
 	}
 }
 
+// A refused re-enable with nothing else to send keeps the prior state, polling
+// shown as paused, even when the response starts as the plan (whose polling
+// attributes are unknown), as the framework doc comment describes.
+func TestFederationIssuerUpdate_ReenableOnlyRefusedKeepsPriorState(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"permission_error","message":"requires a Console session"}}`)
+	}))
+	defer srv.Close()
+
+	r := &FederationIssuerResource{client: oauthtest.NewClient(t, srv)}
+	state := federationIssuerStateModel(t, "2026-06-02T00:00:00Z")
+	state.JWKSPollingDisabled = types.BoolValue(false)
+	plan := reenablePlan(state)
+	req, resp := federationIssuerUpdateRequest(t, r, plan, state)
+	s := schematest.ResourceSchema(t, r)
+	seeded := tfsdk.State{Schema: s}
+	if diags := seeded.Set(context.Background(), &plan); diags.HasError() {
+		t.Fatalf("seed response: %v", diags)
+	}
+	resp.State = seeded
+
+	r.Update(context.Background(), req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error diagnostic for the refused toggle")
+	}
+	var got FederationIssuerResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("get state: %v", diags)
+	}
+	if !got.JWKSPollingDisabledAt.Equal(state.JWKSPollingDisabledAt) || !got.PollStatus.Equal(state.PollStatus) {
+		t.Errorf("jwks_polling_disabled_at/poll_status = %v/%v, want the prior paused values", got.JWKSPollingDisabledAt, got.PollStatus)
+	}
+}
+
+// When the toggle's response lags the first write (old name), state takes the
+// rename from the first response and only the polling attributes from the
+// toggle's, so the apply stays consistent with the plan.
+func TestFederationIssuerUpdate_ReenableAfterRenameIgnoresStaleToggleResponse(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("content-type", "application/json")
+		if _, toggle := body["jwks_polling_disabled"]; toggle {
+			// Polling resumed, but the name is still the old one.
+			_, _ = io.WriteString(w, federationIssuerFixtureWith(`{"type": "discovery"}`, `null`,
+				`{"consecutive_failures": 0, "last_fetched_at": "2026-06-01T12:00:00Z", "next_poll_at": "2026-06-04T00:05:00Z"}`))
+			return
+		}
+		_, _ = io.WriteString(w, strings.Replace(federationIssuerFixtureWith(`{"type": "discovery"}`, `"2026-06-02T00:00:00Z"`,
+			`{"consecutive_failures": 12, "last_fetched_at": "2026-06-01T12:00:00Z", "next_poll_at": null}`), `"github-actions"`, `"renamed"`, 1))
+	}))
+	defer srv.Close()
+
+	r := &FederationIssuerResource{client: oauthtest.NewClient(t, srv)}
+	state := federationIssuerStateModel(t, "2026-06-02T00:00:00Z")
+	state.JWKSPollingDisabled = types.BoolValue(false)
+	plan := reenablePlan(state)
+	plan.Name = types.StringValue("renamed")
+	req, resp := federationIssuerUpdateRequest(t, r, plan, state)
+
+	r.Update(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update returned errors: %v", resp.Diagnostics)
+	}
+	var got FederationIssuerResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("get state: %v", diags)
+	}
+	if got.Name.ValueString() != "renamed" {
+		t.Errorf("name = %v, want the rename from the first response", got.Name)
+	}
+	if !got.JWKSPollingDisabledAt.IsNull() || got.PollStatus.IsNull() || got.PollStatus.IsUnknown() {
+		t.Errorf("jwks_polling_disabled_at/poll_status = %v/%v, want the resumed polling of the toggle's response", got.JWKSPollingDisabledAt, got.PollStatus)
+	}
+}
+
 // Without the polling toggle in the body, an update error stays generic: the
 // OAuth restriction would only mislead.
 func TestFederationIssuerUpdateErrorDiagnostic_WithoutReenable(t *testing.T) {
