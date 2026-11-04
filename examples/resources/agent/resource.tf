@@ -117,7 +117,8 @@ resource "anthropic_agent" "custom_tools" {
             description = "The user's email address"
           }
         }
-        required = ["email"]
+        required             = ["email"]
+        additionalProperties = false
       })
     }
   ]

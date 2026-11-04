@@ -519,9 +519,11 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							MarkdownDescription: "Description shown to the agent. 1-1024 characters.",
 						},
 						"input_schema": schema.StringAttribute{
-							Optional:            true,
-							CustomType:          jsontypes.NormalizedType{},
-							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.",
+							Optional:   true,
+							CustomType: jsontypes.NormalizedType{},
+							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
+								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included. " +
+								"Include `type = \"object\"`: the request adds it when omitted, and the apply then fails with an inconsistent result.",
 						},
 					},
 				},
@@ -1130,11 +1132,10 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 					return nil, diags
 				}
 				// Since SDK v1.75.0 the unmarshal keeps root-level keys other than
-				// type/properties/required (additionalProperties, description, ...)
-				// in ExtraFields, and the request then sends them. SDK v1.67.0
-				// dropped them; keep dropping them so the SDK bump does not change
-				// the request body. Sending them is a separate, user-visible change.
-				schema.ExtraFields = nil
+				// type/properties/required (additionalProperties, $defs,
+				// description, ...) in ExtraFields, and the request sends them, so
+				// the schema reaches the API as configured. SDK v1.67.0 dropped
+				// them: the API then stored a looser schema than configured.
 				p.InputSchema = schema
 			}
 			tools = append(tools, anthropic.BetaAgentNewParamsToolUnion{OfCustom: &p})
