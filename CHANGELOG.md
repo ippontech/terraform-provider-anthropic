@@ -1,3 +1,9 @@
+## [1.69.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.69.0...v1.69.1) (2026-11-04)
+
+### 📚 Documentation
+
+* **provider:** say which key each organization endpoint accepts ([#427](https://github.com/ippontech/terraform-provider-anthropic/issues/427)) ([c271eda](https://github.com/ippontech/terraform-provider-anthropic/commit/c271eda94492a9dba8cacb601b53eda324bac6d9)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#367](https://github.com/ippontech/terraform-provider-anthropic/issues/367) [#433](https://github.com/ippontech/terraform-provider-anthropic/issues/433)
+
 ## [1.69.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.68.0...v1.69.0) (2026-11-04)
 
 ### ✨ Features
