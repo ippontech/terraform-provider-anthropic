@@ -100,8 +100,16 @@ Read-Only:
 
 ## Import
 
-Import the overrides of one group using the composite ID `<workspace_id>:<rate_limit_id>`. Every override the group currently has in the workspace is imported into `limits`, except one of a type `limits` does not accept, which is left out and left alone; the import fails if the group has no override at all. Import is meant for a group that one resource manages: if other `anthropic_workspace_rate_limit` resources manage other types of the same group, their types are imported too, the next plan shows them removed from the imported resource, and applying it clears them.
+Import the overrides of one group using the composite ID `<workspace_id>:<rate_limit_id>`. Every override the group currently has in the workspace is imported into `limits`, except one of a type `limits` does not accept, which is left out and left alone; the import fails if the group has no override at all.
 
 ```shell
 terraform import anthropic_workspace_rate_limit.example wrkspc_01abc123:rl_01xyz789
 ```
+
+When other `anthropic_workspace_rate_limit` resources manage other types of the same group, name the types this resource manages in a third segment, separated by commas. Only those types are imported, and the import fails if the group has no override of one of them. With the two-segment ID, the other resources' types would be imported too: the next plan would show them removed from the imported resource, and applying it would clear them.
+
+```shell
+terraform import anthropic_workspace_rate_limit.example wrkspc_01abc123:rl_01xyz789:requests_per_minute,output_tokens_per_minute
+```
+
+The resource's `id` keeps the two-segment form either way.

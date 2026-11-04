@@ -83,6 +83,12 @@ const maxWorkspaceRateLimitValue = 9007199254740991
 // ownedLimitTypes).
 const setTypesPrivateKey = "set_limit_types"
 
+// importTypesPrivateKey names the private-state entry in which ImportState
+// records the types a three-segment import ID names, as a JSON array. Read
+// imports only those types, fails if one of them has no override in the
+// group, then removes the entry.
+const importTypesPrivateKey = "import_limit_types"
+
 // privateStateReader and privateStateWriter are the methods of the
 // framework's private state used here; its type is internal to the
 // framework.
@@ -261,6 +267,15 @@ func (r *WorkspaceRateLimitResource) Read(ctx context.Context, req resource.Read
 	}
 
 	importing := state.Limits.IsNull()
+	var importOnly []string
+	if importing {
+		var diags diag.Diagnostics
+		importOnly, diags = readImportTypes(ctx, req.Private)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 	if entry == nil && importing {
 		// Nothing to import: the group has no override in this workspace (or
 		// the rate_limit_id is wrong). Removing the resource makes
@@ -280,7 +295,19 @@ func (r *WorkspaceRateLimitResource) Read(ctx context.Context, req resource.Read
 		}
 	}
 
-	limits, diags := types.MapValueFrom(ctx, types.Int64Type, overridesToState(entry, managed, importing))
+	values := overridesToState(entry, managed, importing)
+	if importOnly != nil {
+		missing := keepImportTypes(values, importOnly)
+		if len(missing) > 0 {
+			resp.Diagnostics.AddError("Cannot Import Workspace Rate Limit", fmt.Sprintf(
+				"The rate limit %s has no override of type %s in workspace %s. Name only types it overrides in the import ID, or create the resource instead.",
+				state.RateLimitID.ValueString(), strings.Join(missing, ", "), state.WorkspaceID.ValueString()))
+			return
+		}
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, importTypesPrivateKey, nil)...)
+	}
+
+	limits, diags := types.MapValueFrom(ctx, types.Int64Type, values)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -383,17 +410,83 @@ func (r *WorkspaceRateLimitResource) Delete(ctx context.Context, req resource.De
 // --- ImportState ---
 
 func (r *WorkspaceRateLimitResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	workspaceID, rateLimitID, ok := strings.Cut(req.ID, ":")
-	if !ok || workspaceID == "" || rateLimitID == "" {
+	parts := strings.SplitN(req.ID, ":", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			"Expected format: <workspace_id>:<rate_limit_id>",
+			"Expected format: <workspace_id>:<rate_limit_id>, or <workspace_id>:<rate_limit_id>:<type>[,<type>...] to import only the named limiter types",
 		)
 		return
 	}
+	workspaceID, rateLimitID := parts[0], parts[1]
+	if len(parts) == 3 {
+		names, err := parseImportTypes(parts[2])
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid import ID", err.Error())
+			return
+		}
+		raw, err := json.Marshal(names)
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid import ID", fmt.Sprintf("Unable to record the limiter types to import: %s", err))
+			return
+		}
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, importTypesPrivateKey, raw)...)
+	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("workspace_id"), workspaceID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("rate_limit_id"), rateLimitID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), workspaceRateLimitID(workspaceID, rateLimitID))...)
+}
+
+// parseImportTypes reads the third segment of an import ID: a comma-separated
+// list of limiter types that limits accepts, each named once.
+func parseImportTypes(segment string) ([]string, error) {
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range strings.Split(segment, ",") {
+		switch {
+		case !slices.Contains(workspaceRateLimitTypes, name):
+			return nil, fmt.Errorf("the import ID names %q, which is not a limiter type limits accepts (%s)", name, strings.Join(workspaceRateLimitTypes, ", "))
+		case seen[name]:
+			return nil, fmt.Errorf("the import ID names %q twice", name)
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// readImportTypes returns the types a three-segment import ID named, or nil
+// when the import ID had two segments (or Read is not part of an import).
+func readImportTypes(ctx context.Context, private privateStateReader) ([]string, diag.Diagnostics) {
+	raw, diags := private.GetKey(ctx, importTypesPrivateKey)
+	if diags.HasError() || len(raw) == 0 {
+		return nil, diags
+	}
+	var names []string
+	if err := json.Unmarshal(raw, &names); err != nil {
+		diags.AddError("Invalid Private State", fmt.Sprintf("Unable to read the limiter types to import: %s", err))
+	}
+	return names, diags
+}
+
+// keepImportTypes drops from values every type the import ID did not name,
+// and returns, sorted, the named types the group has no override of.
+func keepImportTypes(values map[string]int64, named []string) []string {
+	wanted := map[string]bool{}
+	var missing []string
+	for _, name := range named {
+		wanted[name] = true
+		if _, ok := values[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	for name := range values {
+		if !wanted[name] {
+			delete(values, name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
 }
 
 // ============================================================================

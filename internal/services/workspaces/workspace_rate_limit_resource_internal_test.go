@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -759,6 +760,91 @@ func TestWorkspaceRateLimitResource_ImportState(t *testing.T) {
 		if !resp.Diagnostics.HasError() {
 			t.Errorf("import ID %q: expected an error", bad)
 		}
+	}
+}
+
+// A third segment names the types to import: ImportState records them in
+// private state and keeps the two-segment id.
+func TestWorkspaceRateLimitResource_ImportStateWithTypes(t *testing.T) {
+	r := &WorkspaceRateLimitResource{}
+
+	resp := resource.ImportStateResponse{State: schematest.NullState(t, r)}
+	resp.Private = newPrivateState(resp.Private)
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "wrkspc_01WS:rl_01SONNET:requests_per_minute,tokens_per_day"}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: %v", resp.Diagnostics)
+	}
+	var got WorkspaceRateLimitResourceModel
+	resp.State.Get(context.Background(), &got)
+	if got.ID.ValueString() != "wrkspc_01WS:rl_01SONNET" || got.RateLimitID.ValueString() != "rl_01SONNET" {
+		t.Errorf("id/rate_limit_id = %q/%q, want the two-segment id", got.ID.ValueString(), got.RateLimitID.ValueString())
+	}
+	names, diags := readImportTypes(context.Background(), resp.Private)
+	if diags.HasError() || strings.Join(names, ",") != "requests_per_minute,tokens_per_day" {
+		t.Errorf("recorded types = %v (%v), want [requests_per_minute tokens_per_day]", names, diags)
+	}
+
+	for _, bad := range []string{
+		"wrkspc_01WS:rl_01SONNET:",                                        // empty list
+		"wrkspc_01WS:rl_01SONNET:requests_per_hour",                       // not a type limits accepts
+		"wrkspc_01WS:rl_01SONNET:requests_per_minute,",                    // empty entry
+		"wrkspc_01WS:rl_01SONNET:requests_per_minute,requests_per_minute", // named twice
+		"wrkspc_01WS:rl_01SONNET:enqueued_batch_requests",                 // listed by the API, not declarable
+	} {
+		resp := resource.ImportStateResponse{State: schematest.NullState(t, r)}
+		resp.Private = newPrivateState(resp.Private)
+		r.ImportState(context.Background(), resource.ImportStateRequest{ID: bad}, &resp)
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("import ID %q: expected an error", bad)
+		}
+	}
+}
+
+// runRateLimitImportRead runs the Read that follows an import whose ID named
+// the given types.
+func runRateLimitImportRead(t *testing.T, list string, named []string) resource.ReadResponse {
+	t.Helper()
+	srv, _ := rateLimitServer(t, "", list, http.StatusOK)
+	r := &WorkspaceRateLimitResource{adminClient: newTestAdminClient(t, srv)}
+
+	importResp := resource.ImportStateResponse{State: schematest.NullState(t, r)}
+	importResp.Private = newPrivateState(importResp.Private)
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "wrkspc_01WS:" + testRateLimitID + ":" + strings.Join(named, ",")}, &importResp)
+	if importResp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: %v", importResp.Diagnostics)
+	}
+	state := rateLimitModel(nil)
+	resp := resource.ReadResponse{State: rateLimitState(t, r, state), Private: importResp.Private}
+	r.Read(context.Background(), resource.ReadRequest{State: rateLimitState(t, r, state), Private: importResp.Private}, &resp)
+	return resp
+}
+
+// The group overrides requests_per_minute and input_tokens_per_minute; an
+// import ID naming only requests_per_minute leaves the other type to the
+// resource that manages it, then clears the private-state entry.
+func TestWorkspaceRateLimitResource_ReadImportTakesOnlyNamedTypes(t *testing.T) {
+	resp := runRateLimitImportRead(t, rateLimitsListForRead, []string{"requests_per_minute"})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+	limits, isNull := stateLimits(t, resp.State)
+	if isNull || len(limits) != 1 || limits["requests_per_minute"] != 150 {
+		t.Errorf("limits = %v (null %v), want only requests_per_minute = 150", limits, isNull)
+	}
+	if names, _ := readImportTypes(context.Background(), resp.Private); names != nil {
+		t.Errorf("import types still recorded after Read: %v", names)
+	}
+}
+
+// A named type the group does not override fails the import, rather than
+// importing a resource that would set it on the next apply.
+func TestWorkspaceRateLimitResource_ReadImportNamedTypeWithoutOverrideFails(t *testing.T) {
+	resp := runRateLimitImportRead(t, rateLimitsListForRead, []string{"requests_per_minute", "tokens_per_day"})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error for a named type with no override")
+	}
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "tokens_per_day") || strings.Contains(detail, "requests_per_minute") {
+		t.Errorf("detail = %q, want it to name tokens_per_day only", detail)
 	}
 }
 
