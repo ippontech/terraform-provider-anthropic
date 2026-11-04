@@ -1,3 +1,9 @@
+## [1.79.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.78.0...v1.79.0) (2026-11-04)
+
+### ✨ Features
+
+* **service_account_workspace:** update workspace_role in place ([#442](https://github.com/ippontech/terraform-provider-anthropic/issues/442)) ([aefe0b0](https://github.com/ippontech/terraform-provider-anthropic/commit/aefe0b08eb533a25fdd080022275d537e0b8437b)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#361](https://github.com/ippontech/terraform-provider-anthropic/issues/361)
+
 ## [1.78.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.77.0...v1.78.0) (2026-11-04)
 
 ### ✨ Features
