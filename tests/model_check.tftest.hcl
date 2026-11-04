@@ -5,6 +5,10 @@
 # terraform test run: in the module that tests/model.tftest.hcl runs against
 # the live API, it would turn that run red once the model is deprecated.
 
+test {
+  parallel = true
+}
+
 mock_provider "anthropic" {}
 
 run "model_check_passes_on_active_model" {
