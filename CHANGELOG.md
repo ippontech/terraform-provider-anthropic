@@ -1,3 +1,9 @@
+## [1.70.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.69.2...v1.70.0) (2026-11-04)
+
+### ✨ Features
+
+* **agent:** add web_search and web_fetch tool options ([#443](https://github.com/ippontech/terraform-provider-anthropic/issues/443)) ([3c4bf79](https://github.com/ippontech/terraform-provider-anthropic/commit/3c4bf792eb0fff77724bfabf29aa33f406142d61)), closes [#510](https://github.com/ippontech/terraform-provider-anthropic/issues/510) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#275](https://github.com/ippontech/terraform-provider-anthropic/issues/275) [#275](https://github.com/ippontech/terraform-provider-anthropic/issues/275) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395)
+
 ## [1.69.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.69.1...v1.69.2) (2026-11-04)
 
 ### 🐛 Bug Fixes
