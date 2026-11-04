@@ -1,3 +1,9 @@
+## [1.80.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.79.0...v1.80.0) (2026-11-04)
+
+### ✨ Features
+
+* add anthropic_telemetry_destination resource ([#437](https://github.com/ippontech/terraform-provider-anthropic/issues/437)) ([cf1d06b](https://github.com/ippontech/terraform-provider-anthropic/commit/cf1d06bb416a0b59f68b5d5f8e22b9a51215435d)), closes [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#436](https://github.com/ippontech/terraform-provider-anthropic/issues/436) [#442](https://github.com/ippontech/terraform-provider-anthropic/issues/442) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#364](https://github.com/ippontech/terraform-provider-anthropic/issues/364) [#436](https://github.com/ippontech/terraform-provider-anthropic/issues/436)
+
 ## [1.79.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.78.0...v1.79.0) (2026-11-04)
 
 ### ✨ Features
