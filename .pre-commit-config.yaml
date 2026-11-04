@@ -1,3 +1,12 @@
+# `pre-commit install` installs the commit-msg and pre-push hooks too: the
+# commit-msg hook checks the Conventional Commits format (CONTRIBUTING.md,
+# Conventional Commits) and the pre-push hook runs the gitleaks scan of the
+# commits not pushed. Every other hook stays at the pre-commit stage:
+# default_stages covers the hooks that name no stage of their own, and
+# `stages: [pre-commit]` the ones whose manifest names pre-push
+# (end-of-file-fixer and trailing-whitespace).
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -5,7 +14,15 @@ repos:
     - id: check-yaml
       exclude: ^\.gitlab
     - id: end-of-file-fixer
+      stages: [pre-commit]
     - id: trailing-whitespace
+      stages: [pre-commit]
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        # Same types as the pr-title check (.github/workflows/pr-title.yml).
+        args: [feat, fix, perf, revert, docs, style, chore, refactor, test, build, ci]
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.109.4
     hooks:
@@ -27,6 +44,37 @@ repos:
         entry: mise exec -- poutine analyze_local . --config tools/.poutine.yml --fail-on-violation
         pass_filenames: false
         always_run: true
+      # Secrets in what the next push would publish, with the rules of
+      # .gitleaks.toml, at the version pinned in mise.toml (the gitleaks
+      # workflow scans the commits of a pull request, once pushed): the commits
+      # on no remote branch, the staged changes, and the unstaged ones, which
+      # `pre-commit run -a` does not stash. Untracked files are left out, as
+      # by every hook. A deliberate fake in a test takes `gitleaks:allow` at
+      # the end of its line, in the commit that adds the line.
+      #
+      # The commits run before a push (`pre-commit run -a --hook-stage
+      # pre-push` by hand), from the commit pushed, or HEAD outside a push.
+      # Before a commit, they still hold the one `git commit --amend` or a
+      # fixup is about to rewrite, so a finding there would block its fix.
+      # always_run: a push whose net diff is empty can still carry a commit
+      # that adds a secret and one that removes it.
+      - id: gitleaks
+        name: gitleaks (commits not pushed)
+        language: system
+        entry: sh -c 'exec mise exec -- gitleaks git --log-opts="${PRE_COMMIT_TO_REF:-HEAD} --not --remotes" --config .gitleaks.toml --redact --no-banner --verbose'
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: gitleaks
+        name: gitleaks (staged changes)
+        language: system
+        entry: mise exec -- gitleaks git --pre-commit --staged --config .gitleaks.toml --redact --no-banner --verbose
+        pass_filenames: false
+      - id: gitleaks
+        name: gitleaks (unstaged changes)
+        language: system
+        entry: mise exec -- gitleaks git --pre-commit --config .gitleaks.toml --redact --no-banner --verbose
+        pass_filenames: false
   - repo: https://github.com/semgrep/semgrep
     rev: v1.183.0
     hooks:
@@ -46,3 +94,36 @@ repos:
           - --quiet
           - --compact
         files: ^\.github/workflows/
+  # Go hooks run the versions pinned in mise.toml (Go, golangci-lint), like the
+  # poutine hook above, so they match `make lint` and the CI lint job.
+  - repo: local
+    hooks:
+      # gofmt + goimports as configured in .golangci.yml, which rewrite whole
+      # files. Of the files pre-commit passes, only those that differ from the
+      # merge base with origin/main (from HEAD when that ref is missing) are
+      # formatted: the staged files on commit, and with `pre-commit run -a`
+      # the files the branch changed, never the untouched ones.
+      - id: golangci-lint-fmt
+        name: golangci-lint fmt
+        language: system
+        entry: >-
+          bash -c 'base=$(git merge-base origin/main HEAD 2>/dev/null) || base=HEAD;
+          changed=$(git -c core.quotePath=false diff --name-only "$base");
+          files=(); for f in "$@"; do grep -qxF -- "$f" <<<"$changed" && files+=("$f"); done;
+          [ ${#files[@]} -eq 0 ] || exec mise exec -- golangci-lint fmt "${files[@]}"' --
+        types: [go]
+      # Lints the packages, but reports only code that differs from origin/main
+      # (new-from-merge-base in .golangci.yml), as the CI lint job does.
+      - id: golangci-lint
+        name: golangci-lint run
+        language: system
+        entry: mise exec -- golangci-lint run
+        types: [go]
+        pass_filenames: false
+        require_serial: true
+      - id: go-mod-tidy
+        name: go mod tidy -diff
+        language: system
+        entry: mise exec -- go mod tidy -diff
+        files: ^go\.(mod|sum)$|\.go$
+        pass_filenames: false
