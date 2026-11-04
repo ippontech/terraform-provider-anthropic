@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -707,13 +708,14 @@ func TestBuildFederationIssuerUpdateParams_JWKSPollingDisabled(t *testing.T) {
 		wantSend     bool
 		wantReenable bool
 	}{
+		// The toggle never goes in params: Update sends it in its own request.
 		"paused and requested": {
 			pausedAt: pausedAt, planValue: types.BoolValue(false),
-			wantBody: `{"jwks_polling_disabled":false}`, wantSend: true, wantReenable: true,
+			wantBody: `{}`, wantReenable: true,
 		},
 		"paused and requested with a rename": {
 			pausedAt: pausedAt, planValue: types.BoolValue(false), rename: true,
-			wantBody: `{"jwks_polling_disabled":false,"name":"renamed"}`, wantSend: true, wantReenable: true,
+			wantBody: `{"name":"renamed"}`, wantSend: true, wantReenable: true,
 		},
 		// Polling is active: nothing to re-enable, and nothing else changed.
 		"active and requested": {
@@ -1003,6 +1005,70 @@ func TestFederationIssuerUpdate_ReenableRefusedExplainsOAuthRestriction(t *testi
 				}
 			}
 		})
+	}
+}
+
+// A rename planned with a re-enable goes first, in its own request; when the
+// API then refuses the toggle, the rename stays applied and recorded in state,
+// polling stays paused, and the diagnostic explains the OAuth restriction.
+func TestFederationIssuerUpdate_ReenableRefusedKeepsOtherChanges(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		bodies = append(bodies, body)
+		mu.Unlock()
+		w.Header().Set("content-type", "application/json")
+		if _, toggle := body["jwks_polling_disabled"]; toggle {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"permission_error","message":"requires a Console session"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, strings.Replace(federationIssuerFixtureWith(`{"type": "discovery"}`, `"2026-06-02T00:00:00Z"`,
+			`{"consecutive_failures": 12, "last_fetched_at": "2026-06-01T12:00:00Z", "next_poll_at": null}`), `"github-actions"`, `"renamed"`, 1))
+	}))
+	defer srv.Close()
+
+	r := &FederationIssuerResource{client: oauthtest.NewClient(t, srv)}
+	state := federationIssuerStateModel(t, "2026-06-02T00:00:00Z")
+	state.JWKSPollingDisabled = types.BoolValue(false)
+	plan := reenablePlan(state)
+	plan.Name = types.StringValue("renamed")
+	req, resp := federationIssuerUpdateRequest(t, r, plan, state)
+
+	r.Update(context.Background(), req, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error diagnostic for the refused toggle")
+	}
+	if d := resp.Diagnostics.Errors()[0]; d.Summary() != "Unable to Update Federation Issuer" || !strings.Contains(d.Detail(), "Console session") {
+		t.Errorf("diagnostic = %q: %s", d.Summary(), d.Detail())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 2 {
+		t.Fatalf("requests = %v, want the rename then the toggle", bodies)
+	}
+	if bodies[0]["name"] != "renamed" || len(bodies[0]) != 1 {
+		t.Errorf("first body = %v, want only the rename", bodies[0])
+	}
+	if v, ok := bodies[1]["jwks_polling_disabled"]; !ok || v != false || len(bodies[1]) != 1 {
+		t.Errorf("second body = %v, want only jwks_polling_disabled: false", bodies[1])
+	}
+
+	var got FederationIssuerResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("get state: %v", diags)
+	}
+	if got.Name.ValueString() != "renamed" {
+		t.Errorf("name = %v, want the rename recorded", got.Name)
+	}
+	if got.JWKSPollingDisabledAt.IsNull() || got.JWKSPollingDisabledAt.IsUnknown() {
+		t.Errorf("jwks_polling_disabled_at = %v, want the pause the API still reports", got.JWKSPollingDisabledAt)
 	}
 }
 

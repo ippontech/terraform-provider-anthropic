@@ -539,21 +539,46 @@ func (r *FederationIssuerResource) Update(ctx context.Context, req resource.Upda
 		return
 	}
 
+	id := state.ID.ValueString()
 	var issuer *anthropic.BetaFederationIssuer
 	var err error
 	if update.send {
-		issuer, err = r.client.Beta.Organization.Federation.Issuers.Update(ctx, state.ID.ValueString(), update.params)
+		issuer, err = r.client.Beta.Organization.Federation.Issuers.Update(ctx, id, update.params)
 		if err != nil {
-			summary, detail := federationIssuerUpdateErrorDiagnostic(state.ID.ValueString(), err, update.reenablePolling)
+			summary, detail := federationIssuerUpdateErrorDiagnostic(id, err, false)
 			resp.Diagnostics.AddError(summary, detail)
 			return
 		}
-	} else {
+	}
+	if update.reenablePolling {
+		// Sent on its own, after the other attributes: the API refuses this
+		// toggle from an OAuth caller when the issuer backs a rule scoped
+		// beyond workspace:developer / workspace:inference, and that refusal
+		// must not block an unrelated change such as a rename.
+		reenabled, err := r.client.Beta.Organization.Federation.Issuers.Update(ctx, id, anthropic.BetaOrganizationFederationIssuerUpdateParams{
+			JWKSPollingDisabled: param.NewOpt(false),
+		})
+		if err != nil {
+			if issuer != nil {
+				// The other attributes landed: record them. Polling stays
+				// paused, as the first response says.
+				resp.Diagnostics.Append(mapFederationIssuerToState(ctx, issuer, &plan)...)
+				if !resp.Diagnostics.HasError() {
+					resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+				}
+			}
+			summary, detail := federationIssuerUpdateErrorDiagnostic(id, err, true)
+			resp.Diagnostics.AddError(summary, detail)
+			return
+		}
+		issuer = reenabled
+	}
+	if issuer == nil {
 		// Only jwks_polling_disabled changed in configuration and polling is
 		// not paused, so there is nothing to send (an empty update body was
 		// never verified against the API). Read the issuer back to resolve
 		// the Computed attributes the plan left unknown.
-		issuer, err = r.client.Beta.Organization.Federation.Issuers.Get(ctx, state.ID.ValueString(), anthropic.BetaOrganizationFederationIssuerGetParams{})
+		issuer, err = r.client.Beta.Organization.Federation.Issuers.Get(ctx, id, anthropic.BetaOrganizationFederationIssuerGetParams{})
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read federation issuer: %s", err))
 			return
@@ -599,16 +624,20 @@ func (r *FederationIssuerResource) ImportState(ctx context.Context, req resource
 // federationIssuerUpdate is the update request buildFederationIssuerUpdateParams
 // derives from the planned and prior states.
 type federationIssuerUpdate struct {
+	// params holds the changed attributes, never jwks_polling_disabled.
 	params anthropic.BetaOrganizationFederationIssuerUpdateParams
-	// send is false when no attribute needs sending.
+	// send is false when no attribute in params needs sending.
 	send bool
-	// reenablePolling reports whether params carries jwks_polling_disabled.
+	// reenablePolling reports that a separate request must send
+	// jwks_polling_disabled = false after params.
 	reenablePolling bool
 }
 
-// buildFederationIssuerUpdateParams sends each updatable attribute only when
-// it changed from state, and jwks_polling_disabled only when
-// jwksPollingReenableRequested says polling must be re-enabled.
+// buildFederationIssuerUpdateParams puts each updatable attribute in params
+// only when it changed from state, and sets reenablePolling when
+// jwksPollingReenableRequested says polling must be re-enabled: Update sends
+// that toggle in its own request, so that a refusal of it leaves the other
+// changes applied.
 func buildFederationIssuerUpdateParams(ctx context.Context, plan, state FederationIssuerResourceModel) (federationIssuerUpdate, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	var u federationIssuerUpdate
@@ -644,11 +673,7 @@ func buildFederationIssuerUpdateParams(ctx context.Context, plan, state Federati
 		}
 		u.send = true
 	}
-	if jwksPollingReenableRequested(plan, state) {
-		u.params.JWKSPollingDisabled = param.NewOpt(false)
-		u.send = true
-		u.reenablePolling = true
-	}
+	u.reenablePolling = jwksPollingReenableRequested(plan, state)
 
 	return u, diags
 }
@@ -683,7 +708,8 @@ func federationIssuerUpdateErrorDiagnostic(issuerID string, err error, reenableP
 				"which is the only credential this provider uses for federation issuers, when the issuer backs a federation rule whose "+
 				"scope is neither workspace:developer nor workspace:inference. If that is the case, re-enable polling from a Console "+
 				"session and remove jwks_polling_disabled from the configuration: while it is set, every plan proposes the re-enable "+
-				"again for as long as polling stays paused.",
+				"again for as long as polling stays paused. Changes to other attributes go in a separate, earlier request and are not "+
+				"affected by this refusal.",
 			issuerID, err)
 	}
 	return "Client Error", fmt.Sprintf("Unable to update federation issuer: %s", err)
