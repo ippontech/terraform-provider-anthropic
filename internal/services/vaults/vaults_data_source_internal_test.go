@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -114,6 +115,30 @@ func TestVaultsDataSourceRead_defaultOmitsIncludeArchived(t *testing.T) {
 				t.Errorf("vaults = %v, want an empty, non-null list", got.Vaults)
 			}
 		})
+	}
+}
+
+// TestVaultsDataSourceRead_repeatedCursor pins the page guard: an API that
+// keeps returning the same next_page cursor fails the read with a diagnostic
+// instead of looping until the context deadline.
+func TestVaultsDataSourceRead_repeatedCursor(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[`+vaultListItemJSON("vlt_01")+`],"next_page":"cursor-1"}`)
+	}))
+	defer srv.Close()
+
+	resp := readDataSource(t, &VaultsDataSource{client: oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0))}, nil)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error diagnostic for a repeated cursor")
+	}
+	if got := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(got, `"cursor-1" again`) {
+		t.Errorf("diagnostic detail = %q, want it to name the repeated cursor", got)
+	}
+	if requests != 2 {
+		t.Errorf("%d requests, want 2", requests)
 	}
 }
 

@@ -5,6 +5,7 @@ package vaults
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -14,10 +15,15 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdkpage"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ datasource.DataSource = &VaultsDataSource{}
+
+// errMapping stops the list walk once a vault fails to map; its diagnostics
+// are already on the response.
+var errMapping = errors.New("vault mapping failed")
 
 func NewVaultsDataSource() datasource.DataSource {
 	return &VaultsDataSource{}
@@ -104,23 +110,28 @@ func (d *VaultsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		params.IncludeArchived = anthropic.Bool(true)
 	}
 
-	pager := d.client.Beta.Vaults.ListAutoPaging(ctx, params)
+	// sdkpage.Cursor rather than ListAutoPaging: a next_page cursor the API
+	// repeats is an error instead of a loop that hangs the plan.
 	vaultObjs := make([]attr.Value, 0)
-	for pager.Next() {
-		vault := pager.Current()
+	first, err := d.client.Beta.Vaults.List(ctx, params)
+	err = sdkpage.Cursor(first, err, func(vault anthropic.BetaManagedAgentsVault) error {
 		common, diags := mapVaultCommon(&vault)
 		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
+		if diags.HasError() {
+			return errMapping
 		}
 		obj, diags := types.ObjectValueFrom(ctx, vaultAttrTypes, common)
 		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
+		if diags.HasError() {
+			return errMapping
 		}
 		vaultObjs = append(vaultObjs, obj)
+		return nil
+	})
+	if errors.Is(err, errMapping) {
+		return
 	}
-	if err := pager.Err(); err != nil {
+	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list vaults: %s", err))
 		return
 	}

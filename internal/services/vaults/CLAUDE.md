@@ -8,7 +8,7 @@ Load-bearing details for `internal/services/vaults/`: the `anthropic_vault` and 
 
 **Data sources:**
 - `anthropic_vault` (`internal/services/vaults/vault_data_source.go`) — fetches a single vault by ID regardless of archived state; its model is `vaultModel`, filled by `mapVaultCommon`, which the resource's `mapVaultResponseToState` and the plural data source share; 404 surfaces as a `Vault Not Found` diagnostic
-- `anthropic_vaults` (`internal/services/vaults/vaults_data_source.go`) — lists vaults with transparent cursor pagination; optional `include_archived` (default `false`, sent only when `true`). The two vault data source acceptance tests create their fixture in a first step and read it in a second one, so a lookup never races the vaults read-after-write window
+- `anthropic_vaults` (`internal/services/vaults/vaults_data_source.go`) — lists vaults with transparent cursor pagination through `sdkpage.Cursor`, not `ListAutoPaging`, so a `next_page` cursor the API repeats fails the read instead of looping; optional `include_archived` (default `false`, sent only when `true`). The two vault data source acceptance tests create their fixture in a first step and read it in a second one, so a lookup never races the vaults read-after-write window
 
 ## Testing
 
