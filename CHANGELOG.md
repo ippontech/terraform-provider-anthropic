@@ -1,3 +1,9 @@
+## [1.73.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.72.0...v1.73.0) (2026-11-04)
+
+### ✨ Features
+
+* **agent:** add execution_identity ([#446](https://github.com/ippontech/terraform-provider-anthropic/issues/446)) ([97f4d1e](https://github.com/ippontech/terraform-provider-anthropic/commit/97f4d1e4a1eb29abd281801183e5a69bb6141bf3)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#443](https://github.com/ippontech/terraform-provider-anthropic/issues/443) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#445](https://github.com/ippontech/terraform-provider-anthropic/issues/445) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#462](https://github.com/ippontech/terraform-provider-anthropic/issues/462) [#370](https://github.com/ippontech/terraform-provider-anthropic/issues/370)
+
 ## [1.72.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.71.0...v1.72.0) (2026-11-04)
 
 ### ✨ Features
