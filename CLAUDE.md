@@ -16,6 +16,7 @@ A Terraform provider on the [Terraform Plugin Framework](https://developer.hashi
 - `internal/sdkpage/`: `Cursor` walks an SDK `next_page` list (`pagination.PageCursor`) like `ListAutoPaging`, but a cursor the API already returned, or more than `MaxPages` pages, is an error instead of an endless loop. Use it for new cursor-paginated list data sources; the older ones still call `ListAutoPaging`.
 - `internal/acctest/`, `admintest/`, `oauthtest/`, `schematest/`, `wifprobetest/`: test helpers, see [Testing](#testing).
 - `examples/` (`provider/`, `resources/<name>/`, `data-sources/<name>/`): configs embedded in the docs and sourced by the native tests. `templates/`: doc templates that `make generate` renders to `docs/`. `tests/`: native tests. `tools/tools.go`: build-time tool imports only.
+- `tools/` is its own Go module. `tools/coversummary/` is the standard-library-only program behind the coverage gate of the CI `coverage` job (rules and exclusions in `.coverage.json`, baseline in `.coverage-baseline`) and its per-file table.
 
 ### Anthropic Go SDK pin
 
@@ -64,6 +65,15 @@ Unit tests need no environment variables. Go acceptance tests (`TestAcc` prefix,
 - Start every acceptance test, and every test that seeds fixtures through the SDK, with the matching `acctest.PreCheck` (standard key), `PreCheckAdmin`, `PreCheckOAuth` (skips without `ANTHROPIC_AUTH_TOKEN`) or `PreCheckMultiWorkspace` (skips without `ANTHROPIC_MULTI_WORKSPACE_API_KEY`) rather than a hand-written `TF_ACC` check. They call `SkipUnlessAcc` first, because fixture setup runs before `resource.Test`'s own `TF_ACC` gate, and a plain `make test` with credentials in `.env` would otherwise create real objects ([#296](https://github.com/ippontech/terraform-provider-anthropic/issues/296)). Providers come from `acctest.ProtoV6ProviderFactories`, live SDK clients from `acctest.NewAPIKeyClient()` / `acctest.NewOAuthClient()` (both `WithoutEnvironmentDefaults`, so the other credential is not sent), never from an inline `anthropic.NewClient`.
 - Clients pointed at an `httptest` server come from the shared helpers, in every package: `admintest.NewClient(t, srv)` for an `*admin.Client`, `oauthtest.NewClient(t, srv)` for a `*providerdata.OAuthClient`, and `oauthtest.NewSDKClient(t, srv)` for a bare `*anthropic.Client`, whatever credential the code under test takes, standard-key tests included (both `oauthtest` helpers take extra `option.RequestOption`s, e.g. `option.WithMaxRetries(0)`). The fake servers do not check the credential, and the helper passes `WithoutEnvironmentDefaults`, so the environment's keys and profile stay out of the test. A few older standard-key tests in `vaults/`, `deployments/`, `files/` and `memorystores/` still build their client inline with `anthropic.NewClient(...)`; do not copy that in new tests. ImportState tests get their null state from `schematest`.
 
+**Coverage gate.** The `coverage` job of `provider.yml` is a required check, and it fails rather than warns (`.coverage.json` holds the thresholds and the exclusions, `.coverage-baseline` the baseline; `tools/coversummary` applies them):
+
+- at least 75% of the executable statements a pull request adds or changes in non-test Go files must be covered by unit tests, so write the tests with the code (fake-API tests through `resource.UnitTest` need no credential);
+- the total, outside the exclusions, stays at or above `.coverage-baseline` minus 0.5 point; when a change raises it, the job summary gives the value to commit in `.coverage-baseline` in the same pull request;
+- once the baseline reaches 80%, the total never drops under 80% and the baseline never goes back under it.
+- per package, monitored, not enforced yet: the job summary lists every package outside the exclusions with its coverage and its distance to 80%, least covered first. `package_min` in `.coverage.json` stays `null` until the last PR of the coverage effort sets it to 80; from then on every package stays at 80% or more. Coverage should be even across packages, not only high in total, so add tests to the packages at the top of that table first.
+
+The exclusions are the test-helper packages, `main.go` and `tools/`, nothing else, and there is no ignore comment: code that cannot be unit-tested is a reason to restructure it, not to exclude it. Run `make cover` before pushing; `go test -cover` needs the `covdata` tool (see Commands).
+
 What runs live depends on the credential:
 
 - All tests run in the dedicated `terraform-tests` workspace. The test `ANTHROPIC_API_KEY` is scoped to it; Admin API tests target it with `acctest.TerraformTestsWorkspaceID`, never a `wrkspc_...` literal. A second workspace, `terraform-tests-2` (`acctest.TerraformTests2WorkspaceID`), serves only the `workspace_id` provider-argument tests (`vault_resource_workspace_test.go`). They run with `ANTHROPIC_MULTI_WORKSPACE_API_KEY`, a service account key member of both test workspaces and scoped to neither (a CI secret), and read the API out of band through `acctest.NewMultiWorkspaceClient(workspaceID)`. Use that key and that workspace for nothing else: every other test relies on `ANTHROPIC_API_KEY` being single-workspace, so that its objects land in `terraform-tests` without a header.
@@ -95,7 +105,8 @@ make install        # Build and install locally
 make fmt            # Format Go code
 make tidy-check     # Fail if go.mod/go.sum are not tidy (go mod tidy -diff)
 make lint           # Run golangci-lint
-make test           # Run unit tests (120s timeout, 10 parallel workers)
+make test           # Run unit tests (300s timeout per package, 10 parallel workers)
+make cover          # make test with a coverage profile, then the CI coverage gate against origin/main (COVER_BASE=<ref>) and the per-file table
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
 make generate       # Regenerate docs and format examples
@@ -104,6 +115,16 @@ go test -run TestName -v ./internal/services/agents/  # One service
 ```
 
 Before committing a feature or a fix, run `make`, then `pre-commit run -a`.
+
+`go test -cover` needs the `covdata` tool, which the toolchains Go downloads through `GOTOOLCHAIN` (`golang.org/toolchain@v0.0.1-go1.26.10...`) lack: the run fails with `go: no such tool "covdata"` on packages without test files. The CI toolchain from `setup-go` has it. Locally, build it once into a GOROOT overlay and run that `go`:
+
+    TC=$(go env GOROOT); G=$HOME/.cache/goroot-covdata/$(basename $TC)
+    mkdir -p $G/pkg/tool/linux_amd64
+    for e in $TC/*; do [ "$(basename $e)" = pkg ] || ln -sfn $e $G/; done
+    for e in $TC/pkg/*; do [ "$(basename $e)" = tool ] || ln -sfn $e $G/pkg/; done
+    ln -sf $TC/pkg/tool/linux_amd64/* $G/pkg/tool/linux_amd64/
+    (cd $TC/src/cmd/covdata && GOROOT=$TC GOTOOLCHAIN=local $TC/bin/go build -o $G/pkg/tool/linux_amd64/covdata .)
+    GOROOT=$G GOTOOLCHAIN=local $G/bin/go test -cover ./...
 
 ## Provider coding conventions
 
@@ -205,5 +226,7 @@ Leave user PII attributes (`email`, `name`) without `Sensitive: true` in schemas
 ## Conventions
 
 Commit messages and PR titles follow [conventional commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:` (documentation and examples), `refactor:`, `test:`, `ci:`, `chore:` (maintenance). PRs are squash-merged, and the PR title becomes the commit message.
+
+The `pr-title` check (`.github/workflows/pr-title.yml`) enforces this on the PR title and description, and again in the merge queue on the squash commit the queue built (`merge_group.head_commit.message`), so an edit made after the PR check cannot slip through: `<type>[(scope)][!]: <subject>` with a type among `feat`, `fix`, `perf`, `revert`, `docs`, `style`, `chore`, `refactor`, `test`, `build` and `ci` (the conventionalcommits preset types semantic-release reads, without the `feature` alias, which no release rule matches), or GitHub's `Revert "<title>"`. A revert (`Revert "<title>"`, or `revert: <subject>` without a scope) needs a `This reverts commit <sha>.` line in the description: the preset's `revertPattern` reads a revert only with it, GitHub's revert PR description (`Reverts <owner>/<repo>#<n>`) has none, and without it the revert publishes nothing. On PRs to `main` (except the `major/<version>` release PR, merged with a merge commit, outside the queue) it refuses a `!` before `: `, after the type or after any later `)` (the parser's `breakingHeaderPattern` has a greedy scope, so `chore(ci): refuse feat(api)!: titles` is breaking), and a `BREAKING CHANGE` line in the description (the parser's rule: `BREAKING CHANGE` or `BREAKING-CHANGE` at the start of any line, any case, after spaces or `*`, then `:` or a space), either of which would publish a major release. Only `feat`, `fix`, `perf`, `build`, `refactor`, `docs`, reverts and breaking changes publish a release (`.releaserc`); `chore`, `ci`, `test` and `style` do not, so a change that must reach users (a dependency security fix, say) needs `fix(deps):` or `build:`.
 
 Breaking changes (`feat!:`, a `BREAKING CHANGE:` footer) target the long-lived staging branch of the next major (`major/2.0.0` for the first one), not `main`, and reach `main` in a single merge commit at release time. `.releaserc` pins `branches` to `["main"]` so no staging branch can become a semantic-release release branch. Procedure: `RELEASE.md`, section "Major versions".
