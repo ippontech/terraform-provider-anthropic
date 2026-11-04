@@ -1,3 +1,9 @@
+## [1.74.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.73.0...v1.74.0) (2026-11-04)
+
+### ✨ Features
+
+* **agent:** support the multiagent_20261001 configuration ([#447](https://github.com/ippontech/terraform-provider-anthropic/issues/447)) ([30dc6c9](https://github.com/ippontech/terraform-provider-anthropic/commit/30dc6c97627f08b4ba61f268338cf426ba5a7b00)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#443](https://github.com/ippontech/terraform-provider-anthropic/issues/443) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#445](https://github.com/ippontech/terraform-provider-anthropic/issues/445) [#446](https://github.com/ippontech/terraform-provider-anthropic/issues/446) [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#446](https://github.com/ippontech/terraform-provider-anthropic/issues/446) [#369](https://github.com/ippontech/terraform-provider-anthropic/issues/369)
+
 ## [1.73.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.72.0...v1.73.0) (2026-11-04)
 
 ### ✨ Features
