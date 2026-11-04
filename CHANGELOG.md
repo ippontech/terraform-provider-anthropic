@@ -1,3 +1,9 @@
+## [1.72.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.71.0...v1.72.0) (2026-11-04)
+
+### ✨ Features
+
+* **agent:** add url_sources to the web_fetch tool config ([#445](https://github.com/ippontech/terraform-provider-anthropic/issues/445)) ([a37d3b3](https://github.com/ippontech/terraform-provider-anthropic/commit/a37d3b33837e06cf257134c2407f941c6c7c4498)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#443](https://github.com/ippontech/terraform-provider-anthropic/issues/443) [#444](https://github.com/ippontech/terraform-provider-anthropic/issues/444) [#395](https://github.com/ippontech/terraform-provider-anthropic/issues/395) [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#371](https://github.com/ippontech/terraform-provider-anthropic/issues/371)
+
 ## [1.71.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.70.0...v1.71.0) (2026-11-04)
 
 ### ✨ Features
