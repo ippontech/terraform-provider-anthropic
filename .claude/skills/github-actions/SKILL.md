@@ -1,6 +1,6 @@
 ---
 name: github-actions
-description: GitHub Actions best practices for writing and reviewing workflows. Use when creating or modifying .github/workflows/ files.
+description: Security and coverage rules for the GitHub Actions configuration of this repository (action pinning, permissions, harden-runner, command injection, secrets, fork triggers, security tooling, CI jobs that mirror Makefile targets). Use when creating, changing or reviewing a GitHub Actions file under `.github/`, or when a new Makefile target may need a CI job. Not for the provider's Go or Terraform code (terraform-provider).
 model: sonnet
 ---
 
@@ -41,7 +41,7 @@ Never leave a job without a `permissions:` block.
 
 # Command injection prevention
 
-`${{ }}` expressions are expanded **before** the shell executes — no escaping occurs. Any attacker-controlled value in a `run:` step is an arbitrary code execution risk.
+`${{ }}` expressions are expanded **before** the shell executes: no escaping occurs. Any attacker-controlled value in a `run:` step is an arbitrary code execution risk.
 
 Never interpolate these directly in `run:` steps:
 
@@ -67,19 +67,22 @@ Never interpolate these directly in `run:` steps:
 
 # Harden runner
 
-Every job's **first** step must be `step-security/harden-runner`, SHA-pinned, with `egress-policy: audit`. This intercepts all outbound network calls and logs unexpected egress (e.g., a compromised action exfiltrating secrets).
+Every job's **first** step must be `step-security/harden-runner`, SHA-pinned, with `egress-policy: block` and an `allowed-endpoints` list. The list names the hosts this job needs, as `host:port`, one per line; any other outbound call is blocked, so a compromised action cannot exfiltrate secrets. Start from the list of the most similar existing job, and add a comment above the step for a host whose purpose is not obvious.
 
 ```yaml
 steps:
   - name: Harden runner
     uses: step-security/harden-runner@<full-sha> # <version tag>
     with:
-      egress-policy: audit
+      egress-policy: block
+      allowed-endpoints: >
+        <host the job needs>:443
+        <another host the job needs>:443
 ```
 
 # Secret handling
 
-- Secrets must only be passed via `env:` or `with:` — never interpolated directly into `run:` shell commands with `${{ secrets.FOO }}` (log injection risk).
+- Secrets must only be passed via `env:` or `with:`, never interpolated directly into `run:` shell commands with `${{ secrets.FOO }}` (log injection risk).
 - Never print, echo, or write secrets to files or stdout.
 
 ```yaml
@@ -94,7 +97,7 @@ steps:
 
 # Fork PR security
 
-Jobs that use repository secrets must not be triggerable from fork pull requests. Fork PRs run with no access to secrets under a plain `pull_request` trigger — but this protection is bypassed by `pull_request_target`, which runs in the base branch context and exposes secrets.
+Jobs that use repository secrets must not be triggerable from fork pull requests. Fork PRs run with no access to secrets under a plain `pull_request` trigger, but this protection is bypassed by `pull_request_target`, which runs in the base branch context and exposes secrets.
 
 - Never use `pull_request_target` for jobs that access secrets unless forked code is never checked out.
 - Jobs needing secrets must be triggered by `push` to a protected branch, `workflow_dispatch`, a GitHub Environment with required reviewers, or `workflow_call` from a workflow that meets one of these conditions.
@@ -178,12 +181,12 @@ The project must have `.github/workflows/security.yml` with four jobs, all SHA-p
 
 ## Tool configuration files
 
-- **`tools/semgrep.yml`** — custom semgrep rules scoped to `.github/`. Add new workflow anti-pattern rules here.
-- **`tools/.poutine.yml`** — skip list for known-safe unverified-creator actions. Uses PURL format `pkg:githubactions/<owner>/<repo>` (no SHA). When intentionally using an unverified-creator action, add it here with a comment explaining why it is trusted.
+- **`tools/semgrep.yml`**: custom semgrep rules scoped to `.github/`. Add new workflow anti-pattern rules here.
+- **`tools/.poutine.yml`**: skip list for known-safe unverified-creator actions. Uses PURL format `pkg:githubactions/<owner>/<repo>` (no SHA). When intentionally using an unverified-creator action, add it here with a comment explaining why it is trusted.
 
 # CI coverage
 
-Quality-gate Makefile targets must each have a corresponding CI job. Reference `make <target>` in CI steps rather than reimplementing the logic inline — this avoids drift between local and CI behavior.
+Quality-gate Makefile targets must each have a corresponding CI job. Reference `make <target>` in CI steps rather than reimplementing the logic inline, because this avoids drift between local and CI behavior.
 
 Targets that must be covered: `fmt`, `lint`, `test`, `testacc`, `generate`, `terraform-test`.
 
