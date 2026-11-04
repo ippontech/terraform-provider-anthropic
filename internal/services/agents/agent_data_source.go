@@ -49,6 +49,7 @@ type AgentDataSourceModel struct {
 	MCPToolsets       types.List   `tfsdk:"mcp_toolsets"`
 	CustomTools       types.List   `tfsdk:"custom_tools"`
 	Multiagent        types.Object `tfsdk:"multiagent"`
+	ExecutionIdentity types.Object `tfsdk:"execution_identity"`
 	Version           types.Int64  `tfsdk:"version"`
 	CreatedAt         types.String `tfsdk:"created_at"`
 	UpdatedAt         types.String `tfsdk:"updated_at"`
@@ -247,6 +248,7 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 					},
 				},
 			},
+			"execution_identity": executionIdentityDataSourceSchema(),
 			"version": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "The agent's current version.",
@@ -463,6 +465,11 @@ func mapAgentResponseToDataSource(agent *anthropic.BetaManagedAgentsAgent, data 
 	multiagent, d := mapMultiagentToObject(agent.Multiagent, agent.ID)
 	diags.Append(d...)
 	data.Multiagent = multiagent
+
+	// Execution identity (verbatim from the API, `service_account` included)
+	identity, d := executionIdentityObject(agent.ExecutionIdentity)
+	diags.Append(d...)
+	data.ExecutionIdentity = identity
 
 	return diags
 }

@@ -58,6 +58,7 @@ Read-Only:
 - `created_at` (String) Creation timestamp (RFC 3339).
 - `custom_tools` (Attributes List) Custom tools executed by the API client. (see [below for nested schema](#nestedatt--agents--custom_tools))
 - `description` (String) Description of what the agent does.
+- `execution_identity` (Attributes) Principal the agent's runs act as. (see [below for nested schema](#nestedatt--agents--execution_identity))
 - `id` (String) Unique agent identifier assigned by the API.
 - `mcp_servers` (Attributes List) MCP servers the agent connects to. (see [below for nested schema](#nestedatt--agents--mcp_servers))
 - `mcp_toolsets` (Attributes List) Tool configurations for MCP servers. (see [below for nested schema](#nestedatt--agents--mcp_toolsets))
@@ -145,6 +146,15 @@ Read-Only:
 - `description` (String) Description shown to the agent.
 - `input_schema` (String) JSON Schema for the tool's input parameters, encoded as a JSON string.
 - `name` (String) Unique tool name.
+
+
+<a id="nestedatt--agents--execution_identity"></a>
+### Nested Schema for `agents.execution_identity`
+
+Read-Only:
+
+- `role_arn` (String) ARN of the IAM role (`aws_role` only).
+- `type` (String) `service_account` (the Anthropic-managed default) or `aws_role`.
 
 
 <a id="nestedatt--agents--mcp_servers"></a>

@@ -11,6 +11,8 @@ Manages a scheduled deployment (beta): a configured instance of an agent that bi
 
 `initial_events`, `resources`, and `budget` accept raw JSON matching the API's own request shape, since Terraform-native modeling of their deeply nested unions would dwarf the rest of this schema.
 
+On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws), each run creates its session as an IAM role in your AWS account: set `execution_identity` to an `aws_role` on the `anthropic_agent` first, or creating the deployment returns a 400 error. The Execution identity section of the `anthropic_agent` resource lists the role's trust policy and permissions.
+
 > **API**: `POST/GET/POST/POST/POST/POST /v1/deployments[/{id}][/pause|/unpause|/archive]` (Managed Agents API).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
 > **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.

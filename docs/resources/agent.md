@@ -196,6 +196,32 @@ Those defaults are also the provider's: a toolset that leaves `default_permissio
 
 `auto` is not a human checkpoint: a call the server judges safe runs before anyone sees it, and its effects might not be reversible. Keep `always_ask` on the tools whose calls a person must review. The server reads what your client posts in `user.message` events as your intent, so relaying untrusted end-user input there can get a call allowed. Permission policies do not apply to `custom_tools`, which your application runs.
 
+## Execution identity
+
+`execution_identity` names the principal the agent's runs act as. By default they use the Anthropic-managed service account (`type = "service_account"`), which carries no identifier. The API returns that default for every agent, and the provider keeps the attribute null while it is unset; removing the attribute from the configuration restores the default on the next update. After an import, a configuration that sets `type = "service_account"` plans one update that only resends the default, since the imported state keeps that default null; leaving the attribute unset avoids it.
+
+On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws), each run of a scheduled deployment creates its session as an IAM role in your AWS account, so the agent needs an `aws_role` identity before an `anthropic_deployment` can use it: creating a deployment for an agent without one returns a 400 error ([Scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)).
+
+```terraform
+resource "anthropic_agent" "scheduled" {
+  model = "claude-sonnet-4-6"
+  name  = "Weekly compliance scan"
+
+  execution_identity = {
+    type     = "aws_role"
+    role_arn = "arn:aws:iam::123456789012:role/agent-runner"
+  }
+}
+```
+
+The role must be in the same AWS account and needs:
+
+- **Trust policy:** allow the `aws-external-anthropic.amazonaws.com` service principal to call `sts:AssumeRole` and `sts:SetSourceIdentity`.
+- **Role permissions:** allow `aws-external-anthropic:CreateSession`, `sts:GetWebIdentityToken` and `sts:TagGetWebIdentityToken`.
+- **Caller permissions:** the IAM principal that sets the role on the agent, the one Terraform applies with, needs `iam:PassRole` on that role. No managed policy grants `iam:PassRole`.
+
+An identity set outside Terraform shows as a change on the next plan, and the apply restores the one in the configuration. If an agent's `aws_role` was set outside Terraform, add the matching `execution_identity` block to its configuration before the next apply: without it, the apply restores the service account and the agent's scheduled deployments lose the role.
+
 ## Web tool restrictions
 
 The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `url_sources`, and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
@@ -220,6 +246,7 @@ These lists are not the only restrictions applied to the two tools:
 - `agent_toolset` (Attributes) Configuration for built-in agent tools (bash, edit, read, write, glob, grep, web_fetch, web_search). (see [below for nested schema](#nestedatt--agent_toolset))
 - `custom_tools` (Attributes List) Custom tools executed by the API client. When the agent calls a custom tool, the session goes idle until the client provides the result. (see [below for nested schema](#nestedatt--custom_tools))
 - `description` (String) Description of what the agent does. Up to 2048 characters.
+- `execution_identity` (Attributes) Principal the agent's runs act as. When omitted, runs use the Anthropic-managed service account (the API default), and removing the attribute restores that default on the next update. On Claude Platform on AWS, an `aws_role` is required before an `anthropic_deployment` can use the agent: see the Execution identity section for the role's trust policy and permissions. (see [below for nested schema](#nestedatt--execution_identity))
 - `mcp_servers` (Attributes List) MCP servers this agent connects to. Maximum 20. Names must be unique. (see [below for nested schema](#nestedatt--mcp_servers))
 - `mcp_toolsets` (Attributes List) Tool configurations for MCP servers. Each entry corresponds to a server defined in `mcp_servers`, at most one entry per server. (see [below for nested schema](#nestedatt--mcp_toolsets))
 - `metadata` (Map of String) Arbitrary key-value metadata. Maximum 16 pairs, keys up to 64 chars, values up to 512 chars.
@@ -322,6 +349,18 @@ Required:
 Optional:
 
 - `input_schema` (String) JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value.
+
+
+<a id="nestedatt--execution_identity"></a>
+### Nested Schema for `execution_identity`
+
+Required:
+
+- `type` (String) `service_account` (the Anthropic-managed service account, which carries no identifier) or `aws_role` (an IAM role in your AWS account).
+
+Optional:
+
+- `role_arn` (String) ARN of the IAM role, e.g. `arn:aws:iam::123456789012:role/agent-runner`. Required when `type` is `aws_role`, forbidden otherwise. Up to 2048 characters.
 
 
 <a id="nestedatt--mcp_servers"></a>
