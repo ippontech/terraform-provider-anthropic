@@ -39,7 +39,7 @@ provider "anthropic" {
 # Claude Enterprise organization: a second configuration, under an alias.
 provider "anthropic" {
   alias         = "enterprise"
-  admin_api_key = var.enterprise_key # sk-ant-api01-..., with the write:members scope
+  admin_api_key = var.enterprise_key # sk-ant-api01-..., with the read:members and write:members scopes
 }
 
 resource "anthropic_workspace" "data" {
