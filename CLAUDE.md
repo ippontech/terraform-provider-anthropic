@@ -40,6 +40,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `messages/`: `message`; `count_tokens`. Standard key.
 - `models/`: none; `model`, `models`. Standard key.
 - `organizations/`: `invite`, `organization_member` (import-only); `organization`, `organization_member(s)`, `invite(s)`. Admin key.
+- `organizationwebhooks/`: `organization_webhook`; none. Admin key (beta `webhooks-2026-10-07`, enabled per organization on request).
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
@@ -184,6 +185,10 @@ Secrets that must never reach state use write-only attributes (plugin framework 
 - In Create and Update, read them from `req.Config`, not the plan or state: `req.Config.GetAttribute(ctx, path.Root("token"), &v)`, nested via `path.Root("refresh").AtName("refresh_token")`. Never write them to state or fill them from API responses.
 - Pair each with a normal `_wo_version` Int64 stored in state (e.g. `token_wo_version`): Terraform cannot diff a write-only value, and bumping the version triggers the Update that re-pushes the secret (rotation). Require it with a `ConfigValidator` whenever the secret is set, or changing the secret is a silent no-op (`vaultCredentialConfigValidator`).
 - In Update, re-push the secret payload on any mutable-field diff, not only a version bump; otherwise a change to a non-secret field (e.g. `expires_at`) is dropped and Terraform reports an inconsistent result after apply. Mark truly immutable fields `RequiresReplace` so they never reach Update.
+
+### Secrets the API returns once
+
+A secret the API **generates** and returns only on create (or on an explicit regenerate call), never on a read — `anthropic_organization_webhook.signing_secret` — cannot be write-only: the configuration does not hold it, and the user needs it from state. Make it Computed + Sensitive, set it from the create response before any follow-up call can fail, never touch it in the Read mapping (so a refresh keeps the prior value, null after an import), and pair it with an Optional `<name>_version` Int64 whose change to a new non-null value makes Update call the regenerate endpoint and store the new value. A custom plan modifier plans the state value unless that version changes (unknown then), so an unchanged resource shows no diff. Document in the template that the secret lives in state, as `aws_iam_access_key` does, and keep it out of any data source.
 
 ### ConfigValidator Unknown handling
 
