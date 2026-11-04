@@ -11,10 +11,8 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 	"unicode"
 
@@ -196,14 +194,12 @@ func (r *FileResource) Create(ctx context.Context, req resource.CreateRequest, r
 		expiresInSeconds = param.NewOpt(data.ExpiresInSeconds.ValueInt64())
 	}
 
-	// The Anthropic SDK cannot retry a streaming multipart body on its own
-	// (see internal/retry's package doc), but that package's MultipartUpload
-	// helper is shaped for a bundle of files uploaded together under a common
-	// directory name (skills), not a single flat file with an explicit
-	// filename. Reusing it would force an artificial "dirName/filename"
-	// multipart name that does not match this resource's `filename`
-	// attribute, so a small local retry loop is used instead.
-	file, err := uploadFileWithRetry(ctx, r.client, sourcePath, filename, mimeType, expiresInSeconds)
+	// provretry.MultipartUpload is shaped for a bundle of files uploaded under
+	// a common directory name (skills); its "dirName/filename" multipart name
+	// would not match this resource's `filename`, so the single file is
+	// uploaded by a local helper. Retries are the client's (429, 529, or a
+	// connection error before the request got a connection).
+	file, err := uploadFile(ctx, r.client, sourcePath, filename, mimeType, expiresInSeconds)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to upload file: %s", err))
 		return
@@ -277,93 +273,26 @@ func (r *FileResource) ImportState(ctx context.Context, req resource.ImportState
 // Helper functions
 // ============================================================================
 
-// uploadFileWithRetry opens sourcePath fresh on each attempt and uploads it,
-// retrying up to 3 times with a short backoff on a 429 API error — multipart
-// uploads set req.Body without req.GetBody, so the SDK's own retry logic
-// (which requires a replayable body) never fires for them. POST /v1/files is
-// not idempotent (each call creates a new file object), so per the same
-// caution documented for internal/admin's DoRequest, only 429 (the one
-// response that guarantees the write was never processed) is retried; a 5xx,
-// a 409 or a dropped connection may mean the file was already created, and
-// retrying then would silently upload a duplicate.
-func uploadFileWithRetry(ctx context.Context, client *anthropic.Client, sourcePath, filename, mimeType string, expiresInSeconds param.Opt[int64]) (*anthropic.FileMetadata, error) {
-	const maxAttempts = 3
-	var lastErr error
-	var lastResp *http.Response
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(retryDelay(lastResp, attempt)):
-			}
-		}
-
-		f, err := os.Open(sourcePath)
-		if err != nil {
-			return nil, fmt.Errorf("unable to open file %q: %w", sourcePath, err)
-		}
-
-		named := namedReader{Reader: f, name: filename, contentType: mimeType}
-		file, err := client.Files.Upload(ctx, anthropic.FileUploadParams{File: named, ExpiresInSeconds: expiresInSeconds})
-		_ = f.Close()
-		if err == nil {
-			return file, nil
-		}
-
-		var apierr *anthropic.Error
-		if !errors.As(err, &apierr) || apierr.StatusCode != 429 {
-			return nil, err
-		}
-		lastErr = err
-		lastResp = apierr.Response
+// uploadFile opens sourcePath and uploads it once. It does not retry: the
+// SDK buffers the multipart body, and the client's retry middleware
+// (provretry.Middleware, installed by the provider on every client) replays
+// it only on 429, 529 or a connection error before the request got a
+// connection. POST /v1/files is not idempotent, so another 5xx, a 409 or a
+// dropped connection may mean the file was already created, and replaying
+// would upload a duplicate.
+func uploadFile(ctx context.Context, client *anthropic.Client, sourcePath, filename, mimeType string, expiresInSeconds param.Opt[int64]) (*anthropic.FileMetadata, error) {
+	// G304: sourcePath is the resource's own source attribute, a local file
+	// the user names in their configuration; opening it is what anthropic_file
+	// does. filepath.Clean would only silence the check, and it can change
+	// which file a path with a symlink followed by ".." resolves to.
+	f, err := os.Open(sourcePath) //nolint:gosec // G304: the user-configured source path, see above
+	if err != nil {
+		return nil, fmt.Errorf("unable to open file %q: %w", sourcePath, err)
 	}
-	return nil, lastErr
-}
+	defer func() { _ = f.Close() }()
 
-// maxRetryAfter caps how long a server-supplied retry-after header can hold
-// off a retry, mirroring internal/admin's DoRequest.
-const maxRetryAfter = 60 * time.Second
-
-// retryDelay returns how long to wait before the next upload attempt. A
-// retry-after header from the server wins (bounded only by maxRetryAfter,
-// deliberately unbounded by the fixed schedule below — the server knows when
-// the rate limit clears, and shortening its answer only earns another 429).
-// Absent the header, the delay follows the fixed attempt*5s schedule this
-// function previously used unconditionally.
-func retryDelay(resp *http.Response, attempt int) time.Duration {
-	if d, ok := parseRetryAfter(resp); ok {
-		return min(max(0, d), maxRetryAfter)
-	}
-	return time.Duration(attempt) * 5 * time.Second
-}
-
-// parseRetryAfter reads the retry-after headers Anthropic returns on 429, in
-// order of preference: retry-after-ms in milliseconds, then retry-after as
-// either a number of seconds or an HTTP-date. Mirrors internal/admin's
-// unexported helper of the same name (not reusable across packages).
-func parseRetryAfter(resp *http.Response) (time.Duration, bool) {
-	if resp == nil {
-		return 0, false
-	}
-
-	if v := resp.Header.Get("retry-after-ms"); v != "" {
-		if ms, err := strconv.ParseFloat(v, 64); err == nil {
-			return time.Duration(ms * float64(time.Millisecond)), true
-		}
-	}
-
-	v := resp.Header.Get("retry-after")
-	if v == "" {
-		return 0, false
-	}
-	if seconds, err := strconv.ParseFloat(v, 64); err == nil {
-		return time.Duration(seconds * float64(time.Second)), true
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		return time.Until(t), true
-	}
-	return 0, false
+	named := namedReader{Reader: f, name: filename, contentType: mimeType}
+	return client.Files.Upload(ctx, anthropic.FileUploadParams{File: named, ExpiresInSeconds: expiresInSeconds})
 }
 
 // namedReader wraps an io.Reader with an explicit multipart filename and

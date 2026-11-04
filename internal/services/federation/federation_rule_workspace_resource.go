@@ -236,7 +236,8 @@ func (r *FederationRuleWorkspaceResource) Delete(ctx context.Context, req resour
 	_, err := r.client.Beta.Organization.Federation.Rules.Workspaces.Remove(ctx, data.WorkspaceID.ValueString(), anthropic.BetaOrganizationFederationRuleWorkspaceRemoveParams{
 		FederationRuleID: data.FederationRuleID.ValueString(),
 	})
-	if err != nil {
+	// A 404 means the rule or its workspace binding is already gone.
+	if err != nil && !providerrors.IsNotFound(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to disable federation rule for workspace: %s", err))
 	}
 }
