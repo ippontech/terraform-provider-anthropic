@@ -294,6 +294,9 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	plannedMetadata, plannedVaultIDs := data.Metadata, data.VaultIDs
+	// mapDeploymentToState overwrites paused with the created deployment's
+	// status, always active: read the planned value first.
+	plannedPaused := data.Paused.ValueBool()
 
 	deployment, err := r.client.Beta.Deployments.New(ctx, params)
 	if err != nil {
@@ -318,7 +321,7 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	if data.Paused.ValueBool() {
+	if plannedPaused {
 		deployment, err = r.client.Beta.Deployments.Pause(ctx, deployment.ID, anthropic.BetaDeploymentPauseParams{})
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to pause newly created deployment: %s", err))
