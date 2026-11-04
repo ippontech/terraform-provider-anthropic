@@ -127,8 +127,8 @@ The root `go.mod` is compiled into the acceptance tests: `make testacc` runs `go
 the push to `main` that merges an update. Its updates (direct and indirect modules, and the `toolchain`
 line) are therefore never automerged, whatever the update type. They still come grouped in the
 `Go dependencies` PR, which a maintainer reviews and merges. Each of them is a `fix(deps)` commit that
-publishes a release, whose signing a maintainer approves anyway (`RELEASE.md`): the review takes place
-before the new code runs next to the keys, instead of after.
+publishes a release that nothing else holds back (`RELEASE.md`, "Review the modules a release
+ships"): the review takes place before the new code runs next to the keys, and before it ships signed.
 
 `tools/go.mod` (the generators behind `make generate`) has its own `Go tools module` group and keeps
 automerging: no job that holds a secret builds it. It cannot share the `Go dependencies` group, because
