@@ -522,7 +522,8 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							Optional:   true,
 							CustomType: jsontypes.NormalizedType{},
 							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
-								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included; `type` defaults to `object` when omitted.",
+								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included. " +
+								"Include `type = \"object\"`: the request adds it when omitted, and the apply then fails with an inconsistent result.",
 						},
 					},
 				},
