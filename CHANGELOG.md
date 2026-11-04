@@ -1,3 +1,9 @@
+## [1.76.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.75.0...v1.76.0) (2026-11-04)
+
+### ✨ Features
+
+* **message:** deprecate temperature on anthropic_message ([#451](https://github.com/ippontech/terraform-provider-anthropic/issues/451)) ([2117783](https://github.com/ippontech/terraform-provider-anthropic/commit/21177839bef04b29a043709e0bf4a9ed5ad18d28)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#284](https://github.com/ippontech/terraform-provider-anthropic/issues/284) [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192) [#284](https://github.com/ippontech/terraform-provider-anthropic/issues/284) [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192)
+
 ## [1.75.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.74.1...v1.75.0) (2026-11-04)
 
 ### ✨ Features
