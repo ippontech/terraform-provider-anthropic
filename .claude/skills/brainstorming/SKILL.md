@@ -140,7 +140,7 @@ Each issue description should reference:
 ## Files to create / modify
 - `internal/provider/<name>_resource.go`
 - `internal/provider/<name>_resource_test.go` — Go acceptance tests
-- `internal/provider/provider.go` — register factory function
+- `internal/provider/registry.go` — register the factory, with its availability on each cloud platform
 - `examples/resources/<name>/resource.tf` — expose relevant outputs
 - `templates/resources/<name>.md.tmpl` — subcategory: "<Category>"
 - `tests/<name>.tftest.hcl` — Terraform native test

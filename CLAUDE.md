@@ -6,7 +6,7 @@ Repo-wide rules for this Terraform provider. Each `internal/services/<service>/`
 
 A Terraform provider on the [Terraform Plugin Framework](https://developer.hashicorp.com/terraform/plugin/framework) v1.19.0, served by `main.go` as `registry.terraform.io/ippontech/anthropic`.
 
-- `internal/provider/`: `provider.go` (schema, credentials, client construction, registration in `Resources()` / `DataSources()`) and `federation.go` (the `federation` block).
+- `internal/provider/`: `provider.go` (schema, credentials, client construction; `Resources()` / `DataSources()` serve the registry), `registry.go` (every resource and data source factory, with its availability on each cloud platform) and `federation.go` (the `federation` block).
 - `internal/services/<service>/`: resources and data sources, one directory per Anthropic service.
 - `internal/admin/`: client for the Admin API (`/v1/organizations/*`), which the SDK does not cover. `DoRequest(ctx, method, path, body, opts...)` takes per-request options: `admin.WithBeta("…")` for the `anthropic-beta` header that beta organization endpoints require (they answer 404 without it: plugins, webhooks, telemetry destinations; listing spend limits needs `spend-limit-reads-2026-09-26`, while getting, setting or deleting one spend limit takes no beta header) and `admin.WithHeader`; a body of type `admin.RawBody{ContentType, Data}` is sent as is (multipart uploads) instead of being marshalled to JSON.
 - `internal/providerdata/`: `ProviderData`, passed to every `Configure`, and the `OAuthClient` wrapper.
@@ -51,7 +51,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 ## Adding a resource or data source
 
 1. Create `internal/services/<service>/<name>_resource.go` (or `_data_source.go`) in `package <service>`, implementing `resource.Resource` (or `datasource.DataSource`).
-2. Register its factory in `Resources()` (or `DataSources()`) in `internal/provider/provider.go`.
+2. Add its factory to `resourceRegistrations()` (or `dataSourceRegistrations()`) in `internal/provider/registry.go`, declaring on the same line whether each cloud platform serves it (the registry tests fail on a missing declaration).
 3. Add an example under `examples/resources/<name>/` (or `examples/data-sources/<name>/`). The main file (`resource.tf` / `data_source.tf`) holds only the resource or data blocks and outputs, because the Registry docs embed it verbatim. The `terraform {}` block (`required_version`, and `required_providers` mapping `anthropic` to `ippontech/anthropic` for the native tests) goes in a sibling `versions.tf` ([#231](https://github.com/ippontech/terraform-provider-anthropic/issues/231)). Pin the provider with `~> 1.0`. CI runs tflint with `preset = "all"`, so every `output` needs a `description` and every `versions.tf` a `required_version` (#229).
 4. Add `templates/resources/<name>.md.tmpl` (or `templates/data-sources/<name>.md.tmpl`) with a non-empty `subcategory` (e.g. `"Agents"`, `"Messages"`); without it the page appears ungrouped on the Terraform Registry.
 5. Add a native test `tests/<name>.tftest.hcl` and Go tests, see [Testing](#testing).
