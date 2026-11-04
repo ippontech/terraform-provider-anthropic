@@ -1,3 +1,9 @@
+## [1.67.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.66.0...v1.67.0) (2026-11-04)
+
+### ✨ Features
+
+* **admin:** per-request headers and raw bodies in the Admin API client ([#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426)) ([9171354](https://github.com/ippontech/terraform-provider-anthropic/commit/9171354ba85537ab2c9ddd5fa1b15cfc633e29e8)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#436](https://github.com/ippontech/terraform-provider-anthropic/issues/436) [#437](https://github.com/ippontech/terraform-provider-anthropic/issues/437) [#454](https://github.com/ippontech/terraform-provider-anthropic/issues/454) [#455](https://github.com/ippontech/terraform-provider-anthropic/issues/455) [#459](https://github.com/ippontech/terraform-provider-anthropic/issues/459) [#454](https://github.com/ippontech/terraform-provider-anthropic/issues/454)
+
 ## [1.66.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.65.0...v1.66.0) (2026-11-04)
 
 ### ✨ Features
