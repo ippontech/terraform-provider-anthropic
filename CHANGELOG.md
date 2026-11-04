@@ -1,3 +1,9 @@
+## [1.69.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.69.1...v1.69.2) (2026-11-04)
+
+### 🐛 Bug Fixes
+
+* **invite:** describe the roles the API can actually assign ([#428](https://github.com/ippontech/terraform-provider-anthropic/issues/428)) ([d089f0f](https://github.com/ippontech/terraform-provider-anthropic/commit/d089f0ff24dfe2e9b99c628e6dbd404a0cb999b7)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#427](https://github.com/ippontech/terraform-provider-anthropic/issues/427) [#492](https://github.com/ippontech/terraform-provider-anthropic/issues/492) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#368](https://github.com/ippontech/terraform-provider-anthropic/issues/368) [#527](https://github.com/ippontech/terraform-provider-anthropic/issues/527)
+
 ## [1.69.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.69.0...v1.69.1) (2026-11-04)
 
 ### 📚 Documentation
