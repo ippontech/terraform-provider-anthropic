@@ -1,3 +1,9 @@
+## [1.68.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.67.0...v1.68.0) (2026-11-04)
+
+### ✨ Features
+
+* **workspace_rate_limits:** include_inherited, per-limit source, group ([#432](https://github.com/ippontech/terraform-provider-anthropic/issues/432)) ([ab1b9e6](https://github.com/ippontech/terraform-provider-anthropic/commit/ab1b9e67d9b7aae324149289f7e6ace7980ce206)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#280](https://github.com/ippontech/terraform-provider-anthropic/issues/280)
+
 ## [1.67.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.66.0...v1.67.0) (2026-11-04)
 
 ### ✨ Features
