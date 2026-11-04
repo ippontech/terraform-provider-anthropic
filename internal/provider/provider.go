@@ -71,9 +71,13 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Description: "The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.",
 			},
 			"admin_api_key": schema.StringAttribute{
-				Optional:    true,
-				Sensitive:   true,
-				Description: "The Anthropic Admin API key for organization management endpoints (workspaces, members). Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
+				Optional:  true,
+				Sensitive: true,
+				Description: "The key for the Admin API's organization management endpoints (workspaces and their members, " +
+					"workspace rate limits, API keys, the organization, organization members and invites): " +
+					"a Claude Console Admin API key (`sk-ant-admin01-...`), a Claude Enterprise Admin API key with scopes (`sk-ant-api01-...`, members and invites only), " +
+					"or a personal or service account key not scoped to a workspace. Sent in the `x-api-key` header. " +
+					"Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
 			},
 			"auth_token": schema.StringAttribute{
 				Optional:  true,

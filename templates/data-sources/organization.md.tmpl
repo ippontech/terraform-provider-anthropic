@@ -7,10 +7,10 @@ description: |-
 
 # anthropic_organization (Data Source)
 
-Fetches the organization associated with the authenticated Admin API key. It takes no input and always returns the organization tied to the configured admin key. Useful for validating the admin key before an apply, exposing the organization ID to other modules, and audit trails.
+Fetches the organization associated with the authenticated Admin API key. It takes no input and always returns the organization tied to the configured admin key. Useful for exposing the organization ID to other modules, for audit trails, and for validating a Claude Console Admin API key, or a personal or service account key, before an apply. A Claude Enterprise organization cannot call this endpoint (see **Auth** below): to check a Claude Enterprise key, read the `anthropic_organization_members` data source instead.
 
 > **API**: `GET /v1/organizations/me` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

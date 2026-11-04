@@ -16,7 +16,7 @@ Each entry's `rate_limit_id` is the ID of the organization's rate-limit entry fo
 `group_type` is deprecated in favour of `group.type` (always equal), and Admin API version 2026-10-21 removes it. The `group_type` **filter** is unchanged.
 
 > **API**: `GET /v1/organizations/workspaces/{workspace_id}/rate_limits` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

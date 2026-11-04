@@ -16,7 +16,7 @@ Terraform updates two resources on the same group in parallel. To move a limiter
 A value above the organization's own limit is stored, but the lower of the two is enforced. Changes take effect within about an hour.
 
 > **API**: `POST /v1/organizations/workspaces/{workspace_id}/rate_limits/{rate_limit_id}` to set and clear overrides, `GET /v1/organizations/workspaces/{workspace_id}/rate_limits` to read them (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 
