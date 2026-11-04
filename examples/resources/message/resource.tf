@@ -15,12 +15,11 @@ output "response" {
   value       = anthropic_message.example.content
 }
 
-# Example with system prompt and temperature
+# Example with a system prompt
 resource "anthropic_message" "with_system" {
-  model       = "claude-haiku-4-5-20251001"
-  max_tokens  = 512
-  system      = "You are a helpful assistant that answers questions concisely."
-  temperature = 0.7
+  model      = "claude-haiku-4-5-20251001"
+  max_tokens = 512
+  system     = "You are a helpful assistant that answers questions concisely."
 
   messages = [
     {
