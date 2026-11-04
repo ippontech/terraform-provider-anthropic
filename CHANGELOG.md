@@ -1,3 +1,9 @@
+## [1.77.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.76.0...v1.77.0) (2026-11-04)
+
+### ✨ Features
+
+* **message:** speed, cache diagnostics and thinking between_tools ([#452](https://github.com/ippontech/terraform-provider-anthropic/issues/452)) ([255820f](https://github.com/ippontech/terraform-provider-anthropic/commit/255820f6bd0d5ab9252a53d0e8ab132e7c1f2fdb)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#451](https://github.com/ippontech/terraform-provider-anthropic/issues/451) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#421](https://github.com/ippontech/terraform-provider-anthropic/issues/421) [#374](https://github.com/ippontech/terraform-provider-anthropic/issues/374)
+
 ## [1.76.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.75.0...v1.76.0) (2026-11-04)
 
 ### ✨ Features
