@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdkpage"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
@@ -249,11 +250,17 @@ func getTelemetryDestination(ctx context.Context, client *admin.Client, id strin
 // listTelemetryDestinationWorkspaceIDs pages through a destination's
 // workspace list. Reads return only the scope's type, so this list endpoint is
 // the only way to read workspace_ids back. A destination of type `all` has no
-// list: callers skip the call for it.
+// list: callers skip the call for it. Only an empty next_page ends the walk: a
+// cursor already sent, or more than sdkpage.MaxPages pages, is an error, so a
+// misbehaving API can neither hang a plan nor cut workspace_ids short.
 func listTelemetryDestinationWorkspaceIDs(ctx context.Context, client *admin.Client, id string) ([]string, error) {
 	var ids []string
 	page := ""
-	for {
+	sent := map[string]bool{}
+	for pages := 1; ; pages++ {
+		if pages > sdkpage.MaxPages {
+			return nil, fmt.Errorf("telemetry destination workspaces list: more than %d pages, stopping", sdkpage.MaxPages)
+		}
 		q := url.Values{}
 		q.Set("limit", telemetryDestinationsPageLimit)
 		if page != "" {
@@ -270,8 +277,12 @@ func listTelemetryDestinationWorkspaceIDs(ctx context.Context, client *admin.Cli
 		for _, e := range p.Data {
 			ids = append(ids, e.WorkspaceID)
 		}
-		if p.NextPage == nil || *p.NextPage == "" || *p.NextPage == page {
+		if p.NextPage == nil || *p.NextPage == "" {
 			return ids, nil
+		}
+		sent[page] = true
+		if sent[*p.NextPage] {
+			return nil, fmt.Errorf("telemetry destination workspaces list returned next_page %q, a cursor already sent: stopping instead of looping", *p.NextPage)
 		}
 		page = *p.NextPage
 	}

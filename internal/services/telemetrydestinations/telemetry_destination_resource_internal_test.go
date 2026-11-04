@@ -9,7 +9,9 @@ package telemetrydestinations
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -1004,5 +1006,27 @@ func TestTelemetryDestinationResource_ReadWorkspaceListNotFoundKeepsState(t *tes
 	}
 	if resp.State.Raw.IsNull() {
 		t.Error("the destination was removed from state")
+	}
+}
+
+// The workspace list walk ends only on an empty next_page: a cursor already
+// sent (an echo, or a cycle) is an error instead of a hang or a list cut short.
+func TestListTelemetryDestinationWorkspaceIDs_repeatedCursor(t *testing.T) {
+	t.Parallel()
+	for name, next := range map[string]map[string]string{
+		"echoed cursor": {"": "A", "A": "A"},
+		"cycle":         {"": "A", "A": "B", "B": "A"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, client := newFakeTelemetryAPI(t, func(r recordedRequest) (int, string) {
+				q, _ := url.ParseQuery(r.Query)
+				return http.StatusOK, fmt.Sprintf(`{"data":[{"workspace_id":"wrkspc_%s"}],"next_page":%q}`, q.Get("page"), next[q.Get("page")])
+			})
+			ids, err := listTelemetryDestinationWorkspaceIDs(context.Background(), client, "tdest_1")
+			if err == nil || !strings.Contains(err.Error(), "a cursor already sent") {
+				t.Fatalf("err = %v (ids %v), want the repeated-cursor error", err, ids)
+			}
+		})
 	}
 }
