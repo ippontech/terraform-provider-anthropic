@@ -131,7 +131,7 @@ func customToolsList(t *testing.T, schema string) types.List {
 
 // TestBuildToolsParams_customToolInputSchemaKeepsRootKeywords: the configured
 // input_schema reaches the API as is, root-level keywords other than
-// type/properties/required included (additionalProperties, $defs,
+// type/properties/required included (additionalProperties, title,
 // description). SDK v1.67.0 dropped them, and the SDK v1.84.0 bump kept
 // dropping them on purpose until this fix. An echo of that schema then maps
 // back to a value semantically equal to the configuration.
@@ -139,9 +139,8 @@ func TestBuildToolsParams_customToolInputSchemaKeepsRootKeywords(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	const configured = `{"type":"object","properties":{"address":{"$ref":"#/$defs/address"},"email":{"type":"string","description":"d"}},` +
-		`"required":["email"],"additionalProperties":false,"description":"root",` +
-		`"$defs":{"address":{"type":"object","properties":{"city":{"type":"string"}},"additionalProperties":false}}}`
+	const configured = `{"type":"object","properties":{"address":{"type":"object","properties":{"city":{"type":"string"}},"additionalProperties":false},` +
+		`"email":{"type":"string","description":"d"}},"required":["email"],"additionalProperties":false,"title":"Lookup","description":"root"}`
 
 	tools, diags := buildToolsParams(ctx, AgentResourceModel{CustomTools: customToolsList(t, configured)})
 	if diags.HasError() {

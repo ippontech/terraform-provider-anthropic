@@ -466,15 +466,15 @@ func TestAccAgentResource_withCustomTools(t *testing.T) {
 			},
 			// Root-level keywords other than type/properties/required reach the
 			// API: the post-apply plan must be empty, i.e. the stored schema keeps
-			// additionalProperties and $defs.
+			// additionalProperties. Not $ref: the API rejects it in a custom tool's
+			// input_schema (400 "input_schema contains $ref, which is not
+			// supported"), so $defs would serve nothing.
 			{
 				Config: testAccAgentResourceWithCustomToolsStrictSchemaConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrWith("anthropic_agent.test_custom_tools", "custom_tools.0.input_schema", func(v string) error {
-						for _, keyword := range []string{`"additionalProperties":false`, `"$defs"`} {
-							if !strings.Contains(v, keyword) {
-								return fmt.Errorf("input_schema %s lacks %s", v, keyword)
-							}
+						if !strings.Contains(v, `"additionalProperties":false`) {
+							return fmt.Errorf("input_schema %s lacks additionalProperties", v)
 						}
 						return nil
 					}),
@@ -775,18 +775,10 @@ resource "anthropic_agent" "test_custom_tools" {
       input_schema = jsonencode({
         type = "object"
         properties = {
-          email   = { type = "string", description = "The user's email address" }
-          address = { "$ref" = "#/$defs/address" }
+          email = { type = "string", description = "The user's email address" }
         }
         required             = ["email"]
         additionalProperties = false
-        "$defs" = {
-          address = {
-            type                 = "object"
-            properties           = { city = { type = "string" } }
-            additionalProperties = false
-          }
-        }
       })
     }
   ]

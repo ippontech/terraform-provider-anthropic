@@ -522,7 +522,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 							Optional:   true,
 							CustomType: jsontypes.NormalizedType{},
 							MarkdownDescription: "JSON Schema for the tool's input parameters. Use `jsonencode()` to build the value. " +
-								"Sent as configured, root-level keywords such as `additionalProperties` and `$defs` included. " +
+								"Sent as configured, root-level keywords such as `additionalProperties` included; the API rejects `$ref`. " +
 								"Include `type = \"object\"`: the request adds it when omitted, and the apply then fails with an inconsistent result.",
 						},
 					},
@@ -1132,7 +1132,7 @@ func buildToolsParams(ctx context.Context, data AgentResourceModel) ([]anthropic
 					return nil, diags
 				}
 				// Since SDK v1.75.0 the unmarshal keeps root-level keys other than
-				// type/properties/required (additionalProperties, $defs,
+				// type/properties/required (additionalProperties, title,
 				// description, ...) in ExtraFields, and the request sends them, so
 				// the schema reaches the API as configured. SDK v1.67.0 dropped
 				// them: the API then stored a looser schema than configured.
