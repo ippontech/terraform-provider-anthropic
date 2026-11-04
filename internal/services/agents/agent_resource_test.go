@@ -273,6 +273,24 @@ func TestAccAgentResource_withAgentToolset(t *testing.T) {
 					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.permission_policy"),
 				),
 			},
+			// url_sources, with an explicit `all`: the post-apply plan must be
+			// empty, whether the API echoes the default or omits the key.
+			{
+				Config: testAccAgentResourceWithURLSourcesConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.user_input", "all"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.client_tool_results.type", "none"),
+					resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.client_tool_results.tools.#"),
+					resource.TestCheckResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.server_tool_results.type", "only"),
+					resource.TestCheckTypeSetElemAttr("anthropic_agent.test_toolset", "agent_toolset.configs.0.url_sources.server_tool_results.tools.*", "web_search"),
+				),
+			},
+			// Removing url_sources must not leave it behind (tools are replaced as
+			// a whole on update).
+			{
+				Config: testAccAgentResourceWithAutoPolicyConfig,
+				Check:  resource.TestCheckNoResourceAttr("anthropic_agent.test_toolset", "agent_toolset.configs.1.url_sources.%"),
+			},
 		},
 	})
 }
@@ -563,6 +581,28 @@ resource "anthropic_agent" "test_toolset" {
       {
         name               = "web_fetch"
         max_content_tokens = 10000
+      }
+    ]
+  }
+}
+`
+
+const testAccAgentResourceWithURLSourcesConfig = `
+resource "anthropic_agent" "test_toolset" {
+  model = "claude-sonnet-4-6"
+  name  = "tf-acc-test-toolset"
+
+  agent_toolset = {
+    default_enabled           = true
+    default_permission_policy = "auto"
+    configs = [
+      {
+        name = "web_fetch"
+        url_sources = {
+          user_input          = "all"
+          client_tool_results = { type = "none" }
+          server_tool_results = { type = "only", tools = ["web_search"] }
+        }
       }
     ]
   }

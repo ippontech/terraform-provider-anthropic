@@ -507,6 +507,7 @@ func agentToolConfigDataSourceAttributes() map[string]schema.Attribute {
 				"timezone": schema.StringAttribute{Computed: true, MarkdownDescription: "IANA timezone identifier."},
 			},
 		},
+		"url_sources": urlSourcesDataSourceSchema(),
 	}
 }
 

@@ -42,6 +42,9 @@ resource "anthropic_agent" "assistant" {
 # (allowed_domains or blocked_domains), web_search a user_location and
 # web_fetch a max_content_tokens cap. With `limited` environment networking,
 # allowed_domains entries must also be within the environment's allowed_hosts.
+# web_fetch only fetches URLs already seen in the session; url_sources narrows
+# where they may come from, here user messages and web_search results only, so
+# a URL planted in a custom tool result is never fetched.
 resource "anthropic_agent" "developer" {
   model       = "claude-sonnet-4-6"
   name        = "Developer Agent"
@@ -68,6 +71,10 @@ resource "anthropic_agent" "developer" {
         name               = "web_fetch"
         blocked_domains    = ["ads.example.com"]
         max_content_tokens = 50000
+        url_sources = {
+          client_tool_results = { type = "none" }
+          server_tool_results = { type = "only", tools = ["web_search"] }
+        }
       }
     ]
   }
@@ -191,7 +198,9 @@ Those defaults are also the provider's: a toolset that leaves `default_permissio
 
 ## Web tool restrictions
 
-The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
+The `web_search` and `web_fetch` entries of `agent_toolset.configs` accept `allowed_domains` or `blocked_domains` (not both), `web_fetch` also accepts `max_content_tokens` and `url_sources`, and `web_search` a `user_location`. Setting one of them on another tool fails at plan time. See [Restrict web search and web fetch domains](https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions) for the domain format the API accepts.
+
+`web_fetch` only fetches a URL that appeared earlier in the session: in a user message, in a custom tool's result, or in a `web_search` or `web_fetch` result. `url_sources` narrows each of these sources, so a URL that a tool result plants (prompt injection) is not fetched: `user_input` takes `all` or `none`, and `client_tool_results` and `server_tool_results` take a `type` of `all`, `none`, `only` or `except`, the last two with a `tools` list (names of `custom_tools` entries for `client_tool_results`, `web_search` or `web_fetch` for `server_tool_results`). Under `except` a custom tool added later counts as a source, under `only` it does not. A fetch of a URL that only an excluded source showed fails with `url_not_in_prior_context`. See [URL sources](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool#url-sources).
 
 These lists are not the only restrictions applied to the two tools:
 
@@ -234,7 +243,7 @@ These lists are not the only restrictions applied to the two tools:
 
 Optional:
 
-- `configs` (Attributes List) Per-tool configuration overrides. The `web_fetch` and `web_search` entries also accept `allowed_domains` or `blocked_domains`, plus `max_content_tokens` (`web_fetch`) or `user_location` (`web_search`); setting one of these on another tool fails at plan time. When unset or empty, an update sends an empty list, which removes any override set outside Terraform. (see [below for nested schema](#nestedatt--agent_toolset--configs))
+- `configs` (Attributes List) Per-tool configuration overrides. The `web_fetch` and `web_search` entries also accept `allowed_domains` or `blocked_domains`, plus `max_content_tokens` and `url_sources` (`web_fetch`) or `user_location` (`web_search`); setting one of these on another tool fails at plan time. When unset or empty, an update sends an empty list, which removes any override set outside Terraform. (see [below for nested schema](#nestedatt--agent_toolset--configs))
 - `default_enabled` (Boolean) Whether tools are enabled by default. Defaults to `true`, the API's documented default. When unset, the plan holds the default, so a value changed outside Terraform is reverted on the next apply.
 - `default_permission_policy` (String) Default permission policy: `always_allow` (runs without confirmation), `always_ask` (waits for approval) or `auto` (the server evaluates each call and runs it, denies it or waits for approval; not a human checkpoint, since a call it judges safe runs before anyone sees it). Defaults to `always_allow`, the API's documented default for the built-in toolset. When unset, the plan holds the default, so a policy changed outside Terraform is reverted on the next apply. Removing the attribute plans `always_allow`, which reverts `auto` or any other policy set before.
 
@@ -252,7 +261,42 @@ Optional:
 - `enabled` (Boolean) Whether this tool is enabled. Overrides `default_enabled`.
 - `max_content_tokens` (Number) `web_fetch` only. Maximum number of tokens of fetched text content included in the context per call. Does not apply to binary content such as PDFs. Positive integer.
 - `permission_policy` (String) Permission policy override: `always_allow`, `always_ask` or `auto`.
+- `url_sources` (Attributes) `web_fetch` only. Which sources may contribute the URLs the tool fetches: the tool only fetches a URL that appeared earlier in the session, in a user message, a custom tool result or a `web_search` or `web_fetch` result, and each key below narrows one of those sources (a URL planted in a tool result is a prompt-injection path). Omitted keys allow their source. At least one key must be set, and setting all three to `none` is rejected. (see [below for nested schema](#nestedatt--agent_toolset--configs--url_sources))
 - `user_location` (Attributes) `web_search` only. Approximate user location used to localize search results (sent with `type = "approximate"`, the only precision the API supports). At least one field must be set. (see [below for nested schema](#nestedatt--agent_toolset--configs--user_location))
+
+<a id="nestedatt--agent_toolset--configs--url_sources"></a>
+### Nested Schema for `agent_toolset.configs.url_sources`
+
+Optional:
+
+- `client_tool_results` (Attributes) Which custom tools' results contribute URLs that may be fetched. Omit it to allow every one (the API default). (see [below for nested schema](#nestedatt--agent_toolset--configs--url_sources--client_tool_results))
+- `server_tool_results` (Attributes) Which `web_search` and `web_fetch` results contribute URLs that may be fetched. Omit it to allow every one (the API default). (see [below for nested schema](#nestedatt--agent_toolset--configs--url_sources--server_tool_results))
+- `user_input` (String) Whether URLs in the text of user messages may be fetched: `all` or `none`.
+
+<a id="nestedatt--agent_toolset--configs--url_sources--client_tool_results"></a>
+### Nested Schema for `agent_toolset.configs.url_sources.client_tool_results`
+
+Required:
+
+- `type` (String) `all` (every result), `none` (no result), `only` (the results of the tools in `tools`) or `except` (every result but those of the tools in `tools`).
+
+Optional:
+
+- `tools` (Set of String) Tool names, compared case-sensitively. Required when `type` is `only` or `except`, forbidden otherwise. 1-128 names. Each name must be a tool in `custom_tools`; with `except`, a custom tool added later counts as a source, with `only` it does not.
+
+
+<a id="nestedatt--agent_toolset--configs--url_sources--server_tool_results"></a>
+### Nested Schema for `agent_toolset.configs.url_sources.server_tool_results`
+
+Required:
+
+- `type` (String) `all` (every result), `none` (no result), `only` (the results of the tools in `tools`) or `except` (every result but those of the tools in `tools`).
+
+Optional:
+
+- `tools` (Set of String) Tool names, compared case-sensitively. Required when `type` is `only` or `except`, forbidden otherwise. 1-128 names. Each name must be `web_search` or `web_fetch`.
+
+
 
 <a id="nestedatt--agent_toolset--configs--user_location"></a>
 ### Nested Schema for `agent_toolset.configs.user_location`

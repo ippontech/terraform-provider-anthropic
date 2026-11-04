@@ -5,6 +5,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -12,11 +13,16 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	"github.com/anthropics/anthropic-sdk-go/packages/respjson"
 	"github.com/anthropics/anthropic-sdk-go/shared/constant"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
@@ -25,7 +31,9 @@ import (
 
 // Web options of an `agent_toolset.configs` entry
 // (https://platform.claude.com/docs/en/managed-agents/tools-web-restrictions).
-// `url_sources` (web_fetch, in the SDK since v1.79.0) is not exposed yet.
+// `url_sources` (web_fetch, SDK v1.79.0+) is described in the agent create
+// reference (https://platform.claude.com/docs/en/api/beta/agents/create) and
+// in https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool#url-sources.
 
 const (
 	toolNameWebFetch  = "web_fetch"
@@ -39,6 +47,7 @@ var webToolOptionTools = map[string][]string{
 	"blocked_domains":    {toolNameWebFetch, toolNameWebSearch},
 	"max_content_tokens": {toolNameWebFetch},
 	"user_location":      {toolNameWebSearch},
+	"url_sources":        {toolNameWebFetch},
 }
 
 // webToolOptionRejection returns a diagnostic detail when the built-in tool
@@ -67,6 +76,112 @@ var agentUserLocationAttrTypes = map[string]attr.Type{
 	"city":     types.StringType,
 	"region":   types.StringType,
 	"timezone": types.StringType,
+}
+
+// URL source values. `user_input` takes the first two only; the tool result
+// filters take all four, `only` and `except` with a `tools` list.
+const (
+	urlSourceAll    = "all"
+	urlSourceNone   = "none"
+	urlSourceOnly   = "only"
+	urlSourceExcept = "except"
+)
+
+// agentURLSourcesModel is the `url_sources` object of a web_fetch config.
+type agentURLSourcesModel struct {
+	UserInput         types.String `tfsdk:"user_input"`
+	ClientToolResults types.Object `tfsdk:"client_tool_results"`
+	ServerToolResults types.Object `tfsdk:"server_tool_results"`
+}
+
+// agentURLSourceFilterModel is a tool result filter of `url_sources`.
+type agentURLSourceFilterModel struct {
+	Type  types.String `tfsdk:"type"`
+	Tools types.Set    `tfsdk:"tools"`
+}
+
+var agentURLSourceFilterAttrTypes = map[string]attr.Type{
+	"type":  types.StringType,
+	"tools": types.SetType{ElemType: types.StringType},
+}
+
+var agentURLSourcesAttrTypes = map[string]attr.Type{
+	"user_input":          types.StringType,
+	"client_tool_results": types.ObjectType{AttrTypes: agentURLSourceFilterAttrTypes},
+	"server_tool_results": types.ObjectType{AttrTypes: agentURLSourceFilterAttrTypes},
+}
+
+// urlSourcesSchema is the `url_sources` attribute of an `agent_toolset.configs`
+// entry.
+func urlSourcesSchema() schema.SingleNestedAttribute {
+	filter := func(source, toolsRule string, toolValidators ...validator.String) schema.SingleNestedAttribute {
+		return schema.SingleNestedAttribute{
+			Optional: true,
+			MarkdownDescription: "Which " + source + " contribute URLs that may be fetched. " +
+				"Omit it to allow every one (the API default).",
+			Attributes: map[string]schema.Attribute{
+				"type": schema.StringAttribute{
+					Required: true,
+					MarkdownDescription: "`all` (every result), `none` (no result), `only` (the results of the tools in `tools`) " +
+						"or `except` (every result but those of the tools in `tools`).",
+					Validators: []validator.String{stringvalidator.OneOf(urlSourceAll, urlSourceNone, urlSourceOnly, urlSourceExcept)},
+				},
+				"tools": schema.SetAttribute{
+					Optional:    true,
+					ElementType: types.StringType,
+					MarkdownDescription: "Tool names, compared case-sensitively. Required when `type` is `only` or `except`, " +
+						"forbidden otherwise. 1-128 names. " + toolsRule,
+					Validators: []validator.Set{
+						setvalidator.SizeBetween(1, 128),
+						setvalidator.ValueStringsAre(append([]validator.String{stringvalidator.LengthBetween(1, 128)}, toolValidators...)...),
+					},
+				},
+			},
+		}
+	}
+	return schema.SingleNestedAttribute{
+		Optional: true,
+		MarkdownDescription: "`web_fetch` only. Which sources may contribute the URLs the tool fetches: the tool only fetches a URL " +
+			"that appeared earlier in the session, in a user message, a custom tool result or a `web_search` or `web_fetch` result, " +
+			"and each key below narrows one of those sources (a URL planted in a tool result is a prompt-injection path). " +
+			"Omitted keys allow their source. At least one key must be set, and setting all three to `none` is rejected.",
+		Attributes: map[string]schema.Attribute{
+			"user_input": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Whether URLs in the text of user messages may be fetched: `all` or `none`.",
+				Validators:          []validator.String{stringvalidator.OneOf(urlSourceAll, urlSourceNone)},
+			},
+			"client_tool_results": filter("custom tools' results",
+				"Each name must be a tool in `custom_tools`; with `except`, a custom tool added later counts as a source, with `only` it does not."),
+			"server_tool_results": filter("`web_search` and `web_fetch` results",
+				"Each name must be `web_search` or `web_fetch`.",
+				stringvalidator.OneOf(toolNameWebSearch, toolNameWebFetch)),
+		},
+	}
+}
+
+// urlSourcesDataSourceSchema is the read-only `url_sources` attribute of the
+// data sources.
+func urlSourcesDataSourceSchema() dsschema.SingleNestedAttribute {
+	filter := func(source string) dsschema.SingleNestedAttribute {
+		return dsschema.SingleNestedAttribute{
+			Computed:            true,
+			MarkdownDescription: "Which " + source + " contribute URLs that may be fetched, null when every one does.",
+			Attributes: map[string]dsschema.Attribute{
+				"type":  dsschema.StringAttribute{Computed: true, MarkdownDescription: "`none`, `only` or `except` (`all`, the default, makes the filter null)."},
+				"tools": dsschema.SetAttribute{Computed: true, ElementType: types.StringType, MarkdownDescription: "Tool names of an `only` or `except` filter."},
+			},
+		}
+	}
+	return dsschema.SingleNestedAttribute{
+		Computed:            true,
+		MarkdownDescription: "Which sources may contribute the URLs `web_fetch` fetches, null when every source may.",
+		Attributes: map[string]dsschema.Attribute{
+			"user_input":          dsschema.StringAttribute{Computed: true, MarkdownDescription: "`none` when URLs in user messages may not be fetched, null when they may (`all`, the default)."},
+			"client_tool_results": filter("custom tools' results"),
+			"server_tool_results": filter("`web_search` and `web_fetch` results"),
+		},
+	}
 }
 
 // --- Config validation ---
@@ -140,6 +255,10 @@ func validateAgentToolConfigs(ctx context.Context, toolset types.Object) diag.Di
 			}
 		}
 
+		if isSet(c.URLSources) {
+			diags.Append(validateURLSources(ctx, c.URLSources, p.AtName("url_sources"))...)
+		}
+
 		if c.Name.IsNull() || c.Name.IsUnknown() {
 			continue
 		}
@@ -151,6 +270,7 @@ func validateAgentToolConfigs(ctx context.Context, toolset types.Object) diag.Di
 			{"blocked_domains", c.BlockedDomains},
 			{"max_content_tokens", c.MaxContentTokens},
 			{"user_location", c.UserLocation},
+			{"url_sources", c.URLSources},
 		} {
 			if !isSet(opt.value) {
 				continue
@@ -207,6 +327,64 @@ func (uniqueDomainsValidator) ValidateSet(_ context.Context, req validator.SetRe
 	}
 }
 
+// validateURLSources checks the rules of a known `url_sources` object the
+// schema cannot express: at least one key set, not all three `none`, and a
+// `tools` list exactly when a filter's type is `only` or `except`. Unknown
+// values count as neither set nor missing.
+func validateURLSources(ctx context.Context, obj types.Object, p path.Path) diag.Diagnostics {
+	var diags diag.Diagnostics
+	var src agentURLSourcesModel
+	if d := obj.As(ctx, &src, basetypes.ObjectAsOptions{}); d.HasError() {
+		return d
+	}
+
+	if src.UserInput.IsNull() && src.ClientToolResults.IsNull() && src.ServerToolResults.IsNull() {
+		diags.AddAttributeError(p, "Empty URL sources",
+			`"url_sources" must set at least one of "user_input", "client_tool_results" or "server_tool_results"; omit it to allow every source.`)
+		return diags
+	}
+
+	// allNone stays true only while every key is known to be "none".
+	allNone := src.UserInput.ValueString() == urlSourceNone
+	for _, f := range []struct {
+		key   string
+		value types.Object
+	}{
+		{"client_tool_results", src.ClientToolResults},
+		{"server_tool_results", src.ServerToolResults},
+	} {
+		if f.value.IsNull() || f.value.IsUnknown() {
+			allNone = false
+			continue
+		}
+		var filter agentURLSourceFilterModel
+		if d := f.value.As(ctx, &filter, basetypes.ObjectAsOptions{}); d.HasError() {
+			diags.Append(d...)
+			return diags
+		}
+		allNone = allNone && filter.Type.ValueString() == urlSourceNone
+		if filter.Type.IsNull() || filter.Type.IsUnknown() {
+			continue
+		}
+		withTools := filter.Type.ValueString() == urlSourceOnly || filter.Type.ValueString() == urlSourceExcept
+		switch {
+		case withTools && filter.Tools.IsNull():
+			diags.AddAttributeError(p.AtName(f.key).AtName("tools"), "Missing tools",
+				fmt.Sprintf(`"tools" is required when "type" is %q.`, filter.Type.ValueString()))
+		case !withTools && !filter.Tools.IsNull() && !filter.Tools.IsUnknown():
+			diags.AddAttributeError(p.AtName(f.key).AtName("tools"), "Unexpected tools",
+				fmt.Sprintf(`"tools" is only allowed when "type" is "only" or "except", not %q.`, filter.Type.ValueString()))
+		}
+	}
+
+	if allNone {
+		diags.AddAttributeError(p, "No URL source left",
+			`Setting "user_input", "client_tool_results" and "server_tool_results" all to "none" is rejected by the API: `+
+				`disable web_fetch instead (enabled = false).`)
+	}
+	return diags
+}
+
 // --- Plan -> params ---
 
 // webToolOptions carries the web options of one `configs` entry to
@@ -216,6 +394,7 @@ type webToolOptions struct {
 	blockedDomains   []string
 	maxContentTokens param.Opt[int64]
 	userLocation     *anthropic.BetaManagedAgentsUserLocationParam
+	urlSources       *anthropic.BetaManagedAgentsWebFetchURLSourcesParams
 }
 
 // rejectedFor returns one diagnostic detail per option set on o that the
@@ -231,6 +410,7 @@ func (o webToolOptions) rejectedFor(name string) []string {
 		{"blocked_domains", o.blockedDomains != nil},
 		{"max_content_tokens", o.maxContentTokens.Valid()},
 		{"user_location", o.userLocation != nil},
+		{"url_sources", o.urlSources != nil},
 	} {
 		if !opt.set {
 			continue
@@ -279,17 +459,110 @@ func webToolOptionsFromModel(ctx context.Context, c agentToolConfigModel) (webTo
 		}
 		o.userLocation = p
 	}
+	if !c.URLSources.IsNull() && !c.URLSources.IsUnknown() {
+		src, d := urlSourcesParamsFromModel(ctx, c.URLSources)
+		diags.Append(d...)
+		o.urlSources = src
+	}
 	return o, diags
+}
+
+// urlSourcesParamsFromModel builds the `url_sources` request object. Every key
+// is sent in its object form ({"type": ...}), the form the API answers in;
+// an unset key is omitted, which allows its source.
+func urlSourcesParamsFromModel(ctx context.Context, obj types.Object) (*anthropic.BetaManagedAgentsWebFetchURLSourcesParams, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	var src agentURLSourcesModel
+	diags.Append(obj.As(ctx, &src, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	p := &anthropic.BetaManagedAgentsWebFetchURLSourcesParams{}
+	if !src.UserInput.IsNull() && !src.UserInput.IsUnknown() {
+		u := &anthropic.BetaManagedAgentsWebFetchURLSourceUserInputUnionParam{}
+		switch src.UserInput.ValueString() {
+		case urlSourceAll:
+			all := anthropic.NewBetaManagedAgentsWebFetchURLSourceAllParam()
+			u.OfAll = &all
+		case urlSourceNone:
+			none := anthropic.NewBetaManagedAgentsWebFetchURLSourceNoneParam()
+			u.OfNone = &none
+		default:
+			diags.AddError("Invalid url_sources", fmt.Sprintf(`"user_input" must be "all" or "none", not %q.`, src.UserInput.ValueString()))
+			return nil, diags
+		}
+		p.UserInput.OfBetaManagedAgentsWebFetchURLSourceUserInputUnion = u
+	}
+	for _, f := range []struct {
+		key   string
+		value types.Object
+		dst   *anthropic.BetaManagedAgentsWebFetchURLSourceToolFilterParamsUnion
+	}{
+		{"client_tool_results", src.ClientToolResults, &p.ClientToolResults},
+		{"server_tool_results", src.ServerToolResults, &p.ServerToolResults},
+	} {
+		if f.value.IsNull() || f.value.IsUnknown() {
+			continue
+		}
+		filter, d := urlSourceFilterParamFromModel(ctx, f.key, f.value)
+		diags.Append(d...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		f.dst.OfBetaManagedAgentsWebFetchURLSourceToolFilterUnion = filter
+	}
+	return p, diags
+}
+
+func urlSourceFilterParamFromModel(ctx context.Context, key string, obj types.Object) (*anthropic.BetaManagedAgentsWebFetchURLSourceToolFilterUnionParam, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	var filter agentURLSourceFilterModel
+	diags.Append(obj.As(ctx, &filter, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	var names []string
+	if !filter.Tools.IsNull() && !filter.Tools.IsUnknown() {
+		diags.Append(filter.Tools.ElementsAs(ctx, &names, false)...)
+		if diags.HasError() {
+			return nil, diags
+		}
+	}
+	refs := make([]anthropic.BetaManagedAgentsWebFetchURLSourceToolReferenceParam, len(names))
+	for i, n := range names {
+		refs[i] = anthropic.BetaManagedAgentsWebFetchURLSourceToolReferenceParam{Name: n}
+	}
+
+	u := &anthropic.BetaManagedAgentsWebFetchURLSourceToolFilterUnionParam{}
+	switch filter.Type.ValueString() {
+	case urlSourceAll:
+		all := anthropic.NewBetaManagedAgentsWebFetchURLSourceAllParam()
+		u.OfAll = &all
+	case urlSourceNone:
+		none := anthropic.NewBetaManagedAgentsWebFetchURLSourceNoneParam()
+		u.OfNone = &none
+	case urlSourceOnly:
+		u.OfOnly = &anthropic.BetaManagedAgentsWebFetchURLSourceOnlyParam{Tools: refs}
+	case urlSourceExcept:
+		u.OfExcept = &anthropic.BetaManagedAgentsWebFetchURLSourceExceptParam{Tools: refs}
+	default:
+		diags.AddError("Invalid url_sources", fmt.Sprintf(`%q type must be "all", "none", "only" or "except", not %q.`, key, filter.Type.ValueString()))
+		return nil, diags
+	}
+	return u, diags
 }
 
 // --- Response -> state ---
 
 // webToolOptionsFromResponse maps the web options of a built-in tool config
-// verbatim. The API documents no default for them (an unset domain list means
-// no restriction, and an unset max_content_tokens or user_location is taken
-// from the calling agent when a session runs): an unset option comes back
-// absent or null and maps to null, so unlike `enabled` and `permission_policy`
-// no comparison with an inherited default is needed to avoid a perpetual diff,
+// verbatim, except that the url_sources keys at their documented default map
+// to null (urlSourcesFromResponse). No other option has a documented default
+// (an unset domain list means no restriction, and an unset max_content_tokens
+// or user_location is taken from the calling agent when a session runs): an
+// unset option comes back absent or null and maps to null, so unlike `enabled`
+// and `permission_policy` no comparison with an inherited default is needed to
+// avoid a perpetual diff,
 // and a value set out of band surfaces as drift. As for `enabled`,
 // TestAccAgentResource_withAgentToolset checks that echo live, for every
 // option. A user_location with no field set (`{"type": "approximate"}` alone)
@@ -331,11 +604,15 @@ func webToolOptionsFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnio
 		userLocation = obj
 	}
 
+	urlSources, d := urlSourcesFromResponse(c)
+	diags.Append(d...)
+
 	return map[string]attr.Value{
 		"allowed_domains":    domains(c.AllowedDomains, c.JSON.AllowedDomains.Valid()),
 		"blocked_domains":    domains(c.BlockedDomains, c.JSON.BlockedDomains.Valid()),
 		"max_content_tokens": maxContentTokens,
 		"user_location":      userLocation,
+		"url_sources":        urlSources,
 	}, diags
 }
 
@@ -349,7 +626,9 @@ func webToolOptionsFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnio
 //     entries normalized;
 //   - with applyMapping, an option current leaves null stays null, and so does
 //     a user_location field: a default the API resolved for it would otherwise
-//     fail the apply as an inconsistent result. It shows on the next Read.
+//     fail the apply as an inconsistent result. It shows on the next Read;
+//   - url_sources is resolved key by key (urlSourcesToState), in both modes: a
+//     key current sets to `all` stays so while the API answers the default.
 //
 // Any other API value is kept, so a change made outside Terraform shows as
 // drift on Read.
@@ -366,6 +645,8 @@ func webToolOptionsToState(current, api map[string]attr.Value, mode mappingMode)
 			resolved[option] = domainSetToState(cur, apiValue)
 		case option == "user_location" && mode == applyMapping:
 			resolved[option] = userLocationToState(cur, apiValue)
+		case option == "url_sources":
+			resolved[option] = urlSourcesToState(cur, apiValue, mode)
 		default:
 			resolved[option] = apiValue
 		}
@@ -430,6 +711,127 @@ func userLocationToState(current, api attr.Value) attr.Value {
 		return api
 	}
 	return obj
+}
+
+// urlSourcesFromResponse maps `url_sources`. The API answers in the object
+// form ({"type": ...}); a key given in the string shorthand ("all"/"none") is
+// read as well. Every key defaults to `all` (web fetch tool docs, "URL
+// sources"), so a key at `all` maps to null like an absent or null one, and an
+// object left with no key maps to null, as an empty domain list does: whether
+// the API echoes the default or omits it, an unset key reads back unset, and an
+// untracked config that only carries defaults sets nothing (setsExtra). Any
+// other value is kept, so a source narrowed out of band shows as drift.
+// urlSourcesToState keeps a configured `all`.
+func urlSourcesFromResponse(c anthropic.BetaManagedAgentsAgentToolConfigUnion) (types.Object, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if !c.JSON.URLSources.Valid() {
+		return types.ObjectNull(agentURLSourcesAttrTypes), diags
+	}
+	src := c.URLSources
+
+	filter := func(f anthropic.BetaManagedAgentsWebFetchURLSourceToolFilterUnion, field respjson.Field) types.Object {
+		typ := urlSourceType(f.Type, field)
+		if typ.IsNull() {
+			return types.ObjectNull(agentURLSourceFilterAttrTypes)
+		}
+		tools := types.SetNull(types.StringType)
+		if len(f.Tools) > 0 {
+			elems := make([]attr.Value, len(f.Tools))
+			for i, t := range f.Tools {
+				elems[i] = types.StringValue(t.Name)
+			}
+			set, d := types.SetValue(types.StringType, elems)
+			diags.Append(d...)
+			tools = set
+		}
+		obj, d := types.ObjectValue(agentURLSourceFilterAttrTypes, map[string]attr.Value{"type": typ, "tools": tools})
+		diags.Append(d...)
+		return obj
+	}
+
+	keys := map[string]attr.Value{
+		"user_input":          urlSourceType(src.UserInput.Type, src.JSON.UserInput),
+		"client_tool_results": filter(src.ClientToolResults, src.JSON.ClientToolResults),
+		"server_tool_results": filter(src.ServerToolResults, src.JSON.ServerToolResults),
+	}
+	obj, d := urlSourcesObject(keys)
+	diags.Append(d...)
+	return obj, diags
+}
+
+// urlSourcesObject builds a url_sources object from its keys, or null when no
+// key is set.
+func urlSourcesObject(keys map[string]attr.Value) (types.Object, diag.Diagnostics) {
+	for _, v := range keys {
+		if !v.IsNull() {
+			return types.ObjectValue(agentURLSourcesAttrTypes, keys)
+		}
+	}
+	return types.ObjectNull(agentURLSourcesAttrTypes), nil
+}
+
+// urlSourceType returns the type of a url_sources key: the decoded object's
+// `type` or the string itself when the key came in the shorthand form, and
+// null when the key is absent, null or `all`, the default of every key.
+func urlSourceType(decoded string, field respjson.Field) types.String {
+	var typ string
+	if field.Valid() && decoded != "" {
+		typ = decoded
+	} else if raw := field.Raw(); raw != "" && json.Unmarshal([]byte(raw), &typ) != nil {
+		typ = ""
+	}
+	if typ == "" || typ == urlSourceAll {
+		return types.StringNull()
+	}
+	return types.StringValue(typ)
+}
+
+// urlSourcesToState resolves the url_sources the API returns (its keys at the
+// default already null) against current's, key by key:
+//   - a key current sets to `all` keeps it while the API answers the default,
+//     whether it echoes `all` or omits the key;
+//   - with applyMapping, a key current leaves null stays null, as a
+//     user_location field does;
+//   - any other key takes the API value, so a source changed out of band
+//     shows as drift on Read.
+func urlSourcesToState(current, api attr.Value, mode mappingMode) attr.Value {
+	cur, okCur := current.(types.Object)
+	got, okAPI := api.(types.Object)
+	if !okCur || !okAPI || cur.IsNull() {
+		return api
+	}
+	keys := map[string]attr.Value{
+		"user_input":          types.StringNull(),
+		"client_tool_results": types.ObjectNull(agentURLSourceFilterAttrTypes),
+		"server_tool_results": types.ObjectNull(agentURLSourceFilterAttrTypes),
+	}
+	maps.Copy(keys, got.Attributes())
+	for key, apiKey := range keys {
+		curKey, ok := cur.Attributes()[key]
+		if !ok || curKey.IsUnknown() {
+			continue
+		}
+		if (curKey.IsNull() && mode == applyMapping) || (apiKey.IsNull() && urlSourceIsAll(curKey)) {
+			keys[key] = curKey
+		}
+	}
+	obj, diags := urlSourcesObject(keys)
+	if diags.HasError() {
+		return api
+	}
+	return obj
+}
+
+// urlSourceIsAll reports whether a url_sources key holds `all`.
+func urlSourceIsAll(v attr.Value) bool {
+	switch v := v.(type) {
+	case types.String:
+		return v.ValueString() == urlSourceAll
+	case types.Object:
+		typ, _ := v.Attributes()["type"].(types.String)
+		return typ.ValueString() == urlSourceAll
+	}
+	return false
 }
 
 // apiAgentToolConfig converts a built-in tool config from the API into the
