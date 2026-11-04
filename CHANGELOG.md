@@ -1,3 +1,9 @@
+## [1.75.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.74.1...v1.75.0) (2026-11-04)
+
+### ✨ Features
+
+* **models:** lifecycle, deprecation and retirement dates, model line ([#450](https://github.com/ippontech/terraform-provider-anthropic/issues/450)) ([1b1034d](https://github.com/ippontech/terraform-provider-anthropic/commit/1b1034d00e750014e2d434760aca391960d93666)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#373](https://github.com/ippontech/terraform-provider-anthropic/issues/373)
+
 ## [1.74.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.74.0...v1.74.1) (2026-11-04)
 
 ### 🐛 Bug Fixes
