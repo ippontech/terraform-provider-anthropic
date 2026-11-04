@@ -1,3 +1,9 @@
+## [1.78.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.77.0...v1.78.0) (2026-11-04)
+
+### ✨ Features
+
+* add anthropic_organization_webhook resource ([#436](https://github.com/ippontech/terraform-provider-anthropic/issues/436)) ([81550c9](https://github.com/ippontech/terraform-provider-anthropic/commit/81550c98a047ca07d73e11762712fa45a6d97801)), closes [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#58](https://github.com/ippontech/terraform-provider-anthropic/issues/58) [#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#363](https://github.com/ippontech/terraform-provider-anthropic/issues/363) [#437](https://github.com/ippontech/terraform-provider-anthropic/issues/437)
+
 ## [1.77.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.76.0...v1.77.0) (2026-11-04)
 
 ### ✨ Features
