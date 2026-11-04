@@ -1,3 +1,9 @@
+## [1.65.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.64.1...v1.65.0) (2026-11-04)
+
+### ✨ Features
+
+* add vault data sources ([#438](https://github.com/ippontech/terraform-provider-anthropic/issues/438)) ([5556d54](https://github.com/ippontech/terraform-provider-anthropic/commit/5556d54b6ee432587e4dc60de2dcab926f66446c)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#418](https://github.com/ippontech/terraform-provider-anthropic/issues/418) [#418](https://github.com/ippontech/terraform-provider-anthropic/issues/418) [#360](https://github.com/ippontech/terraform-provider-anthropic/issues/360)
+
 ## [1.64.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.64.0...v1.64.1) (2026-11-03)
 
 ### 📚 Documentation
