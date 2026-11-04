@@ -517,7 +517,7 @@ func mapAgentToDataSourceObject(agent *anthropic.BetaManagedAgentsAgent) (attr.V
 		customToolsList = list
 	}
 
-	multiagentObj, d := mapMultiagentToObject(agent.Multiagent)
+	multiagentObj, d := mapMultiagentToObject(agent.Multiagent, agent.ID)
 	diags.Append(d...)
 
 	archivedAt := types.StringNull()
