@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework-validators/boolvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -37,6 +39,7 @@ import (
 var _ resource.Resource = &FederationIssuerResource{}
 var _ resource.ResourceWithImportState = &FederationIssuerResource{}
 var _ resource.ResourceWithConfigValidators = &FederationIssuerResource{}
+var _ resource.ResourceWithModifyPlan = &FederationIssuerResource{}
 
 func NewFederationIssuerResource() resource.Resource {
 	return &FederationIssuerResource{}
@@ -60,7 +63,9 @@ type FederationIssuerResourceModel struct {
 	JWKS                  types.Object `tfsdk:"jwks"`
 	CheckJTI              types.Bool   `tfsdk:"check_jti"`
 	MaxJWTLifetimeSeconds types.Int64  `tfsdk:"max_jwt_lifetime_seconds"`
+	JWKSPollingDisabled   types.Bool   `tfsdk:"jwks_polling_disabled"`
 	JWKSPollingDisabledAt types.String `tfsdk:"jwks_polling_disabled_at"`
+	PollStatus            types.Object `tfsdk:"poll_status"`
 	CreatedAt             types.String `tfsdk:"created_at"`
 	UpdatedAt             types.String `tfsdk:"updated_at"`
 	ArchivedAt            types.String `tfsdk:"archived_at"`
@@ -87,6 +92,14 @@ var federationIssuerJWKSAttrTypes = map[string]attr.Type{
 	"url":            types.StringType,
 	"keys":           jsontypes.NormalizedType{},
 	"ca_cert_pem":    types.StringType,
+}
+
+// federationIssuerPollStatusAttrTypes describes the Computed `poll_status`
+// nested object, shared by the resource and both issuer data sources.
+var federationIssuerPollStatusAttrTypes = map[string]attr.Type{
+	"consecutive_failures": types.Int64Type,
+	"last_fetched_at":      types.StringType,
+	"next_poll_at":         types.StringType,
 }
 
 // federationIssuerJWKSDiscoveryDefault is the server-side default jwks shape
@@ -188,12 +201,45 @@ func (r *FederationIssuerResource) Schema(_ context.Context, _ resource.SchemaRe
 				Validators: []validator.Int64{int64validator.Between(1, 176400)},
 			},
 
+			// --- Optional, update-only ---
+			"jwks_polling_disabled": schema.BoolAttribute{
+				Optional: true,
+				MarkdownDescription: "Set to `false` to keep Anthropic's background JWKS polling enabled for this issuer. The API pauses polling on its own " +
+					"after repeated fetch failures (see `jwks_polling_disabled_at`); while this attribute is `false`, a refresh that finds polling paused " +
+					"makes the next plan update the issuer with `jwks_polling_disabled: false`, which re-enables it. Only `false` is accepted: the API " +
+					"rejects `true`. Never sent on create, nor while polling is active or the issuer is archived. " +
+					"**OAuth restriction**: the API refuses this toggle from an OAuth caller, which is the only credential this resource uses, when the " +
+					"issuer backs a federation rule whose scope is neither `workspace:developer` nor `workspace:inference`. Re-enable polling from a " +
+					"Console session in that case and leave this attribute unset, or every plan proposes the re-enable again while polling stays paused.",
+				Validators: []validator.Bool{boolvalidator.Equals(false)},
+			},
+
 			// --- Computed ---
 			"jwks_polling_disabled_at": schema.StringAttribute{
 				Computed: true,
 				MarkdownDescription: "Set when Anthropic's background JWKS poller has paused polling for this issuer after repeated fetch failures. " +
-					"Null while polling is active. Re-enabling requires the update-only `jwks_polling_disabled: false` toggle on the API, which this " +
-					"resource does not expose (see the provider documentation); use the API directly if this needs unpausing.",
+					"Null while polling is active. Set `jwks_polling_disabled = false` to have the provider re-enable polling when it finds it paused.",
+			},
+			"poll_status": schema.SingleNestedAttribute{
+				Computed: true,
+				MarkdownDescription: "Live state of Anthropic's background JWKS polling for this issuer, as of the last refresh. Null for inline-key " +
+					"issuers (nothing to fetch), and while the status is unavailable or polling has not started yet. It changes on every poll cycle: " +
+					"a normal plan records the new values without planning any change, but a refresh-only plan, as drift detection runs, reports " +
+					"them as changed outside of Terraform.",
+				Attributes: map[string]schema.Attribute{
+					"consecutive_failures": schema.Int64Attribute{
+						Computed:            true,
+						MarkdownDescription: "Consecutive fetch failures since the last success.",
+					},
+					"last_fetched_at": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "When the last successful fetch completed (RFC 3339). Null if no fetch has succeeded yet.",
+					},
+					"next_poll_at": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "When the next fetch is scheduled (RFC 3339). Null while polling is paused.",
+					},
+				},
 			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
@@ -362,6 +408,38 @@ func (r *FederationIssuerResource) Configure(_ context.Context, req resource.Con
 	r.client = pd.OAuthClient
 }
 
+// --- ModifyPlan ---
+
+// ModifyPlan turns a paused JWKS poller into a planned update while the
+// configuration asks for polling to stay enabled (jwks_polling_disabled =
+// false). The API never echoes jwks_polling_disabled, so once it sits in
+// state as false no configuration diff reaches Update again; marking the
+// attributes a re-enable rewrites as unknown is what makes Terraform call
+// Update, and lets it accept whatever the API then returns for them.
+func (r *FederationIssuerResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Only updates matter: a new issuer is never paused, and a destroy has no plan.
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+
+	var plan, state FederationIssuerResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !jwksPollingReenableRequested(plan, state) {
+		return
+	}
+
+	plan.JWKSPollingDisabledAt = types.StringUnknown()
+	plan.PollStatus = types.ObjectUnknown(federationIssuerPollStatusAttrTypes)
+	plan.UpdatedAt = types.StringUnknown()
+	plan.UpdatedByActorID = types.StringUnknown()
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
 // --- Create ---
 
 func (r *FederationIssuerResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -393,6 +471,8 @@ func (r *FederationIssuerResource) Create(ctx context.Context, req resource.Crea
 	if !data.MaxJWTLifetimeSeconds.IsNull() && !data.MaxJWTLifetimeSeconds.IsUnknown() {
 		params.MaxJWTLifetimeSeconds = param.NewOpt(data.MaxJWTLifetimeSeconds.ValueInt64())
 	}
+	// jwks_polling_disabled has no create counterpart (a new issuer's polling
+	// is not paused); it stays in state as configured and only Update sends it.
 
 	issuer, err := r.client.Beta.Organization.Federation.Issuers.New(ctx, params)
 	if err != nil {
@@ -453,44 +533,89 @@ func (r *FederationIssuerResource) Update(ctx context.Context, req resource.Upda
 		return
 	}
 
-	params := anthropic.BetaOrganizationFederationIssuerUpdateParams{}
+	update, diags := buildFederationIssuerUpdateParams(ctx, plan, state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	if !plan.Name.Equal(state.Name) {
-		params.Name = param.NewOpt(plan.Name.ValueString())
+	// On an error Terraform saves the state the response holds. Framework
+	// v1.19.0 already starts it as the prior state, but its doc comment says the
+	// plan, whose polling attributes are unknown here: set it explicitly, so a
+	// refused re-enable with nothing else to send keeps polling shown as paused.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	if !plan.IssuerURL.Equal(state.IssuerURL) {
-		params.IssuerURL = param.NewOpt(plan.IssuerURL.ValueString())
-	}
-	if !plan.CheckJTI.Equal(state.CheckJTI) {
-		params.CheckJTI = param.NewOpt(plan.CheckJTI.ValueBool())
-	}
-	if !plan.MaxJWTLifetimeSeconds.Equal(state.MaxJWTLifetimeSeconds) {
-		params.MaxJWTLifetimeSeconds = param.NewOpt(plan.MaxJWTLifetimeSeconds.ValueInt64())
-	}
-	// Setting jwks replaces the full JWKS shape at once, so it is only sent
-	// when it actually changed.
-	if !plan.JWKS.Equal(state.JWKS) {
-		discovery, explicitURL, inline, diags := buildJWKSParams(ctx, plan.JWKS)
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
+
+	id := state.ID.ValueString()
+	var issuer, toggled *anthropic.BetaFederationIssuer
+	var err error
+	if update.send {
+		issuer, err = r.client.Beta.Organization.Federation.Issuers.Update(ctx, id, update.params)
+		if err != nil {
+			summary, detail := federationIssuerUpdateErrorDiagnostic(id, err, false)
+			resp.Diagnostics.AddError(summary, detail)
 			return
 		}
-		params.JWKS = anthropic.BetaOrganizationFederationIssuerUpdateParamsJWKSUnion{
-			OfDiscovery:   discovery,
-			OfExplicitURL: explicitURL,
-			OfInline:      inline,
+	}
+	if update.reenablePolling {
+		// Sent on its own, after the other attributes: the API refuses this
+		// toggle from an OAuth caller when the issuer backs a rule scoped
+		// beyond workspace:developer / workspace:inference, and that refusal
+		// must not block an unrelated change such as a rename.
+		reenabled, err := r.client.Beta.Organization.Federation.Issuers.Update(ctx, id, anthropic.BetaOrganizationFederationIssuerUpdateParams{
+			JWKSPollingDisabled: param.NewOpt(false),
+		})
+		if err != nil {
+			if issuer != nil {
+				// The other attributes landed: record them. Polling stays
+				// paused, as the first response says.
+				resp.Diagnostics.Append(mapFederationIssuerToState(ctx, issuer, &plan)...)
+				if !resp.Diagnostics.HasError() {
+					resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+				}
+			}
+			summary, detail := federationIssuerUpdateErrorDiagnostic(id, err, true)
+			resp.Diagnostics.AddError(summary, detail)
+			return
+		}
+		if issuer == nil {
+			issuer = reenabled
+		} else {
+			toggled = reenabled
 		}
 	}
-
-	issuer, err := r.client.Beta.Organization.Federation.Issuers.Update(ctx, state.ID.ValueString(), params)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update federation issuer: %s", err))
-		return
+	if issuer == nil {
+		// Only jwks_polling_disabled changed in configuration and polling is
+		// not paused, so there is nothing to send (an empty update body was
+		// never verified against the API). Read the issuer back to resolve
+		// the Computed attributes the plan left unknown.
+		issuer, err = r.client.Beta.Organization.Federation.Issuers.Get(ctx, id, anthropic.BetaOrganizationFederationIssuerGetParams{})
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read federation issuer: %s", err))
+			return
+		}
 	}
 
 	resp.Diagnostics.Append(mapFederationIssuerToState(ctx, issuer, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if toggled != nil {
+		// The toggle's response may come from data that lags the first write
+		// (the WIF endpoints served stale reads, see CLAUDE.md): take from it
+		// only what the toggle changes, and every other attribute from the
+		// response of the write that set it.
+		polled := plan
+		resp.Diagnostics.Append(mapFederationIssuerToState(ctx, toggled, &polled)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		plan.JWKSPollingDisabledAt = polled.JWKSPollingDisabledAt
+		plan.PollStatus = polled.PollStatus
+		plan.UpdatedAt = polled.UpdatedAt
+		plan.UpdatedByActorID = polled.UpdatedByActorID
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -523,6 +648,100 @@ func (r *FederationIssuerResource) ImportState(ctx context.Context, req resource
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// federationIssuerUpdate is the update request buildFederationIssuerUpdateParams
+// derives from the planned and prior states.
+type federationIssuerUpdate struct {
+	// params holds the changed attributes, never jwks_polling_disabled.
+	params anthropic.BetaOrganizationFederationIssuerUpdateParams
+	// send is false when no attribute in params needs sending.
+	send bool
+	// reenablePolling reports that a separate request must send
+	// jwks_polling_disabled = false after params.
+	reenablePolling bool
+}
+
+// buildFederationIssuerUpdateParams puts each updatable attribute in params
+// only when it changed from state, and sets reenablePolling when
+// jwksPollingReenableRequested says polling must be re-enabled: Update sends
+// that toggle in its own request, so that a refusal of it leaves the other
+// changes applied.
+func buildFederationIssuerUpdateParams(ctx context.Context, plan, state FederationIssuerResourceModel) (federationIssuerUpdate, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	var u federationIssuerUpdate
+
+	if !plan.Name.Equal(state.Name) {
+		u.params.Name = param.NewOpt(plan.Name.ValueString())
+		u.send = true
+	}
+	if !plan.IssuerURL.Equal(state.IssuerURL) {
+		u.params.IssuerURL = param.NewOpt(plan.IssuerURL.ValueString())
+		u.send = true
+	}
+	if !plan.CheckJTI.Equal(state.CheckJTI) {
+		u.params.CheckJTI = param.NewOpt(plan.CheckJTI.ValueBool())
+		u.send = true
+	}
+	if !plan.MaxJWTLifetimeSeconds.Equal(state.MaxJWTLifetimeSeconds) {
+		u.params.MaxJWTLifetimeSeconds = param.NewOpt(plan.MaxJWTLifetimeSeconds.ValueInt64())
+		u.send = true
+	}
+	// Setting jwks replaces the full JWKS shape at once, so it is only sent
+	// when it actually changed.
+	if !plan.JWKS.Equal(state.JWKS) {
+		discovery, explicitURL, inline, d := buildJWKSParams(ctx, plan.JWKS)
+		diags.Append(d...)
+		if diags.HasError() {
+			return u, diags
+		}
+		u.params.JWKS = anthropic.BetaOrganizationFederationIssuerUpdateParamsJWKSUnion{
+			OfDiscovery:   discovery,
+			OfExplicitURL: explicitURL,
+			OfInline:      inline,
+		}
+		u.send = true
+	}
+	u.reenablePolling = jwksPollingReenableRequested(plan, state)
+
+	return u, diags
+}
+
+// jwksPollingReenableRequested reports whether an update must send
+// jwks_polling_disabled = false: the configuration asks for it (false is the
+// only value the schema accepts), the prior state shows polling paused, and
+// the issuer is not archived (the API rejects any update of an archived
+// issuer with a 400, so asking would only fail every apply).
+func jwksPollingReenableRequested(plan, state FederationIssuerResourceModel) bool {
+	if plan.JWKSPollingDisabled.IsNull() || plan.JWKSPollingDisabled.IsUnknown() || plan.JWKSPollingDisabled.ValueBool() {
+		return false
+	}
+	return !state.JWKSPollingDisabledAt.IsNull() && !state.JWKSPollingDisabledAt.IsUnknown() && state.ArchivedAt.IsNull()
+}
+
+// federationIssuerUpdateErrorDiagnostic returns the summary and detail of the
+// error diagnostic for a failed update. When the request re-enabled JWKS
+// polling and the API refused it, the detail adds the documented restriction
+// on that toggle: an OAuth caller (the provider's only credential for this
+// resource) cannot send it when the issuer backs a rule whose scope is neither
+// workspace:developer nor workspace:inference. The reference does not name the
+// status code of that refusal, so both 400 and 403 get the explanation, and
+// the API error is always kept since it may have another cause.
+func federationIssuerUpdateErrorDiagnostic(issuerID string, err error, reenablePolling bool) (string, string) {
+	var apierr *anthropic.Error
+	if reenablePolling && errors.As(err, &apierr) &&
+		(apierr.StatusCode == http.StatusBadRequest || apierr.StatusCode == http.StatusForbidden) {
+		return "Unable to Update Federation Issuer", fmt.Sprintf(
+			"Unable to update federation issuer %s: %s\n\n"+
+				"The request re-enabled JWKS polling (jwks_polling_disabled = false). The API refuses that toggle from an OAuth caller, "+
+				"which is the only credential this provider uses for federation issuers, when the issuer backs a federation rule whose "+
+				"scope is neither workspace:developer nor workspace:inference. If that is the case, re-enable polling from a Console "+
+				"session and remove jwks_polling_disabled from the configuration: while it is set, every plan proposes the re-enable "+
+				"again for as long as polling stays paused. Changes to other attributes go in a separate, earlier request and are not "+
+				"affected by this refusal.",
+			issuerID, err)
+	}
+	return "Client Error", fmt.Sprintf("Unable to update federation issuer: %s", err)
+}
 
 // buildJWKSParams builds the three possible jwks param variants from a
 // Terraform jwks object. Exactly one of the returned pointers is non-nil,
@@ -643,5 +862,36 @@ func mapFederationIssuerToState(_ context.Context, issuer *anthropic.BetaFederat
 	diags.Append(d...)
 	data.JWKS = jwksObj
 
+	pollStatusObj, d := mapFederationIssuerPollStatus(issuer)
+	diags.Append(d...)
+	data.PollStatus = pollStatusObj
+
+	// JWKSPollingDisabled is configuration only: the API never returns it, so
+	// the prior value (null after an import) is kept.
+
 	return diags
+}
+
+// mapFederationIssuerPollStatus maps the resource's poll_status, which the API
+// sends as null for inline-key issuers (nothing to fetch) and while the status
+// is unavailable or polling has not started. The SDK decodes that null into a
+// zero-valued struct, so the wire metadata decides: anything but a valid
+// object maps to a null attribute rather than to consecutive_failures = 0.
+// The data sources keep their released all-zero object instead
+// (pollStatusObject).
+func mapFederationIssuerPollStatus(issuer *anthropic.BetaFederationIssuer) (types.Object, diag.Diagnostics) {
+	if !issuer.JSON.PollStatus.Valid() {
+		return types.ObjectNull(federationIssuerPollStatusAttrTypes), nil
+	}
+	return pollStatusObject(issuer.PollStatus)
+}
+
+// pollStatusObject maps a poll_status object as decoded, all-zero
+// (consecutive_failures = 0, null timestamps) when the API sent null.
+func pollStatusObject(status anthropic.BetaFederationIssuerPollStatus) (types.Object, diag.Diagnostics) {
+	return types.ObjectValue(federationIssuerPollStatusAttrTypes, map[string]attr.Value{
+		"consecutive_failures": types.Int64Value(status.ConsecutiveFailures),
+		"last_fetched_at":      tfvalue.TimeOrNull(status.LastFetchedAt),
+		"next_poll_at":         tfvalue.TimeOrNull(status.NextPollAt),
+	})
 }
