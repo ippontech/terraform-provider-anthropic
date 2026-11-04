@@ -1,14 +1,16 @@
 # How a release is cut
 
-Every push to `main` runs `semantic-release.yml`:
+Two workflows share the work:
 
-1. The acceptance tests (`testacc.yml`, called as a reusable workflow) run against the real API with the keys of the `acctest` environment. They run after the merge because a pull request from a fork cannot read those keys.
-2. Only if they pass, semantic-release reads the commits since the last tag. A `feat`, `fix`, `perf`, `refactor`, `build` or `docs` commit, or a `BREAKING CHANGE` footer, cuts a version: semantic-release pushes the `chore(release):` commit with `CHANGELOG.md`, the `v*` tag and the GitHub release. Other commit types (`chore`, `ci`, `test`, ...) cut nothing.
-3. The tag starts `goreleaser-release.yml`, which builds, signs and attaches the binaries without waiting for anyone (see [Review the modules a release ships](#review-the-modules-a-release-ships) and [Protect the release credentials](#protect-the-release-credentials)).
+- `testacc.yml` runs the acceptance tests against the real API, with the keys of the `acctest` environment, on every push to `main` (except the push of a release commit). They run after the merge because a pull request from a fork cannot read those keys. A push runs them and stops there: it releases nothing.
+- `semantic-release.yml` runs once a day, at 07:00 UTC (08:00 in Paris in winter, 09:00 in summer), or on demand (`Actions > Semantic Release > Run workflow`, for a fix that cannot wait for the next morning). It first checks that `main` has moved since the last tag, so a quiet day runs no live test; then it runs the acceptance tests again from the head of `main`, and only if they pass semantic-release reads every commit since the last tag. A `feat`, `fix`, `perf`, `refactor`, `build` or `docs` commit, or a `BREAKING CHANGE` footer, cuts one version for all of them, the highest bump winning: semantic-release pushes the `chore(release):` commit with `CHANGELOG.md`, the `v*` tag and the GitHub release. Other commit types (`chore`, `ci`, `test`, ...) cut nothing.
+- The tag starts `goreleaser-release.yml`, which builds, signs and attaches the binaries without waiting for anyone (see [Review the modules a release ships](#review-the-modules-a-release-ships) and [Protect the release credentials](#protect-the-release-credentials)).
 
-A red acceptance run publishes nothing. Fix the cause, or, if the API itself was failing, re-run the failed jobs of the most recent run on `main` only: an older run would take the place of a newer pending run, whose commit would then go untested, and its release would publish nothing since `main` has moved on. The next successful run releases every commit still pending. `Actions > Acceptance Tests > Run workflow` still runs the tests alone, without releasing.
+A red acceptance run publishes nothing: fix the cause, or, if the API itself was failing, re-run the failed jobs of that run, or start a manual run. `Actions > Acceptance Tests > Run workflow` still runs the tests alone, without releasing.
 
-The workflow runs one at a time on `main` (`concurrency` group, no cancellation): when several commits land while a run is testing, only the newest waiting one runs. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit. The run that was testing publishes nothing, even when green, because semantic-release publishes only from the head of `main`; the newer run releases every pending commit once its own tests pass. A running test is never cancelled to make room: the objects it had created would stay in the test workspace, since nothing deletes them afterwards.
+The two workflows share one `concurrency` group (`acceptance-tests-main`, no cancellation), so a single live test run exists at a time: a daily release that finds a push run testing waits for it, and when several commits land while a run is testing, only the newest waiting run starts. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit. The same rule can drop a daily release run that is still waiting behind a push run when another push arrives: start it again by hand. A running test is never cancelled to make room: the objects it had created would stay in the test workspace, since nothing deletes them afterwards.
+
+GitHub disables a scheduled workflow after 60 days without activity on the repository; Renovate's weekly pull requests keep it alive, and the Actions UI says so if it ever happens.
 
 ## Review the modules a release ships
 

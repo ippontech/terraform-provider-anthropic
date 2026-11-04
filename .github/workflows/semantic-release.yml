@@ -1,21 +1,65 @@
 name: Semantic Release
 
+# Cuts one release a day from the head of `main`, or on demand; the acceptance tests on every push
+# live in testacc.yml (RELEASE.md, "How a release is cut"). Releasing on every push cut one version
+# per merged pull request: on a day of Renovate merges, up to twenty, each a changelog entry, a
+# signing run and a registry ingestion for nothing a user needed separately.
 on:
-  push:
-    branches:
-      - main
+  schedule:
+    # 07:00 UTC: 08:00 in Paris in winter, 09:00 in summer (GitHub schedules take UTC only).
+    - cron: '0 7 * * *'
+  workflow_dispatch:
 
 permissions: {}
 
+# Same group as testacc.yml, so a release waits for a push run still testing (and the reverse):
+# two live test runs at once would collide in the test workspace.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: acceptance-tests-main
   cancel-in-progress: false
 
 jobs:
-  # The acceptance tests need the maintainers' keys, which a pull request from a fork cannot read,
-  # so they run here, after the merge. The release waits for them: a red run publishes nothing.
+  # Goes on only when `main` has moved since the last tag; otherwise the two-hour live test run
+  # would create objects in the test workspace every morning for a release that semantic-release
+  # would then decline to cut.
+  pending:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      commits: ${{ steps.count.outputs.commits }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # the tags, and the commits since the newest one
+          persist-credentials: false
+
+      - name: Count the commits since the last release tag
+        id: count
+        run: |
+          set -euo pipefail
+          last=$(git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          if [ -z "${last}" ]; then
+            commits=$(git rev-list --count HEAD)
+          else
+            commits=$(git rev-list --count "${last}..HEAD")
+          fi
+          echo "commits=${commits}" >> "${GITHUB_OUTPUT}"
+          echo "${commits} commit(s) since ${last:-the first commit}." >> "${GITHUB_STEP_SUMMARY}"
+
+  # Run again from the head of `main`, whatever the push runs found: the release waits for them,
+  # and a red run publishes nothing.
   acceptance-tests:
-    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    needs: pending
+    if: needs.pending.outputs.commits != '0'
     uses: ./.github/workflows/testacc.yml
     permissions:
       contents: read
@@ -26,9 +70,9 @@ jobs:
       ANTHROPIC_ADMIN_API_KEY: ${{ secrets.ANTHROPIC_ADMIN_API_KEY }}
       ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
 
+  # Releases every commit merged since the last tag as one version.
   release:
     needs: acceptance-tests
-    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The App ID and private key are secrets of this environment only, whose deployment policy
