@@ -153,7 +153,7 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 					},
 					"default_permission_policy": schema.StringAttribute{
 						Computed:            true,
-						MarkdownDescription: "Default permission policy.",
+						MarkdownDescription: "Default permission policy: `always_allow`, `always_ask` or `auto`.",
 					},
 					"configs": schema.ListNestedAttribute{
 						Computed:            true,
@@ -179,7 +179,7 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 						},
 						"default_permission_policy": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Default permission policy.",
+							MarkdownDescription: "Default permission policy: `always_allow`, `always_ask` or `auto`.",
 						},
 						"configs": schema.ListNestedAttribute{
 							Computed:            true,
@@ -196,7 +196,7 @@ func (d *AgentDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 									},
 									"permission_policy": schema.StringAttribute{
 										Computed:            true,
-										MarkdownDescription: "Permission policy override.",
+										MarkdownDescription: "Permission policy: `always_allow`, `always_ask` or `auto`.",
 									},
 								},
 							},
@@ -481,7 +481,7 @@ func agentToolConfigDataSourceAttributes() map[string]schema.Attribute {
 		},
 		"permission_policy": schema.StringAttribute{
 			Computed:            true,
-			MarkdownDescription: "Permission policy: `always_allow` or `always_ask`.",
+			MarkdownDescription: "Permission policy: `always_allow`, `always_ask` or `auto`.",
 		},
 		"allowed_domains": schema.SetAttribute{
 			Computed:            true,

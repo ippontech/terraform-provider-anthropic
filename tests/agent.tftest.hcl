@@ -77,6 +77,16 @@ run "agent_resource_example" {
   }
 
   assert {
+    condition     = anthropic_agent.mcp_agent.mcp_toolsets[0].default_permission_policy == "auto"
+    error_message = "Expected the MCP toolset to keep the auto permission policy."
+  }
+
+  assert {
+    condition     = anthropic_agent.mcp_agent.mcp_toolsets[0].configs[0].permission_policy == "always_ask"
+    error_message = "Expected the delete_record override to keep always_ask."
+  }
+
+  assert {
     condition     = anthropic_agent.coordinator.multiagent.type == "coordinator"
     error_message = "Expected a coordinator topology."
   }

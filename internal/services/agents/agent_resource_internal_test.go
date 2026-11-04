@@ -147,120 +147,119 @@ func TestBuildToolsParams_customToolInputSchemaDropsRootExtras(t *testing.T) {
 	}
 }
 
+// policyVariant names the permission policy variants set on a union, "" when
+// none is and a "+"-joined list when several are.
+func policyVariant(allow *anthropic.BetaManagedAgentsAlwaysAllowPolicyParam, ask *anthropic.BetaManagedAgentsAlwaysAskPolicyParam, auto *anthropic.BetaManagedAgentsAutoPolicyParam) string {
+	var set []string
+	if allow != nil {
+		set = append(set, "always_allow")
+	}
+	if ask != nil {
+		set = append(set, "always_ask")
+	}
+	if auto != nil {
+		set = append(set, "auto")
+	}
+	return strings.Join(set, "+")
+}
+
 // TestBuildAgentToolConfigParams is a regression test for the anthropic-sdk-go
 // upgrade (v1.58 -> v1.67) that replaced the flat
 // BetaManagedAgentsAgentToolConfigParams (a `name` enum plus shared `enabled` /
 // `permission_policy` fields) with a discriminated union carrying one struct per
 // built-in tool. The Terraform `name` attribute now selects the union branch, so
 // this asserts every schema-accepted name lands on its own branch with the
-// enabled flag and permission policy carried across.
+// enabled flag and each permission policy, `auto` included, carried across.
 func TestBuildAgentToolConfigParams(t *testing.T) {
 	t.Parallel()
 
 	// Each case checks the branch the name must select, and reads back the
-	// enabled/permission-policy fields from that branch.
+	// enabled flag and the permission policy variant from that branch.
 	tests := []struct {
 		name    string
-		extract func(anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (set bool, enabled param.Opt[bool], allow bool, ask bool)
+		extract func(anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (set bool, enabled param.Opt[bool], policy string)
 	}{
-		{"bash", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"bash", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfBash
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"edit", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"edit", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfEdit
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"read", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"read", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfRead
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"write", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"write", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfWrite
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"glob", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"glob", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfGlob
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"grep", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"grep", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfGrep
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"web_fetch", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"web_fetch", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfWebFetch
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"web_search", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"web_search", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfWebSearch
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.name+"/always_allow", func(t *testing.T) {
-			t.Parallel()
+		for _, policy := range []string{"always_allow", "always_ask", "auto"} {
+			t.Run(tc.name+"/"+policy, func(t *testing.T) {
+				t.Parallel()
 
-			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(true), "always_allow", webToolOptions{})
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
-			}
-			set, enabled, allow, ask := tc.extract(u)
-			if !set {
-				t.Fatalf("name %q did not select its own union branch", tc.name)
-			}
-			if !enabled.Valid() || !enabled.Value {
-				t.Errorf("enabled = %+v, want set to true", enabled)
-			}
-			if !allow || ask {
-				t.Errorf("permission policy = (allow=%t, ask=%t), want (true, false)", allow, ask)
-			}
-		})
+				u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(true), policy, webToolOptions{})
+				if diags.HasError() {
+					t.Fatalf("unexpected diagnostics: %v", diags)
+				}
+				set, enabled, got := tc.extract(u)
+				if !set {
+					t.Fatalf("name %q did not select its own union branch", tc.name)
+				}
+				if !enabled.Valid() || !enabled.Value {
+					t.Errorf("enabled = %+v, want set to true", enabled)
+				}
+				if got != policy {
+					t.Errorf("permission policy = %q, want %q", got, policy)
+				}
+			})
+		}
 
-		t.Run(tc.name+"/always_ask", func(t *testing.T) {
-			t.Parallel()
-
-			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(false), "always_ask", webToolOptions{})
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
-			}
-			set, enabled, allow, ask := tc.extract(u)
-			if !set {
-				t.Fatalf("name %q did not select its own union branch", tc.name)
-			}
-			if !enabled.Valid() || enabled.Value {
-				t.Errorf("enabled = %+v, want set to false", enabled)
-			}
-			if allow || !ask {
-				t.Errorf("permission policy = (allow=%t, ask=%t), want (false, true)", allow, ask)
-			}
-		})
-
-		// An omitted permission_policy must leave both variants unset so the
+		// An omitted permission_policy must leave every variant unset so the
 		// field is elided from the request and the toolset default applies.
 		t.Run(tc.name+"/no_policy", func(t *testing.T) {
 			t.Parallel()
@@ -269,17 +268,103 @@ func TestBuildAgentToolConfigParams(t *testing.T) {
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
-			set, enabled, allow, ask := tc.extract(u)
+			set, enabled, got := tc.extract(u)
 			if !set {
 				t.Fatalf("name %q did not select its own union branch", tc.name)
 			}
 			if enabled.Valid() {
 				t.Errorf("enabled = %+v, want unset", enabled)
 			}
-			if allow || ask {
-				t.Errorf("permission policy = (allow=%t, ask=%t), want both unset", allow, ask)
+			if got != "" {
+				t.Errorf("permission policy = %q, want none", got)
 			}
 		})
+	}
+}
+
+// TestBuildToolsParams_autoPermissionPolicy pins the request body of the `auto`
+// policy (`{"type": "auto"}`) in the four places it is accepted: the agent
+// toolset default, a built-in tool override, an MCP toolset default and an MCP
+// tool override.
+func TestBuildToolsParams_autoPermissionPolicy(t *testing.T) {
+	t.Parallel()
+
+	toolset, diags := types.ObjectValue(agentToolsetAttrTypes, map[string]attr.Value{
+		"default_enabled":           types.BoolNull(),
+		"default_permission_policy": types.StringValue("auto"),
+		"configs": toolConfigsList(t, agentToolConfigAttrTypes,
+			agentMCPToolConfigModel{Name: types.StringValue("bash"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
+			agentMCPToolConfigModel{Name: types.StringValue("web_fetch"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("auto")},
+		),
+	})
+	if diags.HasError() {
+		t.Fatalf("toolset: %+v", diags)
+	}
+	data := AgentResourceModel{
+		AgentToolset: toolset,
+		MCPToolsets: mcpToolsetsList(t, agentMCPToolsetModel{
+			MCPServerName:           types.StringValue("github"),
+			DefaultEnabled:          types.BoolNull(),
+			DefaultPermissionPolicy: types.StringValue("auto"),
+			Configs: toolConfigsList(t, agentMCPToolConfigAttrTypes,
+				agentMCPToolConfigModel{Name: types.StringValue("create_issue"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("auto")},
+			),
+		}),
+		CustomTools: types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
+	}
+
+	tools, diags := buildToolsParams(context.Background(), data)
+	if diags.HasError() {
+		t.Fatalf("buildToolsParams: %+v", diags)
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}},` +
+		`{"name":"web_fetch","permission_policy":{"type":"auto"}}],"default_config":{"permission_policy":{"type":"auto"}}},` +
+		`{"mcp_server_name":"github","type":"mcp_toolset","configs":[{"name":"create_issue","permission_policy":{"type":"auto"}}],` +
+		`"default_config":{"permission_policy":{"type":"auto"}}}]`
+	assertJSONEqual(t, string(b), want)
+}
+
+// assertJSONEqual compares two JSON documents regardless of key order.
+func assertJSONEqual(t *testing.T, got, want string) {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Fatalf("unmarshal got: %s\n%s", err, got)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("unmarshal want: %s\n%s", err, want)
+	}
+	gb, _ := json.Marshal(g)
+	wb, _ := json.Marshal(w)
+	if string(gb) != string(wb) {
+		t.Fatalf("got  %s\nwant %s", gb, wb)
+	}
+}
+
+// TestPermissionPolicyValidator checks the values every permission policy
+// attribute accepts.
+func TestPermissionPolicyValidator(t *testing.T) {
+	t.Parallel()
+
+	for value, wantErr := range map[string]bool{
+		"always_allow": false,
+		"always_ask":   false,
+		"auto":         false,
+		"never":        true,
+		"AUTO":         true,
+	} {
+		resp := &validator.StringResponse{}
+		permissionPolicyValidator.ValidateString(context.Background(), validator.StringRequest{
+			Path:        path.Root("permission_policy"),
+			ConfigValue: types.StringValue(value),
+		}, resp)
+		if resp.Diagnostics.HasError() != wantErr {
+			t.Errorf("%q: error = %t, want %t (%v)", value, resp.Diagnostics.HasError(), wantErr, resp.Diagnostics)
+		}
 	}
 }
 
@@ -655,6 +740,63 @@ func TestMapAgentToolsetToState_outOfBandConfig(t *testing.T) {
 	configs := toolConfigsFromList(t, toolset.Configs)
 	if len(configs) != 1 || configs[0].Name.ValueString() != "bash" || configs[0].PermissionPolicy.ValueString() != "always_allow" {
 		t.Errorf("got configs %+v, want the out-of-band bash/always_allow override", configs)
+	}
+}
+
+// `auto` maps like the other policies: an unset per-tool policy stays null
+// while the API echoes an `auto` toolset default, and an override that
+// diverges from it (here `always_allow`, set out of band) surfaces as drift.
+func TestMapToolConfigsToState_autoDefault(t *testing.T) {
+	t.Parallel()
+
+	data := AgentResourceModel{MCPToolsets: mcpToolsetsList(t, agentMCPToolsetModel{
+		MCPServerName:           types.StringValue("github"),
+		DefaultEnabled:          types.BoolValue(true),
+		DefaultPermissionPolicy: types.StringValue("auto"),
+		Configs: toolConfigsList(t, agentMCPToolConfigAttrTypes,
+			agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringNull()},
+			agentMCPToolConfigModel{Name: types.StringValue("delete_repo"), Enabled: types.BoolNull(), PermissionPolicy: types.StringNull()},
+		),
+	})}
+	agent := parseAgentWithTools(t, `[{"type":"mcp_toolset","mcp_server_name":"github",
+		"default_config":{"enabled":true,"permission_policy":{"type":"auto"}},
+		"configs":[{"name":"search","enabled":true,"permission_policy":{"type":"auto"}},
+			{"name":"delete_repo","enabled":true,"permission_policy":{"type":"always_allow"}}]}]`)
+
+	if diags := mapAgentResponseToState(context.Background(), agent, &data, readMapping); diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	toolsets := mcpToolsetsFromState(t, data)
+	if len(toolsets) != 1 || toolsets[0].DefaultPermissionPolicy.ValueString() != "auto" {
+		t.Fatalf("got toolsets %+v, want github with an auto default", toolsets)
+	}
+	configs := toolConfigsFromList(t, toolsets[0].Configs)
+	if len(configs) != 2 {
+		t.Fatalf("got %d configs, want 2", len(configs))
+	}
+	if !configs[0].PermissionPolicy.IsNull() {
+		t.Errorf("search policy = %v, want null (echoed auto default)", configs[0].PermissionPolicy)
+	}
+	if configs[1].PermissionPolicy.ValueString() != "always_allow" {
+		t.Errorf("delete_repo policy = %v, want always_allow (drift from the auto default)", configs[1].PermissionPolicy)
+	}
+
+	// The agent toolset takes `auto` the same way, and the data sources map it
+	// verbatim.
+	agent = parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+		"default_config":{"enabled":true,"permission_policy":{"type":"auto"}},
+		"configs":[{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"auto"}}]}]`)
+	var ds AgentDataSourceModel
+	if diags := mapAgentResponseToDataSource(agent, &ds); diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	var toolset agentToolsetModel
+	if diags := ds.AgentToolset.As(context.Background(), &toolset, basetypes.ObjectAsOptions{}); diags.HasError() {
+		t.Fatalf("read agent_toolset: %+v", diags)
+	}
+	dsConfigs := toolConfigsFromList(t, toolset.Configs)
+	if toolset.DefaultPermissionPolicy.ValueString() != "auto" || len(dsConfigs) != 1 || dsConfigs[0].PermissionPolicy.ValueString() != "auto" {
+		t.Errorf("data source toolset = %+v, configs %+v, want auto everywhere", toolset, dsConfigs)
 	}
 }
 
