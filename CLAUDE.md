@@ -13,6 +13,7 @@ A Terraform provider on the [Terraform Plugin Framework](https://developer.hashi
 - `internal/errors/` (import alias `providerrors`): nil-client guards for `Configure`.
 - `internal/tfvalue/`: `StringOrNull` / `TimeOrNull` map the SDK zero values of absent API fields (`""`, the zero time) to null. Use them in every state mapping instead of a per-package helper.
 - `internal/retry/` (import alias `provretry`): multipart bundle upload with 5xx retry.
+- `internal/sdkpage/`: `Cursor` walks an SDK `next_page` list (`pagination.PageCursor`) like `ListAutoPaging`, but a cursor the API already returned, or more than `MaxPages` pages, is an error instead of an endless loop. Use it for new cursor-paginated list data sources; the older ones still call `ListAutoPaging`.
 - `internal/acctest/`, `admintest/`, `oauthtest/`, `schematest/`, `wifprobetest/`: test helpers, see [Testing](#testing).
 - `examples/` (`provider/`, `resources/<name>/`, `data-sources/<name>/`): configs embedded in the docs and sourced by the native tests. `templates/`: doc templates that `make generate` renders to `docs/`. `tests/`: native tests. `tools/tools.go`: build-time tool imports only.
 
@@ -37,7 +38,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
-- `vaults/`: `vault`, `vault_credential`; none. Standard key. Also holds the vaults read-after-write measurements.
+- `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
 - `workspaces/`: `workspace`, `workspace_member`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key.
 
 ## Adding a resource or data source

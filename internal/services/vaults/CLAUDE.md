@@ -1,10 +1,14 @@
 # Vaults service notes
 
-Load-bearing details for `internal/services/vaults/`: the `anthropic_vault` and `anthropic_vault_credential` resources (Managed Agents beta, `client.Beta.Vaults`, standard API key). The root `CLAUDE.md` still applies; where a note here says "see above" or "see below" and the target is not in this file, it is a section of the root `CLAUDE.md`. Record new details about this service here, not in the root file. The read-after-write wait pattern first built here is described in the root `CLAUDE.md`; this file keeps the vaults measurements and test helpers.
+Load-bearing details for `internal/services/vaults/`: the `anthropic_vault` and `anthropic_vault_credential` resources and the `anthropic_vault` and `anthropic_vaults` data sources (Managed Agents beta, `client.Beta.Vaults`, standard API key). The root `CLAUDE.md` still applies; where a note here says "see above" or "see below" and the target is not in this file, it is a section of the root `CLAUDE.md`. Record new details about this service here, not in the root file. The read-after-write wait pattern first built here is described in the root `CLAUDE.md`; this file keeps the vaults measurements and test helpers.
 
 **Resources:**
 - `anthropic_vault` (`internal/services/vaults/vault_resource.go`) — manages vaults (Beta managed-agents API; `client.Beta.Vaults`); named container for MCP credentials; supports `archive_on_destroy`
 - `anthropic_vault_credential` (`internal/services/vaults/vault_credential_resource.go`) — manages a credential inside a vault (`client.Beta.Vaults.Credentials`); three auth `type`s (`static_bearer`, `mcp_oauth` with nested `refresh`/`token_endpoint_auth`, `environment_variable` with `networking`); secret material is **write-only** (see write-only convention below); structural/immutable fields are RequiresReplace (`vault_id`, `type`, `mcp_server_url`, `secret_name`, and the `refresh` block's `client_id`/`token_endpoint`/`resource`/`token_endpoint_auth.type` — the update API cannot modify these, and its `token_endpoint_auth` union has no `none` variant); supports `archive_on_destroy`
+
+**Data sources:**
+- `anthropic_vault` (`internal/services/vaults/vault_data_source.go`) — fetches a single vault by ID regardless of archived state; its model is `vaultModel`, filled by `mapVaultCommon`, which the resource's `mapVaultResponseToState` and the plural data source share; 404 surfaces as a `Vault Not Found` diagnostic
+- `anthropic_vaults` (`internal/services/vaults/vaults_data_source.go`) — lists vaults with transparent cursor pagination through `sdkpage.Cursor`, not `ListAutoPaging`, so a `next_page` cursor the API repeats fails the read instead of looping; optional `include_archived` (default `false`, sent only when `true`). The two vault data source acceptance tests create their fixture in a first step and read it in a second one, so a lookup never races the vaults read-after-write window
 
 ## Testing
 
