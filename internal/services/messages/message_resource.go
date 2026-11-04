@@ -6,6 +6,7 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -37,6 +38,7 @@ import (
 var _ resource.Resource = &MessageResource{}
 var _ resource.ResourceWithImportState = &MessageResource{}
 var _ resource.ResourceWithConfigValidators = &MessageResource{}
+var _ resource.ResourceWithModifyPlan = &MessageResource{}
 
 func NewMessageResource() resource.Resource {
 	return &MessageResource{}
@@ -388,6 +390,26 @@ func (r *MessageResource) Read(ctx context.Context, req resource.ReadRequest, re
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// ModifyPlan rejects an output_config.format that is not a JSON object when
+// the plan sends the message: a create, including the create half of a
+// replacement, which Terraform plans with a null prior state. A message
+// already in state is left alone, so one created while a null format was
+// still dropped from the request keeps planning with no change. An unknown
+// format is checked by Create.
+func (r *MessageResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if !req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var format jsontypes.Normalized
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("output_config").AtName("format"), &format)...)
+	if resp.Diagnostics.HasError() || format.IsNull() || format.IsUnknown() {
+		return
+	}
+	if _, err := decodeFormatSchema(format); err != nil {
+		addInvalidFormatError(&resp.Diagnostics, err)
+	}
+}
+
 func (r *MessageResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
 	// Never called: all input attributes have RequiresReplace plan modifiers.
 }
@@ -504,10 +526,9 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 			oc.Effort = anthropic.OutputConfigEffort(data.OutputConfig.Effort.ValueString())
 		}
 		if !data.OutputConfig.Format.IsNull() && !data.OutputConfig.Format.IsUnknown() {
-			var schemaObj map[string]any
-			if err := json.Unmarshal([]byte(data.OutputConfig.Format.ValueString()), &schemaObj); err != nil {
-				diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid JSON Schema",
-					fmt.Sprintf("output_config.format must be a JSON object holding a JSON schema: %s", err))
+			schemaObj, err := decodeFormatSchema(data.OutputConfig.Format)
+			if err != nil {
+				addInvalidFormatError(&diags, err)
 			} else {
 				oc.Format = anthropic.JSONOutputFormatParam{Schema: schemaObj}
 			}
@@ -520,6 +541,27 @@ func buildMessageParams(ctx context.Context, data *MessageResourceModel) (anthro
 	}
 
 	return params, diags
+}
+
+// decodeFormatSchema decodes output_config.format, which must hold a JSON
+// object. JSON null decodes to a nil schema, which the SDK would leave out of
+// the request together with the whole output_config, so it is an error too,
+// as in anthropic_count_tokens.
+func decodeFormatSchema(format jsontypes.Normalized) (map[string]any, error) {
+	var schemaObj map[string]any
+	if err := json.Unmarshal([]byte(format.ValueString()), &schemaObj); err != nil {
+		return nil, err
+	}
+	if schemaObj == nil {
+		return nil, errors.New("got null")
+	}
+	return schemaObj, nil
+}
+
+// addInvalidFormatError reports a format that decodeFormatSchema rejected.
+func addInvalidFormatError(diags *diag.Diagnostics, err error) {
+	diags.AddAttributeError(path.Root("output_config").AtName("format"), "Invalid JSON Schema",
+		fmt.Sprintf("output_config.format must be a JSON object holding a JSON schema: %s", err))
 }
 
 // mapMessageToState copies the API response into the computed attributes.
