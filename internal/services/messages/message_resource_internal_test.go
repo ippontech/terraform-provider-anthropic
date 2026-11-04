@@ -126,7 +126,7 @@ func TestMessageSchema_TemperatureDeprecated(t *testing.T) {
 	if !ok {
 		t.Fatalf("temperature is %T, want schema.Float64Attribute", sresp.Schema.Attributes["temperature"])
 	}
-	for _, want := range []string{"next major version", "2026-10-21", "1.0 included"} {
+	for _, want := range []string{"next major version", "2026-10-21", "1.0 included", "replaces that resource"} {
 		if !strings.Contains(temperature.DeprecationMessage, want) {
 			t.Errorf("DeprecationMessage %q does not mention %q", temperature.DeprecationMessage, want)
 		}

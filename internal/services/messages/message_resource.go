@@ -122,7 +122,9 @@ type OutputConfigModel struct {
 const temperatureDeprecationMessage = "temperature is deprecated and will be removed in the next major version of the provider, " +
 	"together with the move to Anthropic Go SDK v2 and API version 2026-10-21, which rejects temperature (HTTP 400) at any value, 1.0 included. " +
 	"Claude 4.7 and later models already reject any value other than 1.0. " +
-	"Remove the attribute: the request then omits it and the model samples at its default temperature of 1.0."
+	"Without it, the request omits the parameter and the model samples at its default temperature of 1.0. " +
+	"Like any input change, removing it from an existing resource replaces that resource, which sends a new, billable request " +
+	"with new content: remove it when the resource is replaced anyway, or when upgrading to the next major version."
 
 // stopDetailsAttrTypes is the object type of the computed stop_details attribute.
 var stopDetailsAttrTypes = map[string]attr.Type{
