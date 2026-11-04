@@ -104,15 +104,19 @@ func TestCursor_walksEveryPage(t *testing.T) {
 	}
 }
 
-// An empty page ends the walk even with a cursor, as in the SDK's auto-pager up
-// to v1.76.0 (since v1.77.0 the auto-pager follows the cursor past it).
-func TestCursor_stopsOnEmptyPage(t *testing.T) {
+// An empty page with a cursor does not end the walk: only an empty cursor
+// does, as in the SDK's auto-pager since v1.77.0.
+func TestCursor_continuesPastEmptyPage(t *testing.T) {
 	var s listServer
 	srv := s.start(t, func(page string) (int, string) {
-		if page == "" {
+		switch page {
+		case "":
 			return http.StatusOK, pageJSON("c2", "v1")
+		case "c2":
+			return http.StatusOK, pageJSON("c3")
+		default:
+			return http.StatusOK, pageJSON("", "v3")
 		}
-		return http.StatusOK, pageJSON("c3")
 	})
 
 	var ids []string
@@ -120,8 +124,29 @@ func TestCursor_stopsOnEmptyPage(t *testing.T) {
 	if err := Cursor(first, err, collect(&ids)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(ids) != 1 || len(s.requested()) != 2 {
-		t.Errorf("visited %v over %d requests, want [v1] over 2", ids, len(s.requested()))
+	if got := strings.Join(ids, ","); got != "v1,v3" {
+		t.Errorf("visited %s, want v1,v3 across the empty page", got)
+	}
+	if got := strings.Join(s.requested(), ","); got != ",c2,c3" {
+		t.Errorf("requested pages %q, want \",c2,c3\"", got)
+	}
+}
+
+// Empty pages that keep returning one cursor still end in an error rather
+// than a loop.
+func TestCursor_emptyPagesWithRepeatedCursorIsAnError(t *testing.T) {
+	var s listServer
+	srv := s.start(t, func(string) (int, string) {
+		return http.StatusOK, pageJSON("c1")
+	})
+
+	first, err := firstPage(t, srv)
+	err = Cursor(first, err, func(vault) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), `"c1" again`) {
+		t.Fatalf("error = %v, want one naming the repeated cursor c1", err)
+	}
+	if got := len(s.requested()); got != 2 {
+		t.Errorf("%d requests, want 2", got)
 	}
 }
 
