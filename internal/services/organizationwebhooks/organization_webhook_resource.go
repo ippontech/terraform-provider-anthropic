@@ -6,6 +6,7 @@ package organizationwebhooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -245,6 +246,7 @@ func (r *OrganizationWebhookResource) Create(ctx context.Context, req resource.C
 	// example over its URL), the same call turns it on as planned.
 	if wantEnabled.IsNull() || wantEnabled.IsUnknown() || data.Enabled.Equal(wantEnabled) {
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		addMissingSigningSecretError(&resp.Diagnostics, created)
 		return
 	}
 	want := organizationWebhookStateDisabled
@@ -264,6 +266,20 @@ func (r *OrganizationWebhookResource) Create(ctx context.Context, req resource.C
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Organization webhook %s was created but could not be set to state %q: %s", created.ID, want, err))
 	}
+	addMissingSigningSecretError(&resp.Diagnostics, created)
+}
+
+// addMissingSigningSecretError fails a create whose 2xx response carries no
+// signing_secret. The endpoint is already saved to state (Terraform marks it
+// tainted), so it is not orphaned, but an endpoint without a known secret is
+// unusable, and the plan never offered it as null.
+func addMissingSigningSecretError(diags *diag.Diagnostics, created organizationWebhookAPIResponse) {
+	if created.SigningSecret != "" {
+		return
+	}
+	diags.AddError("Missing Signing Secret",
+		fmt.Sprintf("Organization webhook %s was created, but the API response carries no signing_secret. "+
+			"The endpoint is saved and marked tainted; the next apply replaces it.", created.ID))
 }
 
 // --- Read ---
@@ -314,9 +330,14 @@ func (r *OrganizationWebhookResource) Update(ctx context.Context, req resource.U
 	}
 	id := state.ID.ValueString()
 
-	// On an error Terraform saves the state the response holds. The framework
-	// starts it as the prior state, so every error path below that sets
-	// nothing keeps the old signing secret and version.
+	// On an error Terraform saves the state the response holds. Framework
+	// v1.19.0 already starts it as the prior state, but its doc comment says the
+	// plan, where the secret is unknown: set it explicitly, so every error path
+	// below that sets nothing keeps the old signing secret and version.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	body, diags := buildOrganizationWebhookUpdate(ctx, plan, state)
 	resp.Diagnostics.Append(diags...)
@@ -447,6 +468,11 @@ func (r *OrganizationWebhookResource) regenerateSigningSecret(ctx context.Contex
 	var out organizationWebhookSigningSecretResponse
 	if err := json.Unmarshal(respBytes, &out); err != nil {
 		return "", fmt.Errorf("parse regenerate signing secret response: %w", err)
+	}
+	// A 2xx without the secret has already revoked the old one: report it as a
+	// failure so Update keeps the old version and the next plan retries.
+	if out.SigningSecret == "" {
+		return "", errors.New("the regenerate response carries no signing_secret")
 	}
 	return out.SigningSecret, nil
 }

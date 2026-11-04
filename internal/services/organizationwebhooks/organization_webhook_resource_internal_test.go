@@ -545,8 +545,9 @@ func TestOrganizationWebhookResource_UpdateErrorKeepsPriorState(t *testing.T) {
 	plan.UpdatedAt = types.StringUnknown()
 	plan.DisabledReason = types.StringUnknown()
 
-	// The framework hands Update a response that starts as the prior state.
-	resp := resource.UpdateResponse{State: webhookState(t, r, state)}
+	// Seeded from the plan, as the framework's doc comment describes: Update
+	// must set the prior state itself, not rely on the framework seeding it.
+	resp := resource.UpdateResponse{State: webhookState(t, r, plan)}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: webhookPlan(t, r, plan), State: webhookState(t, r, state)}, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected an error when the regeneration fails")
@@ -555,6 +556,60 @@ func TestOrganizationWebhookResource_UpdateErrorKeepsPriorState(t *testing.T) {
 	got := readWebhookState(t, resp.State)
 	if got.SigningSecret.ValueString() != "whsec_original" || got.SigningSecretVersion.ValueInt64() != 1 {
 		t.Errorf("signing_secret/version = %v/%v, want the prior state, not the plan's unknown secret", got.SigningSecret, got.SigningSecretVersion)
+	}
+}
+
+// A 2xx regenerate response without signing_secret has revoked the old secret
+// without handing over a new one: Update fails and keeps the old secret and
+// version, so the next plan asks for the regeneration again.
+func TestOrganizationWebhookResource_UpdateRegenerateWithoutSecretFails(t *testing.T) {
+	t.Parallel()
+
+	_, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
+		if strings.HasSuffix(r.Path, "/regenerate_signing_secret") {
+			return http.StatusOK, `{}`
+		}
+		return http.StatusOK, webhookJSON(t, nil)
+	})
+	r := &OrganizationWebhookResource{client: client}
+
+	state := stateWebhookModel(t)
+	plan := state
+	plan.SigningSecretVersion = types.Int64Value(2)
+	plan.SigningSecret = types.StringUnknown()
+	plan.UpdatedAt = types.StringUnknown()
+	plan.DisabledReason = types.StringUnknown()
+
+	resp := resource.UpdateResponse{State: webhookState(t, r, plan)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: webhookPlan(t, r, plan), State: webhookState(t, r, state)}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the regenerate response carries no signing_secret")
+	}
+
+	got := readWebhookState(t, resp.State)
+	if got.SigningSecret.ValueString() != "whsec_original" || got.SigningSecretVersion.ValueInt64() != 1 {
+		t.Errorf("signing_secret/version = %v/%v, want the old ones so the next plan retries", got.SigningSecret, got.SigningSecretVersion)
+	}
+}
+
+// A 2xx create response without signing_secret saves the endpoint (so it is
+// not orphaned) and fails, so Terraform marks it tainted.
+func TestOrganizationWebhookResource_CreateWithoutSecretFails(t *testing.T) {
+	t.Parallel()
+
+	_, client := newFakeWebhookAPI(t, func(recordedRequest) (int, string) {
+		return http.StatusOK, webhookJSON(t, nil)
+	})
+	r := &OrganizationWebhookResource{client: client}
+
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: schematest.ResourceSchema(t, r)}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: webhookPlan(t, r, baseWebhookModel(t))}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the create response carries no signing_secret")
+	}
+	got := readWebhookState(t, resp.State)
+	if got.ID.ValueString() != testWebhookID {
+		t.Errorf("id = %v, want the created endpoint saved to state", got.ID)
 	}
 }
 
