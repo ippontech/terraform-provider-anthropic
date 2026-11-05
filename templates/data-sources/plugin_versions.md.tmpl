@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_plugin_versions Data Source - anthropic"
-subcategory: "Claude Enterprise"
+subcategory: "Plugins"
 description: |-
   Lists the versions of a plugin of a Claude Enterprise organization.
 ---

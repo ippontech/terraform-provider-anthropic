@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_plugin_installation_setting Resource - anthropic"
-subcategory: "Claude Enterprise"
+subcategory: "Plugins"
 description: |-
   Manages who can use an organization-owned plugin in a Claude Enterprise organization, for the whole organization or one RBAC group.
 ---
