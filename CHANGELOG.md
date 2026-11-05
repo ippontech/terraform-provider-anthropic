@@ -1,3 +1,21 @@
+## [1.83.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.82.0...v1.83.0) (2026-11-05)
+
+### ✨ Features
+
+* **admin:** send Admin API requests through a platform SDK client ([#459](https://github.com/ippontech/terraform-provider-anthropic/issues/459)) ([8ef3a53](https://github.com/ippontech/terraform-provider-anthropic/commit/8ef3a53c68f14ef83ac3c2331b1b4ff2591da556)), closes [#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458) [#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458) [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#461](https://github.com/ippontech/terraform-provider-anthropic/issues/461) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#461](https://github.com/ippontech/terraform-provider-anthropic/issues/461) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#387](https://github.com/ippontech/terraform-provider-anthropic/issues/387) [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#434](https://github.com/ippontech/terraform-provider-anthropic/issues/434) [#437](https://github.com/ippontech/terraform-provider-anthropic/issues/437) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#408](https://github.com/ippontech/terraform-provider-anthropic/issues/408) [#406](https://github.com/ippontech/terraform-provider-anthropic/issues/406) [#385](https://github.com/ippontech/terraform-provider-anthropic/issues/385)
+
+## [1.82.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.81.1...v1.82.0) (2026-11-05)
+
+### ✨ Features
+
+* **provider:** platform registry and gateway 404 guard ([#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458)) ([c62a70a](https://github.com/ippontech/terraform-provider-anthropic/commit/c62a70a03e677a2bd548de33f4f897aa0daed6c2)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#333](https://github.com/ippontech/terraform-provider-anthropic/issues/333) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#459](https://github.com/ippontech/terraform-provider-anthropic/issues/459) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#461](https://github.com/ippontech/terraform-provider-anthropic/issues/461) [#462](https://github.com/ippontech/terraform-provider-anthropic/issues/462) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#387](https://github.com/ippontech/terraform-provider-anthropic/issues/387) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#384](https://github.com/ippontech/terraform-provider-anthropic/issues/384)
+
+## [1.81.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.81.0...v1.81.1) (2026-11-04)
+
+### 📚 Documentation
+
+* **release:** drop the manual approval of the signing job ([#533](https://github.com/ippontech/terraform-provider-anthropic/issues/533)) ([325670e](https://github.com/ippontech/terraform-provider-anthropic/commit/325670e5aa0df16588bba7a5c4c09fd4906e826d))
+
 ## [1.81.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.80.0...v1.81.0) (2026-11-04)
 
 ### ✨ Features
