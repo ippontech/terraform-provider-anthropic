@@ -582,7 +582,8 @@ func TestInviteResource_rbacGroupIDsRequiresReplace(t *testing.T) {
 
 	for _, test := range []struct {
 		name        string
-		state, plan any // nil: unset
+		status      string // "": pending
+		state, plan any    // nil: unset
 		wantReplace bool
 	}{
 		{name: "groups added", plan: []string{rbacGroupA}, wantReplace: true},
@@ -594,13 +595,20 @@ func TestInviteResource_rbacGroupIDsRequiresReplace(t *testing.T) {
 		{name: "unchanged", state: []string{rbacGroupB, rbacGroupA}, plan: []string{rbacGroupA, rbacGroupB}},
 		{name: "unset to empty", plan: []string{}},
 		{name: "empty to unset", state: []string{}},
+		{name: "accepted, group added", status: "accepted", state: []string{rbacGroupA}, plan: []string{rbacGroupA, rbacGroupB}},
+		{name: "expired, groups removed", status: "expired", state: []string{rbacGroupA}},
+		{name: "accepted, unknown at plan", status: "accepted", plan: Unknown},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
 			ctx := context.Background()
+			status := test.status
+			if status == "" {
+				status = "pending"
+			}
 			invite := func(rbacGroupIDs any) map[string]any {
-				return map[string]any{"id": "invite_01ABC", "email": "new-engineer@example.com", "role": "managed", "rbac_group_ids": rbacGroupIDs}
+				return map[string]any{"id": "invite_01ABC", "email": "new-engineer@example.com", "role": "managed", "status": status, "rbac_group_ids": rbacGroupIDs}
 			}
 			state := State(t, r, invite(test.state))
 			plan := Plan(t, r, invite(test.plan))

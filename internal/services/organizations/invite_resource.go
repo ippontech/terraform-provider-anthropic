@@ -103,7 +103,7 @@ func (r *InviteResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Creates and manages an invitation for a user to join the organization via the Admin API. " +
 			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider. " +
-			"There is no update operation: changing `email`, `role` or `rbac_group_ids` replaces the invite. " +
+			"There is no update operation: changing `email`, `role` or `rbac_group_ids` replaces the invite (a change to `rbac_group_ids` is only recorded once the invite is accepted or expired). " +
 			"The resource remains managed after the invite is accepted or expires; deleting this resource cancels the invite when possible.",
 		Attributes: map[string]schema.Attribute{
 			// --- Writable ---
@@ -291,9 +291,10 @@ func (r *InviteResource) Read(ctx context.Context, req resource.ReadRequest, res
 // --- Update ---
 
 // Update is reached only when rbac_group_ids switches between unset and an
-// empty set: every other change to an input replaces the invite, since the
-// Admin API has no update endpoint for invites. Both values send no group, so
-// there is nothing to send: the prior state is kept with the planned value.
+// empty set, or changes on an invite that is no longer pending: every other
+// change to an input replaces the invite, since the Admin API has no update
+// endpoint for invites. There is nothing to send either way: the prior state
+// is kept with the planned value.
 func (r *InviteResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state InviteResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -403,17 +404,26 @@ func inviteRBACGroupIDsValue(ids *[]string) (types.Set, diag.Diagnostics) {
 	return types.SetValue(types.StringType, values)
 }
 
-// rbacGroupIDsRequiresReplace replaces the invite when its groups change, but
-// not when rbac_group_ids only switches between unset and an empty set: both
-// send no group, so replacing would only send a second invitation email. An
-// unknown plan value may hold groups, so it replaces.
+// rbacGroupIDsRequiresReplace replaces a pending invite when its groups
+// change, but not when rbac_group_ids only switches between unset and an
+// empty set: both send no group, so replacing would only send a second
+// invitation email. An unknown plan value may hold groups, so it replaces.
+// Once the invite is accepted or expired, its groups can no longer change
+// anything and a replacement would fail (the address is a member) or send a
+// new invitation email: the change is only recorded, through Update.
 func rbacGroupIDsRequiresReplace() planmodifier.Set {
 	return setplanmodifier.RequiresReplaceIf(
-		func(_ context.Context, req planmodifier.SetRequest, resp *setplanmodifier.RequiresReplaceIfFuncResponse) {
+		func(ctx context.Context, req planmodifier.SetRequest, resp *setplanmodifier.RequiresReplaceIfFuncResponse) {
+			var status types.String
+			resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("status"), &status)...)
+			if !status.IsNull() && !status.IsUnknown() && status.ValueString() != "pending" {
+				resp.RequiresReplace = false
+				return
+			}
 			resp.RequiresReplace = !isEmptySet(req.StateValue) || !isEmptySet(req.PlanValue)
 		},
-		"Changing the RBAC groups forces replacement; switching between unset and an empty set does not.",
-		"Changing the RBAC groups forces replacement; switching between unset and an empty set does not.",
+		"Changing the RBAC groups of a pending invite forces replacement; switching between unset and an empty set does not, nor does any change once the invite is accepted or expired.",
+		"Changing the RBAC groups of a pending invite forces replacement; switching between unset and an empty set does not, nor does any change once the invite is accepted or expired.",
 	)
 }
 
