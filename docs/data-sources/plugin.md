@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_plugin Data Source - anthropic"
-subcategory: "Claude Enterprise"
+subcategory: "Plugins"
 description: |-
   Fetches one plugin of a Claude Enterprise organization by ID.
 ---

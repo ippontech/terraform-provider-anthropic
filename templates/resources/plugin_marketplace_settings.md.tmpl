@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_plugin_marketplace_settings Resource - anthropic"
-subcategory: "Claude Enterprise"
+subcategory: "Plugins"
 description: |-
   Manages the default installation setting of a Claude Enterprise plugin marketplace. The marketplace itself is managed in claude.ai.
 ---

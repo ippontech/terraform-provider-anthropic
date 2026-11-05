@@ -1,6 +1,6 @@
 ---
 page_title: "anthropic_plugin_marketplaces Data Source - anthropic"
-subcategory: "Claude Enterprise"
+subcategory: "Plugins"
 description: |-
   Lists the plugin marketplaces of a Claude Enterprise organization.
 ---
