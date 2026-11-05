@@ -1,3 +1,9 @@
+## [1.86.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.85.1...v1.86.0) (2026-11-05)
+
+### ✨ Features
+
+* add RBAC group and group member resources (Enterprise) ([#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453)) ([7a84cb9](https://github.com/ippontech/terraform-provider-anthropic/commit/7a84cb971f00e29ee24c04139bd445c78af8948e)), closes [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458) [#462](https://github.com/ippontech/terraform-provider-anthropic/issues/462) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#512](https://github.com/ippontech/terraform-provider-anthropic/issues/512) [#512](https://github.com/ippontech/terraform-provider-anthropic/issues/512) [#279](https://github.com/ippontech/terraform-provider-anthropic/issues/279)
+
 ## [1.85.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.85.0...v1.85.1) (2026-11-05)
 
 ### 📚 Documentation
