@@ -1,3 +1,9 @@
+## [1.85.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.85.0...v1.85.1) (2026-11-05)
+
+### 📚 Documentation
+
+* **guides:** Claude Platform on AWS and Claude Models on Google Cloud ([#462](https://github.com/ippontech/terraform-provider-anthropic/issues/462)) ([9683a35](https://github.com/ippontech/terraform-provider-anthropic/commit/9683a35158a39387eddca80a4f94df5abc2437b7)), closes [#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458) [#461](https://github.com/ippontech/terraform-provider-anthropic/issues/461) [#446](https://github.com/ippontech/terraform-provider-anthropic/issues/446) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#387](https://github.com/ippontech/terraform-provider-anthropic/issues/387) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#461](https://github.com/ippontech/terraform-provider-anthropic/issues/461) [#380](https://github.com/ippontech/terraform-provider-anthropic/issues/380) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#388](https://github.com/ippontech/terraform-provider-anthropic/issues/388)
+
 ## [1.85.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.84.0...v1.85.0) (2026-11-05)
 
 ### ✨ Features
