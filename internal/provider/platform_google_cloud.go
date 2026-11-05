@@ -60,20 +60,20 @@ type googleCloudModel struct {
 func googleCloudSchema() schema.SingleNestedAttribute {
 	return schema.SingleNestedAttribute{
 		Optional: true,
-		Description: "**Beta.** Reach Claude Models on Google Cloud (Anthropic managed) instead of the Claude API: the provider alias " +
-			"then manages the Anthropic organization tied to a Google Cloud project, through claude.googleapis.com. " +
+		Description: "**Beta.** Reach Claude Models on Google Cloud (Anthropic managed) instead of the Claude API: the provider configuration " +
+			"(the default one or an alias) then manages the Anthropic organization tied to a Google Cloud project, through claude.googleapis.com. " +
 			"Setting the block is what selects the platform; the ANTHROPIC_GOOGLE_CLOUD_* and GOOGLE_CLOUD_PROJECT " +
 			"environment variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token, " +
 			"federation and aws, and the first-party ANTHROPIC_* variables are ignored. Requests carry a Google " +
 			"access token (cloud-platform scope) from credentials, access_token or Application Default Credentials. " +
-			"workspace_id goes into the request URL, never into a header, and may be left unset only for an alias " +
+			"workspace_id goes into the request URL, never into a header, and may be left unset only for a configuration " +
 			"limited to organization routes. A type the gateway does not serve fails at plan, or at apply for a data " +
 			"source that Terraform reads only then. Support for this platform is verified with offline tests only, " +
 			"and the provider prints a warning saying so.",
 		Attributes: map[string]schema.Attribute{
 			"project": schema.StringAttribute{
 				Optional: true,
-				Description: "Google Cloud project whose Anthropic organization the alias manages. Can also be set via " +
+				Description: "Google Cloud project whose Anthropic organization the provider configuration manages. Can also be set via " +
 					"the ANTHROPIC_GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT environment variable; otherwise the " +
 					"project of the credentials, when they carry one.",
 			},

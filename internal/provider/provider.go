@@ -95,7 +95,7 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only. " +
 					"With the aws block: required, sent on every request except the Admin API ones, and read from " +
 					"ANTHROPIC_AWS_WORKSPACE_ID when unset. With the google_cloud block: part of " +
-					"the request URL, never a header, required except for an alias limited to organization routes, and " +
+					"the request URL, never a header, required except for a configuration limited to organization routes, and " +
 					"read from ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID when unset.",
 			},
 			"aws":          awsSchema(),

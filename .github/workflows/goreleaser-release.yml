@@ -8,11 +8,11 @@ on:
 permissions: {}
 
 jobs:
-  # Runs before the approval that releases the GPG key, with no secret (only the read-only job
-  # token): it writes on the run's summary page the go.mod lines that changed since the last
-  # release users received signed, which the approver checks before approving (RELEASE.md,
-  # "Approve a release"). A maintainer merged each module update; this approval is the last human
-  # check before they ship signed, with every change since the last signed release in one list.
+  # Runs before the signing job, with no secret (only the read-only job token): it writes on the
+  # run's summary page the go.mod lines that changed since the last release users received signed,
+  # as an audit trail of what each version shipped. A maintainer reviewed each module update at
+  # its merge, the last human check before it ships signed (RELEASE.md, "Review the modules a
+  # release ships"); nothing waits for anyone here.
   dependency-changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
 
       # The baseline is the newest earlier tag whose GitHub release carries the signed checksums.
-      # A version tagged but never signed (approval rejected, signing failed, release deleted) is
+      # A version tagged but never signed (signing failed, release deleted) is
       # skipped, so its module changes are listed again here rather than shipping unseen. A failed
       # API call also counts as unsigned: it widens the comparison, never narrows it.
       - name: List the go.mod changes since the last signed release
@@ -56,7 +56,7 @@ jobs:
             if [ "${#tags[@]}" -eq 0 ]; then
               echo "No previous release tag: nothing to compare." >> "${GITHUB_STEP_SUMMARY}"
             else
-              echo "No release with signed binaries among the ${#unsigned[@]} most recent tags: compare \`go.mod\` by hand before approving." >> "${GITHUB_STEP_SUMMARY}"
+              echo "No release with signed binaries among the ${#unsigned[@]} most recent tags: compare \`go.mod\` by hand." >> "${GITHUB_STEP_SUMMARY}"
             fi
             exit 0
           fi
@@ -71,7 +71,7 @@ jobs:
             if [ -z "${changes}" ]; then
               echo "None: this release compiles the same modules as ${previous}."
             else
-              echo "\`go.mod\` lists every module compiled into the provider. Check each change before approving the signing job (RELEASE.md, \"Approve a release\")."
+              echo "\`go.mod\` lists every module compiled into the provider. Each change was reviewed at its merge (RELEASE.md, \"Review the modules a release ships\")."
               echo
               echo '```diff'
               echo "${changes}"

@@ -4,23 +4,25 @@ Every push to `main` runs `semantic-release.yml`:
 
 1. The acceptance tests (`testacc.yml`, called as a reusable workflow) run against the real API with the keys of the `acctest` environment. They run after the merge because a pull request from a fork cannot read those keys.
 2. Only if they pass, semantic-release reads the commits since the last tag. A `feat`, `fix`, `perf`, `refactor`, `build` or `docs` commit, or a `BREAKING CHANGE` footer, cuts a version: semantic-release pushes the `chore(release):` commit with `CHANGELOG.md`, the `v*` tag and the GitHub release. Other commit types (`chore`, `ci`, `test`, ...) cut nothing.
-3. The tag starts `goreleaser-release.yml`, which builds, signs and attaches the binaries once a maintainer approves it (see [Protect the release credentials](#protect-the-release-credentials)).
+3. The tag starts `goreleaser-release.yml`, which builds, signs and attaches the binaries without waiting for anyone (see [Review the modules a release ships](#review-the-modules-a-release-ships) and [Protect the release credentials](#protect-the-release-credentials)).
 
 A red acceptance run publishes nothing. Fix the cause, or, if the API itself was failing, re-run the failed jobs of the most recent run on `main` only: an older run would take the place of a newer pending run, whose commit would then go untested, and its release would publish nothing since `main` has moved on. The next successful run releases every commit still pending. `Actions > Acceptance Tests > Run workflow` still runs the tests alone, without releasing.
 
 The workflow runs one at a time on `main` (`concurrency` group, no cancellation): when several commits land while a run is testing, only the newest waiting one runs. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit. The run that was testing publishes nothing, even when green, because semantic-release publishes only from the head of `main`; the newer run releases every pending commit once its own tests pass. A running test is never cancelled to make room: the objects it had created would stay in the test workspace, since nothing deletes them afterwards.
 
-## Approve a release
+## Review the modules a release ships
 
-A maintainer merges each update of the root `go.mod`, which Renovate never merges on its own (`.github/renovate.md`, "Go modules"), and each one cuts a version. The approval of the signing job is the last human decision before those modules ship signed to every user, so it checks them again, every change since the last signed release at once.
+A maintainer merges each update of the root `go.mod`, which Renovate never merges on its own (`.github/renovate.md`, "Go modules"), and each one cuts a version. That merge is the last human decision before those modules ship signed to every user: nothing else waits for a maintainer, so review the modules there, before the merge, not after.
 
-The signing job waits in `Actions > GoReleaser Release`, on the run of the new tag, behind **Review deployments**, for one of the `release` environment's reviewers. Before approving:
+The signing job used to wait for a reviewer in the Actions UI. Releases queued up whenever several versions were cut in a row, the newest one was approved and the others rejected, and the numbering got holes (tags without binaries, GitHub releases without assets). The review at merge time already checks the same modules, so the wait only duplicated it; it was removed and the versions now publish in order, each one on its own run.
 
-1. Open the run's summary. The `dependency-changes` job lists every `go.mod` line that changed since the last release with signed binaries; `go.mod` lists every module compiled into the provider, indirect ones included. A version that was tagged but never signed, or whose GitHub release was deleted, does not count as a baseline: its changes are listed again, and the summary names it. "None" means the release compiles the same modules as that last signed release.
-2. For each changed module, check that the new version is a published release of that module (a tag or release notes on its repository), and look for anything unexpected: a module nobody added on purpose, a version published a few days ago without notes, a repository that changed owner.
-3. Approve. If in doubt, reject: nothing is built, signed or published. The tag and the GitHub release stay without binaries, and the next fix ships under the next version number. Delete that GitHub release (the tag stays: the tag ruleset forbids deleting it) and say in the next release notes why the number was skipped. Never re-sign or replace a published version: the Terraform Registry asks to release a new version instead.
+For each module an update changes, check that the new version is a published release of that module (a tag or release notes on its repository), and look for anything unexpected: a module nobody added on purpose, a version published a few days ago without notes, a repository that changed owner. `go.mod` lists every module compiled into the provider, indirect ones included.
 
-After approving, check that the version shows up on the [Terraform Registry](https://registry.terraform.io/providers/ippontech/anthropic/latest). semantic-release publishes the GitHub release before the signed binaries are attached, now possibly hours apart. If the version does not appear, the Resync button on the provider's settings page in the Registry re-creates its webhook.
+The `dependency-changes` job of `goreleaser-release.yml` still writes on each run's summary page the `go.mod` lines that changed since the last release with signed binaries, as an audit trail: open it to see what a given version shipped without diffing tags by hand. A version that was tagged but never signed (signing failed, release deleted) does not count as a baseline; its changes are listed again, and the summary names it.
+
+A signing run that fails for a transient reason (a module proxy error, a GitHub outage) can be re-run as is: it builds the same tag again. Never re-sign or replace a version already published with binaries: the Terraform Registry asks to release a new version instead. A version that must not ship is withdrawn by deleting its GitHub release (the tag stays: the tag ruleset forbids deleting it) and saying in the next release notes why the number was skipped.
+
+Check that each version shows up on the [Terraform Registry](https://registry.terraform.io/providers/ippontech/anthropic/latest) a few minutes after its run turns green. If it does not, the Resync button on the provider's settings page in the Registry re-creates its webhook.
 
 # GPG Key Setup
 
@@ -197,7 +199,7 @@ Create two environments (`Settings > Environments > New environment`):
 | `semantic-release` | `semantic-release.yml` | **Selected branches and tags**, one branch rule `main` | `SEMREL_APP_ID`, `SEMREL_APP_PRIVATE_KEY` |
 | `acctest` (already set up) | `testacc.yml`, which `semantic-release.yml` calls before releasing | **Selected branches and tags**, one branch rule `main` | `ANTHROPIC_API_KEY`, `ANTHROPIC_ADMIN_API_KEY`, `ANTHROPIC_MULTI_WORKSPACE_API_KEY` |
 
-On `release`, also tick **Required reviewers** and add the maintainers: every signed release then waits for one approval in the Actions UI ([Approve a release](#approve-a-release) says what to check), which is the only control that holds even if a tag slips through. Leave **Allow administrators to bypass** unticked.
+On `release`, leave **Required reviewers** unticked: the modules are reviewed when their update is merged ([Review the modules a release ships](#review-the-modules-a-release-ships)), and a reviewer at signing time only queued the releases up. The tag rule is what keeps the key away from any other ref. Leave **Allow administrators to bypass** unticked.
 
 Then **delete the four secrets at repository level** (`Settings > Secrets and variables > Actions`), and check that no organization secret carries them. Until they are deleted, the environments protect nothing.
 
@@ -216,7 +218,7 @@ semantic-release keeps tagging releases; nobody else can create, move or delete 
 
 1. Push a branch with a workflow that prints `${{ secrets.GPG_PASSPHRASE != '' }}`: it must print `false`. Delete the branch.
 2. From a collaborator account, `git push origin <any-commit>:refs/tags/v9.9.9`: GitHub must refuse it.
-3. On the next release, the `goreleaser-release` run waits for a reviewer before its job starts.
+3. On the next release, the `goreleaser-release` run starts its signing job on its own, with the secrets of `release`.
 
 The release job also refuses a tagged commit that is not on `main` (`git merge-base --is-ancestor`). That check is defence in depth only: a tag-triggered run reads its workflow file from the tagged commit, so whoever can tag an arbitrary commit can remove the check too.
 
