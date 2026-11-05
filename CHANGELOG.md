@@ -1,3 +1,9 @@
+## [1.88.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.87.0...v1.88.0) (2026-11-05)
+
+### ✨ Features
+
+* **invite:** add rbac_group_ids to anthropic_invite ([#512](https://github.com/ippontech/terraform-provider-anthropic/issues/512)) ([31662f1](https://github.com/ippontech/terraform-provider-anthropic/commit/31662f1ef820c1888c833e71b68b99f8fc8245bb)), closes [#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453) [#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453) [#427](https://github.com/ippontech/terraform-provider-anthropic/issues/427) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453) [#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453) [#279](https://github.com/ippontech/terraform-provider-anthropic/issues/279) [#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453) [#279](https://github.com/ippontech/terraform-provider-anthropic/issues/279)
+
 ## [1.87.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.86.0...v1.87.0) (2026-11-05)
 
 ### ✨ Features
