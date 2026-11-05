@@ -15,7 +15,7 @@ Sets a spend limit via the Admin API: a cap on metered spend for one scope and p
 Any other combination is rejected by the API with a 400.
 
 > **API**: `POST /v1/organizations/spend_limits` (upsert), `GET` and `DELETE /v1/organizations/spend_limits/{spend_limit_id}` (Admin API, [reference](https://platform.claude.com/docs/en/api/beta/organization/spend_limits/set)).
-> **Auth**: `admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`. For a Claude Enterprise organization, a **scoped Admin API key** created by the primary owner with the `read:spend_limits` and `write:spend_limits` scopes; usage credits must be turned on in claude.ai billing settings.
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`). For `organization` and `workspace` limits (Claude Console, early access): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. For `user` limits (Claude Enterprise): a **scoped Admin API key** created by the primary owner with the `read:spend_limits` and `write:spend_limits` scopes; usage credits must be turned on in claude.ai billing settings.
 > **Beta header**: None.
 > **Cost**: Free.
 
