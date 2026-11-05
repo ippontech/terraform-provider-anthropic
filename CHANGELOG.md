@@ -1,3 +1,9 @@
+## [1.85.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.84.0...v1.85.0) (2026-11-05)
+
+### ✨ Features
+
+* **provider:** Claude Models on Google Cloud through a google_cloud block ([#461](https://github.com/ippontech/terraform-provider-anthropic/issues/461)) ([c741334](https://github.com/ippontech/terraform-provider-anthropic/commit/c741334853515452c4dd83eeb68612644604cb8b)), closes [#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458) [#459](https://github.com/ippontech/terraform-provider-anthropic/issues/459) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#462](https://github.com/ippontech/terraform-provider-anthropic/issues/462) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#388](https://github.com/ippontech/terraform-provider-anthropic/issues/388) [#462](https://github.com/ippontech/terraform-provider-anthropic/issues/462) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#380](https://github.com/ippontech/terraform-provider-anthropic/issues/380) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#385](https://github.com/ippontech/terraform-provider-anthropic/issues/385) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#387](https://github.com/ippontech/terraform-provider-anthropic/issues/387)
+
 ## [1.84.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.83.0...v1.84.0) (2026-11-05)
 
 ### ✨ Features
