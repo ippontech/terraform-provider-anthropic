@@ -1,3 +1,9 @@
+## [1.91.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.91.0...v1.91.1) (2026-11-05)
+
+### 🐛 Bug Fixes
+
+* **skills:** store force_destroy when it changes on an existing skill ([#538](https://github.com/ippontech/terraform-provider-anthropic/issues/538)) ([a002dcc](https://github.com/ippontech/terraform-provider-anthropic/commit/a002dccab4e24b643d646543992054b3fea758f3))
+
 ## [1.91.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.90.0...v1.91.0) (2026-11-05)
 
 ### ✨ Features
