@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -24,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	"github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
@@ -258,16 +258,14 @@ func TestTagKeyValidator(t *testing.T) {
 // alias would: one SDK client, the 404 guard on it, the Admin API through it.
 func configureOnPlatform(t *testing.T, srv *httptest.Server, p platform.Platform) resource.Resource {
 	t.Helper()
-	sdk := anthropic.NewClient(
-		option.WithoutEnvironmentDefaults(),
-		option.WithBaseURL(srv.URL),
-		option.WithHeader("Authorization", "Bearer gateway-token"),
+	sdk := oauthtest.NewSDKClient(t, srv,
+		option.WithAuthToken("gateway-token"),
 		option.WithMiddleware(platform.NotFoundGuard(p)),
 	)
 	r := NewWorkspaceResource()
 	var resp resource.ConfigureResponse
 	r.(resource.ResourceWithConfigure).Configure(context.Background(),
-		resource.ConfigureRequest{ProviderData: providerdata.ForPlatform(p, &sdk)}, &resp)
+		resource.ConfigureRequest{ProviderData: providerdata.ForPlatform(p, sdk)}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Configure: %v", resp.Diagnostics)
 	}
