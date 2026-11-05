@@ -6,6 +6,7 @@ package providerdata
 import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 )
 
 // OAuthClient is an SDK client authenticated with an org:admin OAuth bearer
@@ -24,6 +25,11 @@ type OAuthClient struct {
 
 // ProviderData is passed to every resource and data source Configure call.
 type ProviderData struct {
+	// Platform is what the clients below reach: the Claude API (first party)
+	// or a cloud gateway. The zero value means first party. Resources rarely
+	// need it: the provider already refuses, at Configure, a resource the
+	// platform does not serve (see internal/provider/registry.go).
+	Platform platform.Platform
 	// Client is the Anthropic SDK client for standard API endpoints.
 	Client *anthropic.Client
 	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
