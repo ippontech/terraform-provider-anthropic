@@ -26,13 +26,16 @@ on:
 
 permissions: {}
 
-# On a push, the same group as semantic-release.yml, so one live test run exists at a time: two
-# would collide in the test workspace. When several pushes queue up, only the newest waiting run
-# starts. A called run already sits in its caller's group: giving it the same one here would queue
-# it behind the caller that holds it (the GitHub docs warn of the cancellation variant of this,
-# "Reusing workflow configurations"), hence a group of its own, its run id.
+# On a push or a manual run, the same group as semantic-release.yml, so one live test run exists
+# at a time: two would collide in the test workspace. When several pushes queue up, only the
+# newest waiting run starts. A called run already sits in its caller's group: giving it the same
+# one here would queue it behind the caller that holds it (the GitHub docs warn of the
+# cancellation variant of this, "Reusing workflow configurations"), hence a group of its own, its
+# run id. The called run is told apart by `github.workflow`, which then carries the caller's name
+# (same page), where `github.event_name` is `workflow_dispatch` for a manual run and for a run
+# called by a dispatched semantic-release.yml alike.
 concurrency:
-  group: ${{ github.event_name == 'push' && 'acceptance-tests-main' || github.run_id }}
+  group: ${{ github.workflow == 'Acceptance Tests' && 'acceptance-tests-main' || github.run_id }}
   cancel-in-progress: false
 
 jobs:

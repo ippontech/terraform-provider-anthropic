@@ -26,8 +26,10 @@ concurrency:
 jobs:
   # Goes on only when a commit since the last tag would cut a version; otherwise the two-hour
   # live test run would create objects in the test workspace every morning for a release that
-  # semantic-release would then decline to cut. The check mirrors .releaserc: the release types
-  # listed there, a `!` after the type, or a `BREAKING CHANGE:` footer. Keep the two in step.
+  # semantic-release would then decline to cut. The decision comes from semantic-release's own
+  # commit analyzer, run with the .releaserc configuration by next-release.mjs, so the two cannot
+  # drift apart (a `--dry-run` of semantic-release would need the App token: it checks that it may
+  # push before any plugin runs).
   pending:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -41,12 +43,23 @@ jobs:
         with:
           egress-policy: block
           allowed-endpoints: >
+            api.github.com:443
             github.com:443
+            registry.npmjs.org:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # the tags, and the commits since the newest one
           persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      # Same install as the release job below: the committed lockfile, no lifecycle script.
+      - name: Install semantic-release and plugins
+        working-directory: .github/semantic-release
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Check whether a commit since the last release tag cuts a version
         id: check
@@ -54,13 +67,15 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
-          last=$(git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
-          range="${last:+${last}..}HEAD"
-          release=false
-          if git log --format=%s "${range}" | grep -Eq '^(feat|fix|perf|refactor|build|docs)(\([^)]*\))?!?:' \
-            || git log --format=%s "${range}" | grep -Eq '^[a-z]+(\([^)]*\))?!:' \
-            || git log --format=%B "${range}" | grep -q '^BREAKING CHANGE:'; then
-            release=true
+          # Two lines on stdout, `last_tag=` and `release_type=`; the analysis log on stderr. Read
+          # from a variable with sed, not through a pipe into grep -q: under pipefail a reader that
+          # exits on its first match fails the pipeline when the writer still has output to send.
+          analysis=$(node .github/semantic-release/next-release.mjs)
+          last=$(sed -n 's/^last_tag=//p' <<< "${analysis}")
+          type=$(sed -n 's/^release_type=//p' <<< "${analysis}")
+          release=true
+          if [ "${type}" = none ]; then
+            release=false
           fi
           # The retry run never cuts a second version in a day.
           if [ "${SCHEDULE}" = "23 12 * * *" ] && [ -n "${last}" ] \
@@ -68,7 +83,7 @@ jobs:
             release=false
           fi
           echo "release=${release}" >> "${GITHUB_OUTPUT}"
-          echo "Release to cut since ${last:-the first commit}: ${release}." >> "${GITHUB_STEP_SUMMARY}"
+          echo "Release type since ${last:-the first commit}: ${type}. Cut in this run: ${release}." >> "${GITHUB_STEP_SUMMARY}"
 
   # Run again from the head of `main`, whatever the push runs found: the release waits for them,
   # and a red run publishes nothing.
