@@ -202,8 +202,17 @@ func (r *SpendLimitResource) Create(ctx context.Context, req resource.CreateRequ
 // Update re-sets the limit with the new amount: scope and period force
 // replacement, so the upsert targets the same row.
 func (r *SpendLimitResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan SpendLimitResourceModel
+	var plan, prior SpendLimitResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// On an error Terraform saves the state the response holds. Framework
+	// v1.19.0 already starts it as the prior state, but its doc comment says the
+	// plan, whose id is unknown here: set it explicitly, so a failed set keeps
+	// the limit's id and created_at.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &prior)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}

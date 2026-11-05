@@ -207,6 +207,29 @@ func TestSpendLimitResource_Update_resetsTheAmount(t *testing.T) {
 	}
 }
 
+// A failed update keeps the prior state, id included, even when the response
+// starts as the plan (whose id is unknown), as the framework doc comment
+// describes.
+func TestSpendLimitResource_Update_failureKeepsPriorState(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := stub(t, func(recordedRequest) (int, string) {
+		return http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"bad amount"}}`
+	})
+	r := &SpendLimitResource{client: admintest.NewClient(t, srv)}
+
+	state := stateWithID(t, r)
+	plan := resourcePlan(t, r, scopeValue(t, r, "user", userID, ""), "monthly", "75000")
+	resp := resource.UpdateResponse{State: tfsdk.State{Schema: plan.Schema, Raw: plan.Raw}}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected a diagnostic for a 400")
+	}
+	if got, _ := spendLimitState(t, resp.State); got.ID.ValueString() != spendLimitID {
+		t.Errorf("id = %v, want the prior %s", got.ID, spendLimitID)
+	}
+}
+
 // --- Read ---
 
 func TestSpendLimitResource_Read(t *testing.T) {
