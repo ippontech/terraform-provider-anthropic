@@ -39,7 +39,7 @@ type awsModel struct {
 func awsSchema() schema.SingleNestedAttribute {
 	return schema.SingleNestedAttribute{
 		Optional: true,
-		Description: "**Beta.** Reach Claude Platform on AWS instead of the Claude API: the provider alias then manages the " +
+		Description: "**Beta.** Reach Claude Platform on AWS instead of the Claude API: the provider configuration (the default one or an alias) then manages the " +
 			"Anthropic organization tied to an AWS account, through the aws-external-anthropic gateway of one AWS " +
 			"region. Setting the block is what selects the platform; the AWS and ANTHROPIC_AWS_* environment " +
 			"variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token and federation, " +
@@ -207,7 +207,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 		diags.AddAttributeError(path.Root("workspace_id"), "Missing Workspace",
 			"Claude Platform on AWS identifies the workspace of every inference and resource request by the "+
 				"anthropic-workspace-id header. Set workspace_id or the "+awsWorkspaceIDEnv+" environment variable "+
-				"(ANTHROPIC_WORKSPACE_ID is not read with the aws block). An alias that only manages workspaces "+
+				"(ANTHROPIC_WORKSPACE_ID is not read with the aws block). A configuration that only manages workspaces "+
 				"needs one too: any workspace of the same region.")
 	}
 
@@ -280,7 +280,7 @@ func ignoredFirstPartyEnvironment(ctx context.Context, p platform.Platform) {
 		"ANTHROPIC_BASE_URL", "ANTHROPIC_WORKSPACE_ID",
 	} {
 		if os.Getenv(name) != "" {
-			tflog.Debug(ctx, "environment variable ignored by a platform provider alias",
+			tflog.Debug(ctx, "environment variable ignored by a platform provider configuration",
 				map[string]any{"variable": name, "platform": string(p)})
 		}
 	}
