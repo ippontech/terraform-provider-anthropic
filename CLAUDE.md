@@ -41,7 +41,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `models/`: none; `model`, `models`. Standard key.
 - `organizations/`: `invite`, `organization_member` (import-only); `organization`, `organization_member(s)`, `invite(s)`. Admin key.
 - `organizationwebhooks/`: `organization_webhook`; none. Admin key (beta `webhooks-2026-10-07`, enabled per organization on request).
-- `plugins/`: `plugin`, `plugin_version`; none. Claude Enterprise scoped Admin key (beta `ce-plugins-2026-09-01`).
+- `plugins/`: `plugin`, `plugin_version`, `plugin_installation_setting`, `plugin_marketplace_settings`; none. Claude Enterprise scoped Admin key (beta `ce-plugins-2026-09-01`).
 - `rbac/`: `rbac_group`, `rbac_group_member`; `rbac_group(s)`. Claude Enterprise scoped Admin key.
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.

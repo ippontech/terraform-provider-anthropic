@@ -108,6 +108,8 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: organizations.NewInviteResource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizations.NewOrganizationMemberResource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizationwebhooks.NewOrganizationWebhookResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginInstallationSettingResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginMarketplaceSettingsResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: plugins.NewPluginResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: plugins.NewPluginVersionResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: rbac.NewRBACGroupResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
