@@ -1,3 +1,9 @@
+## [1.91.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.90.0...v1.91.0) (2026-11-05)
+
+### ✨ Features
+
+* **plugins:** add plugin, version and marketplace data sources ([#457](https://github.com/ippontech/terraform-provider-anthropic/issues/457)) ([457d2ae](https://github.com/ippontech/terraform-provider-anthropic/commit/457d2aee75aff20049964eccada3e36c134954f0)), closes [#455](https://github.com/ippontech/terraform-provider-anthropic/issues/455) [#456](https://github.com/ippontech/terraform-provider-anthropic/issues/456) [#456](https://github.com/ippontech/terraform-provider-anthropic/issues/456) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#456](https://github.com/ippontech/terraform-provider-anthropic/issues/456) [#455](https://github.com/ippontech/terraform-provider-anthropic/issues/455) [#365](https://github.com/ippontech/terraform-provider-anthropic/issues/365) [#455](https://github.com/ippontech/terraform-provider-anthropic/issues/455)
+
 ## [1.90.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.89.0...v1.90.0) (2026-11-05)
 
 ### ✨ Features
