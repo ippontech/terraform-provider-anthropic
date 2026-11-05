@@ -18,4 +18,6 @@ Fetches a single Anthropic Workspace by ID via the Admin API.
 
 {{ codefile "hcl" "examples/data-sources/workspace/data_source.tf" }}
 
+On Claude Platform on AWS (the provider's `aws` block), workspaces are read through the gateway of the alias's region, and `external_key_id` is an AWS KMS key ARN. A workspace is reachable only through the region it is bound to; whether one region's gateway also returns the workspaces of other regions is not documented. On Claude Models on Google Cloud (`google_cloud`), this data source is not available: the gateway serves no workspace route, and workspace IDs are read in the Claude Console.
+
 {{ .SchemaMarkdown | trimspace }}

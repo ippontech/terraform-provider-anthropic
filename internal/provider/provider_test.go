@@ -63,10 +63,15 @@ func configureProvider(t *testing.T, attrs map[string]tftypes.Value) *provider.C
 
 // configureProviderInstance is configureProvider on a provider the test keeps,
 // to call its resource and data source factories afterwards.
+//
+// Configure's context is cancelled when it returns, as Terraform's gRPC
+// server cancels the ConfigureProvider RPC's: a client that kept it would
+// fail its first request in the test, as it would under Terraform.
 func configureProviderInstance(t *testing.T, p *AnthropicProvider, attrs map[string]tftypes.Value) *provider.ConfigureResponse {
 	t.Helper()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	schemaResp := &provider.SchemaResponse{}
 	p.Schema(ctx, provider.SchemaRequest{}, schemaResp)

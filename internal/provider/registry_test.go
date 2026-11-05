@@ -152,7 +152,7 @@ func TestGateRefusesAnUnavailableResource(t *testing.T) {
 	}
 
 	r := providerOn(platform.AWS).gateResource(reg)()
-	if _, ok := r.(*unavailableResource); !ok {
+	if _, ok := r.(*refusedResource); !ok {
 		t.Fatalf("factory returned %T, want the unavailable stand-in", r)
 	}
 	if got := resourceTypeName(r); got != "anthropic_invite" {
@@ -185,7 +185,7 @@ func TestGateRefusesAnUnavailableDataSource(t *testing.T) {
 
 	d := providerOn(platform.GoogleCloud).gateDataSource(reg)()
 	cd, ok := d.(datasource.DataSourceWithConfigure)
-	if _, stand := d.(*unavailableDataSource); !stand || !ok {
+	if _, stand := d.(*refusedDataSource); !stand || !ok {
 		t.Fatalf("factory returned %T, want the unavailable stand-in", d)
 	}
 	var resp datasource.ConfigureResponse

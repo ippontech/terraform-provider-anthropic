@@ -32,6 +32,18 @@ type Support struct {
 	// Reason says why the type is unavailable or unverified. It is printed in
 	// the diagnostic, after the platform name, so it is a full sentence.
 	Reason string
+	// OrganizationRoutes marks a type that calls /v1/organizations routes
+	// only. Claude Models on Google Cloud serves them without a workspace,
+	// under the organization's URL, so such a type also works on a provider
+	// alias that sets no workspace; every other type needs one there.
+	OrganizationRoutes bool
+}
+
+// OnOrganizationRoutes returns s for a type that calls organization routes
+// only (see Support.OrganizationRoutes).
+func (s Support) OnOrganizationRoutes() Support {
+	s.OrganizationRoutes = true
+	return s
 }
 
 // Supported declares a type the platform serves.
@@ -75,4 +87,20 @@ func UnavailableDetail(typeName string, p Platform, s Support) string {
 		detail += " " + s.Reason
 	}
 	return detail + " See " + p.DocURL() + "."
+}
+
+// WorkspaceRequiredSummary and WorkspaceRequiredDetail make the diagnostic for
+// typeName on a provider alias for p that sets no workspace, when typeName
+// calls workspace routes.
+func WorkspaceRequiredSummary(typeName string, p Platform) string {
+	return fmt.Sprintf("%s Requires a Workspace on %s", typeName, p.DisplayName())
+}
+
+// WorkspaceRequiredDetail is the detail of the diagnostic
+// WorkspaceRequiredSummary heads.
+func WorkspaceRequiredDetail(typeName string, p Platform) string {
+	return fmt.Sprintf("%s calls workspace routes, which %s serves under a workspace's URL, and this provider alias "+
+		"sets no workspace. Set workspace_id (or the ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID environment variable) to a "+
+		"workspace ID from the Claude Console, under Settings > Workspaces. Without one, an alias serves only the "+
+		"types that call organization routes. See %s.", typeName, p.DisplayName(), p.DocURL())
 }

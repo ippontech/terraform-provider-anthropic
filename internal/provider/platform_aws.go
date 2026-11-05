@@ -42,8 +42,8 @@ func awsSchema() schema.SingleNestedAttribute {
 		Description: "**Beta.** Reach Claude Platform on AWS instead of the Claude API: the provider configuration (the default one or an alias) then manages the " +
 			"Anthropic organization tied to an AWS account, through the aws-external-anthropic gateway of one AWS " +
 			"region. Setting the block is what selects the platform; the AWS and ANTHROPIC_AWS_* environment " +
-			"variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token and federation, " +
-			"and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and " +
+			"variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token, federation and " +
+			"google_cloud, and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and " +
 			"ANTHROPIC_BASE_URL variables are ignored: no first-party credential is valid there. workspace_id is " +
 			"required. Requests are signed with AWS SigV4 (service aws-external-anthropic), with credentials from " +
 			"access_key/secret_key, profile or the AWS default chain, unless api_key is set. A type the gateway does " +

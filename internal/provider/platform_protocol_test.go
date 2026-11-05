@@ -251,3 +251,73 @@ func TestAWSGateThroughTheProtocol(t *testing.T) {
 		t.Errorf("detail = %v", summaries(diags))
 	}
 }
+
+// TestGoogleCloudGateThroughTheProtocol: TestAWSGateThroughTheProtocol for a
+// google_cloud alias, with a static access token so that no credential is
+// looked up, and a closed local base URL.
+func TestGoogleCloudGateThroughTheProtocol(t *testing.T) {
+	isolateGoogleEnv(t)
+	exportFirstPartyEnvironment(t)
+	s := newProtocolServer(t)
+
+	gcType := s.schema.Provider.ValueType().(tftypes.Object).AttributeTypes["google_cloud"]
+	block := map[string]tftypes.Value{}
+	for name, attrType := range gcType.(tftypes.Object).AttributeTypes {
+		block[name] = tftypes.NewValue(attrType, nil)
+	}
+	block["project"] = tfString(gcTestProject)
+	block["access_token"] = tfString(gcTestToken)
+	block["base_url"] = tfString("http://127.0.0.1:9")
+	if diags := s.configure(map[string]tftypes.Value{
+		"workspace_id": tfString(gcTestWorkspace),
+		"google_cloud": tftypes.NewValue(gcType, block),
+	}); hasProtocolError(diags) {
+		t.Fatalf("ConfigureProvider: %v", summaries(diags))
+	}
+
+	const name = "Claude Models on Google Cloud (Anthropic managed)"
+	assertProtocolUnavailable(t, s.planCreate("anthropic_workspace", map[string]tftypes.Value{"name": tfString("w")}), "anthropic_workspace", name)
+	assertProtocolUnavailable(t, s.readDataSource("anthropic_workspaces", nil), "anthropic_workspaces", name)
+	assertProtocolUnavailable(t, s.planCreate("anthropic_invite", map[string]tftypes.Value{
+		"email": tfString("new-teammate@example.com"), "role": tfString("developer"),
+	}), "anthropic_invite", name)
+	if diags := s.planCreate("anthropic_agent", map[string]tftypes.Value{"name": tfString("Simple Agent"), "model": tfString("claude-opus-5-5")}); hasProtocolError(diags) {
+		t.Errorf("anthropic_agent: plan failed on Google Cloud: %v", summaries(diags))
+	}
+}
+
+// TestGoogleCloudValidationRefusesNothing: Terraform validates a provider
+// configuration, then every resource and data source block that uses it, on
+// an instance it never configures, and often where the plan's environment is
+// not exported (a lint job, an editor, a pre-commit hook). A google_cloud
+// alias that takes its workspace from ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID must
+// refuse nothing there, neither a type that needs a workspace nor one the
+// gateway does not serve: Configure, which reads the plan or apply
+// environment, decides both (TestGoogleCloudGate).
+func TestGoogleCloudValidationRefusesNothing(t *testing.T) {
+	isolateGoogleEnv(t)
+	s := newProtocolServer(t)
+
+	gcType := s.schema.Provider.ValueType().(tftypes.Object).AttributeTypes["google_cloud"]
+	block := map[string]tftypes.Value{}
+	for name, attrType := range gcType.(tftypes.Object).AttributeTypes {
+		block[name] = tftypes.NewValue(attrType, nil)
+	}
+	block["project"] = tfString(gcTestProject)
+	if diags := s.validateProvider(map[string]tftypes.Value{"google_cloud": tftypes.NewValue(gcType, block)}); hasProtocolError(diags) {
+		t.Fatalf("ValidateProviderConfig: %v", summaries(diags))
+	}
+
+	unknown := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	if diags := s.validateResource("anthropic_agent", map[string]tftypes.Value{
+		"name": tfString("Simple Agent"), "model": tfString("claude-opus-5-5"),
+	}); hasProtocolError(diags) {
+		t.Errorf("anthropic_agent resource refused at validation: %v", summaries(diags))
+	}
+	if diags := s.validateDataSource("anthropic_agent", map[string]tftypes.Value{"agent_id": unknown}); hasProtocolError(diags) {
+		t.Errorf("anthropic_agent data source refused at validation: %v", summaries(diags))
+	}
+	if diags := s.validateDataSource("anthropic_workspace_members", map[string]tftypes.Value{"workspace_id": unknown}); hasProtocolError(diags) {
+		t.Errorf("anthropic_workspace_members refused at validation: %v", summaries(diags))
+	}
+}
