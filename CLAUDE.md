@@ -42,8 +42,10 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `organizations/`: `invite`, `organization_member` (import-only); `organization`, `organization_member(s)`, `invite(s)`. Admin key.
 - `organizationwebhooks/`: `organization_webhook`; none. Admin key (beta `webhooks-2026-10-07`, enabled per organization on request).
 - `plugins/`: `plugin`, `plugin_version`, `plugin_installation_setting`, `plugin_marketplace_settings`; none. Claude Enterprise scoped Admin key (beta `ce-plugins-2026-09-01`).
+- `rbac/`: `rbac_group`, `rbac_group_member`; `rbac_group(s)`. Claude Enterprise scoped Admin key.
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
+- `spendlimits/`: `spend_limit`; none. Admin key (Claude Enterprise scoped key for `user` limits; Console key for `organization`/`workspace` limits, early access).
 - `telemetrydestinations/`: `telemetry_destination`; none. Admin key (beta `telemetry-destinations-2026-08-11`).
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
 - `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
