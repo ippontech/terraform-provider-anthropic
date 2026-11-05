@@ -230,6 +230,42 @@ func TestSDKClient_doesNotReplayPostOnADroppedConnection(t *testing.T) {
 	}
 }
 
+// TestSDKClient_boundsEachAttempt: a gateway that accepts the request and
+// never answers fails the attempt once the per-attempt timeout expires, as
+// the direct client's http.Client timeout does. The retry policy then
+// applies: a GET is retried, a POST is not (it may have landed).
+func TestSDKClient_boundsEachAttempt(t *testing.T) {
+	if got := NewSDKClient(newGatewaySDKClient("http://127.0.0.1:9")).sdkAttemptTimeout; got != attemptTimeout {
+		t.Errorf("NewSDKClient: sdkAttemptTimeout = %v, want %v", got, attemptTimeout)
+	}
+	for method, wantCalls := range map[string]int32{"GET": 3, "POST": 1} {
+		t.Run(method, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				<-r.Context().Done()
+			}))
+			defer srv.Close()
+
+			c := newRetryingSDKTestClient(srv.URL, 2)
+			c.sdkAttemptTimeout = 50 * time.Millisecond
+			// Without a per-attempt bound, only this deadline ends the call.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if _, err := c.DoRequest(ctx, method, "/v1/organizations/workspaces", nil); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if ctx.Err() != nil {
+				t.Fatal("the call ran until the caller's deadline: no attempt was bounded")
+			}
+			if got := calls.Load(); got != wantCalls {
+				t.Errorf("calls = %d, want %d", got, wantCalls)
+			}
+		})
+	}
+}
+
 func TestSDKClient_honoursXShouldRetry(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -369,5 +405,26 @@ func TestSDKClient_treatsATruncatedBodyAsADroppedConnection(t *testing.T) {
 				t.Errorf("calls = %d, want %d", n, tt.wantCalls)
 			}
 		})
+	}
+}
+
+// TestSDKClient_sendsNoWorkspaceHeader: Claude Platform on AWS's SDK client
+// stamps anthropic-workspace-id on every request, and its Admin API routes do
+// not require it. Like the direct client, the Admin API client sends none.
+func TestSDKClient_sendsNoWorkspaceHeader(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := NewSDKClient(newGatewaySDKClient(srv.URL, option.WithHeader("anthropic-workspace-id", "wrkspc_default")))
+	if _, err := c.DoRequest(context.Background(), "GET", "/v1/organizations/workspaces", nil); err != nil {
+		t.Fatalf("DoRequest: %v", err)
+	}
+	if v := got.Get("anthropic-workspace-id"); v != "" {
+		t.Errorf("anthropic-workspace-id = %q, want none", v)
 	}
 }

@@ -38,6 +38,11 @@ const (
 	// up an apply. The SDK honours the header verbatim; a Terraform provider
 	// that blocked for an hour on a stray value would be worse than giving up.
 	maxRetryAfter = 60 * time.Second
+
+	// attemptTimeout bounds one attempt, response body included, so that a
+	// server that accepts the connection and never answers fails the attempt
+	// instead of hanging a plan or an apply.
+	attemptTimeout = 60 * time.Second
 )
 
 // Client makes authenticated requests to the Anthropic Admin API (/v1/organizations/*).
@@ -71,6 +76,9 @@ type Client struct {
 	// sdk, when set, carries every request instead of HTTPClient, with its own
 	// base URL and authentication; ApiKey and BaseURL are then unused.
 	sdk *anthropic.Client
+	// sdkAttemptTimeout bounds each attempt through sdk, as HTTPClient's
+	// Timeout does for the direct client. Zero means no bound.
+	sdkAttemptTimeout time.Duration
 }
 
 // APIError is returned when the API responds with a non-2xx status code.
@@ -97,7 +105,7 @@ func NewClient(apiKey string) *Client {
 	return &Client{
 		ApiKey:     apiKey,
 		BaseURL:    adminAPIBaseURL,
-		HTTPClient: &http.Client{Timeout: 60 * time.Second},
+		HTTPClient: &http.Client{Timeout: attemptTimeout},
 		MaxRetries: DefaultMaxRetries,
 	}
 }
@@ -116,7 +124,7 @@ func NewClient(apiKey string) *Client {
 // would replay a POST on a 5xx or a dropped connection, and a second
 // POST /v1/organizations/workspaces creates a second workspace.
 func NewSDKClient(sdk *anthropic.Client) *Client {
-	return &Client{sdk: sdk, MaxRetries: DefaultMaxRetries}
+	return &Client{sdk: sdk, MaxRetries: DefaultMaxRetries, sdkAttemptTimeout: attemptTimeout}
 }
 
 // RawBody is a request body sent as is, with its own content type, instead of
@@ -267,7 +275,19 @@ func (c *Client) attempt(template *http.Request, reqBody []byte) ([]byte, *http.
 // response for a transport error, as with HTTPClient; see transportResponse.
 func (c *Client) sdkAttempt(template *http.Request, reqBody []byte) ([]byte, *http.Response, error) {
 	var res *http.Response
-	opts := []option.RequestOption{option.WithMaxRetries(0), option.WithResponseInto(&res)}
+	opts := []option.RequestOption{
+		option.WithMaxRetries(0),
+		// The SDK sets no per-request deadline by default. With this one, a
+		// stalled attempt fails like one of the direct client and goes back
+		// to DoRequest's retry loop (GET and DELETE retry it, POST does not).
+		option.WithRequestTimeout(c.sdkAttemptTimeout),
+		option.WithResponseInto(&res),
+		// The Admin API is organization-wide. Claude Platform on AWS sets a
+		// workspace header on every request of its SDK client, which its
+		// Admin API routes do not require; like the direct client, this one
+		// sends none. A template header, set by the caller, still goes out.
+		option.WithHeaderDel("anthropic-workspace-id"),
+	}
 	for name, values := range template.Header {
 		if http.CanonicalHeaderKey(name) == "Anthropic-Version" {
 			continue

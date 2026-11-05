@@ -51,79 +51,101 @@ func (r registration[T]) on(p platform.Platform) platform.Support {
 	}
 }
 
+// Reasons a gateway platform does not serve a type, cited by the diagnostic.
+// Sources, re-read on 2026-10-25: the Claude Platform on AWS page ("Features
+// not supported") and its IAM actions page, whose route table states that
+// "the gateway denies any route not listed here by default".
+var (
+	supported = platform.Supported()
+
+	awsAdminRoutesReason = "Its gateway serves only the workspace, external key and telemetry destination " +
+		"routes of the Admin API."
+	awsAdminRoutes = platform.Unavailable(awsAdminRoutesReason)
+	awsMembers     = platform.Unavailable(awsAdminRoutesReason + " AWS IAM manages organization membership.")
+	awsAPIKeys     = platform.Unavailable(awsAdminRoutesReason + " API keys for this platform are generated in the " +
+		"AWS Console and are not Claude Console keys.")
+	awsWorkspaceMembers = platform.Unavailable("Adding or removing users from individual workspaces is not " +
+		"available: AWS IAM policies on workspace ARNs control access.")
+	awsRateLimits = platform.Unavailable(awsAdminRoutesReason + " Rate limits are managed by Anthropic and shown " +
+		"read-only in the Claude Console.")
+	awsNoOAuth = platform.Unavailable("Its gateway accepts no OAuth token, only AWS SigV4 or a key generated in " +
+		"the AWS Console, so Workload Identity Federation and its service accounts do not apply.")
+)
+
 func resourceRegistrations() []registration[resource.Resource] {
 	return []registration[resource.Resource]{
-		{New: agents.NewAgentResource},
-		{New: apikeys.NewAPIKeyResource},
-		{New: deployments.NewDeploymentResource},
-		{New: environments.NewEnvironmentResource},
-		{New: federation.NewFederationIssuerResource},
-		{New: federation.NewFederationRuleResource},
-		{New: federation.NewFederationRuleWorkspaceResource},
-		{New: files.NewFileResource},
-		{New: memorystores.NewMemoryResource},
-		{New: memorystores.NewMemoryStoreResource},
-		{New: messages.NewMessageResource},
-		{New: organizations.NewInviteResource},
-		{New: organizations.NewOrganizationMemberResource},
-		{New: organizationwebhooks.NewOrganizationWebhookResource},
-		{New: serviceaccounts.NewServiceAccountResource},
-		{New: serviceaccounts.NewServiceAccountWorkspaceResource},
-		{New: skills.NewSkillResource},
-		{New: skills.NewSkillVersionResource},
-		{New: telemetrydestinations.NewTelemetryDestinationResource},
-		{New: userprofiles.NewUserProfileResource},
-		{New: vaults.NewVaultResource},
-		{New: vaults.NewVaultCredentialResource},
-		{New: workspaces.NewWorkspaceResource},
-		{New: workspaces.NewWorkspaceMemberResource},
-		{New: workspaces.NewWorkspaceRateLimitResource},
+		{New: agents.NewAgentResource, AWS: supported},
+		{New: apikeys.NewAPIKeyResource, AWS: awsAPIKeys},
+		// Served, though the gateway's route table does not list them.
+		{New: deployments.NewDeploymentResource, AWS: supported},
+		{New: environments.NewEnvironmentResource, AWS: supported},
+		{New: federation.NewFederationIssuerResource, AWS: awsNoOAuth},
+		{New: federation.NewFederationRuleResource, AWS: awsNoOAuth},
+		{New: federation.NewFederationRuleWorkspaceResource, AWS: awsNoOAuth},
+		{New: files.NewFileResource, AWS: supported},
+		{New: memorystores.NewMemoryResource, AWS: supported},
+		{New: memorystores.NewMemoryStoreResource, AWS: supported},
+		{New: messages.NewMessageResource, AWS: supported},
+		{New: organizations.NewInviteResource, AWS: awsMembers},
+		{New: organizations.NewOrganizationMemberResource, AWS: awsMembers},
+		{New: organizationwebhooks.NewOrganizationWebhookResource, AWS: awsAdminRoutes},
+		{New: serviceaccounts.NewServiceAccountResource, AWS: awsNoOAuth},
+		{New: serviceaccounts.NewServiceAccountWorkspaceResource, AWS: awsNoOAuth},
+		{New: skills.NewSkillResource, AWS: supported},
+		{New: skills.NewSkillVersionResource, AWS: supported},
+		{New: telemetrydestinations.NewTelemetryDestinationResource, AWS: supported},
+		{New: userprofiles.NewUserProfileResource, AWS: supported},
+		{New: vaults.NewVaultResource, AWS: supported},
+		{New: vaults.NewVaultCredentialResource, AWS: supported},
+		{New: workspaces.NewWorkspaceResource, AWS: supported},
+		{New: workspaces.NewWorkspaceMemberResource, AWS: awsWorkspaceMembers},
+		{New: workspaces.NewWorkspaceRateLimitResource, AWS: awsRateLimits},
 	}
 }
 
 func dataSourceRegistrations() []registration[datasource.DataSource] {
 	return []registration[datasource.DataSource]{
-		{New: agents.NewAgentDataSource},
-		{New: apikeys.NewAPIKeyDataSource},
-		{New: apikeys.NewAPIKeysDataSource},
-		{New: agents.NewAgentsDataSource},
-		{New: messages.NewCountTokensDataSource},
-		{New: deployments.NewDeploymentRunsDataSource},
-		{New: environments.NewEnvironmentDataSource},
-		{New: environments.NewEnvironmentsDataSource},
-		{New: federation.NewFederationIssuersDataSource},
-		{New: federation.NewFederationRulesDataSource},
-		{New: federation.NewFederationIssuerDataSource},
-		{New: federation.NewFederationRuleDataSource},
-		{New: federation.NewFederationRuleWorkspacesDataSource},
-		{New: files.NewFileDataSource},
-		{New: files.NewFilesDataSource},
-		{New: memorystores.NewMemoryDataSource},
-		{New: memorystores.NewMemoriesDataSource},
-		{New: memorystores.NewMemoryStoreDataSource},
-		{New: memorystores.NewMemoryStoresDataSource},
-		{New: models.NewModelDataSource},
-		{New: models.NewModelsDataSource},
-		{New: organizations.NewOrganizationDataSource},
-		{New: organizations.NewOrganizationMemberDataSource},
-		{New: organizations.NewOrganizationMembersDataSource},
-		{New: organizations.NewInviteDataSource},
-		{New: organizations.NewInvitesDataSource},
-		{New: serviceaccounts.NewServiceAccountsDataSource},
-		{New: serviceaccounts.NewServiceAccountDataSource},
-		{New: serviceaccounts.NewServiceAccountWorkspacesDataSource},
-		{New: skills.NewSkillDataSource},
-		{New: skills.NewSkillVersionDataSource},
-		{New: skills.NewSkillVersionsDataSource},
-		{New: skills.NewSkillsDataSource},
-		{New: userprofiles.NewUserProfileDataSource},
-		{New: userprofiles.NewUserProfilesDataSource},
-		{New: vaults.NewVaultDataSource},
-		{New: vaults.NewVaultsDataSource},
-		{New: workspaces.NewWorkspaceDataSource},
-		{New: workspaces.NewWorkspaceMemberDataSource},
-		{New: workspaces.NewWorkspaceMembersDataSource},
-		{New: workspaces.NewWorkspaceRateLimitsDataSource},
-		{New: workspaces.NewWorkspacesDataSource},
+		{New: agents.NewAgentDataSource, AWS: supported},
+		{New: apikeys.NewAPIKeyDataSource, AWS: awsAPIKeys},
+		{New: apikeys.NewAPIKeysDataSource, AWS: awsAPIKeys},
+		{New: agents.NewAgentsDataSource, AWS: supported},
+		{New: messages.NewCountTokensDataSource, AWS: supported},
+		{New: deployments.NewDeploymentRunsDataSource, AWS: supported},
+		{New: environments.NewEnvironmentDataSource, AWS: supported},
+		{New: environments.NewEnvironmentsDataSource, AWS: supported},
+		{New: federation.NewFederationIssuersDataSource, AWS: awsNoOAuth},
+		{New: federation.NewFederationRulesDataSource, AWS: awsNoOAuth},
+		{New: federation.NewFederationIssuerDataSource, AWS: awsNoOAuth},
+		{New: federation.NewFederationRuleDataSource, AWS: awsNoOAuth},
+		{New: federation.NewFederationRuleWorkspacesDataSource, AWS: awsNoOAuth},
+		{New: files.NewFileDataSource, AWS: supported},
+		{New: files.NewFilesDataSource, AWS: supported},
+		{New: memorystores.NewMemoryDataSource, AWS: supported},
+		{New: memorystores.NewMemoriesDataSource, AWS: supported},
+		{New: memorystores.NewMemoryStoreDataSource, AWS: supported},
+		{New: memorystores.NewMemoryStoresDataSource, AWS: supported},
+		{New: models.NewModelDataSource, AWS: supported},
+		{New: models.NewModelsDataSource, AWS: supported},
+		{New: organizations.NewOrganizationDataSource, AWS: awsAdminRoutes},
+		{New: organizations.NewOrganizationMemberDataSource, AWS: awsMembers},
+		{New: organizations.NewOrganizationMembersDataSource, AWS: awsMembers},
+		{New: organizations.NewInviteDataSource, AWS: awsMembers},
+		{New: organizations.NewInvitesDataSource, AWS: awsMembers},
+		{New: serviceaccounts.NewServiceAccountsDataSource, AWS: awsNoOAuth},
+		{New: serviceaccounts.NewServiceAccountDataSource, AWS: awsNoOAuth},
+		{New: serviceaccounts.NewServiceAccountWorkspacesDataSource, AWS: awsNoOAuth},
+		{New: skills.NewSkillDataSource, AWS: supported},
+		{New: skills.NewSkillVersionDataSource, AWS: supported},
+		{New: skills.NewSkillVersionsDataSource, AWS: supported},
+		{New: skills.NewSkillsDataSource, AWS: supported},
+		{New: userprofiles.NewUserProfileDataSource, AWS: supported},
+		{New: userprofiles.NewUserProfilesDataSource, AWS: supported},
+		{New: vaults.NewVaultDataSource, AWS: supported},
+		{New: vaults.NewVaultsDataSource, AWS: supported},
+		{New: workspaces.NewWorkspaceDataSource, AWS: supported},
+		{New: workspaces.NewWorkspaceMemberDataSource, AWS: awsWorkspaceMembers},
+		{New: workspaces.NewWorkspaceMembersDataSource, AWS: awsWorkspaceMembers},
+		{New: workspaces.NewWorkspaceRateLimitsDataSource, AWS: awsRateLimits},
+		{New: workspaces.NewWorkspacesDataSource, AWS: supported},
 	}
 }

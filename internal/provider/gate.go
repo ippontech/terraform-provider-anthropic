@@ -33,6 +33,9 @@ func (p *AnthropicProvider) configuredPlatform() platform.Platform {
 // validation RPCs) the platform is first party and every factory returns the
 // real type; the stand-in only ever exists after Configure, and it carries the
 // real type's Metadata and Schema, so even then nothing but Configure changes.
+// Validation must stay ungated: Terraform validates every block whatever its
+// count, so a block a module turns off with count = 0 would fail
+// (TestAWSValidationRefusesNothing).
 //
 // Unverified and undeclared types get the real type: they are allowed, and a
 // gateway 404 that is not the API's own is turned into an error by
