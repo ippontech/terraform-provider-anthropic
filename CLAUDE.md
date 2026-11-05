@@ -51,7 +51,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 ## Adding a resource or data source
 
 1. Create `internal/services/<service>/<name>_resource.go` (or `_data_source.go`) in `package <service>`, implementing `resource.Resource` (or `datasource.DataSource`).
-2. Add its factory to `resourceRegistrations()` (or `dataSourceRegistrations()`) in `internal/provider/registry.go`, declaring on the same line whether each cloud platform serves it (the registry tests fail on a missing declaration).
+2. Add its factory to `resourceRegistrations()` (or `dataSourceRegistrations()`) in `internal/provider/registry.go`, declaring on the same line whether each cloud platform serves it (once a platform can be configured, the registry tests fail on a missing declaration for it).
 3. Add an example under `examples/resources/<name>/` (or `examples/data-sources/<name>/`). The main file (`resource.tf` / `data_source.tf`) holds only the resource or data blocks and outputs, because the Registry docs embed it verbatim. The `terraform {}` block (`required_version`, and `required_providers` mapping `anthropic` to `ippontech/anthropic` for the native tests) goes in a sibling `versions.tf` ([#231](https://github.com/ippontech/terraform-provider-anthropic/issues/231)). Pin the provider with `~> 1.0`. CI runs tflint with `preset = "all"`, so every `output` needs a `description` and every `versions.tf` a `required_version` (#229).
 4. Add `templates/resources/<name>.md.tmpl` (or `templates/data-sources/<name>.md.tmpl`) with a non-empty `subcategory` (e.g. `"Agents"`, `"Messages"`); without it the page appears ungrouped on the Terraform Registry.
 5. Add a native test `tests/<name>.tftest.hcl` and Go tests, see [Testing](#testing).

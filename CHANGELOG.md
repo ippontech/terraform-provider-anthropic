@@ -1,3 +1,9 @@
+## [1.81.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.81.0...v1.81.1) (2026-11-04)
+
+### 📚 Documentation
+
+* **release:** drop the manual approval of the signing job ([#533](https://github.com/ippontech/terraform-provider-anthropic/issues/533)) ([325670e](https://github.com/ippontech/terraform-provider-anthropic/commit/325670e5aa0df16588bba7a5c4c09fd4906e826d))
+
 ## [1.81.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.80.0...v1.81.0) (2026-11-04)
 
 ### ✨ Features
