@@ -1,0 +1,35 @@
+---
+page_title: "anthropic_plugin_version Resource - anthropic"
+subcategory: "Claude Enterprise"
+description: |-
+  Uploads a version of an organization-owned plugin in a Claude Enterprise organization.
+---
+
+# anthropic_plugin_version (Resource)
+
+Uploads a version of an organization-owned plugin through the Claude Enterprise [Plugins API](https://platform.claude.com/docs/en/manage-claude/plugins-api). A version is an immutable snapshot of the plugin's files.
+
+> **API**: `POST /v1/organizations/plugins/{plugin_id}/versions`, `GET /v1/organizations/plugins/{plugin_id}/versions/{version}` (Plugins API).
+> **Auth**: Claude Enterprise Admin API key with the `read:plugins` and `write:plugins` scopes (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`), created by the primary owner in claude.ai under Organization settings > API. A Claude Console Admin API key does not work.
+> **Beta header**: `ce-plugins-2026-09-01`, sent by the provider (the endpoints answer 404 without it).
+> **Availability**: beta, Claude Enterprise organizations only, and not organizations with HIPAA readiness enabled.
+> **Cost**: Free.
+
+## Behavior
+
+- **Every input forces a new version**, and so does any edit to the uploaded files: `source_hash` is recomputed from them at every plan. The manifest's `name` must be the plugin's `name`.
+- **Git metadata is left out.** `.git` directories and files under `source_dir`, at any depth, are neither uploaded nor hashed, so `source_dir` can be a Git checkout of the plugin: a fresh clone or a fetch does not force a new version.
+- **Served or stored.** While the plugin is not pinned, the new version is served to members as soon as it is stored. Once the plugin is pinned (`served_version_id` on `anthropic_plugin`), it is stored but not served until chosen.
+- **Content scanning.** With content scanning on, the version's `content_scan` reads `processing` after the upload, and the verdict shows on a later refresh. A served version is withheld from members until its scan is `completed` with `pass` or `warn`: pin the plugin first if members should keep the current version meanwhile.
+- **Destroy only removes the version from state**, with a warning: the API cannot delete a single version, so it stays in the plugin's history until the plugin is deleted. Replacing this resource therefore adds a version each time.
+- The upload is not idempotent: the provider never resends it after a server error, only when the API asks for it (`registration_pending` with `x-should-retry: true`), which stores one more identical version.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/resources/plugin_version/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import is not supported: the API cannot say which local files a version came from.

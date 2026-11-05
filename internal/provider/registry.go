@@ -18,8 +18,11 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizationwebhooks"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/plugins"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/rbac"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/spendlimits"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/telemetrydestinations"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
@@ -105,10 +108,17 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: organizations.NewInviteResource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizations.NewOrganizationMemberResource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizationwebhooks.NewOrganizationWebhookResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginInstallationSettingResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginMarketplaceSettingsResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginVersionResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: rbac.NewRBACGroupResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: rbac.NewRBACGroupMemberResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: serviceaccounts.NewServiceAccountResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: serviceaccounts.NewServiceAccountWorkspaceResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: skills.NewSkillResource, AWS: supported, GoogleCloud: supported},
 		{New: skills.NewSkillVersionResource, AWS: supported, GoogleCloud: supported},
+		{New: spendlimits.NewSpendLimitResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: telemetrydestinations.NewTelemetryDestinationResource, AWS: supported, GoogleCloud: gcTelemetry},
 		{New: userprofiles.NewUserProfileResource, AWS: supported, GoogleCloud: gcUserProfiles},
 		{New: vaults.NewVaultResource, AWS: supported, GoogleCloud: supported},
@@ -147,6 +157,13 @@ func dataSourceRegistrations() []registration[datasource.DataSource] {
 		{New: organizations.NewOrganizationMembersDataSource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizations.NewInviteDataSource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizations.NewInvitesDataSource, AWS: awsMembers, GoogleCloud: gcMembers},
+		{New: plugins.NewPluginDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginsDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginVersionsDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginMarketplaceDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginMarketplacesDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: rbac.NewRBACGroupDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: rbac.NewRBACGroupsDataSource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: serviceaccounts.NewServiceAccountsDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: serviceaccounts.NewServiceAccountDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: serviceaccounts.NewServiceAccountWorkspacesDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},

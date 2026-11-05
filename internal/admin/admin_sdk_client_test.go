@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -319,7 +320,7 @@ func TestSDKClient_mapsErrorsLikeTheDirectClient(t *testing.T) {
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("err = %v (%T), want *APIError", err, err)
 			}
-			if *apiErr != tt.want {
+			if !reflect.DeepEqual(*apiErr, tt.want) {
 				t.Errorf("error = %+v, want %+v", *apiErr, tt.want)
 			}
 			if IsNotFound(err) != (tt.status == http.StatusNotFound) {
