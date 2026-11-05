@@ -36,9 +36,11 @@ The provider reaches that organization through its `aws` block, documented with 
 
 ## 2. One provider alias per region and workspace
 
-A workspace is bound to the AWS region of the endpoint it was created through and is reachable only there. Every inference and resource request names its workspace in the `anthropic-workspace-id` header, so a provider alias serves one region and one workspace. Admin API requests (workspaces) do not carry the header, but the alias still needs a workspace ID: give the one created at sign-up. The workspace object does not show its region, so keep it next to the workspace ID, in the alias that reaches it.
+A workspace is bound to the AWS region of the endpoint it was created through and is reachable only there. Every inference and resource request names its workspace in the `anthropic-workspace-id` header, so a provider configuration serves one region and one workspace. Admin API requests (workspaces) do not carry the header, but the configuration still needs a workspace ID: give the one created at sign-up. The workspace object does not show its region, so keep it next to the workspace ID, in the alias that reaches it.
 
-A workspace created in the same run cannot be the `workspace_id` of an alias: provider configuration must be known at plan time, and the provider rejects an unknown `workspace_id`. Manage workspaces from one alias, and their contents from aliases whose workspace IDs are known: a variable, as below, or a separate configuration that reads the first one's outputs.
+Any provider configuration can carry the `aws` block, the default one included; the examples below use aliases because a configuration usually manages several regions or workspaces next to a first-party organization.
+
+A workspace created in the same run cannot be the `workspace_id` of a provider configuration: provider configuration must be known at plan time, and the provider rejects an unknown `workspace_id`. Manage workspaces from one alias, and their contents from aliases whose workspace IDs are known: a variable, as below, or a separate configuration that reads the first one's outputs.
 
 ```hcl
 variable "signup_workspace_id" {
@@ -352,6 +354,7 @@ Not verified yet:
 3. Whether reading a workspace fails without `ListTagsForResource`, which CloudTrail records on every read.
 4. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
 5. Which IAM action authorizes the deployment routes, which the IAM actions page does not list ([section 3](#3-iam-permissions-of-the-terraform-principal)).
+6. Telemetry destinations (`anthropic_telemetry_destination`): the gateway lists their routes and the OpenTelemetry setup page sends them to this endpoint with AWS credentials, so the provider declares them supported, but none was created through the gateway.
 
 ## See also
 

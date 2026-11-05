@@ -68,7 +68,7 @@ The project comes from `google_cloud.project`, then `ANTHROPIC_GOOGLE_CLOUD_PROJ
 
 ## 3. Provider aliases
 
-The workspace is part of every request's URL (`.../projects/<project>/locations/global/workspaces/<workspace>/invoke/v1/...`), never a header, so an alias serves one project and one workspace. Since workspaces are created in the Console, their IDs are always known inputs.
+The workspace is part of every request's URL (`.../projects/<project>/locations/global/workspaces/<workspace>/invoke/v1/...`), never a header, so a provider configuration serves one project and one workspace. Any provider configuration can carry the `google_cloud` block, the default one included; the examples use aliases. Since workspaces are created in the Console, their IDs are always known inputs.
 
 ```hcl
 variable "support_workspace_id" {
@@ -98,7 +98,7 @@ resource "anthropic_agent" "triage" {
 }
 ```
 
-Organization routes (`/v1/organizations/...`) go to the organization endpoint (`.../claudeOrganization/invoke`) and need no workspace: an alias without `workspace_id` serves those types only, and refuses every other type at plan time. On the provider's current resources, every type that works on this platform needs a workspace.
+Organization routes (`/v1/organizations/...`) go to the organization endpoint (`.../claudeOrganization/invoke`) and need no workspace: a provider configuration without `workspace_id` serves those types only, and refuses every other type at plan time. On the provider's current resources, every type that works on this platform needs a workspace.
 
 ## 4. What the provider can and cannot manage
 
