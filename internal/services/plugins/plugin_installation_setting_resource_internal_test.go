@@ -212,6 +212,46 @@ func TestPluginInstallationSettingResource_Update(t *testing.T) {
 	}
 }
 
+// A setting removed outside Terraform since the refresh comes back from the
+// upsert with a new created_at. Update keeps the planned one (taken from state
+// by UseStateForUnknown), which Terraform requires, and the response's other
+// values; with no stored value, the plan is unknown and the response's is kept.
+func TestPluginInstallationSettingResource_UpdateKeepsThePlannedCreatedAt(t *testing.T) {
+	t.Parallel()
+	for name, planned := range map[string]types.String{
+		"stored":  types.StringValue("2026-08-01T09:00:00Z"),
+		"unknown": types.StringUnknown(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			client, _ := fakePluginsAPI(t, map[string][]fakeResponse{
+				"POST /v1/organizations/plugins/plugin_01/installation_settings/organization": {ok(installationSettingJSON("organization", "required"))},
+			})
+			r := &PluginInstallationSettingResource{client: client}
+			prior := installationSettingModel("organization", "available")
+			prior.CreatedAt = types.StringValue("2026-08-01T09:00:00Z")
+			plan := installationSettingModel("organization", "required")
+			plan.CreatedAt = planned
+			plan.UpdatedAt = types.StringUnknown()
+
+			resp := resource.UpdateResponse{State: stateOf(t, r, prior)}
+			r.Update(context.Background(), resource.UpdateRequest{Plan: planOf(t, r, plan), State: stateOf(t, r, prior)}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Update: %v", resp.Diagnostics)
+			}
+			var got PluginInstallationSettingResourceModel
+			resp.State.Get(context.Background(), &got)
+			want := map[string]string{"stored": "2026-08-01T09:00:00Z", "unknown": "2026-09-02T10:00:00Z"}[name]
+			if got.CreatedAt.ValueString() != want {
+				t.Errorf("created_at = %s, want %s", got.CreatedAt, want)
+			}
+			if got.UpdatedAt.ValueString() != "2026-09-03T10:00:00Z" || got.InstallationPreference.ValueString() != "required" {
+				t.Errorf("state = %+v", got)
+			}
+		})
+	}
+}
+
 func TestPluginInstallationSettingResource_Delete(t *testing.T) {
 	t.Parallel()
 	for name, answer := range map[string]fakeResponse{

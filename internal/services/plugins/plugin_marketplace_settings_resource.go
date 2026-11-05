@@ -155,12 +155,17 @@ func (r *PluginMarketplaceSettingsResource) Read(ctx context.Context, req resour
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update keeps the planned name and source, which the plan takes from state
+// (UseStateForUnknown): a marketplace changed in claude.ai since the last
+// refresh would otherwise fail the apply with an inconsistent result after the
+// write. The next refresh records the new values.
 func (r *PluginMarketplaceSettingsResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data PluginMarketplaceSettingsResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	planned := data
 
 	marketplace, err := setMarketplaceDefault(ctx, r.client, data.MarketplaceID.ValueString(), data.DefaultInstallationPreference.ValueString())
 	if err != nil {
@@ -169,6 +174,12 @@ func (r *PluginMarketplaceSettingsResource) Update(ctx context.Context, req reso
 	}
 
 	mapMarketplaceSettingsToState(marketplace, &data)
+	if !planned.Name.IsUnknown() && !planned.Name.IsNull() {
+		data.Name = planned.Name
+	}
+	if !planned.Source.IsUnknown() && !planned.Source.IsNull() {
+		data.Source = planned.Source
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
