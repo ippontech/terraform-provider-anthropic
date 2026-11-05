@@ -18,6 +18,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/models"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizations"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/organizationwebhooks"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/plugins"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/rbac"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/serviceaccounts"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/skills"
@@ -107,6 +108,8 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: organizations.NewInviteResource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizations.NewOrganizationMemberResource, AWS: awsMembers, GoogleCloud: gcMembers},
 		{New: organizationwebhooks.NewOrganizationWebhookResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
+		{New: plugins.NewPluginVersionResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: rbac.NewRBACGroupResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: rbac.NewRBACGroupMemberResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		{New: serviceaccounts.NewServiceAccountResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},

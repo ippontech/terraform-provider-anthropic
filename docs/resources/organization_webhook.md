@@ -10,7 +10,7 @@ description: |-
 Manages an [organization webhook endpoint](https://platform.claude.com/docs/en/manage-claude/organization-webhooks): an HTTPS URL that receives an event when Anthropic opens an enforcement action (a restriction or a ban) on one of the organization's [user profiles](https://platform.claude.com/docs/en/manage-claude/user-profiles), and when the action ends. The endpoint belongs to the organization, not to one of its workspaces.
 
 > **API**: `POST /v1/organizations/webhooks`, `GET/POST/DELETE /v1/organizations/webhooks/{id}`, `POST /v1/organizations/webhooks/{id}/regenerate_signing_secret` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. A Claude Enterprise Admin API key covers organization members and invites only, not this endpoint.
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. A Claude Enterprise Admin API key does not reach this endpoint.
 > **Beta header**: `webhooks-2026-10-07`, sent by the provider on every request.
 > **Cost**: Free.
 
