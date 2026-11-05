@@ -220,7 +220,7 @@ func TestSpendLimitResource_Update_failureKeepsPriorState(t *testing.T) {
 
 	state := stateWithID(t, r)
 	plan := resourcePlan(t, r, scopeValue(t, r, "user", userID, ""), "monthly", "75000")
-	resp := resource.UpdateResponse{State: tfsdk.State{Schema: plan.Schema, Raw: plan.Raw}}
+	resp := resource.UpdateResponse{State: tfsdk.State(plan)}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected a diagnostic for a 400")
