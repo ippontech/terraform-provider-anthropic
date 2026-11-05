@@ -50,7 +50,9 @@ function lastTag(tagFormat) {
 }
 
 // The commits since the tag, newest first, in the shape semantic-release hands the plugin
-// (lib/git.js, getCommits): the hash and the whole trimmed message.
+// (lib/git.js, getCommits): the hash and the whole trimmed message, without the commits marked
+// `[skip release]` or `[release skip]`, which semantic-release drops before the analysis
+// (lib/definitions/plugins.js, the analyzeCommits preprocess).
 function commitsSince(tag) {
   return git("log", `--format=%H${FIELD}%B${RECORD}`, tag ? `${tag}..HEAD` : "HEAD")
     .split(RECORD)
@@ -59,7 +61,8 @@ function commitsSince(tag) {
     .map((record) => {
       const [hash, ...message] = record.split(FIELD);
       return { hash, message: message.join(FIELD).trim() };
-    });
+    })
+    .filter((commit) => !/\[skip\s+release]|\[release\s+skip]/i.test(commit.message));
 }
 
 const { tagFormat, pluginConfig } = releaseConfig();
