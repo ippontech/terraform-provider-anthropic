@@ -1,21 +1,95 @@
 name: Semantic Release
 
+# Cuts one release a day from the head of `main`, or on demand; the acceptance tests on every push
+# live in testacc.yml (RELEASE.md, "How a release is cut"). Releasing on every push cut one version
+# per merged pull request: on a day of Renovate merges, up to twenty, each a changelog entry, a
+# signing run and a registry ingestion for nothing a user needed separately.
 on:
-  push:
-    branches:
-      - main
+  schedule:
+    # 07:23 UTC: 08:23 in Paris in winter, 09:23 in summer (GitHub schedules take UTC only; an
+    # off-the-hour minute, since GitHub drops scheduled runs under the load of the top of the
+    # hour). The second one is a retry: it releases only if the day still has no release, after a
+    # morning run that was dropped, cancelled while waiting behind a push run, or that found
+    # `main` moved during its tests (semantic-release then publishes nothing, and exits green).
+    - cron: '23 7 * * *'
+    - cron: '23 12 * * *'
+  workflow_dispatch:
 
 permissions: {}
 
+# Same group as testacc.yml, so a release waits for a push run still testing (and the reverse):
+# two live test runs at once would collide in the test workspace.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: acceptance-tests-main
   cancel-in-progress: false
 
 jobs:
-  # The acceptance tests need the maintainers' keys, which a pull request from a fork cannot read,
-  # so they run here, after the merge. The release waits for them: a red run publishes nothing.
+  # Goes on only when a commit since the last tag would cut a version; otherwise the two-hour
+  # live test run would create objects in the test workspace every morning for a release that
+  # semantic-release would then decline to cut. The decision comes from semantic-release's own
+  # commit analyzer, run with the .releaserc configuration by next-release.mjs, so the two cannot
+  # drift apart (a `--dry-run` of semantic-release would need the App token: it checks that it may
+  # push before any plugin runs).
+  pending:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            registry.npmjs.org:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # the tags, and the commits since the newest one
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      # Same install as the release job below: the committed lockfile, no lifecycle script.
+      - name: Install semantic-release and plugins
+        working-directory: .github/semantic-release
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Check whether a commit since the last release tag cuts a version
+        id: check
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          set -euo pipefail
+          # Two lines on stdout, `last_tag=` and `release_type=`; the analysis log on stderr. Read
+          # from a variable with sed, not through a pipe into grep -q: under pipefail a reader that
+          # exits on its first match fails the pipeline when the writer still has output to send.
+          analysis=$(node .github/semantic-release/next-release.mjs)
+          last=$(sed -n 's/^last_tag=//p' <<< "${analysis}")
+          type=$(sed -n 's/^release_type=//p' <<< "${analysis}")
+          release=true
+          if [ "${type}" = none ]; then
+            release=false
+          fi
+          # The retry run never cuts a second version in a day.
+          if [ "${SCHEDULE}" = "23 12 * * *" ] && [ -n "${last}" ] \
+            && [ "$(git log -1 --format=%cs "${last}")" = "$(date -u +%F)" ]; then
+            release=false
+          fi
+          echo "release=${release}" >> "${GITHUB_OUTPUT}"
+          echo "Release type since ${last:-the first commit}: ${type}. Cut in this run: ${release}." >> "${GITHUB_STEP_SUMMARY}"
+
+  # Run again from the head of `main`, whatever the push runs found: the release waits for them,
+  # and a red run publishes nothing.
   acceptance-tests:
-    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    needs: pending
+    if: needs.pending.outputs.release == 'true'
     uses: ./.github/workflows/testacc.yml
     permissions:
       contents: read
@@ -26,9 +100,9 @@ jobs:
       ANTHROPIC_ADMIN_API_KEY: ${{ secrets.ANTHROPIC_ADMIN_API_KEY }}
       ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
 
+  # Releases every commit merged since the last tag as one version.
   release:
     needs: acceptance-tests
-    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The App ID and private key are secrets of this environment only, whose deployment policy
