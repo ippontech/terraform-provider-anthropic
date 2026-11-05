@@ -1,3 +1,9 @@
+## [1.87.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.86.0...v1.87.0) (2026-11-05)
+
+### ✨ Features
+
+* add anthropic_spend_limit resource ([#454](https://github.com/ippontech/terraform-provider-anthropic/issues/454)) ([3f89c5a](https://github.com/ippontech/terraform-provider-anthropic/commit/3f89c5a31ce045e862b8f6720440d04c0744c04b)), closes [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#453](https://github.com/ippontech/terraform-provider-anthropic/issues/453) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#426](https://github.com/ippontech/terraform-provider-anthropic/issues/426) [#148](https://github.com/ippontech/terraform-provider-anthropic/issues/148) [#147](https://github.com/ippontech/terraform-provider-anthropic/issues/147)
+
 ## [1.86.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.85.1...v1.86.0) (2026-11-05)
 
 ### ✨ Features
