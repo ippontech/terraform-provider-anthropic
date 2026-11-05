@@ -162,4 +162,4 @@ func mapInviteToDataSourceState(invite inviteAPIResponse) (InviteDataSourceModel
 // inviteRBACGroupIDsDataSourceDescription documents rbac_group_ids on both
 // invite data sources.
 const inviteRBACGroupIDsDataSourceDescription = "IDs of the RBAC groups (`rbac_group_...`) the person joins when they accept the invite. " +
-	"Empty when the invite carries none; RBAC groups exist only in Claude Enterprise organizations."
+	"Empty when the invite carries none, null if the response leaves the field out; RBAC groups exist only in Claude Enterprise organizations."

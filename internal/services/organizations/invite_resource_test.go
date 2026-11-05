@@ -503,6 +503,71 @@ func TestInviteRead_mapsRBACGroupIDs(t *testing.T) {
 	}
 }
 
+// TestInviteRead_keepsGroupsOnceNotPending: once an invite is accepted or
+// expired, a stored rbac_group_ids is kept whatever the API returns, so a
+// cleared or pruned set never plans a replacement; a null stored value
+// (import) takes the API's set.
+func TestInviteRead_keepsGroupsOnceNotPending(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		status   string
+		prior    any
+		response string
+		want     []string
+	}{
+		{name: "accepted, groups cleared", status: "accepted", prior: []string{rbacGroupA}, response: `[]`, want: []string{rbacGroupA}},
+		{name: "expired, groups pruned", status: "expired", prior: []string{rbacGroupA, rbacGroupB}, response: `["` + rbacGroupA + `"]`, want: []string{rbacGroupB, rbacGroupA}},
+		{name: "accepted, imported", status: "accepted", response: `["` + rbacGroupA + `"]`, want: []string{rbacGroupA}},
+		{name: "pending, groups gone", status: "pending", prior: []string{rbacGroupA}, response: `[]`, want: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv, _ := stub(t, func(recordedRequest) (int, string) {
+				return http.StatusOK, strings.Replace(inviteFixtureWithGroups(test.response), `"status": "pending"`, `"status": "`+test.status+`"`, 1)
+			})
+			r := &InviteResource{adminClient: admintest.NewClient(t, srv)}
+
+			state := State(t, r, map[string]any{
+				"id": "invite_01ABC", "email": "new-engineer@example.com", "role": "managed", "status": "pending",
+				"rbac_group_ids": test.prior,
+			})
+			resp := resource.ReadResponse{State: state}
+			r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read: %v", resp.Diagnostics)
+			}
+			got := rbacGroupIDsOf(t, inviteState(t, resp.State).RBACGroupIDs)
+			if (got == nil) != (test.want == nil) || strings.Join(got, ",") != strings.Join(test.want, ",") {
+				t.Errorf("rbac_group_ids = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+// TestInviteCreate_keepsPlannedGroups: rbac_group_ids is not Computed, so a
+// create response that echoes another set does not replace the plan (which
+// would fail the apply after the invitation email went out).
+func TestInviteCreate_keepsPlannedGroups(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := stub(t, func(recordedRequest) (int, string) {
+		return http.StatusOK, inviteFixtureWithGroups(`[]`)
+	})
+	r := &InviteResource{adminClient: admintest.NewClient(t, srv)}
+
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: schematest.ResourceSchema(t, r)}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: invitePlan(t, r, []string{rbacGroupA})}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+	if ids := rbacGroupIDsOf(t, inviteState(t, resp.State).RBACGroupIDs); len(ids) != 1 || ids[0] != rbacGroupA {
+		t.Errorf("state rbac_group_ids = %v, want the planned [%s]", ids, rbacGroupA)
+	}
+}
+
 // TestInviteResource_rbacGroupIDsRequiresReplace runs the schema's own plan
 // modifiers: the API cannot update an invite, so any change to its groups
 // replaces it, except switching between unset and an empty set.

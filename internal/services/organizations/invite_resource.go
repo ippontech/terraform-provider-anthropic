@@ -150,6 +150,9 @@ func (r *InviteResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"status": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Status of the invite: `pending`, `accepted`, `expired`, or `deleted`.",
+				// Update only switches rbac_group_ids between unset and an empty
+				// set and calls no API, so the stored value stays right.
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"invited_at": schema.StringAttribute{
 				Computed:            true,
@@ -164,6 +167,7 @@ func (r *InviteResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"accepted_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "RFC 3339 timestamp of when the invite was accepted, or empty if it has not been accepted.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"type": schema.StringAttribute{
 				Computed:            true,
@@ -224,10 +228,15 @@ func (r *InviteResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	// rbac_group_ids is not Computed: the result must equal the plan, so the
+	// create response's echo is not mapped over it. Read compares it with the
+	// API's set from the next refresh on.
+	planned := data.RBACGroupIDs
 	resp.Diagnostics.Append(mapInviteToState(&inv, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	data.RBACGroupIDs = planned
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -262,9 +271,18 @@ func (r *InviteResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
+	stored := data.RBACGroupIDs
 	resp.Diagnostics.Append(mapInviteToState(&inv, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	// Once an invite is accepted or expired, its groups can no longer change
+	// anything, and whether the API keeps them is not documented: a stored
+	// value is kept, so that a cleared or pruned set never plans a replacement
+	// that would fail (the address is a member) or send a new invitation
+	// email. A null stored value (import) takes the API's set.
+	if inv.Status != "pending" && !stored.IsNull() && !stored.IsUnknown() {
+		data.RBACGroupIDs = stored
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
