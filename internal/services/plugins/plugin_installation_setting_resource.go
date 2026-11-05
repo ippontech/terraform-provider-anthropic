@@ -174,15 +174,24 @@ func (r *PluginInstallationSettingResource) Read(ctx context.Context, req resour
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update sends the same upsert as Create. The plan carries the stored
+// created_at (UseStateForUnknown); a setting removed outside Terraform since
+// the last refresh comes back from the upsert with a new one, which Terraform
+// would reject as an inconsistent result after the write. The planned value is
+// kept, and the next refresh records the new one.
 func (r *PluginInstallationSettingResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data PluginInstallationSettingResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	plannedCreatedAt := data.CreatedAt
 	resp.Diagnostics.Append(r.write(ctx, &data, "update")...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if !plannedCreatedAt.IsUnknown() && !plannedCreatedAt.IsNull() {
+		data.CreatedAt = plannedCreatedAt
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

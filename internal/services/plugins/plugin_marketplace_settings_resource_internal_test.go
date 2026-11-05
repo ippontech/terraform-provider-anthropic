@@ -115,6 +115,34 @@ func TestPluginMarketplaceSettingsResource_Update(t *testing.T) {
 	}
 }
 
+// A marketplace renamed in claude.ai since the refresh: Update keeps the
+// planned name and source (taken from state by UseStateForUnknown), which
+// Terraform requires, and the next refresh records the new ones.
+func TestPluginMarketplaceSettingsResource_UpdateKeepsThePlannedNameAndSource(t *testing.T) {
+	t.Parallel()
+	client, _ := fakePluginsAPI(t, map[string][]fakeResponse{
+		"POST /v1/organizations/plugin_marketplaces/marketplace_01": {ok(marketplaceJSON("required"))},
+	})
+	r := &PluginMarketplaceSettingsResource{client: client}
+	prior := marketplaceSettingsModel("available")
+	prior.ID = types.StringValue("marketplace_01")
+	prior.Name = types.StringValue("eng-tools")
+	prior.Source = types.StringValue("manual")
+	plan := prior
+	plan.DefaultInstallationPreference = types.StringValue("required")
+
+	resp := resource.UpdateResponse{State: stateOf(t, r, prior)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: planOf(t, r, plan), State: stateOf(t, r, prior)}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+	var got PluginMarketplaceSettingsResourceModel
+	resp.State.Get(context.Background(), &got)
+	if got.Name.ValueString() != "eng-tools" || got.Source.ValueString() != "manual" || got.DefaultInstallationPreference.ValueString() != "required" {
+		t.Errorf("state = %+v", got)
+	}
+}
+
 func TestPluginMarketplaceSettingsResource_DeleteOnlyForgets(t *testing.T) {
 	t.Parallel()
 	client, requests := fakePluginsAPI(t, nil)
