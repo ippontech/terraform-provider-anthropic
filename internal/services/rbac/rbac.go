@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdkpage"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
@@ -99,11 +100,16 @@ type cursorPage[T any] struct {
 // filters out users who left), so only `has_more` and the cursor end the
 // loop: an explicit `has_more: false` wins over a stray cursor (the
 // reference's own example pairs them), and a page without `has_more` defers
-// to the cursor. A missing or repeated cursor also ends it rather than
-// looping forever.
+// to the cursor. A missing cursor ends it too; a cursor already sent, or more
+// than sdkpage.MaxPages pages, is an error, so a misbehaving API can neither
+// hang a plan nor cut a list short.
 func listPages[T any](ctx context.Context, client *admin.Client, path string, visit func([]T) bool) error {
 	cursor := ""
-	for {
+	sent := map[string]bool{}
+	for pages := 1; ; pages++ {
+		if pages > sdkpage.MaxPages {
+			return fmt.Errorf("list %s: more than %d pages, stopping", path, sdkpage.MaxPages)
+		}
 		query := url.Values{}
 		query.Set("limit", listPageSize)
 		if cursor != "" {
@@ -123,8 +129,12 @@ func listPages[T any](ctx context.Context, client *admin.Client, path string, vi
 		if !visit(page.Data) {
 			return nil
 		}
-		if (page.HasMore != nil && !*page.HasMore) || page.NextPage == nil || *page.NextPage == "" || *page.NextPage == cursor {
+		if (page.HasMore != nil && !*page.HasMore) || page.NextPage == nil || *page.NextPage == "" {
 			return nil
+		}
+		sent[cursor] = true
+		if sent[*page.NextPage] {
+			return fmt.Errorf("list %s returned next_page %q, a cursor already sent: stopping instead of looping", path, *page.NextPage)
 		}
 		cursor = *page.NextPage
 	}
