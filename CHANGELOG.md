@@ -1,3 +1,9 @@
+## [1.82.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.81.1...v1.82.0) (2026-11-05)
+
+### ✨ Features
+
+* **provider:** platform registry and gateway 404 guard ([#458](https://github.com/ippontech/terraform-provider-anthropic/issues/458)) ([c62a70a](https://github.com/ippontech/terraform-provider-anthropic/commit/c62a70a03e677a2bd548de33f4f897aa0daed6c2)), closes [#425](https://github.com/ippontech/terraform-provider-anthropic/issues/425) [#333](https://github.com/ippontech/terraform-provider-anthropic/issues/333) [#398](https://github.com/ippontech/terraform-provider-anthropic/issues/398) [#399](https://github.com/ippontech/terraform-provider-anthropic/issues/399) [#405](https://github.com/ippontech/terraform-provider-anthropic/issues/405) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#459](https://github.com/ippontech/terraform-provider-anthropic/issues/459) [#460](https://github.com/ippontech/terraform-provider-anthropic/issues/460) [#461](https://github.com/ippontech/terraform-provider-anthropic/issues/461) [#462](https://github.com/ippontech/terraform-provider-anthropic/issues/462) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#387](https://github.com/ippontech/terraform-provider-anthropic/issues/387) [#386](https://github.com/ippontech/terraform-provider-anthropic/issues/386) [#384](https://github.com/ippontech/terraform-provider-anthropic/issues/384)
+
 ## [1.81.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.81.0...v1.81.1) (2026-11-04)
 
 ### 📚 Documentation
