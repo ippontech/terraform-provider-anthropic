@@ -1,3 +1,9 @@
+## [1.91.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.91.1...v1.91.2) (2026-11-05)
+
+### 📚 Documentation
+
+* **plugins:** file the plugin pages under Plugins ([#539](https://github.com/ippontech/terraform-provider-anthropic/issues/539)) ([9470cc4](https://github.com/ippontech/terraform-provider-anthropic/commit/9470cc479dfebcd572ea09403f0be223b6c6c8f6)), closes [#489](https://github.com/ippontech/terraform-provider-anthropic/issues/489) [#489](https://github.com/ippontech/terraform-provider-anthropic/issues/489) [#455](https://github.com/ippontech/terraform-provider-anthropic/issues/455) [#456](https://github.com/ippontech/terraform-provider-anthropic/issues/456) [#457](https://github.com/ippontech/terraform-provider-anthropic/issues/457)
+
 ## [1.91.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.91.0...v1.91.1) (2026-11-05)
 
 ### 🐛 Bug Fixes
