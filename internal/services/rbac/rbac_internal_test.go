@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -83,13 +85,12 @@ func TestListAll_missingHasMoreFollowsTheCursor(t *testing.T) {
 	}
 }
 
-func TestListAll_stopsOnMissingOrRepeatedCursor(t *testing.T) {
+func TestListAll_stopsOnMissingCursor(t *testing.T) {
 	t.Parallel()
 
 	for name, body := range map[string]string{
-		"null next_page":     `{"data":[],"has_more":true,"next_page":null}`,
-		"empty next_page":    `{"data":[],"has_more":true,"next_page":""}`,
-		"repeated next_page": `{"data":[],"has_more":true,"next_page":"same"}`,
+		"null next_page":  `{"data":[],"has_more":true,"next_page":null}`,
+		"empty next_page": `{"data":[],"has_more":true,"next_page":""}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -104,12 +105,36 @@ func TestListAll_stopsOnMissingOrRepeatedCursor(t *testing.T) {
 			if _, err := listAll[rbacGroupAPIResponse](context.Background(), admintest.NewClient(t, srv), rbacGroupsPath); err != nil {
 				t.Fatalf("listAll: %v", err)
 			}
-			want := 1
-			if name == "repeated next_page" {
-				want = 2 // the first request has no cursor, the second repeats "same"
+			if n := len(rec.all()); n != 1 {
+				t.Errorf("requests = %d, want 1", n)
 			}
-			if n := len(rec.all()); n != want {
-				t.Errorf("requests = %d, want %d", n, want)
+		})
+	}
+}
+
+// A cursor already sent (an echo, or a cycle) is an error, never a hang or a
+// list cut short.
+func TestListAll_failsOnRepeatedCursor(t *testing.T) {
+	t.Parallel()
+
+	for name, next := range map[string]map[string]string{
+		"echoed cursor": {"": "A", "A": "A"},
+		"cycle":         {"": "A", "A": "B", "B": "A"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			srv, _ := stub(t, func(r recordedRequest) (int, string) {
+				if calls.Add(1) > 10 {
+					// Fail the request rather than loop forever.
+					return http.StatusBadRequest, `{}`
+				}
+				page := url.Values(r.Query).Get("page")
+				return http.StatusOK, `{"data":[],"has_more":true,"next_page":"` + next[page] + `"}`
+			})
+			_, err := listAll[rbacGroupAPIResponse](context.Background(), admintest.NewClient(t, srv), rbacGroupsPath)
+			if err == nil || !strings.Contains(err.Error(), "a cursor already sent") {
+				t.Fatalf("err = %v, want the repeated-cursor error", err)
 			}
 		})
 	}
