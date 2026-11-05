@@ -44,6 +44,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `rbac/`: `rbac_group`, `rbac_group_member`; `rbac_group(s)`. Claude Enterprise scoped Admin key.
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
+- `spendlimits/`: `spend_limit`; none. Admin key (Claude Enterprise scoped key for `user` limits; Console key for `organization`/`workspace` limits, early access).
 - `telemetrydestinations/`: `telemetry_destination`; none. Admin key (beta `telemetry-destinations-2026-08-11`).
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
 - `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
