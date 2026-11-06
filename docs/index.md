@@ -132,7 +132,7 @@ provider "anthropic" {
 }
 ```
 
-~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` block below when it needs to.
+~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` or `cli` block below when it needs to.
 
 The `auth_token` is optional — you only need it for federation resources.
 
@@ -167,7 +167,36 @@ Give the rule a `token_lifetime_seconds` well above 120 (the default, 3600, is f
 
 Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation.
 
-Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
+### `ant` CLI login (`cli`)
+
+~> **Experimental.** This block depends on the `ant` CLI's profile and credentials layout, read through the Anthropic Go SDK's `config` package. If Anthropic changes `ant` or that package, the block may have to change or be removed in a minor release rather than wait for the next major version.
+
+On an operator's workstation, the provider can use the `org:admin` login that the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) stores, and refresh it with the profile's refresh token, so an apply never outlives the login:
+
+```bash
+ant auth login --profile admin --scope "org:admin"
+```
+
+```hcl
+provider "anthropic" {
+  cli = {
+    profile = "admin"
+    # Or, with no profile named, find the one org:admin login for:
+    # organization_id = "00000000-0000-0000-0000-000000000000"
+    # workspace_id    = "wrkspc_..."   # only to tell several apart
+  }
+}
+```
+
+The `cli` block is a fallback. It is used only when neither `auth_token` (or `ANTHROPIC_AUTH_TOKEN`) nor `federation` supplies the token, so one configuration can carry both: CI provides its token and never reads a profile, and an operator without one uses their own login. An `auth_token` unknown at plan time counts as supplied. An exported `ANTHROPIC_AUTH_TOKEN` wins too, so unset it when switching to `cli`; the provider logs that the block was skipped.
+
+- The profile is `profile`, else `ANTHROPIC_PROFILE`. With neither set, the provider looks among the usable `user_oauth` profiles with the `org:admin` scope for the one whose login is for `organization_id` (else `ANTHROPIC_ORGANIZATION_ID`) and, when set, `workspace_id`. Finding none or several is an error. `workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is read by `federation.workspace_id` only.
+- A profile without the `org:admin` scope is an error when it comes from `ANTHROPIC_PROFILE`, which is usually an everyday login exported for other tools, and only a warning when `profile` names it.
+- Each attribute must be known at plan time; an unknown one is an error rather than a fallback to the environment.
+- The profile must be logged in, and an expired login must be refreshable; otherwise the error names the `ant auth login` command to run.
+- A profile whose `base_url` differs from the provider's (`ANTHROPIC_BASE_URL`, else production) is rejected. The profile's `workspace_id` is never sent: an `org:admin` token is organization-wide.
+
+Without a `cli` block, profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 
 ~> **Warning**: Never hardcode API keys in your Terraform configuration files.
 Use environment variables or a secrets manager instead.
@@ -316,6 +345,7 @@ provider "anthropic" {}
 - `api_key` (String, Sensitive) The Anthropic API key. Can also be set via the ANTHROPIC_API_KEY environment variable.
 - `auth_token` (String, Sensitive) An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, such as the Workload Identity Federation admin endpoints. Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.
 - `aws` (Attributes) **Beta.** Reach Claude Platform on AWS instead of the Claude API: the provider configuration (the default one or an alias) then manages the Anthropic organization tied to an AWS account, through the aws-external-anthropic gateway of one AWS region. Setting the block is what selects the platform; the AWS and ANTHROPIC_AWS_* environment variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token, federation and google_cloud, and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL variables are ignored: no first-party credential is valid there. workspace_id is required. Requests are signed with AWS SigV4 (service aws-external-anthropic), with credentials from access_key/secret_key, profile or the AWS default chain, unless api_key is set. A type the gateway does not serve fails at plan, or at apply for a data source that Terraform reads only then. Support for this platform is in beta, verified mostly with offline tests, and the provider prints a warning saying so. (see [below for nested schema](#nestedatt--aws))
+- `cli` (Attributes) Experimental: may change or be removed in a minor release if the `ant` CLI's profile layout changes. Obtain the org:admin OAuth bearer token from a profile written by `ant auth login`, refreshing it with the profile's refresh token. Used only when neither `auth_token` nor `federation` supplies the token, so the same configuration runs locally as the operator and in CI as a workload. Without `profile`, the provider looks for the one org:admin profile that matches `organization_id` (and `workspace_id`, when set). (see [below for nested schema](#nestedatt--cli))
 - `federation` (Attributes) Obtain the org:admin OAuth bearer token through Workload Identity Federation instead of `auth_token`. The provider exchanges an identity token from your platform (a CI OIDC token, a Kubernetes projected service account token, an Entra token...) for an Anthropic access token, and exchanges again before it expires, fetching a fresh identity token each time. Every attribute falls back to the environment variable the Anthropic SDKs read. Conflicts with `auth_token`; an exported ANTHROPIC_AUTH_TOKEN is ignored, with a warning. Give the federation rule a `token_lifetime_seconds` well above 120: the SDK refreshes within the last 120 seconds of a token's life, so a shorter lifetime refreshes, and fetches an identity token, on nearly every request. (see [below for nested schema](#nestedatt--federation))
 - `google_cloud` (Attributes) **Beta.** Reach Claude Models on Google Cloud (Anthropic managed) instead of the Claude API: the provider configuration (the default one or an alias) then manages the Anthropic organization tied to a Google Cloud project, through claude.googleapis.com. Setting the block is what selects the platform; the ANTHROPIC_GOOGLE_CLOUD_* and GOOGLE_CLOUD_PROJECT environment variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token, federation and aws, and the first-party ANTHROPIC_* variables are ignored. Requests carry a Google access token (cloud-platform scope) from credentials, access_token or Application Default Credentials. workspace_id goes into the request URL, never into a header, and may be left unset only for a configuration limited to organization routes. A type the gateway does not serve fails at plan, or at apply for a data source that Terraform reads only then. Support for this platform is verified with offline tests only, and the provider prints a warning saying so. (see [below for nested schema](#nestedatt--google_cloud))
 - `workspace_id` (String) Workspace (`wrkspc_...`) the standard API key acts in, sent as the `anthropic-workspace-id` header on every request of the standard client. Required with a personal or service account key that is not scoped to a single workspace; must be left unset with a single-workspace key, which the API rejects with a 404 when the header names any workspace, its own included. Not sent on the Admin API or the org:admin OAuth client, which select their workspace otherwise. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only. With the aws block: required, sent on every request except the Admin API ones, and read from ANTHROPIC_AWS_WORKSPACE_ID when unset. With the google_cloud block: part of the request URL, never a header, required except for a configuration limited to organization routes, and read from ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID when unset.
@@ -332,6 +362,16 @@ Optional:
 - `region` (String) AWS region of the gateway endpoint (https://aws-external-anthropic.<region>.api.aws) and of the SigV4 signature. A workspace is bound to the region it was created in and is reachable only there, so use one provider alias per region. Can also be set via the AWS_REGION or AWS_DEFAULT_REGION environment variable.
 - `secret_key` (String, Sensitive) AWS secret access key, with access_key.
 - `session_token` (String, Sensitive) AWS session token of temporary credentials, with access_key and secret_key. Static credentials are not refreshed: for a long apply prefer profile or the default chain.
+
+
+<a id="nestedatt--cli"></a>
+### Nested Schema for `cli`
+
+Optional:
+
+- `organization_id` (String) UUID of the Anthropic organization, used to find the profile when none is named. Can also be set via the ANTHROPIC_ORGANIZATION_ID environment variable.
+- `profile` (String) Name of the `ant` profile to use. Can also be set via the ANTHROPIC_PROFILE environment variable.
+- `workspace_id` (String) Workspace (`wrkspc_...`) the profile was logged in to, used to narrow the search when none is named. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.
 
 
 <a id="nestedatt--federation"></a>
