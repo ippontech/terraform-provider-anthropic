@@ -6,23 +6,30 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/provider"
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
@@ -104,139 +111,301 @@ func TestMapAgentResponseToState_customToolInputSchema(t *testing.T) {
 	}
 }
 
+// customToolsList builds a custom_tools list holding one tool with schema.
+func customToolsList(t *testing.T, schema string) types.List {
+	t.Helper()
+	tool, diags := types.ObjectValue(agentCustomToolAttrTypes, map[string]attr.Value{
+		"name":         types.StringValue("lookup_user"),
+		"description":  types.StringValue("Look up a user"),
+		"input_schema": jsontypes.NewNormalizedValue(schema),
+	})
+	if diags.HasError() {
+		t.Fatalf("tool: %+v", diags)
+	}
+	list, diags := types.ListValue(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}, []attr.Value{tool})
+	if diags.HasError() {
+		t.Fatalf("list: %+v", diags)
+	}
+	return list
+}
+
+// TestBuildToolsParams_customToolInputSchemaKeepsRootKeywords: the configured
+// input_schema reaches the API as is, root-level keywords other than
+// type/properties/required included (additionalProperties, title,
+// description). SDK v1.67.0 dropped them, and the SDK v1.84.0 bump kept
+// dropping them on purpose until this fix. An echo of that schema then maps
+// back to a value semantically equal to the configuration.
+func TestBuildToolsParams_customToolInputSchemaKeepsRootKeywords(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const configured = `{"type":"object","properties":{"address":{"type":"object","properties":{"city":{"type":"string"}},"additionalProperties":false},` +
+		`"email":{"type":"string","description":"d"}},"required":["email"],"additionalProperties":false,"title":"Lookup","description":"root"}`
+
+	tools, diags := buildToolsParams(ctx, AgentResourceModel{CustomTools: customToolsList(t, configured)})
+	if diags.HasError() {
+		t.Fatalf("buildToolsParams: %+v", diags)
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sent []struct {
+		InputSchema json.RawMessage `json:"input_schema"`
+	}
+	if err := json.Unmarshal(b, &sent); err != nil || len(sent) != 1 {
+		t.Fatalf("decode request %s: %v", b, err)
+	}
+	assertJSONEqual(t, string(sent[0].InputSchema), configured)
+
+	agent := parseAgentWithTools(t, `[{"type":"custom","name":"lookup_user","description":"Look up a user","input_schema":`+string(sent[0].InputSchema)+`}]`)
+	var data AgentResourceModel
+	if diags := mapAgentResponseToState(ctx, agent, &data, readMapping); diags.HasError() {
+		t.Fatalf("mapAgentResponseToState: %+v", diags)
+	}
+	var mapped []agentCustomToolModel
+	if diags := data.CustomTools.ElementsAs(ctx, &mapped, false); diags.HasError() || len(mapped) != 1 {
+		t.Fatalf("custom tools: %+v", diags)
+	}
+	equal, diags := jsontypes.NewNormalizedValue(configured).StringSemanticEquals(ctx, mapped[0].InputSchema)
+	if diags.HasError() || !equal {
+		t.Errorf("mapped input_schema %s is not semantically equal to the configuration", mapped[0].InputSchema.ValueString())
+	}
+}
+
+// A schema without `type` is still sent with `type: object`, the SDK default
+// that SDK v1.67.0 applied too.
+func TestBuildToolsParams_customToolInputSchemaDefaultsType(t *testing.T) {
+	t.Parallel()
+	tools, diags := buildToolsParams(context.Background(), AgentResourceModel{CustomTools: customToolsList(t, `{"properties":{},"additionalProperties":false}`)})
+	if diags.HasError() {
+		t.Fatalf("buildToolsParams: %+v", diags)
+	}
+	b, err := json.Marshal(tools[0].OfCustom.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, string(b), `{"type":"object","properties":{},"additionalProperties":false}`)
+}
+
+// policyVariant names the permission policy variants set on a union, "" when
+// none is and a "+"-joined list when several are.
+func policyVariant(allow *anthropic.BetaManagedAgentsAlwaysAllowPolicyParam, ask *anthropic.BetaManagedAgentsAlwaysAskPolicyParam, auto *anthropic.BetaManagedAgentsAutoPolicyParam) string {
+	var set []string
+	if allow != nil {
+		set = append(set, "always_allow")
+	}
+	if ask != nil {
+		set = append(set, "always_ask")
+	}
+	if auto != nil {
+		set = append(set, "auto")
+	}
+	return strings.Join(set, "+")
+}
+
 // TestBuildAgentToolConfigParams is a regression test for the anthropic-sdk-go
 // upgrade (v1.58 -> v1.67) that replaced the flat
 // BetaManagedAgentsAgentToolConfigParams (a `name` enum plus shared `enabled` /
 // `permission_policy` fields) with a discriminated union carrying one struct per
 // built-in tool. The Terraform `name` attribute now selects the union branch, so
 // this asserts every schema-accepted name lands on its own branch with the
-// enabled flag and permission policy carried across.
+// enabled flag and each permission policy, `auto` included, carried across.
 func TestBuildAgentToolConfigParams(t *testing.T) {
 	t.Parallel()
 
 	// Each case checks the branch the name must select, and reads back the
-	// enabled/permission-policy fields from that branch.
+	// enabled flag and the permission policy variant from that branch.
 	tests := []struct {
 		name    string
-		extract func(anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (set bool, enabled param.Opt[bool], allow bool, ask bool)
+		extract func(anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (set bool, enabled param.Opt[bool], policy string)
 	}{
-		{"bash", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"bash", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfBash
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"edit", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"edit", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfEdit
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"read", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"read", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfRead
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"write", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"write", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfWrite
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"glob", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"glob", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfGlob
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"grep", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"grep", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfGrep
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"web_fetch", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"web_fetch", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfWebFetch
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
-		{"web_search", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], bool, bool) {
+		{"web_search", func(u anthropic.BetaManagedAgentsAgentToolConfigParamsUnion) (bool, param.Opt[bool], string) {
 			c := u.OfWebSearch
 			if c == nil {
-				return false, param.Opt[bool]{}, false, false
+				return false, param.Opt[bool]{}, ""
 			}
-			return true, c.Enabled, c.PermissionPolicy.OfAlwaysAllow != nil, c.PermissionPolicy.OfAlwaysAsk != nil
+			return true, c.Enabled, policyVariant(c.PermissionPolicy.OfAlwaysAllow, c.PermissionPolicy.OfAlwaysAsk, c.PermissionPolicy.OfAuto)
 		}},
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.name+"/always_allow", func(t *testing.T) {
-			t.Parallel()
+		for _, policy := range []string{"always_allow", "always_ask", "auto"} {
+			t.Run(tc.name+"/"+policy, func(t *testing.T) {
+				t.Parallel()
 
-			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(true), "always_allow")
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
-			}
-			set, enabled, allow, ask := tc.extract(u)
-			if !set {
-				t.Fatalf("name %q did not select its own union branch", tc.name)
-			}
-			if !enabled.Valid() || !enabled.Value {
-				t.Errorf("enabled = %+v, want set to true", enabled)
-			}
-			if !allow || ask {
-				t.Errorf("permission policy = (allow=%t, ask=%t), want (true, false)", allow, ask)
-			}
-		})
+				u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(true), policy, webToolOptions{})
+				if diags.HasError() {
+					t.Fatalf("unexpected diagnostics: %v", diags)
+				}
+				set, enabled, got := tc.extract(u)
+				if !set {
+					t.Fatalf("name %q did not select its own union branch", tc.name)
+				}
+				if !enabled.Valid() || !enabled.Value {
+					t.Errorf("enabled = %+v, want set to true", enabled)
+				}
+				if got != policy {
+					t.Errorf("permission policy = %q, want %q", got, policy)
+				}
+			})
+		}
 
-		t.Run(tc.name+"/always_ask", func(t *testing.T) {
-			t.Parallel()
-
-			u, diags := buildAgentToolConfigParams(tc.name, param.NewOpt(false), "always_ask")
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
-			}
-			set, enabled, allow, ask := tc.extract(u)
-			if !set {
-				t.Fatalf("name %q did not select its own union branch", tc.name)
-			}
-			if !enabled.Valid() || enabled.Value {
-				t.Errorf("enabled = %+v, want set to false", enabled)
-			}
-			if allow || !ask {
-				t.Errorf("permission policy = (allow=%t, ask=%t), want (false, true)", allow, ask)
-			}
-		})
-
-		// An omitted permission_policy must leave both variants unset so the
+		// An omitted permission_policy must leave every variant unset so the
 		// field is elided from the request and the toolset default applies.
 		t.Run(tc.name+"/no_policy", func(t *testing.T) {
 			t.Parallel()
 
-			u, diags := buildAgentToolConfigParams(tc.name, param.Opt[bool]{}, "")
+			u, diags := buildAgentToolConfigParams(tc.name, param.Opt[bool]{}, "", webToolOptions{})
 			if diags.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
-			set, enabled, allow, ask := tc.extract(u)
+			set, enabled, got := tc.extract(u)
 			if !set {
 				t.Fatalf("name %q did not select its own union branch", tc.name)
 			}
 			if enabled.Valid() {
 				t.Errorf("enabled = %+v, want unset", enabled)
 			}
-			if allow || ask {
-				t.Errorf("permission policy = (allow=%t, ask=%t), want both unset", allow, ask)
+			if got != "" {
+				t.Errorf("permission policy = %q, want none", got)
 			}
 		})
+	}
+}
+
+// TestBuildToolsParams_autoPermissionPolicy pins the request body of the `auto`
+// policy (`{"type": "auto"}`) in the four places it is accepted: the agent
+// toolset default, a built-in tool override, an MCP toolset default and an MCP
+// tool override.
+func TestBuildToolsParams_autoPermissionPolicy(t *testing.T) {
+	t.Parallel()
+
+	toolset, diags := types.ObjectValue(agentToolsetAttrTypes, map[string]attr.Value{
+		"default_enabled":           types.BoolNull(),
+		"default_permission_policy": types.StringValue("auto"),
+		"configs": toolConfigsList(t, agentToolConfigAttrTypes,
+			agentMCPToolConfigModel{Name: types.StringValue("bash"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
+			agentMCPToolConfigModel{Name: types.StringValue("web_fetch"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("auto")},
+		),
+	})
+	if diags.HasError() {
+		t.Fatalf("toolset: %+v", diags)
+	}
+	data := AgentResourceModel{
+		AgentToolset: toolset,
+		MCPToolsets: mcpToolsetsList(t, agentMCPToolsetModel{
+			MCPServerName:           types.StringValue("github"),
+			DefaultEnabled:          types.BoolNull(),
+			DefaultPermissionPolicy: types.StringValue("auto"),
+			Configs: toolConfigsList(t, agentMCPToolConfigAttrTypes,
+				agentMCPToolConfigModel{Name: types.StringValue("create_issue"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("auto")},
+			),
+		}),
+		CustomTools: types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
+	}
+
+	tools, diags := buildToolsParams(context.Background(), data)
+	if diags.HasError() {
+		t.Fatalf("buildToolsParams: %+v", diags)
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[{"type":"agent_toolset_20260401","configs":[{"name":"bash","permission_policy":{"type":"always_ask"}},` +
+		`{"name":"web_fetch","permission_policy":{"type":"auto"}}],"default_config":{"permission_policy":{"type":"auto"}}},` +
+		`{"mcp_server_name":"github","type":"mcp_toolset","configs":[{"name":"create_issue","permission_policy":{"type":"auto"}}],` +
+		`"default_config":{"permission_policy":{"type":"auto"}}}]`
+	assertJSONEqual(t, string(b), want)
+}
+
+// assertJSONEqual compares two JSON documents regardless of key order.
+func assertJSONEqual(t *testing.T, got, want string) {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Fatalf("unmarshal got: %s\n%s", err, got)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("unmarshal want: %s\n%s", err, want)
+	}
+	gb, _ := json.Marshal(g)
+	wb, _ := json.Marshal(w)
+	if string(gb) != string(wb) {
+		t.Fatalf("got  %s\nwant %s", gb, wb)
+	}
+}
+
+// TestPermissionPolicyValidator checks the values every permission policy
+// attribute accepts.
+func TestPermissionPolicyValidator(t *testing.T) {
+	t.Parallel()
+
+	for value, wantErr := range map[string]bool{
+		"always_allow": false,
+		"always_ask":   false,
+		"auto":         false,
+		"never":        true,
+		"AUTO":         true,
+	} {
+		resp := &validator.StringResponse{}
+		permissionPolicyValidator.ValidateString(context.Background(), validator.StringRequest{
+			Path:        path.Root("permission_policy"),
+			ConfigValue: types.StringValue(value),
+		}, resp)
+		if resp.Diagnostics.HasError() != wantErr {
+			t.Errorf("%q: error = %t, want %t (%v)", value, resp.Diagnostics.HasError(), wantErr, resp.Diagnostics)
+		}
 	}
 }
 
@@ -246,7 +415,7 @@ func TestBuildAgentToolConfigParams(t *testing.T) {
 func TestBuildAgentToolConfigParams_unknownName(t *testing.T) {
 	t.Parallel()
 
-	_, diags := buildAgentToolConfigParams("not_a_tool", param.NewOpt(true), "always_allow")
+	_, diags := buildAgentToolConfigParams("not_a_tool", param.NewOpt(true), "always_allow", webToolOptions{})
 	if !diags.HasError() {
 		t.Fatal("expected an error diagnostic for an unsupported tool name, got none")
 	}
@@ -255,16 +424,30 @@ func TestBuildAgentToolConfigParams_unknownName(t *testing.T) {
 	}
 }
 
-// toolConfigsList builds a configs list in state shape from typed entries.
-func toolConfigsList(t *testing.T, attrTypes map[string]attr.Type, entries ...agentToolConfigModel) types.List {
+// toolConfigsList builds a configs list in state shape from typed entries. The
+// attributes attrTypes has beyond the shared three (the built-in web options)
+// are null.
+func toolConfigsList(t *testing.T, attrTypes map[string]attr.Type, entries ...agentMCPToolConfigModel) types.List {
 	t.Helper()
+	ctx := context.Background()
 	objs := make([]attr.Value, 0, len(entries))
 	for _, e := range entries {
-		obj, diags := types.ObjectValue(attrTypes, map[string]attr.Value{
+		values := map[string]attr.Value{
 			"name":              e.Name,
 			"enabled":           e.Enabled,
 			"permission_policy": e.PermissionPolicy,
-		})
+		}
+		for name, typ := range attrTypes {
+			if _, ok := values[name]; ok {
+				continue
+			}
+			null, err := typ.ValueFromTerraform(ctx, tftypes.NewValue(typ.TerraformType(ctx), nil))
+			if err != nil {
+				t.Fatalf("null %s: %s", name, err)
+			}
+			values[name] = null
+		}
+		obj, diags := types.ObjectValue(attrTypes, values)
 		if diags.HasError() {
 			t.Fatalf("build config object: %+v", diags)
 		}
@@ -318,14 +501,25 @@ func mcpToolsetsFromState(t *testing.T, data AgentResourceModel) []agentMCPTools
 	return toolsets
 }
 
-func toolConfigsFromList(t *testing.T, list types.List) []agentToolConfigModel {
+// toolConfigsFromList reads the three attributes built-in and MCP configs share
+// from a configs list of either shape.
+func toolConfigsFromList(t *testing.T, list types.List) []agentMCPToolConfigModel {
 	t.Helper()
 	if list.IsNull() {
 		return nil
 	}
-	var configs []agentToolConfigModel
-	if diags := list.ElementsAs(context.Background(), &configs, false); diags.HasError() {
-		t.Fatalf("read configs: %+v", diags)
+	configs := make([]agentMCPToolConfigModel, 0, len(list.Elements()))
+	for _, el := range list.Elements() {
+		obj, ok := el.(types.Object)
+		if !ok {
+			t.Fatalf("config element is %T, want types.Object", el)
+		}
+		attrs := obj.Attributes()
+		configs = append(configs, agentMCPToolConfigModel{
+			Name:             attrs["name"].(types.String),
+			Enabled:          attrs["enabled"].(types.Bool),
+			PermissionPolicy: attrs["permission_policy"].(types.String),
+		})
 	}
 	return configs
 }
@@ -399,15 +593,15 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 	t.Parallel()
 
 	current := toolConfigsList(t, agentMCPToolConfigAttrTypes,
-		agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
-		agentToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
+		agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
+		agentMCPToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
 	)
 
 	tests := []struct {
 		name       string
 		api        []apiToolConfig
-		wantSearch agentToolConfigModel
-		wantDelete agentToolConfigModel
+		wantSearch agentMCPToolConfigModel
+		wantDelete agentMCPToolConfigModel
 	}{
 		{
 			name: "echoed defaults stay null",
@@ -415,8 +609,8 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 				{name: "search", enabled: true, permissionPolicy: "always_allow"},
 				{name: "delete_record", enabled: false, permissionPolicy: "always_ask"},
 			},
-			wantSearch: agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
-			wantDelete: agentToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
+			wantSearch: agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_allow")},
+			wantDelete: agentMCPToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
 		},
 		{
 			name: "diverging values surface",
@@ -424,14 +618,14 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 				{name: "search", enabled: false, permissionPolicy: "always_allow"},
 				{name: "delete_record", enabled: false, permissionPolicy: "always_allow"},
 			},
-			wantSearch: agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
-			wantDelete: agentToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
+			wantSearch: agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
+			wantDelete: agentMCPToolConfigModel{Name: types.StringValue("delete_record"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringValue("always_allow")},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			list, diags := mapToolConfigsToState(context.Background(), current, tt.api, true, "always_ask", agentMCPToolConfigAttrTypes, readMapping)
+			list, diags := mapToolConfigsToState(current, tt.api, true, "always_ask", agentMCPToolConfigAttrTypes, readMapping)
 			if diags.HasError() {
 				t.Fatalf("diags: %+v", diags)
 			}
@@ -439,7 +633,7 @@ func TestMapToolConfigsToState_unsetFields(t *testing.T) {
 			if len(got) != 2 {
 				t.Fatalf("got %d configs, want 2", len(got))
 			}
-			for i, want := range []agentToolConfigModel{tt.wantSearch, tt.wantDelete} {
+			for i, want := range []agentMCPToolConfigModel{tt.wantSearch, tt.wantDelete} {
 				if !got[i].Name.Equal(want.Name) || !got[i].Enabled.Equal(want.Enabled) || !got[i].PermissionPolicy.Equal(want.PermissionPolicy) {
 					t.Errorf("config %d = %+v, want %+v", i, got[i], want)
 				}
@@ -454,15 +648,15 @@ func TestMapToolConfigsToState_trackedAndExtra(t *testing.T) {
 	t.Parallel()
 
 	current := toolConfigsList(t, agentToolConfigAttrTypes,
-		agentToolConfigModel{Name: types.StringValue("bash"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
-		agentToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
+		agentMCPToolConfigModel{Name: types.StringValue("bash"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
+		agentMCPToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()},
 	)
 	api := []apiToolConfig{
-		{name: "web_fetch", enabled: true, permissionPolicy: "always_allow"},
-		{name: "bash", enabled: true, permissionPolicy: "always_ask"},
+		builtinAPIToolConfig(t, `{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_allow"}}`),
+		builtinAPIToolConfig(t, `{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}`),
 	}
 
-	list, diags := mapToolConfigsToState(context.Background(), current, api, true, "always_ask", agentToolConfigAttrTypes, readMapping)
+	list, diags := mapToolConfigsToState(current, api, true, "always_ask", agentToolConfigAttrTypes, readMapping)
 	if diags.HasError() {
 		t.Fatalf("diags: %+v", diags)
 	}
@@ -486,13 +680,18 @@ func TestMapToolConfigsToState_skipsUntrackedDefaults(t *testing.T) {
 	t.Parallel()
 
 	echoed := []apiToolConfig{
-		{name: "bash", enabled: true, permissionPolicy: "always_allow"},
-		{name: "read", enabled: true, permissionPolicy: "always_allow"},
+		builtinAPIToolConfig(t, `{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"always_allow"}}`),
+		builtinAPIToolConfig(t, `{"type":"read","name":"read","enabled":true,"permission_policy":{"type":"always_allow"}}`),
 	}
 	overrides := []apiToolConfig{
-		{name: "web_fetch", enabled: true, permissionPolicy: "always_ask"},
-		{name: "grep", enabled: false, permissionPolicy: "always_allow"},
+		builtinAPIToolConfig(t, `{"type":"web_fetch","name":"web_fetch","enabled":true,"permission_policy":{"type":"always_ask"}}`),
+		builtinAPIToolConfig(t, `{"type":"grep","name":"grep","enabled":false,"permission_policy":{"type":"always_allow"}}`),
 	}
+	// Equal to the defaults in enabled and permission_policy, but restricting
+	// the tool: a web option has no inherited default, so the config is reported.
+	webOption := builtinAPIToolConfig(t, `{"type":"web_search","name":"web_search","enabled":true,"permission_policy":{"type":"always_allow"},"blocked_domains":["ads.example.com"]}`)
+	// The same tool with no web option set changes nothing and stays skipped.
+	webNoOption := builtinAPIToolConfig(t, `{"type":"web_search","name":"web_search","enabled":true,"permission_policy":{"type":"always_allow"},"allowed_domains":[]}`)
 	tests := []struct {
 		name    string
 		current types.List
@@ -511,17 +710,28 @@ func TestMapToolConfigsToState_skipsUntrackedDefaults(t *testing.T) {
 			want:    []string{"web_fetch", "grep"},
 		},
 		{
+			name:    "no configs block, a web option set on a tool at the defaults",
+			current: types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}),
+			api:     append(append([]apiToolConfig{}, echoed...), webOption),
+			want:    []string{"web_search"},
+		},
+		{
+			name:    "no configs block, a web tool at the defaults with an empty domain list",
+			current: types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}),
+			api:     append(append([]apiToolConfig{}, echoed...), webNoOption),
+		},
+		{
 			name: "tracked config, defaults listed for other tools",
 			current: toolConfigsList(t, agentToolConfigAttrTypes,
-				agentToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()}),
-			api:  append([]apiToolConfig{{name: "write", enabled: false, permissionPolicy: "always_allow"}}, echoed...),
+				agentMCPToolConfigModel{Name: types.StringValue("write"), Enabled: types.BoolValue(false), PermissionPolicy: types.StringNull()}),
+			api:  append([]apiToolConfig{builtinAPIToolConfig(t, `{"type":"write","name":"write","enabled":false,"permission_policy":{"type":"always_allow"}}`)}, echoed...),
 			want: []string{"write"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			list, diags := mapToolConfigsToState(context.Background(), tt.current, tt.api, true, "always_allow", agentToolConfigAttrTypes, readMapping)
+			list, diags := mapToolConfigsToState(tt.current, tt.api, true, "always_allow", agentToolConfigAttrTypes, readMapping)
 			if diags.HasError() {
 				t.Fatalf("diags: %+v", diags)
 			}
@@ -574,6 +784,63 @@ func TestMapAgentToolsetToState_outOfBandConfig(t *testing.T) {
 	}
 }
 
+// `auto` maps like the other policies: an unset per-tool policy stays null
+// while the API echoes an `auto` toolset default, and an override that
+// diverges from it (here `always_allow`, set out of band) surfaces as drift.
+func TestMapToolConfigsToState_autoDefault(t *testing.T) {
+	t.Parallel()
+
+	data := AgentResourceModel{MCPToolsets: mcpToolsetsList(t, agentMCPToolsetModel{
+		MCPServerName:           types.StringValue("github"),
+		DefaultEnabled:          types.BoolValue(true),
+		DefaultPermissionPolicy: types.StringValue("auto"),
+		Configs: toolConfigsList(t, agentMCPToolConfigAttrTypes,
+			agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolNull(), PermissionPolicy: types.StringNull()},
+			agentMCPToolConfigModel{Name: types.StringValue("delete_repo"), Enabled: types.BoolNull(), PermissionPolicy: types.StringNull()},
+		),
+	})}
+	agent := parseAgentWithTools(t, `[{"type":"mcp_toolset","mcp_server_name":"github",
+		"default_config":{"enabled":true,"permission_policy":{"type":"auto"}},
+		"configs":[{"name":"search","enabled":true,"permission_policy":{"type":"auto"}},
+			{"name":"delete_repo","enabled":true,"permission_policy":{"type":"always_allow"}}]}]`)
+
+	if diags := mapAgentResponseToState(context.Background(), agent, &data, readMapping); diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	toolsets := mcpToolsetsFromState(t, data)
+	if len(toolsets) != 1 || toolsets[0].DefaultPermissionPolicy.ValueString() != "auto" {
+		t.Fatalf("got toolsets %+v, want github with an auto default", toolsets)
+	}
+	configs := toolConfigsFromList(t, toolsets[0].Configs)
+	if len(configs) != 2 {
+		t.Fatalf("got %d configs, want 2", len(configs))
+	}
+	if !configs[0].PermissionPolicy.IsNull() {
+		t.Errorf("search policy = %v, want null (echoed auto default)", configs[0].PermissionPolicy)
+	}
+	if configs[1].PermissionPolicy.ValueString() != "always_allow" {
+		t.Errorf("delete_repo policy = %v, want always_allow (drift from the auto default)", configs[1].PermissionPolicy)
+	}
+
+	// The agent toolset takes `auto` the same way, and the data sources map it
+	// verbatim.
+	agent = parseAgentWithTools(t, `[{"type":"agent_toolset_20260401",
+		"default_config":{"enabled":true,"permission_policy":{"type":"auto"}},
+		"configs":[{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"auto"}}]}]`)
+	var ds AgentDataSourceModel
+	if diags := mapAgentResponseToDataSource(agent, &ds); diags.HasError() {
+		t.Fatalf("diags: %+v", diags)
+	}
+	var toolset agentToolsetModel
+	if diags := ds.AgentToolset.As(context.Background(), &toolset, basetypes.ObjectAsOptions{}); diags.HasError() {
+		t.Fatalf("read agent_toolset: %+v", diags)
+	}
+	dsConfigs := toolConfigsFromList(t, toolset.Configs)
+	if toolset.DefaultPermissionPolicy.ValueString() != "auto" || len(dsConfigs) != 1 || dsConfigs[0].PermissionPolicy.ValueString() != "auto" {
+		t.Errorf("data source toolset = %+v, configs %+v, want auto everywhere", toolset, dsConfigs)
+	}
+}
+
 // Import (no prior state) still maps every toolset and config verbatim.
 func TestMapMCPToolsetsToState_import(t *testing.T) {
 	t.Parallel()
@@ -607,7 +874,7 @@ func TestMapMCPToolsetsToState_import(t *testing.T) {
 // out: the tool mapping does not read it.
 const unplannedTools = `[
 	{"type":"agent_toolset_20260401","default_config":{"enabled":false,"permission_policy":{"type":"always_allow"}},
-		"configs":[{"name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}]},
+		"configs":[{"type":"bash","name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}]},
 	{"type":"mcp_toolset","mcp_server_name":"crm","default_config":{"enabled":false,"permission_policy":{"type":"always_allow"}},
 		"configs":[
 			{"name":"search","enabled":true,"permission_policy":{"type":"always_ask"}},
@@ -619,15 +886,16 @@ const unplannedTools = `[
 // with every list, map and object typed null so the framework can encode it.
 func agentModelFor(agent *anthropic.BetaManagedAgentsAgent) AgentResourceModel {
 	return AgentResourceModel{
-		Model:        types.StringValue(string(agent.Model.ID)),
-		Name:         types.StringValue(agent.Name),
-		Metadata:     types.MapNull(types.StringType),
-		MCPServers:   types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
-		Skills:       types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
-		CustomTools:  types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
-		Multiagent:   types.ObjectNull(agentMultiagentAttrTypes),
-		AgentToolset: types.ObjectNull(agentToolsetAttrTypes),
-		MCPToolsets:  types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}),
+		Model:             types.StringValue(string(agent.Model.ID)),
+		Name:              types.StringValue(agent.Name),
+		Metadata:          types.MapNull(types.StringType),
+		MCPServers:        types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
+		Skills:            types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
+		CustomTools:       types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
+		Multiagent:        types.ObjectNull(agentMultiagentAttrTypes),
+		ExecutionIdentity: types.ObjectNull(agentExecutionIdentityAttrTypes),
+		AgentToolset:      types.ObjectNull(agentToolsetAttrTypes),
+		MCPToolsets:       types.ListNull(types.ObjectType{AttrTypes: agentMCPToolsetAttrTypes}),
 	}
 }
 
@@ -656,8 +924,8 @@ func unplannedToolsPlan(t *testing.T, agent *anthropic.BetaManagedAgentsAgent) A
 		DefaultEnabled:          types.BoolValue(false),
 		DefaultPermissionPolicy: types.StringValue("always_allow"),
 		Configs: toolConfigsList(t, agentMCPToolConfigAttrTypes,
-			agentToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(true), PermissionPolicy: types.StringNull()},
-			agentToolConfigModel{Name: types.StringValue("lookup"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
+			agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(true), PermissionPolicy: types.StringNull()},
+			agentMCPToolConfigModel{Name: types.StringValue("lookup"), Enabled: types.BoolNull(), PermissionPolicy: types.StringValue("always_ask")},
 		),
 	})
 	return plan
@@ -1051,4 +1319,664 @@ func TestMapAgentResponseToState_modelEffortAndGeo(t *testing.T) {
 			}
 		}
 	})
+}
+
+// agentTestProvider serves a single AgentResource, so a test can drive it
+// through the framework's protocol server: PlanResourceChange then applies the
+// schema defaults, marks unconfigured Computed values unknown and runs the plan
+// modifiers as it does for Terraform. ConfigureProvider is never called, so the
+// resource keeps the client the test gave it.
+type agentTestProvider struct{ r *AgentResource }
+
+func (agentTestProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "anthropic"
+}
+
+func (agentTestProvider) Schema(context.Context, provider.SchemaRequest, *provider.SchemaResponse) {}
+
+func (agentTestProvider) Configure(context.Context, provider.ConfigureRequest, *provider.ConfigureResponse) {
+}
+
+func (p agentTestProvider) Resources(context.Context) []func() resource.Resource {
+	return []func() resource.Resource{func() resource.Resource { return p.r }}
+}
+
+func (agentTestProvider) DataSources(context.Context) []func() datasource.DataSource { return nil }
+
+// agentProtocol runs ReadResource, PlanResourceChange and ApplyResourceChange
+// for anthropic_agent, with values in their Terraform encoding.
+type agentProtocol struct {
+	t      *testing.T
+	server tfprotov6.ProviderServer
+	sch    rschema.Schema
+	typ    tftypes.Type
+}
+
+func newAgentProtocol(t *testing.T, r *AgentResource) agentProtocol {
+	t.Helper()
+	server, err := providerserver.NewProtocol6WithError(agentTestProvider{r: r})()
+	if err != nil {
+		t.Fatalf("provider server: %s", err)
+	}
+	return agentProtocol{t: t, server: server, sch: schematest.ResourceSchema(t, r), typ: schematest.ResourceObjectType(t, r)}
+}
+
+// value encodes m as Terraform sends it: a configuration, a prior state or a
+// proposed new state.
+func (p agentProtocol) value(m AgentResourceModel) tftypes.Value {
+	p.t.Helper()
+	s := tfsdk.State{Schema: p.sch}
+	if diags := s.Set(context.Background(), &m); diags.HasError() {
+		p.t.Fatalf("encode: %+v", diags)
+	}
+	return s.Raw
+}
+
+// model decodes v, unknown values included.
+func (p agentProtocol) model(v tftypes.Value) AgentResourceModel {
+	p.t.Helper()
+	var m AgentResourceModel
+	if diags := (tfsdk.Plan{Schema: p.sch, Raw: v}).Get(context.Background(), &m); diags.HasError() {
+		p.t.Fatalf("decode: %+v", diags)
+	}
+	return m
+}
+
+func (p agentProtocol) dynamic(v tftypes.Value) *tfprotov6.DynamicValue {
+	p.t.Helper()
+	dv, err := tfprotov6.NewDynamicValue(p.typ, v)
+	if err != nil {
+		p.t.Fatalf("dynamic value: %s", err)
+	}
+	return &dv
+}
+
+func (p agentProtocol) decode(dv *tfprotov6.DynamicValue, diags []*tfprotov6.Diagnostic) tftypes.Value {
+	p.t.Helper()
+	for _, d := range diags {
+		if d.Severity == tfprotov6.DiagnosticSeverityError {
+			p.t.Fatalf("%s: %s", d.Summary, d.Detail)
+		}
+	}
+	v, err := dv.Unmarshal(p.typ)
+	if err != nil {
+		p.t.Fatalf("unmarshal: %s", err)
+	}
+	return v
+}
+
+func (p agentProtocol) read(state tftypes.Value) tftypes.Value {
+	p.t.Helper()
+	resp, err := p.server.ReadResource(context.Background(), &tfprotov6.ReadResourceRequest{
+		TypeName: "anthropic_agent", CurrentState: p.dynamic(state),
+	})
+	if err != nil {
+		p.t.Fatalf("read: %s", err)
+	}
+	return p.decode(resp.NewState, resp.Diagnostics)
+}
+
+// plan returns the planned state. proposed is what Terraform derives from
+// prior and config: the configured values, and the prior value of every
+// Computed attribute the configuration leaves null.
+func (p agentProtocol) plan(prior, config, proposed tftypes.Value) tftypes.Value {
+	p.t.Helper()
+	resp, err := p.server.PlanResourceChange(context.Background(), &tfprotov6.PlanResourceChangeRequest{
+		TypeName: "anthropic_agent", PriorState: p.dynamic(prior), Config: p.dynamic(config), ProposedNewState: p.dynamic(proposed),
+	})
+	if err != nil {
+		p.t.Fatalf("plan: %s", err)
+	}
+	return p.decode(resp.PlannedState, resp.Diagnostics)
+}
+
+func (p agentProtocol) apply(prior, config, planned tftypes.Value) tftypes.Value {
+	p.t.Helper()
+	resp, err := p.server.ApplyResourceChange(context.Background(), &tfprotov6.ApplyResourceChangeRequest{
+		TypeName: "anthropic_agent", PriorState: p.dynamic(prior), Config: p.dynamic(config), PlannedState: p.dynamic(planned),
+	})
+	if err != nil {
+		p.t.Fatalf("apply: %s", err)
+	}
+	return p.decode(resp.NewState, resp.Diagnostics)
+}
+
+// toolsetDefaults holds the four default_config attributes of
+// toolsetDefaultsModel: agent_toolset's, then those of the crm MCP toolset.
+type toolsetDefaults struct {
+	agentEnabled types.Bool
+	agentPolicy  types.String
+	mcpEnabled   types.Bool
+	mcpPolicy    types.String
+}
+
+// unsetDefaults is a configuration that sets none of them.
+var unsetDefaults = toolsetDefaults{types.BoolNull(), types.StringNull(), types.BoolNull(), types.StringNull()}
+
+// documentedDefaults are the values the API documents for an omitted
+// default_config, which a state written before the schema defaults holds.
+var documentedDefaults = toolsetDefaults{
+	types.BoolValue(true), types.StringValue("always_allow"), types.BoolValue(true), types.StringValue("always_ask"),
+}
+
+// overlay returns d with every value c sets, as Terraform's proposed new state
+// does for an Optional+Computed attribute.
+func (d toolsetDefaults) overlay(c toolsetDefaults) toolsetDefaults {
+	if !c.agentEnabled.IsNull() {
+		d.agentEnabled = c.agentEnabled
+	}
+	if !c.agentPolicy.IsNull() {
+		d.agentPolicy = c.agentPolicy
+	}
+	if !c.mcpEnabled.IsNull() {
+		d.mcpEnabled = c.mcpEnabled
+	}
+	if !c.mcpPolicy.IsNull() {
+		d.mcpPolicy = c.mcpPolicy
+	}
+	return d
+}
+
+// toolsetDefaultsAgentJSON is the agent the API returns for
+// toolsetDefaultsModel: the built-in toolset and the crm MCP toolset, with the
+// given default_config and no per-tool config.
+func toolsetDefaultsAgentJSON(version int64, agentEnabled bool, agentPolicy string, mcpEnabled bool, mcpPolicy string) string {
+	return fmt.Sprintf(`{"id":"agent_1","name":"n","model":{"id":"claude-sonnet-4-6"},"version":%d,
+		"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
+		"mcp_servers":[{"type":"url","name":"crm","url":"https://mcp.example.com/sse"}],
+		"tools":[
+			{"type":"agent_toolset_20260401","default_config":{"enabled":%t,"permission_policy":{"type":%q}},"configs":[]},
+			{"type":"mcp_toolset","mcp_server_name":"crm","default_config":{"enabled":%t,"permission_policy":{"type":%q}},"configs":[]}]}`,
+		version, agentEnabled, agentPolicy, mcpEnabled, mcpPolicy)
+}
+
+// toolsetDefaultsModel is the configuration of that agent with the given
+// defaults; with a version, it is the state the provider stores for it.
+func toolsetDefaultsModel(t *testing.T, d toolsetDefaults, version int64) AgentResourceModel {
+	t.Helper()
+	m := agentModelFor(parseAgentWithTools(t, `[]`))
+	m.MCPServers = types.ListValueMust(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}, []attr.Value{
+		types.ObjectValueMust(agentMCPServerAttrTypes, map[string]attr.Value{
+			"name": types.StringValue("crm"), "url": types.StringValue("https://mcp.example.com/sse"),
+		}),
+	})
+	m.AgentToolset = types.ObjectValueMust(agentToolsetAttrTypes, map[string]attr.Value{
+		"default_enabled":           d.agentEnabled,
+		"default_permission_policy": d.agentPolicy,
+		"configs":                   types.ListNull(types.ObjectType{AttrTypes: agentToolConfigAttrTypes}),
+	})
+	m.MCPToolsets = mcpToolsetsList(t, agentMCPToolsetModel{
+		MCPServerName:           types.StringValue("crm"),
+		DefaultEnabled:          d.mcpEnabled,
+		DefaultPermissionPolicy: d.mcpPolicy,
+		Configs:                 types.ListNull(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes}),
+	})
+	if version > 0 {
+		m.ID = types.StringValue("agent_1")
+		m.Version = types.Int64Value(version)
+		m.CreatedAt = types.StringValue("2026-01-01T00:00:00Z")
+		m.UpdatedAt = types.StringValue("2026-01-01T00:00:00Z")
+	}
+	return m
+}
+
+// plannedDefaults reads the four default_config attributes of a planned state.
+func plannedDefaults(t *testing.T, m AgentResourceModel) toolsetDefaults {
+	t.Helper()
+	var agentToolset agentToolsetModel
+	if diags := m.AgentToolset.As(context.Background(), &agentToolset, basetypes.ObjectAsOptions{}); diags.HasError() {
+		t.Fatalf("read agent_toolset: %+v", diags)
+	}
+	mcp := mcpToolsetsFromState(t, m)
+	if len(mcp) != 1 {
+		t.Fatalf("mcp_toolsets = %+v, want crm", mcp)
+	}
+	return toolsetDefaults{agentToolset.DefaultEnabled, agentToolset.DefaultPermissionPolicy, mcp[0].DefaultEnabled, mcp[0].DefaultPermissionPolicy}
+}
+
+func (d toolsetDefaults) String() string {
+	return fmt.Sprintf("agent_toolset{%s, %s} crm{%s, %s}", d.agentEnabled, d.agentPolicy, d.mcpEnabled, d.mcpPolicy)
+}
+
+// A toolset default_config attribute the configuration leaves unset plans the
+// API's documented default instead of the refreshed value (#499), also inside
+// the mcp_toolsets list: the framework applies a schema Default to an
+// attribute nested in a list. A state written before the defaults, which holds
+// the API's values, plans no change; a value changed outside Terraform plans
+// an update back to the default; a configured value is planned as before.
+func TestAgentResource_toolsetDefaultsPlan(t *testing.T) {
+	t.Parallel()
+
+	p := newAgentProtocol(t, &AgentResource{})
+	allowAgent := toolsetDefaults{types.BoolNull(), types.StringNull(), types.BoolNull(), types.StringValue("always_allow")}
+	askBuiltIn := toolsetDefaults{types.BoolNull(), types.StringValue("always_ask"), types.BoolNull(), types.StringNull()}
+	tests := []struct {
+		name   string
+		config toolsetDefaults
+		prior  toolsetDefaults
+		want   toolsetDefaults
+	}{
+		{
+			name:   "unset, state holds the API defaults",
+			config: unsetDefaults,
+			prior:  documentedDefaults,
+			want:   documentedDefaults,
+		},
+		{
+			name:   "unset, MCP policy switched to always_allow out of band",
+			config: unsetDefaults,
+			prior:  documentedDefaults.overlay(toolsetDefaults{mcpPolicy: types.StringValue("always_allow")}),
+			want:   documentedDefaults,
+		},
+		{
+			name:   "unset, every default changed out of band",
+			config: unsetDefaults,
+			prior: toolsetDefaults{
+				types.BoolValue(false), types.StringValue("always_ask"), types.BoolValue(false), types.StringValue("always_allow"),
+			},
+			want: documentedDefaults,
+		},
+		{
+			name:   "set to a non-default value, unchanged",
+			config: allowAgent,
+			prior:  documentedDefaults.overlay(allowAgent),
+			want:   documentedDefaults.overlay(allowAgent),
+		},
+		{
+			name:   "set to a non-default value, changed out of band",
+			config: askBuiltIn,
+			prior:  documentedDefaults,
+			want:   documentedDefaults.overlay(askBuiltIn),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			prior := p.value(toolsetDefaultsModel(t, tt.prior, 1))
+			proposed := p.value(toolsetDefaultsModel(t, tt.prior.overlay(tt.config), 1))
+			planned := p.plan(prior, p.value(toolsetDefaultsModel(t, tt.config, 0)), proposed)
+
+			got := plannedDefaults(t, p.model(planned))
+			if got.String() != tt.want.String() {
+				t.Errorf("planned %s\nwant    %s", got, tt.want)
+			}
+			if noChange := tt.prior.String() == tt.want.String(); planned.Equal(prior) != noChange {
+				t.Errorf("planned state equals prior state: %t, want %t (no change)", planned.Equal(prior), noChange)
+			}
+		})
+	}
+}
+
+// The #499 acceptance scenario, against a local server: an agent applied with
+// the toolset defaults unset, then switched to always_allow from the Console,
+// shows the drift on refresh and an update in the plan; the apply sends the
+// documented defaults, and the next refresh and plan are clean.
+func TestAgentResource_revertsToolsetDefaultDrift(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	current := toolsetDefaultsAgentJSON(2, true, "always_allow", true, "always_allow") // switched out of band
+	var updates [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/agents/agent_1" {
+			body, _ := io.ReadAll(r.Body)
+			updates = append(updates, body)
+			current = toolsetDefaultsAgentJSON(3, true, "always_allow", true, "always_ask")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, current)
+	}))
+	t.Cleanup(srv.Close)
+	p := newAgentProtocol(t, &AgentResource{client: oauthtest.NewSDKClient(t, srv)})
+
+	config := p.value(toolsetDefaultsModel(t, unsetDefaults, 0))
+	refreshed := p.read(p.value(toolsetDefaultsModel(t, documentedDefaults, 1)))
+	if got := plannedDefaults(t, p.model(refreshed)); got.mcpPolicy.ValueString() != "always_allow" {
+		t.Fatalf("refreshed %s, want the out-of-band always_allow on crm", got)
+	}
+
+	planned := p.plan(refreshed, config, refreshed)
+	if planned.Equal(refreshed) {
+		t.Fatal("plan shows no change, want an update reverting crm's policy")
+	}
+	if got := plannedDefaults(t, p.model(planned)); got.String() != documentedDefaults.String() {
+		t.Fatalf("planned %s\nwant    %s", got, documentedDefaults)
+	}
+
+	applied := p.apply(refreshed, config, planned)
+	if got := plannedDefaults(t, p.model(applied)); got.String() != documentedDefaults.String() {
+		t.Errorf("applied %s\nwant    %s", got, documentedDefaults)
+	}
+	mu.Lock()
+	if len(updates) != 1 {
+		t.Fatalf("got %d update requests, want 1", len(updates))
+	}
+	var body struct {
+		Version int64 `json:"version"`
+		Tools   []struct {
+			Type          string `json:"type"`
+			DefaultConfig struct {
+				Enabled          *bool `json:"enabled"`
+				PermissionPolicy struct {
+					Type string `json:"type"`
+				} `json:"permission_policy"`
+			} `json:"default_config"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(updates[0], &body); err != nil {
+		t.Fatalf("update body %s: %s", updates[0], err)
+	}
+	mu.Unlock()
+	if body.Version != 2 || len(body.Tools) != 2 {
+		t.Fatalf("update body = %+v, want version 2 and both toolsets", body)
+	}
+	for i, want := range []string{"always_allow", "always_ask"} {
+		dc := body.Tools[i].DefaultConfig
+		if dc.Enabled == nil || !*dc.Enabled || dc.PermissionPolicy.Type != want {
+			t.Errorf("%s default_config = {enabled: %v, permission_policy: %q}, want {true, %q}",
+				body.Tools[i].Type, dc.Enabled, dc.PermissionPolicy.Type, want)
+		}
+	}
+
+	refreshed = p.read(applied)
+	if planned := p.plan(refreshed, config, refreshed); !planned.Equal(refreshed) {
+		t.Errorf("plan after the apply is not empty: %s", plannedDefaults(t, p.model(planned)))
+	}
+}
+
+// The per-tool comparison of #395 still holds now that the toolset defaults are
+// planned. The configuration enables `search` on crm and leaves its policy and
+// crm's default policy unset. An unset per-tool field stays null while the API
+// value equals the toolset default the API returns, so an echoed default plans
+// no change; a default switched out of band, which `search` inherits, plans an
+// update of the toolset default alone; a policy set out of band on `search`
+// alone still shows on the tool and plans its removal.
+func TestAgentResource_toolConfigsWithPlannedDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		crmPolicy    string // the API's crm default_config.permission_policy
+		searchPolicy string // the API's resolved policy for search
+		wantDefault  string
+		wantSearch   types.String
+	}{
+		{name: "API echoes the defaults", crmPolicy: "always_ask", searchPolicy: "always_ask",
+			wantDefault: "always_ask", wantSearch: types.StringNull()},
+		{name: "toolset default switched out of band", crmPolicy: "always_allow", searchPolicy: "always_allow",
+			wantDefault: "always_allow", wantSearch: types.StringNull()},
+		{name: "per-tool policy set out of band", crmPolicy: "always_ask", searchPolicy: "always_allow",
+			wantDefault: "always_ask", wantSearch: types.StringValue("always_allow")},
+	}
+	withSearch := func(t *testing.T, m AgentResourceModel) AgentResourceModel {
+		t.Helper()
+		toolsets := mcpToolsetsFromState(t, m)
+		toolsets[0].Configs = toolConfigsList(t, agentMCPToolConfigAttrTypes,
+			agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(true), PermissionPolicy: types.StringNull()})
+		m.MCPToolsets = mcpToolsetsList(t, toolsets...)
+		return m
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			agent := strings.Replace(toolsetDefaultsAgentJSON(2, true, "always_allow", true, tt.crmPolicy),
+				`"mcp_server_name":"crm","default_config":{"enabled":true,"permission_policy":{"type":"`+tt.crmPolicy+`"}},"configs":[]`,
+				`"mcp_server_name":"crm","default_config":{"enabled":true,"permission_policy":{"type":"`+tt.crmPolicy+`"}},`+
+					`"configs":[{"name":"search","enabled":true,"permission_policy":{"type":"`+tt.searchPolicy+`"}}]`, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, agent)
+			}))
+			t.Cleanup(srv.Close)
+			p := newAgentProtocol(t, &AgentResource{client: oauthtest.NewSDKClient(t, srv)})
+
+			config := p.value(withSearch(t, toolsetDefaultsModel(t, unsetDefaults, 0)))
+			refreshed := p.read(p.value(withSearch(t, toolsetDefaultsModel(t, documentedDefaults, 1))))
+			crm := mcpToolsetsFromState(t, p.model(refreshed))[0]
+			search := toolConfigsFromList(t, crm.Configs)
+			if crm.DefaultPermissionPolicy.ValueString() != tt.wantDefault || len(search) != 1 || !search[0].PermissionPolicy.Equal(tt.wantSearch) {
+				t.Fatalf("refreshed crm = %s, configs %+v; want default %s, search policy %s",
+					crm.DefaultPermissionPolicy, search, tt.wantDefault, tt.wantSearch)
+			}
+
+			// `configs` is not Computed: Terraform proposes the configured list.
+			planned := p.plan(refreshed, config, p.value(withSearch(t, p.model(refreshed))))
+			wantChange := tt.wantDefault != "always_ask" || !tt.wantSearch.IsNull()
+			if planned.Equal(refreshed) == wantChange {
+				t.Errorf("plan shows a change: %t, want %t", !planned.Equal(refreshed), wantChange)
+			}
+			crm = mcpToolsetsFromState(t, p.model(planned))[0]
+			search = toolConfigsFromList(t, crm.Configs)
+			if crm.DefaultPermissionPolicy.ValueString() != "always_ask" || len(search) != 1 || !search[0].PermissionPolicy.IsNull() {
+				t.Errorf("planned crm = %s, configs %+v; want default always_ask, search policy null", crm.DefaultPermissionPolicy, search)
+			}
+		})
+	}
+}
+
+// toolsetConfigsAgent is what the server returns for toolsetConfigsPlan: the
+// built-in toolset and crm without per-tool configs, billing with an empty
+// list, docs with one config.
+const toolsetConfigsAgent = `{"id":"agent_1","name":"n","model":{"id":"claude-sonnet-4-6"},"version":2,
+	"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z",
+	"mcp_servers":[
+		{"type":"url","name":"crm","url":"https://crm.example.com/sse"},
+		{"type":"url","name":"billing","url":"https://billing.example.com/sse"},
+		{"type":"url","name":"docs","url":"https://docs.example.com/sse"}],
+	"tools":[
+		{"type":"agent_toolset_20260401","default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},"configs":[]},
+		{"type":"mcp_toolset","mcp_server_name":"crm","default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}},"configs":[]},
+		{"type":"mcp_toolset","mcp_server_name":"billing","default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}},"configs":[]},
+		{"type":"mcp_toolset","mcp_server_name":"docs","default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}},
+			"configs":[{"name":"search","enabled":true,"permission_policy":{"type":"always_ask"}}]},
+		{"type":"custom","name":"lookup","description":"Look up","input_schema":{"type":"object"}}]}`
+
+// toolsetConfigsPlan plans agent_toolset and crm without `configs`, billing
+// with `configs = []` and docs with one config, plus a custom tool.
+func toolsetConfigsPlan(t *testing.T) AgentResourceModel {
+	t.Helper()
+	m := toolsetDefaultsModel(t, documentedDefaults, 0)
+	servers := make([]attr.Value, 0, 3)
+	for _, name := range []string{"crm", "billing", "docs"} {
+		servers = append(servers, types.ObjectValueMust(agentMCPServerAttrTypes, map[string]attr.Value{
+			"name": types.StringValue(name), "url": types.StringValue("https://" + name + ".example.com/sse"),
+		}))
+	}
+	m.MCPServers = types.ListValueMust(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}, servers)
+	toolset := func(name string, configs types.List) agentMCPToolsetModel {
+		return agentMCPToolsetModel{
+			MCPServerName:           types.StringValue(name),
+			DefaultEnabled:          types.BoolValue(true),
+			DefaultPermissionPolicy: types.StringValue("always_ask"),
+			Configs:                 configs,
+		}
+	}
+	m.MCPToolsets = mcpToolsetsList(t,
+		toolset("crm", types.ListNull(types.ObjectType{AttrTypes: agentMCPToolConfigAttrTypes})),
+		toolset("billing", toolConfigsList(t, agentMCPToolConfigAttrTypes)),
+		toolset("docs", toolConfigsList(t, agentMCPToolConfigAttrTypes,
+			agentMCPToolConfigModel{Name: types.StringValue("search"), Enabled: types.BoolValue(true), PermissionPolicy: types.StringNull()})),
+	)
+	m.CustomTools = types.ListValueMust(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}, []attr.Value{
+		types.ObjectValueMust(agentCustomToolAttrTypes, map[string]attr.Value{
+			"name": types.StringValue("lookup"), "description": types.StringValue("Look up"),
+			"input_schema": jsontypes.NewNormalizedValue(`{"type":"object"}`),
+		}),
+	})
+	return m
+}
+
+// On Update, a toolset planned without per-tool configs (null or empty) sends
+// `configs: []` (#508): `tools` is a full replacement, but an omitted `configs`
+// might keep the overrides the toolset holds, so one set out of band would
+// survive the apply. Planned configs are sent as before, and Create still omits
+// the field, since nothing is stored yet.
+func TestAgentResource_toolsetConfigsOnUpdate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	bodies := map[string][]byte{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies[r.URL.Path] = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, toolsetConfigsAgent)
+	}))
+	t.Cleanup(srv.Close)
+	r := &AgentResource{client: oauthtest.NewSDKClient(t, srv)}
+	sch := schematest.ResourceSchema(t, r)
+
+	planned := toolsetConfigsPlan(t)
+	plan := tfsdk.Plan{Schema: sch}
+	if diags := plan.Set(ctx, &planned); diags.HasError() {
+		t.Fatalf("set plan: %+v", diags)
+	}
+	prior := planned
+	prior.ID = types.StringValue("agent_1")
+	prior.Version = types.Int64Value(1)
+	state := tfsdk.State{Schema: sch}
+	if diags := state.Set(ctx, &prior); diags.HasError() {
+		t.Fatalf("set state: %+v", diags)
+	}
+
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: sch}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create: %+v", createResp.Diagnostics)
+	}
+	updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: sch}}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update: %+v", updateResp.Diagnostics)
+	}
+
+	// configsOf returns each tool's raw `configs`, "" when the field is absent.
+	configsOf := func(t *testing.T, path string) []string {
+		t.Helper()
+		mu.Lock()
+		raw := bodies[path]
+		mu.Unlock()
+		var body struct {
+			Tools []map[string]json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("%s body %s: %s", path, raw, err)
+		}
+		got := make([]string, 0, len(body.Tools))
+		for _, tool := range body.Tools {
+			got = append(got, string(tool["configs"]))
+		}
+		return got
+	}
+	const docs = `[{"name":"search","enabled":true}]`
+	for _, tt := range []struct {
+		name, path string
+		want       []string // agent_toolset, crm, billing, docs, custom
+	}{
+		{"create omits them", "/v1/agents", []string{"", "", "", docs, ""}},
+		{"update sends an empty list", "/v1/agents/agent_1", []string{"[]", "[]", "[]", docs, ""}},
+	} {
+		if got := configsOf(t, tt.path); strings.Join(got, " | ") != strings.Join(tt.want, " | ") {
+			t.Errorf("%s: configs = %q\nwant      %q", tt.name, got, tt.want)
+		}
+	}
+
+	var data AgentResourceModel
+	if diags := updateResp.State.Get(ctx, &data); diags.HasError() {
+		t.Fatalf("get state: %+v", diags)
+	}
+	if !data.AgentToolset.Equal(planned.AgentToolset) || !data.MCPToolsets.Equal(planned.MCPToolsets) {
+		t.Errorf("state after update = %s, %s\nwant the plan   %s, %s", data.AgentToolset, data.MCPToolsets, planned.AgentToolset, planned.MCPToolsets)
+	}
+}
+
+// builtinAPIToolConfig decodes one built-in tool config as the API returns it.
+func builtinAPIToolConfig(t *testing.T, raw string) apiToolConfig {
+	t.Helper()
+	var c anthropic.BetaManagedAgentsAgentToolConfigUnion
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatalf("unmarshal tool config: %s", err)
+	}
+	cfg, diags := apiAgentToolConfig(c)
+	if diags.HasError() {
+		t.Fatalf("apiAgentToolConfig: %+v", diags)
+	}
+	return cfg
+}
+
+// agentServer answers every request with agent, as the create, read and
+// update endpoints would.
+func agentServer(t *testing.T, agent *anthropic.BetaManagedAgentsAgent) *AgentResource {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, agent.RawJSON())
+	}))
+	t.Cleanup(srv.Close)
+	return &AgentResource{client: oauthtest.NewSDKClient(t, srv)}
+}
+
+// plannedAgent plans agent as it is, except for the toolsets.
+func plannedAgent(agent *anthropic.BetaManagedAgentsAgent, toolset types.Object, mcpToolsets types.List) AgentResourceModel {
+	return AgentResourceModel{
+		Model:             types.StringValue(string(agent.Model.ID)),
+		Name:              types.StringValue(agent.Name),
+		Metadata:          types.MapNull(types.StringType),
+		MCPServers:        types.ListNull(types.ObjectType{AttrTypes: agentMCPServerAttrTypes}),
+		Skills:            types.ListNull(types.ObjectType{AttrTypes: agentSkillAttrTypes}),
+		CustomTools:       types.ListNull(types.ObjectType{AttrTypes: agentCustomToolAttrTypes}),
+		Multiagent:        types.ObjectNull(agentMultiagentAttrTypes),
+		ExecutionIdentity: types.ObjectNull(agentExecutionIdentityAttrTypes),
+		AgentToolset:      toolset,
+		MCPToolsets:       mcpToolsets,
+	}
+}
+
+// applyAndRead runs Create and Update with planned as the plan, and Read with
+// planned as the prior state, all against r, and returns the three states.
+func applyAndRead(t *testing.T, r *AgentResource, agent *anthropic.BetaManagedAgentsAgent, planned AgentResourceModel) (created, updated, read AgentResourceModel) {
+	t.Helper()
+	ctx := context.Background()
+	sch := schematest.ResourceSchema(t, r)
+
+	plan := tfsdk.Plan{Schema: sch}
+	if diags := plan.Set(ctx, &planned); diags.HasError() {
+		t.Fatalf("set plan: %+v", diags)
+	}
+	prior := planned
+	prior.ID = types.StringValue(agent.ID)
+	prior.Version = types.Int64Value(agent.Version)
+	state := tfsdk.State{Schema: sch}
+	if diags := state.Set(ctx, &prior); diags.HasError() {
+		t.Fatalf("set state: %+v", diags)
+	}
+	model := func(s tfsdk.State) AgentResourceModel {
+		var data AgentResourceModel
+		if diags := s.Get(ctx, &data); diags.HasError() {
+			t.Fatalf("get state: %+v", diags)
+		}
+		return data
+	}
+
+	createResp := &resource.CreateResponse{State: tfsdk.State{Schema: sch}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, createResp)
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create: %+v", createResp.Diagnostics)
+	}
+	updateResp := &resource.UpdateResponse{State: tfsdk.State{Schema: sch}}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, updateResp)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update: %+v", updateResp.Diagnostics)
+	}
+	readResp := &resource.ReadResponse{State: state}
+	r.Read(ctx, resource.ReadRequest{State: state}, readResp)
+	if readResp.Diagnostics.HasError() {
+		t.Fatalf("read: %+v", readResp.Diagnostics)
+	}
+	return model(createResp.State), model(updateResp.State), model(readResp.State)
 }

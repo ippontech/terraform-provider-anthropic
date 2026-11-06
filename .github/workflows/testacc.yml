@@ -1,15 +1,47 @@
 name: Acceptance Tests
 
 on:
+  # Every push to main, except the release commit, which changes nothing the tests cover. The
+  # tests run after the merge because a pull request from a fork cannot read the keys; a push
+  # releases nothing, semantic-release.yml cuts the release once a day (RELEASE.md, "How a release
+  # is cut").
   push:
     branches:
       - main
+  # Called by semantic-release.yml before each release, which is cut only when these jobs pass.
+  # The caller must pass each secret by name, even one that exists only in the acctest environment
+  # of the jobs below, which then receive that environment's value (GitHub docs, "Reuse
+  # workflows"). Not `required`: that only checks that the caller passes the secret, not its value
+  # (same page), and a missing key already fails the tests (acctest.PreCheck stops on an empty
+  # key).
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      ANTHROPIC_ADMIN_API_KEY:
+        required: false
+      ANTHROPIC_MULTI_WORKSPACE_API_KEY:
+        required: false
   workflow_dispatch:
 
 permissions: {}
 
+# On a push or a manual run, the same group as semantic-release.yml, so one live test run exists
+# at a time: two would collide in the test workspace. When several pushes queue up, only the
+# newest waiting run starts. A called run already sits in its caller's group: giving it the same
+# one here would queue it behind the caller that holds it (the GitHub docs warn of the
+# cancellation variant of this, "Reusing workflow configurations"), hence a group of its own, its
+# run id. The called run is told apart by `github.workflow`, which then carries the caller's name
+# (same page), where `github.event_name` is `workflow_dispatch` for a manual run and for a run
+# called by a dispatched semantic-release.yml alike.
+concurrency:
+  group: ${{ github.workflow == 'Acceptance Tests' && 'acceptance-tests-main' || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   testacc:
+    # Skipped on the push of a release commit; a called or manual run always goes on.
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
     timeout-minutes: 130
     environment: acctest
@@ -40,6 +72,10 @@ jobs:
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          # Pinned instead of the action's default, `latest`: the CLI runs next to the keys. Renovate's
+          # github-actions manager tracks this input, in the reviewed `release tooling` group
+          # (.github/renovate.md, "Release tooling").
+          terraform_version: 1.17.1
           terraform_wrapper: false
 
       - name: Run acceptance tests
@@ -50,6 +86,8 @@ jobs:
           ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
 
   terraform-test:
+    # Skipped on the push of a release commit; a called or manual run always goes on.
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: acctest
@@ -81,6 +119,10 @@ jobs:
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          # Pinned instead of the action's default, `latest`: the CLI runs next to the keys. Renovate's
+          # github-actions manager tracks this input, in the reviewed `release tooling` group
+          # (.github/renovate.md, "Release tooling").
+          terraform_version: 1.17.1
           terraform_wrapper: false
 
       - name: Run Terraform tests

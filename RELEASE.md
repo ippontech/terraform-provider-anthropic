@@ -1,3 +1,33 @@
+# How a release is cut
+
+Two workflows share the work:
+
+- `testacc.yml` runs the acceptance tests against the real API, with the keys of the `acctest` environment, on every push to `main` (except the push of a release commit). They run after the merge because a pull request from a fork cannot read those keys. A push runs them and stops there: it releases nothing.
+- `semantic-release.yml` runs once a day, at 07:23 UTC (08:23 in Paris in winter, 09:23 in summer), or on demand (`Actions > Semantic Release > Run workflow`, for a fix that cannot wait for the next morning). It first checks that a commit since the last tag would cut a version (the `pending` job runs semantic-release's own commit analyzer with the `.releaserc` rules, through `.github/semantic-release/next-release.mjs`), so a day of `chore` or `ci` merges runs no live test; then it runs the acceptance tests again from the head of `main`, and only if they pass semantic-release reads every commit since the last tag. A `feat`, `fix`, `perf`, `refactor`, `build` or `docs` commit, a `BREAKING CHANGE` footer or a `!` after the type, or a `git revert` of an already released commit, cuts one version for all of them, the highest bump winning: semantic-release pushes the `chore(release):` commit with `CHANGELOG.md`, the `v*` tag and the GitHub release. Other commit types (`chore`, `ci`, `test`, ...) cut nothing.
+- The tag starts `goreleaser-release.yml`, which builds, signs and attaches the binaries without waiting for anyone (see [Review the modules a release ships](#review-the-modules-a-release-ships) and [Protect the release credentials](#protect-the-release-credentials)).
+
+A second scheduled run, at 12:23 UTC, is a retry: it cuts a version only if the day still has none. It catches a morning run that GitHub dropped (it schedules nothing at the top of the hour for that reason), one cancelled while it waited behind a push run, and one whose tests ran while a pull request merged: semantic-release then sees `main` ahead of the commit it tested, publishes nothing and exits green. Those commits ship at the retry, or at a manual run.
+
+A red acceptance run publishes nothing: fix the cause, or, if the API itself was failing, re-run the failed jobs of that run, or start a manual run. `Actions > Acceptance Tests > Run workflow` still runs the tests alone, without releasing.
+
+The two workflows share one `concurrency` group (`acceptance-tests-main`, no cancellation), on push runs, manual runs and daily release runs alike, so a single live test run exists at a time: a daily release that finds a push run testing waits for it, and when several commits land while a run is testing, only the newest waiting run starts. An intermediate commit then gets no acceptance run of its own; its changes are tested as part of the newer commit. The same rule drops a daily release run still waiting behind a push run when another push arrives; the retry run or a manual run cuts the release then. A running test is never cancelled to make room: the objects it had created would stay in the test workspace, since nothing deletes them afterwards.
+
+GitHub disables a scheduled workflow after 60 days without activity on the repository; Renovate's weekly pull requests keep it alive, and the Actions UI says so if it ever happens.
+
+## Review the modules a release ships
+
+A maintainer merges each update of the root `go.mod`, which Renovate never merges on its own (`.github/renovate.md`, "Go modules"), and each one cuts a version. That merge is the last human decision before those modules ship signed to every user: nothing else waits for a maintainer, so review the modules there, before the merge, not after.
+
+The signing job used to wait for a reviewer in the Actions UI. Releases queued up whenever several versions were cut in a row, the newest one was approved and the others rejected, and the numbering got holes (tags without binaries, GitHub releases without assets). The review at merge time already checks the same modules, so the wait only duplicated it; it was removed and the versions now publish in order, each one on its own run.
+
+For each module an update changes, check that the new version is a published release of that module (a tag or release notes on its repository), and look for anything unexpected: a module nobody added on purpose, a version published a few days ago without notes, a repository that changed owner. `go.mod` lists every module compiled into the provider, indirect ones included.
+
+The `dependency-changes` job of `goreleaser-release.yml` still writes on each run's summary page the `go.mod` lines that changed since the last release with signed binaries, as an audit trail: open it to see what a given version shipped without diffing tags by hand. A version that was tagged but never signed (signing failed, release deleted) does not count as a baseline; its changes are listed again, and the summary names it.
+
+A signing run that fails for a transient reason (a module proxy error, a GitHub outage) can be re-run as is: it builds the same tag again. Never re-sign or replace a version already published with binaries: the Terraform Registry asks to release a new version instead. A version that must not ship is withdrawn by deleting its GitHub release (the tag stays: the tag ruleset forbids deleting it) and saying in the next release notes why the number was skipped.
+
+Check that each version shows up on the [Terraform Registry](https://registry.terraform.io/providers/ippontech/anthropic/latest) a few minutes after its run turns green. If it does not, the Resync button on the provider's settings page in the Registry re-creates its webhook.
+
 # GPG Key Setup
 
 The release workflow signs the provider checksums with a GPG key. This is required by the [Terraform Registry](https://registry.terraform.io) to verify the authenticity of provider binaries.
@@ -56,6 +86,48 @@ gpg --armor --export YOUR_KEY_ID
 Then paste it in your Terraform Registry namespace:
 `registry.terraform.io > Settings > GPG Keys > Add a GPG key`
 
+A key added there is permanent: the Registry offers no way to delete or replace it, and it rejects a second import of the same key ID (checked on 2026-11-03). HashiCorp keeps every key on purpose so that the versions it signed stay verifiable ([Terraform Registry FAQ](https://developer.hashicorp.com/terraform/registry/faq)). Two consequences:
+
+- the Registry serves the copy it received, so a change made to the key afterwards (adding an expiration, say) is invisible to `terraform init` and has no effect: the only way to change what the Registry verifies with is a new key, see [Rotate the key](#rotate-the-key);
+- the key is generated without expiration (`Expiry: 0` above) because an expired key invalidates the versions it signed: the OpenPGP library both tools use (ProtonMail go-crypto) checks the key's expiration against the current time, not the signature date. Terraform only logs a warning in that case ([`checkDetachedSignature`](https://github.com/hashicorp/terraform/blob/main/internal/getproviders/package_authentication.go)), and OpenTofu prints one and warns that a future version will fail, failing already under `OPENTOFU_ENFORCE_GPG_EXPIRATION=true` ([`findSigningKey`](https://github.com/opentofu/opentofu/blob/main/internal/getproviders/package_authentication.go)); both checked on 2026-11-03. GnuPG also refuses to sign with an expired key, which would break the release workflow at the expiration date.
+
+## Register the public key in the OpenTofu Registry
+
+The OpenTofu Registry also lists the provider (`registry.opentofu.org/ippontech/anthropic`) and serves the same GitHub release assets. It checks their signature only when it holds the signing key: without one, `tofu init` installs the provider without verifying it, and a user who enforces verification with `OPENTOFU_ENFORCE_GPG_VALIDATION=true` cannot install it ([OpenTofu: provider signing](https://opentofu.org/docs/cli/plugins/signing)).
+
+Submit the same public key with the [Submit new Provider Signing Key](https://github.com/opentofu/registry/issues/new?template=provider_key.yml) form of `opentofu/registry`:
+
+| Field | Value |
+|-------|-------|
+| Provider Namespace | `ippontech` |
+| Provider Name | `anthropic`, so the key validates this provider only: each provider of the organization signs with its own key, which confines a leaked key to one provider |
+| Public Membership | the submitter must be a member of the `ippontech` GitHub organization, with the membership set to public |
+| Provider GPG Key | the output of `gpg --armor --export YOUR_KEY_ID` |
+
+Fill in the form in the GitHub web UI: the registry's automated validation parses the structured body the form generates, and it cannot read an issue opened through the API or `gh`.
+
+When the key is rotated, add the new one to both registries, see [Rotate the key](#rotate-the-key). The Terraform Registry has no per-provider scope: every key registered for the `ippontech` namespace there validates every provider of the namespace.
+
+## Rotate the key
+
+Rotate the key when its private part may have leaked (a compromised laptop, a secret printed in a log, a Vaultwarden access that should not have existed) or when the maintainer who holds it leaves. The procedure adds a new key next to the old one: the old key is never removed from the Terraform Registry, since the versions it signed must stay verifiable, and the leaked key cannot be used to publish a release anyway, because publishing requires pushing a tag through the `release` environment, not only signing.
+
+1. Generate a new key as in [Generate a GPG key](#generate-a-gpg-key) and store its private part, passphrase and revocation certificate in Vaultwarden, in the same folder as the old one, without deleting the old entry: it stays the record of which key signed the versions published so far.
+2. Replace the `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` secrets of the `release` environment with the new key, from a file rather than the clipboard, so that no whitespace is altered:
+
+   ```bash
+   gpg --armor --export-secret-keys NEW_KEY_ID > private.asc
+   gh secret set GPG_PRIVATE_KEY --env release --repo ippontech/terraform-provider-anthropic < private.asc
+   shred -u private.asc
+   ```
+
+   Export outside the repository, or delete the file right after: `.asc` files are not ignored by git.
+3. Add the new public key to the Terraform Registry as in [Register the public key in the Terraform Registry](#register-the-public-key-in-the-terraform-registry). The old key stays listed.
+4. Submit the new public key to the OpenTofu Registry as in [Register the public key in the OpenTofu Registry](#register-the-public-key-in-the-opentofu-registry). Every registered key stays valid there too, so the old one still validates the versions it signed.
+5. Publish a release (any `fix:` or `feat:` merge does) and check that `terraform init` and `tofu init` install it: the new key validates it on both registries.
+6. If the private key leaked, publish its revocation certificate so that other users of OpenPGP stop trusting it, with `gpg --import <FINGERPRINT>.rev` followed by `gpg --send-keys OLD_KEY_ID` on a key server. The registries ignore revocations, so the versions already published keep installing; the revocation only protects uses of the key outside the registries.
+7. Note the rotation date and its reason in the Vaultwarden entry of the old key.
+
 # GitHub App Setup (Semantic Release)
 
 The semantic-release workflow uses a GitHub App to push the `chore(release):` commit and tags directly to `main`, bypassing the branch ruleset (PR requirement, merge queue, and signed commits).
@@ -80,6 +152,8 @@ Fill in:
 | Issues | Read & write |
 | Pull requests | Read & write |
 | Metadata | Read only (mandatory) |
+
+`semantic-release.yml` requests exactly these three write permissions when it mints the token (`permission-*` inputs of `actions/create-github-app-token`). A permission added to the App later does not reach the token, and if the App lacks one of the three, the token step fails.
 
 Click **Create GitHub App**.
 
@@ -127,8 +201,9 @@ Create two environments (`Settings > Environments > New environment`):
 |---|---|---|---|
 | `release` | `goreleaser-release.yml` | **Selected branches and tags**, one tag rule `v*` and no branch rule | `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` |
 | `semantic-release` | `semantic-release.yml` | **Selected branches and tags**, one branch rule `main` | `SEMREL_APP_ID`, `SEMREL_APP_PRIVATE_KEY` |
+| `acctest` (already set up) | `testacc.yml`, which `semantic-release.yml` calls before releasing | **Selected branches and tags**, one branch rule `main` | `ANTHROPIC_API_KEY`, `ANTHROPIC_ADMIN_API_KEY`, `ANTHROPIC_MULTI_WORKSPACE_API_KEY` |
 
-On `release`, also tick **Required reviewers** and add the maintainers: every signed release then waits for one approval in the Actions UI, which is the only control that holds even if a tag slips through. Leave **Allow administrators to bypass** unticked.
+On `release`, leave **Required reviewers** unticked: the modules are reviewed when their update is merged ([Review the modules a release ships](#review-the-modules-a-release-ships)), and a reviewer at signing time only queued the releases up. The tag rule is what keeps the key away from any other ref. Leave **Allow administrators to bypass** unticked.
 
 Then **delete the four secrets at repository level** (`Settings > Secrets and variables > Actions`), and check that no organization secret carries them. Until they are deleted, the environments protect nothing.
 
@@ -147,7 +222,7 @@ semantic-release keeps tagging releases; nobody else can create, move or delete 
 
 1. Push a branch with a workflow that prints `${{ secrets.GPG_PASSPHRASE != '' }}`: it must print `false`. Delete the branch.
 2. From a collaborator account, `git push origin <any-commit>:refs/tags/v9.9.9`: GitHub must refuse it.
-3. On the next release, the `goreleaser-release` run waits for a reviewer before its job starts.
+3. On the next release, the `goreleaser-release` run starts its signing job on its own, with the secrets of `release`.
 
 The release job also refuses a tagged commit that is not on `main` (`git merge-base --is-ancestor`). That check is defence in depth only: a tag-triggered run reads its workflow file from the tagged commit, so whoever can tag an arbitrary commit can remove the check too.
 
@@ -172,6 +247,6 @@ The first major planned this way is 2.0.0; candidates are the issues labelled as
 3. Open a PR `major/2.0.0` → `main` and merge it with a **merge commit**. semantic-release then analyses every commit since the last `v1.x` tag, finds the `BREAKING CHANGE:` footers, publishes a single `v2.0.0` and lists each breaking change in the release notes and in `CHANGELOG.md`.
 4. Restore the `main` ruleset (squash only, linear history, merge queue) and delete `major/2.0.0`.
 
-If a `1.x` maintenance line is needed after 2.0.0, create `1.x` from the last `v1.*` tag, add it to the workflow trigger and to `.releaserc` (`"branches": ["1.x", "main"]`); semantic-release then restricts it to `1.*` versions and refuses anything that would collide with `main`. Two of the release-credential guards admit `main` only and must be widened at the same time, or `1.x` gets no release and no signed artifacts: add a `1.x` branch rule to the deployment branches of the `semantic-release` environment (`Settings > Environments`), and extend the "Check the tagged commit is on main" step of `goreleaser-release.yml` to accept a commit on `1.x` as well.
+If a `1.x` maintenance line is needed after 2.0.0, create `1.x` from the last `v1.*` tag, add it to the workflow trigger and to `.releaserc` (`"branches": ["1.x", "main"]`); semantic-release then restricts it to `1.*` versions and refuses anything that would collide with `main`. Three guards admit `main` only and must be widened at the same time, or `1.x` gets no release and no signed artifacts: add a `1.x` branch rule to the deployment branches of the `semantic-release` environment and of the `acctest` environment, whose acceptance tests every release waits for (`Settings > Environments`), and extend the "Check the tagged commit is on main" step of `goreleaser-release.yml` to accept a commit on `1.x` as well.
 
 Pre-releases (`2.0.0-beta.N`, the approach the AWS provider used on `release/6.0.0-beta`) are deliberately not part of this process: they would require `@semantic-release/git` to commit `CHANGELOG.md` on the staging branch, which conflicts on every sync with `main`. Revisit only if users ask to test a beta from the Registry.

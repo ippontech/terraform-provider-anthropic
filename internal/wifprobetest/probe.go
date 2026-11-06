@@ -4,7 +4,7 @@
 // Package wifprobetest holds the harness behind the TestAccWIFStalenessProbe
 // tests in internal/services/federation and internal/services/serviceaccounts:
 // they measure read-after-write staleness on the Workload Identity Federation
-// endpoints (see the "Read-after-write consistency" section of CLAUDE.md). The
+// endpoints (see internal/services/federation/CLAUDE.md). The
 // harness is an instrument, not an assertion library: Read never fails a test
 // on a stale read, it only records when the endpoint converged.
 //
@@ -133,7 +133,8 @@ func Read(t *testing.T, res *Result, writtenAt time.Time, read func() (updatedAt
 }
 
 // LogTable prints every trial as one row of a fixed-width table via t.Log, so
-// the numbers can be copied into CLAUDE.md as they are.
+// the numbers can be copied into internal/services/federation/CLAUDE.md as
+// they are.
 func LogTable(t *testing.T, results []Result) {
 	t.Helper()
 	var b strings.Builder
