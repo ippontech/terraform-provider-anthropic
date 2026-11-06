@@ -28,7 +28,8 @@ func requireAPIClient(client *anthropic.Client, diags *diag.Diagnostics, kind st
 	diags.AddError(
 		"Missing API Key",
 		"This "+kind+" requires an API key. "+
-			"Configure it via the api_key provider argument or the ANTHROPIC_API_KEY environment variable.",
+			"Configure it via the api_key provider argument or the ANTHROPIC_API_KEY environment variable, "+
+			"or let the provider mint it through Workload Identity Federation with an api_federation block.",
 	)
 	return false
 }
