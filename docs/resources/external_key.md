@@ -12,7 +12,7 @@ Registers a customer-managed encryption key (CMEK) with the organization via the
 Before you create it, CMEK must be turned on for the organization and the key must exist in your KMS with access granted to Anthropic: follow the setup guide for [AWS KMS](https://platform.claude.com/docs/en/manage-claude/cmek-aws-kms), [Google Cloud KMS](https://platform.claude.com/docs/en/manage-claude/cmek-google-cloud-kms) or [Azure Key Vault](https://platform.claude.com/docs/en/manage-claude/cmek-azure-key-vault). The [Admin API calls](https://platform.claude.com/docs/en/manage-claude/cmek-admin-api) are documented for Claude Platform; on Claude Enterprise or Claude Platform on AWS, follow your [setup page](https://platform.claude.com/docs/en/manage-claude/cmek#set-it-up).
 
 > **API**: `POST /v1/organizations/external_keys`, `GET/POST/DELETE /v1/organizations/external_keys/{id}` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); or the provider's `aws` block on Claude Platform on AWS, or its `google_cloud` block on Claude Models on Google Cloud (with `roles/claude.admin`; `workspace_id` may be left unset).
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -27,7 +27,7 @@ Deleting the key record never touches the key in your KMS. Deleting or disabling
 
 This resource does not check that Anthropic can reach the key. Use **Verify** in the Claude Console, or `POST /v1/organizations/external_keys/{id}/validate`, before attaching it.
 
-On Claude Platform on AWS, the API identifies a key by its AWS KMS key ARN instead of an `ekey_...` ID, so `id` holds the ARN. The deprecated `role_arn` field is ignored by the API and not exposed.
+On Claude Platform on AWS, the API identifies a key by its AWS KMS key ARN instead of an `ekey_...` ID, so `id` holds the ARN; registering a key needs the `aws-external-anthropic:RegisterKey` IAM action and deleting it `aws-external-anthropic:DisableKey`. On Claude Models on Google Cloud, a key is registered through a provider configuration that may leave `workspace_id` unset, and attached to a workspace in the Claude Console, since the gateway serves no workspace route. The deprecated `role_arn` field is ignored by the API and not exposed.
 
 ## Example Usage
 

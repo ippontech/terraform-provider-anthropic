@@ -10,7 +10,7 @@ description: |-
 Fetches a customer-managed encryption key (CMEK) registered with the organization, by ID, via the Admin API. The ID is `ekey_...`, or the AWS KMS key ARN for organizations on Claude Platform on AWS.
 
 > **API**: `GET /v1/organizations/external_keys/{id}` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); or the provider's `aws` block on Claude Platform on AWS, or its `google_cloud` block on Claude Models on Google Cloud (with `roles/claude.admin`; `workspace_id` may be left unset).
 > **Beta header**: None.
 > **Cost**: Free.
 

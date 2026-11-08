@@ -10,7 +10,7 @@ description: |-
 Lists the customer-managed encryption keys (CMEK) registered with the organization via the Admin API, newest first. All pages are fetched automatically.
 
 > **API**: `GET /v1/organizations/external_keys` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); or the provider's `aws` block on Claude Platform on AWS, or its `google_cloud` block on Claude Models on Google Cloud (with `roles/claude.admin`; `workspace_id` may be left unset).
 > **Beta header**: None.
 > **Cost**: Free.
 
