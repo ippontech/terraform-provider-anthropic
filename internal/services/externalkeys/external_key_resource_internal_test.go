@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
@@ -923,5 +924,45 @@ func TestExternalKeyResource_Update_nothingToSendReads(t *testing.T) {
 	}
 	if data.Attachment.ValueString() != "attached" {
 		t.Errorf("attachment = %v, want the value read back", data.Attachment)
+	}
+}
+
+// On Claude Platform on AWS an external key is an AWS KMS key: another
+// provider_config type is refused at plan time, on create and on update.
+// Elsewhere every type passes this check.
+func TestExternalKeyResource_ModifyPlan_awsKeysOnlyOnAWS(t *testing.T) {
+	s := schematest.ResourceSchema(t, &ExternalKeyResource{})
+	gcpPC := map[string]any{"type": "gcp", "key_name": "projects/p/locations/l/keyRings/r/cryptoKeys/k"}
+	unknownTypePC := map[string]any{"type": tftypes.UnknownValue, "key_name": "k"}
+	for _, tc := range []struct {
+		name      string
+		platform  platform.Platform
+		pc        map[string]any
+		create    bool
+		wantError bool
+	}{
+		{"AWS, gcp key on create", platform.AWS, gcpPC, true, true},
+		{"AWS, gcp key on update", platform.AWS, gcpPC, false, true},
+		{"AWS, aws key", platform.AWS, awsStatePC(), true, false},
+		{"AWS, type unknown at plan", platform.AWS, unknownTypePC, true, false},
+		{"first party, gcp key", platform.FirstParty, gcpPC, true, false},
+		{"Google Cloud, gcp key", platform.GoogleCloud, gcpPC, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &ExternalKeyResource{platform: tc.platform}
+			plan := tfsdk.Plan{Schema: s, Raw: keyValue(t, awsStateTop("unattached"), tc.pc)}
+			state := tfsdk.State{Schema: s, Raw: keyValue(t, awsStateTop("unattached"), awsStatePC())}
+			if tc.create {
+				state = tfsdk.State{Schema: s, Raw: tftypes.NewValue(plan.Raw.Type(), nil)}
+			}
+			resp := resource.ModifyPlanResponse{Plan: plan}
+			r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{State: state, Plan: plan}, &resp)
+			if got := resp.Diagnostics.HasError(); got != tc.wantError {
+				t.Fatalf("error = %v (%v), want %v", got, resp.Diagnostics, tc.wantError)
+			}
+			if tc.wantError && !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), `must be "aws"`) {
+				t.Errorf("detail = %q", resp.Diagnostics.Errors()[0].Detail())
+			}
+		})
 	}
 }

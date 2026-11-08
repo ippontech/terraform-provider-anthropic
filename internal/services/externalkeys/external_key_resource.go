@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 )
 
@@ -37,6 +38,9 @@ func NewExternalKeyResource() resource.Resource {
 // ExternalKeyResource defines the resource implementation.
 type ExternalKeyResource struct {
 	client *admin.Client
+	// platform is the one Configure resolved: on Claude Platform on AWS an
+	// external key is an AWS KMS key (ModifyPlan).
+	platform platform.Platform
 }
 
 // --- Schema ---
@@ -163,6 +167,7 @@ func (r *ExternalKeyResource) Configure(_ context.Context, req resource.Configur
 	}
 
 	r.client = pd.AdminClient
+	r.platform = pd.Platform
 }
 
 // --- ModifyPlan ---
@@ -182,7 +187,8 @@ func (r *ExternalKeyResource) Configure(_ context.Context, req resource.Configur
 // A destroy plan for an attached key gets a warning, because the DELETE will
 // be refused.
 func (r *ExternalKeyResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.State.Raw.IsNull() {
+	r.requireAWSKeyOnAWS(ctx, req.Plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() || req.State.Raw.IsNull() {
 		return
 	}
 
@@ -224,6 +230,24 @@ func (r *ExternalKeyResource) ModifyPlan(ctx context.Context, req resource.Modif
 			"Revert the change, or register the new key as a separate anthropic_external_key and use it from a new workspace "+
 			"(a workspace cannot switch keys).",
 		state.ID.ValueString(), strings.Join(changed, ", ")))
+}
+
+// requireAWSKeyOnAWS refuses, on Claude Platform on AWS, a provider_config
+// other than an AWS KMS key: there an external key is the ARN of an AWS KMS
+// key in the workspace's account and region (CMEK on Claude Platform on AWS),
+// and the gateway would only reject another type at apply. It runs in
+// ModifyPlan because ValidateConfig runs before Configure sets the platform.
+func (r *ExternalKeyResource) requireAWSKeyOnAWS(ctx context.Context, plan tfsdk.Plan, diags *diag.Diagnostics) {
+	if r.platform != platform.AWS || plan.Raw.IsNull() {
+		return
+	}
+	var keyType types.String
+	diags.Append(plan.GetAttribute(ctx, path.Root("provider_config").AtName("type"), &keyType)...)
+	if diags.HasError() || keyType.IsNull() || keyType.IsUnknown() || keyType.ValueString() == "aws" {
+		return
+	}
+	diags.AddAttributeError(path.Root("provider_config").AtName("type"), "Unsupported Key Provider on Claude Platform on AWS",
+		fmt.Sprintf("On Claude Platform on AWS an external key is an AWS KMS key, so provider_config.type must be \"aws\", not %q.", keyType.ValueString()))
 }
 
 const stopManagingHint = "To stop managing the key with Terraform without deleting it, remove it from the state instead: " +
