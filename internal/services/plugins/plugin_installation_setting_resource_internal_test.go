@@ -275,6 +275,9 @@ func TestPluginInstallationSettingResource_Delete(t *testing.T) {
 	}
 }
 
+// TestPluginInstallationSettingResource_WriteIsResentWhenTheAPIAsks: the write
+// is idempotent (admin.WithIdempotent), so the 503 the API answers under
+// concurrent writes is retried, as a GET would be.
 func TestPluginInstallationSettingResource_WriteIsResentWhenTheAPIAsks(t *testing.T) {
 	t.Parallel()
 	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
@@ -288,6 +291,24 @@ func TestPluginInstallationSettingResource_WriteIsResentWhenTheAPIAsks(t *testin
 	}
 	if n := len(requests()); n != 2 {
 		t.Errorf("requests = %d, want the 503 with x-should-retry: true resent once", n)
+	}
+}
+
+// TestPluginInstallationSettingResource_WriteIsRetriedOnAServerError: being
+// idempotent, the write is also retried on a 5xx without x-should-retry.
+func TestPluginInstallationSettingResource_WriteIsRetriedOnAServerError(t *testing.T) {
+	t.Parallel()
+	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
+		"POST /v1/organizations/plugins/plugin_01/installation_settings/organization": {
+			apiError(http.StatusBadGateway, "api_error", "bad gateway", "", nil),
+			ok(installationSettingJSON("organization", "required")),
+		},
+	})
+	if _, err := setPluginInstallationSetting(context.Background(), client, "plugin_01", "organization", "required"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if n := len(requests()); n != 2 {
+		t.Errorf("requests = %d, want the 502 retried once", n)
 	}
 }
 

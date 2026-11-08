@@ -5,7 +5,6 @@ package plugins
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -118,7 +117,11 @@ func TestPluginVersionResource_CreateRefusesContentChangedSincePlan(t *testing.T
 	}
 }
 
-func TestPluginVersionResource_CreateResendsAPendingRegistrationWhenAsked(t *testing.T) {
+// TestPluginVersionResource_CreateDoesNotResendAPendingRegistration: the API
+// stored the upload and asks for it again with x-should-retry: true, but a
+// resend would store one more version, so the apply fails naming the stored
+// one and the next apply uploads again.
+func TestPluginVersionResource_CreateDoesNotResendAPendingRegistration(t *testing.T) {
 	t.Parallel()
 	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
 		"POST /v1/organizations/plugins/plugin_01/versions": {
@@ -126,41 +129,6 @@ func TestPluginVersionResource_CreateResendsAPendingRegistrationWhenAsked(t *tes
 				`{"error_code":"registration_pending","plugin_version_id":"pluginver_02"}`,
 				map[string]string{"x-should-retry": "true"}),
 			ok(pluginVersionJSON),
-		},
-	})
-	r := &PluginVersionResource{client: client}
-	archive := filepath.Join(t.TempDir(), "sales-toolkit.zip")
-	writeFile(t, archive, "PK")
-
-	plan := newPluginVersionModel()
-	plan.PluginID = types.StringValue("plugin_01")
-	plan.SourceArchive = types.StringValue(archive)
-	resp, got := createPluginVersion(t, r, plan)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("Create: %v", resp.Diagnostics)
-	}
-	reqs := requests()
-	if len(reqs) != 2 || string(reqs[0].Body) != string(reqs[1].Body) {
-		t.Errorf("requests = %d, want the same upload resent once, as x-should-retry: true asks", len(reqs))
-	}
-	if got.ID.ValueString() != "pluginver_03" {
-		t.Errorf("id = %s, want the version of the completed upload", got.ID)
-	}
-	if got.SourceHash.ValueString() != sourceHashOf(t, "", archive) {
-		t.Error("source_hash must be the archive's hash")
-	}
-}
-
-func TestPluginVersionResource_CreateNamesTheVersionStillPendingAfterRetries(t *testing.T) {
-	t.Parallel()
-	pending := func(versionID string) fakeResponse {
-		return apiError(http.StatusServiceUnavailable, "api_error", "registration pending",
-			`{"error_code":"registration_pending","plugin_version_id":"`+versionID+`"}`,
-			map[string]string{"x-should-retry": "true"})
-	}
-	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
-		"POST /v1/organizations/plugins/plugin_01/versions": {
-			pending("pluginver_02"), pending("pluginver_03"), pending("pluginver_04"), pending("pluginver_05"),
 		},
 	})
 	r := &PluginVersionResource{client: client}
@@ -172,13 +140,14 @@ func TestPluginVersionResource_CreateNamesTheVersionStillPendingAfterRetries(t *
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected an error")
 	}
-	n := len(requests())
-	last := fmt.Sprintf("pluginver_%02d", n+1)
-	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, last) || !strings.Contains(detail, "plugin_01") {
-		t.Errorf("detail = %q, want the version %s the last attempt stored", detail, last)
+	if n := len(requests()); n != 1 {
+		t.Errorf("requests = %d, want the upload sent once: a resend stores another version", n)
 	}
-	if n < 2 {
-		t.Errorf("requests = %d, want the upload resent as x-should-retry asks", n)
+	detail := resp.Diagnostics.Errors()[0].Detail()
+	for _, want := range []string{"pluginver_02", "plugin_01", "Applying again uploads the files again"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail = %q, want it to mention %q", detail, want)
+		}
 	}
 }
 

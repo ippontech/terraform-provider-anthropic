@@ -939,17 +939,34 @@ func TestShouldRetry_dependsOnIdempotency(t *testing.T) {
 	}
 }
 
-func TestShouldRetry_xShouldRetryOverridesIdempotency(t *testing.T) {
-	forced := &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{}}
-	forced.Header.Set("x-should-retry", "true")
-	if !shouldRetry(isIdempotent(http.MethodPost), forced) {
-		t.Error("expected the server's explicit opt-in to replay a POST")
+// TestShouldRetry_xShouldRetry: false always prevents a retry; true makes an
+// idempotent request retryable on any status, but never a POST, since the
+// write it carried may have landed.
+func TestShouldRetry_xShouldRetry(t *testing.T) {
+	marked := func(status int, value string) *http.Response {
+		resp := &http.Response{StatusCode: status, Header: http.Header{}}
+		resp.Header.Set("x-should-retry", value)
+		return resp
 	}
-
-	refused := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
-	refused.Header.Set("x-should-retry", "false")
-	if shouldRetry(isIdempotent(http.MethodPost), refused) {
-		t.Error("expected the server's explicit opt-out to win")
+	tests := []struct {
+		name   string
+		method string
+		resp   *http.Response
+		want   bool
+	}{
+		{"true on a GET with a non-retryable status", http.MethodGet, marked(http.StatusBadRequest, "true"), true},
+		{"true on a POST 5xx", http.MethodPost, marked(http.StatusBadGateway, "true"), false},
+		{"true on a POST 503 registration_pending", http.MethodPost, marked(http.StatusServiceUnavailable, "true"), false},
+		{"true on a POST 429", http.MethodPost, marked(http.StatusTooManyRequests, "true"), true},
+		{"false on a POST 429", http.MethodPost, marked(http.StatusTooManyRequests, "false"), false},
+		{"false on a GET 5xx", http.MethodGet, marked(http.StatusInternalServerError, "false"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldRetry(isIdempotent(tt.method), tt.resp); got != tt.want {
+				t.Errorf("shouldRetry = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

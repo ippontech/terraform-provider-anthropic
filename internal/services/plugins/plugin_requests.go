@@ -16,10 +16,10 @@ import (
 
 // The Plugins API's uploads are not idempotent: a repeated create or version
 // upload stores a second plugin or version. They go through admin.DoRequest,
-// which replays a POST only on a 429 (or when the server says so with
-// `x-should-retry: true`, which the API sends on a version upload whose
-// registration is pending and must be resent), never on a 5xx or a dropped
-// connection.
+// which replays a POST only on a 429, never on a 5xx or a dropped connection,
+// and not on the `x-should-retry: true` the API sends with a version upload
+// whose registration is pending: that upload was stored, so resending it
+// stores another version, and the next apply does it instead.
 
 // getPlugin reads one plugin.
 func getPlugin(ctx context.Context, client *admin.Client, pluginID string) (*pluginAPIObject, error) {
@@ -125,19 +125,20 @@ func uploadPluginVersion(ctx context.Context, client *admin.Client, src pluginSo
 
 // postPluginVersion sends an already-built version upload.
 //
-// A 503 `registration_pending` comes with `x-should-retry: true`, so the
-// admin client resends the upload; each attempt stores a version. When the
-// last attempt is still pending, the error names the version the API stored,
-// which stays in the plugin's history: the API cannot delete one version.
+// A 503 `registration_pending` comes with `x-should-retry: true`, but the
+// admin client does not resend a POST on it: the API stored the upload, and
+// each resend stores one more version. The error names the version the API
+// stored, which stays in the plugin's history (the API cannot delete one
+// version), and the next apply uploads the files again, as the API asks.
 func postPluginVersion(ctx context.Context, client *admin.Client, pluginID string, body admin.RawBody) (*pluginVersionAPIObject, error) {
 	respBody, err := pluginsRequest(ctx, client, http.MethodPost, pluginPath(pluginID, "versions"), nil, body)
 	if err != nil {
 		status, details := pluginErrorOf(err)
 		if status == http.StatusServiceUnavailable && details.ErrorCode == "registration_pending" && details.PluginVersionID != "" {
 			return nil, fmt.Errorf("%w\n\nThe API stored this upload as version %s of plugin %s, but its registration "+
-				"was still pending after the retries. That version stays in the plugin's version history, and "+
-				"`served_version_id` on `anthropic_plugin` can serve it once its registration completes. Applying "+
-				"again uploads another version", err, details.PluginVersionID, pluginID)
+				"is still pending. That version stays in the plugin's version history, and `served_version_id` on "+
+				"`anthropic_plugin` can serve it once its registration completes. Applying again uploads the files "+
+				"again, as the API asks, which stores another version", err, details.PluginVersionID, pluginID)
 		}
 		return nil, err
 	}
@@ -161,8 +162,8 @@ func getPluginVersion(ctx context.Context, client *admin.Client, pluginID, versi
 // a 503 instead of applying them, so it asks clients to send them one at a
 // time; Terraform applies independent resources in parallel, so an
 // organization-wide setting and a group setting of the same plugin would
-// otherwise race. (The 503 carries `x-should-retry: true`, which
-// admin.DoRequest honours, for writes from outside this provider.)
+// otherwise race. (A 503 caused by writes from outside this provider is
+// retried: setPluginInstallationSetting passes admin.WithIdempotent.)
 var pluginSettingLocks sync.Map
 
 func lockPluginSettings(pluginID string) (unlock func()) {
@@ -173,11 +174,13 @@ func lockPluginSettings(pluginID string) (unlock func()) {
 
 // setPluginInstallationSetting creates or changes the setting a plugin holds
 // for target (`organization` or an `rbac_group_` ID). Writing the value the
-// target already holds changes nothing, so the call is safe to repeat.
+// target already holds changes nothing, so the call is safe to repeat, and it
+// passes admin.WithIdempotent: the admin client then retries it on a 5xx or a
+// dropped connection, like a GET.
 func setPluginInstallationSetting(ctx context.Context, client *admin.Client, pluginID, target, preference string) (*pluginInstallationSettingAPIObject, error) {
 	defer lockPluginSettings(pluginID)()
 	respBody, err := pluginsRequest(ctx, client, http.MethodPost, pluginPath(pluginID, "installation_settings", target), nil,
-		map[string]string{"installation_preference": preference})
+		map[string]string{"installation_preference": preference}, admin.WithIdempotent())
 	if err != nil {
 		return nil, err
 	}

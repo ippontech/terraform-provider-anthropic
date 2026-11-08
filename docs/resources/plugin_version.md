@@ -22,7 +22,7 @@ Uploads a version of an organization-owned plugin through the Claude Enterprise 
 - **Served or stored.** While the plugin is not pinned, the new version is served to members as soon as it is stored. Once the plugin is pinned (`served_version_id` on `anthropic_plugin`), it is stored but not served until chosen.
 - **Content scanning.** With content scanning on, the version's `content_scan` reads `processing` after the upload, and the verdict shows on a later refresh. A served version is withheld from members until its scan is `completed` with `pass` or `warn`: pin the plugin first if members should keep the current version meanwhile.
 - **Destroy only removes the version from state**, with a warning: the API cannot delete a single version, so it stays in the plugin's history until the plugin is deleted. Replacing this resource therefore adds a version each time.
-- The upload is not idempotent: the provider never resends it after a server error, only when the API asks for it (`registration_pending` with `x-should-retry: true`), which stores one more identical version.
+- The upload is not idempotent: the provider never resends it after a server error, nor when the API answers `registration_pending`. That upload was stored: the apply fails with an error naming the version, and applying again uploads the files again, as the API asks, which stores one more identical version.
 
 ## Example Usage
 
