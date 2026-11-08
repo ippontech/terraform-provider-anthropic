@@ -216,3 +216,30 @@ func TestNotFoundGuardKeepsTheResourceInState(t *testing.T) {
 		})
 	}
 }
+
+// TestNotFoundGuardMasksThePassword: a base URL with user information puts it
+// in every request URL. The error, which resources paste into diagnostics,
+// names the request without the password.
+func TestNotFoundGuardMasksThePassword(t *testing.T) {
+	srv, _ := fixedServer(t, http.StatusNotFound, "text/html", "<html>404</html>")
+	withPassword := strings.Replace(srv.URL, "http://", "http://user:s3cr3t-value@", 1)
+	c := anthropic.NewClient(
+		option.WithoutEnvironmentDefaults(),
+		option.WithBaseURL(withPassword),
+		option.WithAPIKey("test"),
+		option.WithMiddleware(platform.NotFoundGuard(platform.AWS)),
+	)
+
+	_, err := c.Files.GetMetadata(context.Background(), "file_1", anthropic.FileGetMetadataParams{})
+
+	var unserved *platform.UnservedRouteError
+	if !errors.As(err, &unserved) {
+		t.Fatalf("err = %v (%T), want *platform.UnservedRouteError", err, err)
+	}
+	if strings.Contains(err.Error(), "s3cr3t-value") || strings.Contains(unserved.URL, "s3cr3t-value") {
+		t.Errorf("the error carries the password: %q", err.Error())
+	}
+	if !strings.Contains(unserved.URL, "user:xxxxx@") || !strings.HasSuffix(unserved.URL, "/v1/files/file_1") {
+		t.Errorf("URL = %q, want the request URL with the password masked", unserved.URL)
+	}
+}
