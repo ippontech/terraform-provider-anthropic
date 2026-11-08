@@ -19,6 +19,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdkpage"
 )
 
 var _ datasource.DataSource = &APIKeysDataSource{}
@@ -175,30 +176,10 @@ func (d *APIKeysDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
-	var allKeys []apiKeyAPIResponse
-	afterID := ""
-
-	for {
-		apiPath := "/v1/organizations/api_keys?" + buildAPIKeysQuery(&data, afterID).Encode()
-
-		respBytes, err := d.adminClient.DoRequest(ctx, "GET", apiPath, nil)
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list API keys: %s", err))
-			return
-		}
-
-		var page apiKeyListAPIResponse
-		if err := json.Unmarshal(respBytes, &page); err != nil {
-			resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse API keys list response: %s", err))
-			return
-		}
-
-		allKeys = append(allKeys, page.Data...)
-
-		if !page.HasMore {
-			break
-		}
-		afterID = page.LastID
+	allKeys, err := listAPIKeys(ctx, d.adminClient, &data)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list API keys: %s", err))
+		return
 	}
 
 	keyObjs := make([]attr.Value, 0, len(allKeys))
@@ -224,6 +205,39 @@ func (d *APIKeysDataSource) Read(ctx context.Context, req datasource.ReadRequest
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+// listAPIKeys pages through GET /v1/organizations/api_keys with the
+// configured filters until has_more is false. A last_id already sent (an
+// empty one included, which would restart the list), or more than
+// sdkpage.MaxPages pages, is an error, so a misbehaving API can neither hang
+// a plan nor cut the list short.
+func listAPIKeys(ctx context.Context, client *admin.Client, data *APIKeysDataSourceModel) ([]apiKeyAPIResponse, error) {
+	var keys []apiKeyAPIResponse
+	afterID := ""
+	sent := map[string]bool{}
+	for pages := 1; ; pages++ {
+		if pages > sdkpage.MaxPages {
+			return nil, fmt.Errorf("more than %d pages, stopping", sdkpage.MaxPages)
+		}
+		respBytes, err := client.DoRequest(ctx, "GET", "/v1/organizations/api_keys?"+buildAPIKeysQuery(data, afterID).Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		var page apiKeyListAPIResponse
+		if err := json.Unmarshal(respBytes, &page); err != nil {
+			return nil, fmt.Errorf("parse API keys list response: %w", err)
+		}
+		keys = append(keys, page.Data...)
+		if !page.HasMore {
+			return keys, nil
+		}
+		sent[afterID] = true
+		if sent[page.LastID] {
+			return nil, fmt.Errorf("has_more with last_id %q, a cursor already sent: stopping instead of looping", page.LastID)
+		}
+		afterID = page.LastID
+	}
+}
 
 // buildAPIKeysQuery builds the query parameters for one page of the list
 // request: the fixed page limit, the pagination cursor (omitted when empty)

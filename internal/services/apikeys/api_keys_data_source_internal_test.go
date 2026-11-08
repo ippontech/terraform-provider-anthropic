@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -98,6 +99,42 @@ func TestAPIKeysDataSourceRead_paginates(t *testing.T) {
 	}
 	if got := queries[1].Get("after_id"); got != "apikey_01A" {
 		t.Errorf("second request after_id = %q, want apikey_01A", got)
+	}
+}
+
+// A has_more page whose last_id was already sent, or is empty (which would
+// restart the list), ends the read with an error instead of looping.
+func TestAPIKeysDataSourceRead_stopsOnRepeatedCursor(t *testing.T) {
+	for name, lastIDs := range map[string][]string{
+		"last_id repeats":     {"apikey_01A", "apikey_01A"},
+		"last_id goes back":   {"apikey_01A", "apikey_01B", "apikey_01A"},
+		"last_id empty first": {""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if requests >= len(lastIDs) {
+					http.Error(w, "too many requests", http.StatusBadRequest)
+					return
+				}
+				lastID := lastIDs[requests]
+				requests++
+				w.Header().Set("content-type", "application/json")
+				_, _ = io.WriteString(w, makeAPIKeyListPage(nil, true, lastID))
+			}))
+			defer srv.Close()
+
+			resp, _ := runAPIKeysRead(t, srv, nil)
+			if !resp.Diagnostics.HasError() {
+				t.Fatal("Read succeeded, want a repeated-cursor error")
+			}
+			if requests != len(lastIDs) {
+				t.Errorf("requests = %d, want %d", requests, len(lastIDs))
+			}
+			if got := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(got, "a cursor already sent") {
+				t.Errorf("error = %q, want a repeated-cursor error", got)
+			}
+		})
 	}
 }
 
