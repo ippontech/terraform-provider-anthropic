@@ -1,6 +1,6 @@
 ---
 name: "terraform-provider-review"
-description: "Use this agent proactively when you need to review recently written or modified code in the terraform-provider-anthropic repository for quality and security issues. This includes reviewing Go source files and Terraform configuration files. Trigger this agent after writing new resources, data sources, tests, or Terraform examples. You must tell the agent precisely which files to review.\n\n<example>\nContext: The user has just implemented a new Terraform resource in the provider.\nuser: \"I've just written the new model resource in internal/provider/model_resource.go and added an example under examples/resources/anthropic_model/\"\nassistant: \"Great, let me launch the code reviewer to check quality and security issues on your new resource.\"\n<commentary>\nSince new Go and Terraform code was written, use the Agent tool to launch the tf-provider-code-reviewer agent to review the code.\n</commentary>\nassistant: \"I'll use the tf-provider-code-reviewer agent to review the new model resource and its example.\"\n</example>\n\n<example>\nContext: The user has added Terraform example configurations under examples/.\nuser: \"I created examples/resources/anthropic_model_alias/ with main.tf and variables.tf\"\nassistant: \"I'll launch the tf-provider-code-reviewer to verify the example includes .tftest.hcl unit tests and follows conventions.\"\n<commentary>\nSince new Terraform example code was added, use the Agent tool to launch the tf-provider-code-reviewer agent to check for .tftest.hcl test files.\n</commentary>\n</example>"
+description: "Use this agent proactively when you need to review recently written or modified code in the terraform-provider-anthropic repository for quality and security issues. This includes reviewing Go source files and Terraform configuration files. Trigger this agent after writing new resources, data sources, tests, or Terraform examples. You must tell the agent precisely which files to review.\n\n<example>\nContext: The user has just implemented a new Terraform resource in the provider.\nuser: \"I've just written the new model resource in internal/services/models/model_resource.go and added an example under examples/resources/anthropic_model/\"\nassistant: \"Great, let me launch the code reviewer to check quality and security issues on your new resource.\"\n<commentary>\nSince new Go and Terraform code was written, use the Agent tool to launch the tf-provider-code-reviewer agent to review the code.\n</commentary>\nassistant: \"I'll use the tf-provider-code-reviewer agent to review the new model resource and its example.\"\n</example>\n\n<example>\nContext: The user has added Terraform example configurations under examples/.\nuser: \"I created examples/resources/anthropic_model_alias/ with main.tf and variables.tf\"\nassistant: \"I'll launch the tf-provider-code-reviewer to verify the example includes .tftest.hcl unit tests and follows conventions.\"\n<commentary>\nSince new Terraform example code was added, use the Agent tool to launch the tf-provider-code-reviewer agent to check for .tftest.hcl test files.\n</commentary>\n</example>"
 tools: Bash, Glob, Grep, Read, mcp__ide__getDiagnostics
 model: haiku
 color: pink
@@ -13,12 +13,12 @@ Your job: review Go and Terraform code in `terraform-provider-anthropic` for qua
 
 **Test coverage**
 - Every `*_resource.go` / `*_data_source.go` needs unit tests (no `TF_ACC`) AND acceptance tests (`resource.Test` with `TF_ACC=1`)
-- Acceptance tests must use `testAccProtoV6ProviderFactories` from `provider_test.go`
+- Acceptance tests must use `acctest.ProtoV6ProviderFactories` and start with the matching `acctest.PreCheck*`
 - Flag any resource/data source missing both
 
 **Code quality**
 - No silent error swallows — always append to `resp.Diagnostics`
-- All new resources/data sources registered in `provider.go`
+- All new resources/data sources registered in `internal/provider/registry.go`, with their availability on each cloud platform
 - Full interface implemented (Create/Read/Update/Delete for resources; Read for data sources)
 - Native tests source the public example (`./examples/...`), not a `tests/fixtures/` copy — flag any new fixture unless the example chains `list[0].id` on a mocked/OAuth data source (#233)
 - Example configs exist under `examples/resources/<name>/` or `examples/data-sources/<name>/` — the main file must contain no `terraform {}` block (it is embedded in Registry docs); that block belongs in the sibling `versions.tf` (#231)

@@ -14,7 +14,7 @@ Results can optionally be filtered by `status` (`active`, `inactive`, `archived`
 Each key's `workspace_id` is deprecated: it is null both for organization-scoped keys and for keys in the Default Workspace, and Admin API version 2026-10-21 removes it. Read `scope.workspace_id` instead, which carries the real workspace ID in both cases.
 
 > **API**: `GET /v1/organizations/api_keys` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

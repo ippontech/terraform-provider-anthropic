@@ -15,11 +15,12 @@ import (
 
 // TestAccWIFStalenessProbe measures read-after-write staleness on the WIF
 // federation endpoints, the way the vaults API was probed on 2026-09-01 (see
-// the "Read-after-write consistency" section of CLAUDE.md). It is an
-// instrument, not a regression test: it never fails on a stale read, it only
-// records when each endpoint converged, so the numbers can be copied into
-// CLAUDE.md and the decision to add (or not add) a production wait rests on a
-// measurement rather than on an analogy with vaults.
+// internal/services/vaults/CLAUDE.md). It is an instrument, not a regression
+// test: it never fails on a stale read, it only records when each endpoint
+// converged, so the numbers can be copied into
+// internal/services/federation/CLAUDE.md and the decision to add (or not add)
+// a production wait rests on a measurement rather than on an analogy with
+// vaults.
 //
 // It is doubly gated. acctest.PreCheckOAuth skips it without an org:admin
 // bearer token (the federation endpoints reject API keys), and
