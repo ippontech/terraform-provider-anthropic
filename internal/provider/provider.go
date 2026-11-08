@@ -183,9 +183,11 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	// standard client on its own. Null reads as "".
 	workspaceID := data.WorkspaceID.ValueString()
 
-	// The org:admin block passes no workspace: its token is organization-wide
-	// and the provider-level workspace_id never reaches the OAuth client. The
-	// standard client's block takes it as its exchange-time workspace.
+	// The OAuth block passes no workspace: an org:admin token is
+	// organization-wide, a workspace:manage_tunnels one selects its workspace
+	// through the rule, and the provider-level workspace_id never reaches the
+	// OAuth client. The standard client's block takes it as its exchange-time
+	// workspace.
 	federation, diags := resolveFederation(ctx, "federation", data.Federation, "")
 	resp.Diagnostics.Append(diags...)
 	apiFederation, diags := resolveFederation(ctx, "api_federation", data.APIFederation, workspaceID)
@@ -212,7 +214,9 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	if federation != nil && apiFederation != nil && federation.options.FederationRuleID == apiFederation.options.FederationRuleID {
 		resp.Diagnostics.AddAttributeError(path.Root("api_federation").AtName("federation_rule_id"), "Conflicting Federation Rules",
 			fmt.Sprintf("federation and api_federation both exchange against rule %s, but a rule grants a single scope: "+
-				"federation needs an org:admin rule and api_federation a workspace:developer or workspace:inference rule. "+
+				"federation needs a rule with the scope of the bearer this provider block uses (org:admin for the Workload Identity "+
+				"Federation endpoints, workspace:manage_tunnels for MCP tunnels) and api_federation a workspace:developer or "+
+				"workspace:inference rule. "+
 				"Set a different federation_rule_id in one of them.", apiFederation.options.FederationRuleID))
 	}
 	// Each block exchanges on its own, so one file (or one literal, often

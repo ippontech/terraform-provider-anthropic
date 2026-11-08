@@ -184,9 +184,10 @@ func (s identitySource) sharedWith(o identitySource) bool {
 // the standard client acts in, whatever credential backs it. It sits between
 // the block's attribute and the environment variable, as configuration does
 // everywhere else, and a block attribute that names another workspace is an
-// error rather than a silent winner. The org:admin block passes "": its token
-// is organization-wide and the provider-level workspace_id never reaches the
-// OAuth client.
+// error rather than a silent winner. The OAuth block passes "": an org:admin
+// token is organization-wide, a workspace:manage_tunnels one selects its
+// workspace through the rule, and the provider-level workspace_id never
+// reaches the OAuth client.
 func resolveFederation(ctx context.Context, name string, obj types.Object, workspaceID string) (*federationSettings, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	root := path.Root(name)
