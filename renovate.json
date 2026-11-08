@@ -12,7 +12,8 @@
   "postUpdateOptions": ["gomodTidy"],
   "vulnerabilityAlerts": {
     "automerge": false,
-    "minimumReleaseAge": "3 days"
+    "minimumReleaseAge": "3 days",
+    "fetchChangeLogs": "pr"
   },
   "enabledManagers": [
     "github-actions",
@@ -76,21 +77,25 @@
       "groupSlug": "ci-tools"
     },
     {
+      "description": "No upstream release notes in an automerged PR: its description becomes the body of the squash commit on main, which semantic-release reads with no maintainer in between, and a BREAKING CHANGE line written upstream would land in the release notes and CHANGELOG.md (.releaserc keeps it from cutting a major). The reviewed rules below turn the notes back on, for the maintainer who reads them before merging.",
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true,
-      "minimumReleaseAge": "3 days"
+      "minimumReleaseAge": "3 days",
+      "fetchChangeLogs": "off"
     },
     {
       "description": "Root go.mod updates (direct and indirect modules, and the Go toolchain) are compiled into the acceptance tests, which run with the acctest keys on the push to main that the merge makes (make testacc, make terraform-test). Never automerged, whatever the update type, so a maintainer decides on each one before that run.",
       "matchManagers": ["gomod"],
       "matchFileNames": ["go.mod"],
-      "automerge": false
+      "automerge": false,
+      "fetchChangeLogs": "pr"
     },
     {
       "description": "tflint is installed from a pinned release zip whose sha256 is hardcoded next to the version (security.yml); Renovate can bump the version but not the hash, so its PR always fails the tflint job until TFLINT_SHA256 is updated by hand. Never automerge it (#241 was merged with the job red).",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["terraform-linters/tflint"],
-      "automerge": false
+      "automerge": false,
+      "fetchChangeLogs": "pr"
     },
     {
       "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. The actions of testacc.yml run next to the acctest keys, on every push to main. Their updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser (custom.regex), the semantic-release packages and their lockfile (npm) and the actions those three workflows use (github-actions); the same action in other workflows keeps its usual automerged group. A new workflow whose jobs read any secret other than GITHUB_TOKEN, or run in a protected environment, joins this list. The commit type is forced to chore: the npm manager gives the semantic-release packages the dependencies depType, which config:recommended would title fix(deps), and a fix title would publish a provider patch release for a tooling bump.",
@@ -103,6 +108,7 @@
       "groupName": "release tooling",
       "groupSlug": "release-tooling",
       "automerge": false,
+      "fetchChangeLogs": "pr",
       "semanticCommitType": "chore"
     },
     {
@@ -112,6 +118,7 @@
       "groupName": "release tooling",
       "groupSlug": "release-tooling",
       "automerge": false,
+      "fetchChangeLogs": "pr",
       "semanticCommitType": "chore"
     },
     {
@@ -127,7 +134,8 @@
       "matchUpdateTypes": ["minor"],
       "groupName": "Anthropic Go SDK",
       "groupSlug": "anthropic-sdk-go",
-      "automerge": false
+      "automerge": false,
+      "fetchChangeLogs": "pr"
     },
     {
       "description": "Never propose a major SDK update, OSV vulnerability-fix PRs included (their allowedVersions replaces any hold above): a new major is the #192 migration, not a dependency bump.",

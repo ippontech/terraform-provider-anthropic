@@ -189,6 +189,23 @@ Three consequences worth knowing:
 
 Remove the rule as part of #192, in `major/2.0.0` — never on its own.
 
+## Release notes
+
+A squash merge makes the PR description the body of the commit on `main`, and semantic-release reads
+that body. Renovate puts the upstream release notes in its PR description, so a `BREAKING CHANGE:`
+line written upstream could reach the release decision, the release notes and `CHANGELOG.md`.
+Two settings keep it out:
+
+- `.releaserc` gives the `deps` scope its own rules: a `chore(deps)` commit cuts no release and a
+  `fix(deps)` commit a patch, whatever its body says. Without them, the analyzer's default rule
+  (a breaking note cuts a major) applies to any commit type. The `---` line Renovate puts before its
+  release notes already hides them from the commit parser, but a line of two dashes in the upstream
+  text ends that and lets the next `BREAKING CHANGE:` line through.
+- The automerge rule sets `fetchChangeLogs` to `off`, so an automerged PR, which no maintainer reads,
+  carries no upstream text. The rules that hold an update for review set it back to `pr`, and so does
+  `vulnerabilityAlerts`: the maintainer reads the notes before merging, and removes from the squash
+  message anything that should not reach the release notes.
+
 ## Validating a config change
 
 Renovate ships a validator that catches unknown keys and malformed values:
