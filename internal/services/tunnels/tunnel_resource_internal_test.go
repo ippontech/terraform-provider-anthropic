@@ -13,10 +13,14 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/provider"
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
@@ -147,6 +151,27 @@ func TestTokenFollowsRotation(t *testing.T) {
 			}
 		})
 	}
+
+	// After an import, state has no token. With no configuration change the
+	// framework plans the state's null, and the modifier turns it unknown,
+	// so the plan shows an update and the apply reveals the token.
+	t.Run("state without a token plans it unknown", func(t *testing.T) {
+		imported := map[string]string{"id": "tnl_01ABC", "domain": "d", "created_at": "2026-07-01T10:00:00Z"}
+		req := planmodifier.StringRequest{
+			State:      resourceState(t, r, imported),
+			Plan:       resourcePlan(t, r, imported),
+			StateValue: types.StringNull(),
+			PlanValue:  types.StringNull(),
+		}
+		resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+		tokenFollowsRotation().PlanModifyString(context.Background(), req, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+		}
+		if !resp.PlanValue.IsUnknown() {
+			t.Errorf("plan value = %v, want unknown", resp.PlanValue)
+		}
+	})
 
 	t.Run("create leaves the value unknown", func(t *testing.T) {
 		req := planmodifier.StringRequest{
@@ -332,9 +357,11 @@ func TestTunnelResource_Read_keepsTokenWithoutRevealing(t *testing.T) {
 	}
 }
 
-// TestTunnelResource_Read_importRevealsOnce: after an import there is no
-// token in state, so Read reveals it exactly once.
-func TestTunnelResource_Read_importRevealsOnce(t *testing.T) {
+// TestTunnelResource_Read_importDoesNotReveal: after an import there is no
+// token in state, and Read still does not reveal it. Read runs on every plan,
+// a plan never saves its refreshed state, and each reveal is an audited
+// compliance event, so a pending import would add one per plan.
+func TestTunnelResource_Read_importDoesNotReveal(t *testing.T) {
 	srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
 		"GET /v1/tunnels/tnl_01ABC":               respond(http.StatusOK, tunnelLiveJSON),
 		"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusOK, tunnelTokenJSON),
@@ -345,37 +372,16 @@ func TestTunnelResource_Read_importRevealsOnce(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Read returned errors: %v", resp.Diagnostics)
 	}
-	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/reveal_token"); n != 1 {
-		t.Errorf("reveal_token called %d times on import, want 1", n)
+	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/reveal_token"); n != 0 {
+		t.Errorf("reveal_token called %d times after an import, want 0", n)
 	}
 	var data TunnelResourceModel
 	resp.State.Get(context.Background(), &data)
-	if data.Token.ValueString() != "secret-token-1" {
-		t.Errorf("token = %v, want the revealed token", data.Token)
+	if data.ID.ValueString() != "tnl_01ABC" || data.Domain.ValueString() != "abc123.tunnel.anthropic.com" {
+		t.Errorf("id/domain = %v/%v, want the tunnel read", data.ID, data.Domain)
 	}
-}
-
-// TestTunnelResource_Read_revealFailureIsAWarning: a failed import-time
-// reveal must not fail the refresh (it would block every plan, including the
-// one replacing a tunnel tainted by the same failure in Create).
-func TestTunnelResource_Read_revealFailureIsAWarning(t *testing.T) {
-	srv, _ := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
-		"GET /v1/tunnels/tnl_01ABC":               respond(http.StatusOK, tunnelLiveJSON),
-		"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusForbidden, `{"type":"error","error":{"type":"permission_error","message":"nope"}}`),
-	})
-	r := &TunnelResource{client: oauthtest.NewClient(t, srv)}
-
-	resp := readTunnel(t, r, map[string]string{"id": "tnl_01ABC"})
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("Read returned errors: %v", resp.Diagnostics)
-	}
-	if resp.Diagnostics.WarningsCount() != 1 {
-		t.Errorf("expected one warning, got %v", resp.Diagnostics)
-	}
-	var data TunnelResourceModel
-	resp.State.Get(context.Background(), &data)
-	if data.ID.ValueString() != "tnl_01ABC" || !data.Token.IsNull() {
-		t.Errorf("id/token = %v/%v, want the tunnel kept with a null token", data.ID, data.Token)
+	if !data.Token.IsNull() || !data.TokenID.IsNull() {
+		t.Errorf("token/token_id = %v/%v, want null until the apply reveals them", data.Token, data.TokenID)
 	}
 }
 
@@ -476,6 +482,56 @@ func TestTunnelResource_Update_baselineDoesNotRotate(t *testing.T) {
 	}
 }
 
+// TestTunnelResource_Update_afterImportRevealsToken: the first apply after an
+// import (state without a token) reveals the token once and stores it,
+// without rotating it.
+func TestTunnelResource_Update_afterImportRevealsToken(t *testing.T) {
+	srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+		"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusOK, tunnelTokenJSON),
+	})
+	r := &TunnelResource{client: oauthtest.NewClient(t, srv)}
+
+	imported := map[string]string{"id": "tnl_01ABC", "display_name": "corp-mcp", "domain": "abc123.tunnel.anthropic.com"}
+	resp := updateTunnel(t, r, imported, imported)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update returned errors: %v", resp.Diagnostics)
+	}
+	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/reveal_token"); n != 1 {
+		t.Errorf("reveal_token called %d times, want 1", n)
+	}
+	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/rotate_token"); n != 0 {
+		t.Errorf("rotate_token called %d times, want 0", n)
+	}
+	var data TunnelResourceModel
+	resp.State.Get(context.Background(), &data)
+	if data.Token.ValueString() != "secret-token-1" || data.TokenID.ValueString() != "ttok_01" {
+		t.Errorf("token/token_id = %v/%v, want the revealed token stored", data.Token, data.TokenID)
+	}
+}
+
+// TestTunnelResource_Update_afterImportRevealFailureKeepsPriorState: a failed
+// reveal fails the apply and leaves the prior state, still without a token,
+// so the next plan plans the reveal again.
+func TestTunnelResource_Update_afterImportRevealFailureKeepsPriorState(t *testing.T) {
+	srv, _ := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+		"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusForbidden, `{"type":"error","error":{"type":"permission_error","message":"nope"}}`),
+	})
+	r := &TunnelResource{client: oauthtest.NewClient(t, srv, option.WithMaxRetries(0))}
+
+	resp := updateTunnel(t, r,
+		map[string]string{"id": "tnl_01ABC"},
+		map[string]string{"id": "tnl_01ABC", "token_rotation": "1"},
+	)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the token cannot be revealed")
+	}
+	var data TunnelResourceModel
+	resp.State.Get(context.Background(), &data)
+	if !data.Token.IsNull() || !data.TokenRotation.IsNull() {
+		t.Errorf("token/token_rotation = %v/%v, want the prior state kept", data.Token, data.TokenRotation)
+	}
+}
+
 func TestTunnelResource_Delete_archives(t *testing.T) {
 	for name, tc := range map[string]struct {
 		status  int
@@ -502,5 +558,154 @@ func TestTunnelResource_Delete_archives(t *testing.T) {
 				t.Errorf("archive called %d times, want 1", n)
 			}
 		})
+	}
+}
+
+// tunnelTestProvider serves a single TunnelResource, so a test can drive it
+// through the framework's protocol server: PlanResourceChange then applies
+// the schema defaults, marks unconfigured Computed values unknown and runs
+// the plan modifiers as it does for Terraform. ConfigureProvider is never
+// called, so the resource keeps the client the test gave it.
+type tunnelTestProvider struct{ r *TunnelResource }
+
+func (tunnelTestProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "anthropic"
+}
+
+func (tunnelTestProvider) Schema(context.Context, provider.SchemaRequest, *provider.SchemaResponse) {}
+
+func (tunnelTestProvider) Configure(context.Context, provider.ConfigureRequest, *provider.ConfigureResponse) {
+}
+
+func (p tunnelTestProvider) Resources(context.Context) []func() resource.Resource {
+	return []func() resource.Resource{func() resource.Resource { return p.r }}
+}
+
+func (tunnelTestProvider) DataSources(context.Context) []func() datasource.DataSource { return nil }
+
+// tunnelProtocol runs ReadResource, PlanResourceChange and
+// ApplyResourceChange for anthropic_tunnel, with values in their Terraform
+// encoding.
+type tunnelProtocol struct {
+	t      *testing.T
+	r      *TunnelResource
+	server tfprotov6.ProviderServer
+}
+
+func newTunnelProtocol(t *testing.T, r *TunnelResource) tunnelProtocol {
+	t.Helper()
+	server, err := providerserver.NewProtocol6WithError(tunnelTestProvider{r: r})()
+	if err != nil {
+		t.Fatalf("provider server: %s", err)
+	}
+	return tunnelProtocol{t: t, r: r, server: server}
+}
+
+func (p tunnelProtocol) dynamic(v tftypes.Value) *tfprotov6.DynamicValue {
+	p.t.Helper()
+	dv, err := tfprotov6.NewDynamicValue(schematest.ResourceObjectType(p.t, p.r), v)
+	if err != nil {
+		p.t.Fatalf("dynamic value: %s", err)
+	}
+	return &dv
+}
+
+// decode fails the test on an error diagnostic and returns the value as a
+// model, unknown values included.
+func (p tunnelProtocol) decode(dv *tfprotov6.DynamicValue, diags []*tfprotov6.Diagnostic) (tftypes.Value, TunnelResourceModel) {
+	p.t.Helper()
+	for _, d := range diags {
+		if d.Severity == tfprotov6.DiagnosticSeverityError {
+			p.t.Fatalf("%s: %s", d.Summary, d.Detail)
+		}
+	}
+	v, err := dv.Unmarshal(schematest.ResourceObjectType(p.t, p.r))
+	if err != nil {
+		p.t.Fatalf("unmarshal: %s", err)
+	}
+	var m TunnelResourceModel
+	if diags := (tfsdk.Plan{Schema: schematest.ResourceSchema(p.t, p.r), Raw: v}).Get(context.Background(), &m); diags.HasError() {
+		p.t.Fatalf("decode: %+v", diags)
+	}
+	return v, m
+}
+
+func (p tunnelProtocol) read(state tftypes.Value) (tftypes.Value, TunnelResourceModel) {
+	p.t.Helper()
+	resp, err := p.server.ReadResource(context.Background(), &tfprotov6.ReadResourceRequest{
+		TypeName: "anthropic_tunnel", CurrentState: p.dynamic(state),
+	})
+	if err != nil {
+		p.t.Fatalf("read: %s", err)
+	}
+	return p.decode(resp.NewState, resp.Diagnostics)
+}
+
+// plan returns the planned state. proposed is what Terraform derives from
+// prior and config: the configured values, and the prior value of every
+// Computed attribute the configuration leaves null.
+func (p tunnelProtocol) plan(prior, config, proposed tftypes.Value) (tftypes.Value, TunnelResourceModel) {
+	p.t.Helper()
+	resp, err := p.server.PlanResourceChange(context.Background(), &tfprotov6.PlanResourceChangeRequest{
+		TypeName: "anthropic_tunnel", PriorState: p.dynamic(prior), Config: p.dynamic(config), ProposedNewState: p.dynamic(proposed),
+	})
+	if err != nil {
+		p.t.Fatalf("plan: %s", err)
+	}
+	return p.decode(resp.PlannedState, resp.Diagnostics)
+}
+
+func (p tunnelProtocol) apply(prior, config, planned tftypes.Value) (tftypes.Value, TunnelResourceModel) {
+	p.t.Helper()
+	resp, err := p.server.ApplyResourceChange(context.Background(), &tfprotov6.ApplyResourceChangeRequest{
+		TypeName: "anthropic_tunnel", PriorState: p.dynamic(prior), Config: p.dynamic(config), PlannedState: p.dynamic(planned),
+	})
+	if err != nil {
+		p.t.Fatalf("apply: %s", err)
+	}
+	return p.decode(resp.NewState, resp.Diagnostics)
+}
+
+// TestTunnelResource_importThenPlanAndApply drives an import through the
+// protocol: the refresh and the plan never reveal the token, the plan shows
+// it unknown (an update), and the apply reveals it once and stores it. A
+// second plan is then empty and reveals nothing.
+func TestTunnelResource_importThenPlanAndApply(t *testing.T) {
+	srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+		"GET /v1/tunnels/tnl_01ABC":               respond(http.StatusOK, tunnelLiveJSON),
+		"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusOK, tunnelTokenJSON),
+	})
+	r := &TunnelResource{client: oauthtest.NewClient(t, srv)}
+	p := newTunnelProtocol(t, r)
+	reveals := func() int { return log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/reveal_token") }
+
+	// terraform import, or an import block: ImportState sets the ID, then a
+	// refresh fills the rest.
+	refreshed, _ := p.read(resourceValue(t, r, map[string]string{"id": "tnl_01ABC"}))
+	config := resourceValue(t, r, map[string]string{"display_name": "corp-mcp"})
+
+	planned, plan := p.plan(refreshed, config, refreshed)
+	if !plan.Token.IsUnknown() || !plan.TokenID.IsUnknown() {
+		t.Errorf("planned token/token_id = %v/%v, want unknown after an import", plan.Token, plan.TokenID)
+	}
+	if n := reveals(); n != 0 {
+		t.Fatalf("reveal_token called %d times by refresh and plan, want 0", n)
+	}
+
+	applied, state := p.apply(refreshed, config, planned)
+	if n := reveals(); n != 1 {
+		t.Errorf("reveal_token called %d times by the apply, want 1", n)
+	}
+	if state.Token.ValueString() != "secret-token-1" || state.TokenID.ValueString() != "ttok_01" {
+		t.Errorf("token/token_id = %v/%v, want the revealed token", state.Token, state.TokenID)
+	}
+
+	refreshed, _ = p.read(applied)
+	planned, _ = p.plan(refreshed, config, refreshed)
+	if !planned.Equal(refreshed) {
+		t.Errorf("second plan differs from state:\n%s\nwant\n%s", planned, refreshed)
+	}
+	if n := reveals(); n != 1 {
+		t.Errorf("reveal_token called %d times in all, want 1", n)
 	}
 }

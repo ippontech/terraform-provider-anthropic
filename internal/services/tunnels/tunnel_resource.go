@@ -108,8 +108,8 @@ func (r *TunnelResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed:  true,
 				Sensitive: true,
 				MarkdownDescription: "The connector token `cloudflared` runs the tunnel with. Treat it as a credential: it is stored " +
-					"in the Terraform state. Revealed once at creation (and once on import), then kept from state; it changes only " +
-					"when `token_rotation` triggers a rotation. A rotation made outside Terraform is not detected.",
+					"in the Terraform state. Revealed once at creation, or by the first apply after an import, then kept from state; " +
+					"it changes only when `token_rotation` triggers a rotation. A rotation made outside Terraform is not detected.",
 				PlanModifiers: []planmodifier.String{tokenFollowsRotation()},
 			},
 			"token_id": schema.StringAttribute{
@@ -221,35 +221,24 @@ func (r *TunnelResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
+	// The token is never revealed here, not even after an import, when state
+	// has none: Read runs on every plan and refresh, a plan never saves its
+	// refreshed state, and the API logs every reveal as a
+	// tunnel_token_revealed compliance event, so a pending import would add
+	// one per plan. tokenFollowsRotation plans the missing token unknown
+	// instead, and Update reveals it at apply.
 	mapTunnelToState(tunnel, &data)
-
-	// The token is never re-revealed on refresh: the API logs every reveal
-	// as a tunnel_token_revealed compliance event, so revealing per plan
-	// would flood the audit log. The only reveal here is the one an import
-	// needs, when state has no token yet. Its failure is a warning, not an
-	// error: an error would fail every plan, including the one that replaces
-	// a tunnel Create left tainted after its own reveal failed.
-	if data.Token.IsNull() || data.Token.IsUnknown() {
-		token, err := r.client.Beta.Tunnels.RevealToken(ctx, tunnel.ID, anthropic.BetaTunnelRevealTokenParams{})
-		if err != nil {
-			resp.Diagnostics.AddWarning("Tunnel Token Not Revealed",
-				fmt.Sprintf("Unable to reveal the token of tunnel %s: %s. token stays null; the next refresh tries again.", tunnel.ID, err))
-			data.Token = types.StringNull()
-			data.TokenID = types.StringNull()
-		} else {
-			mapTunnelTokenToState(token, &data)
-		}
-	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 // --- Update ---
 
-// Update is only reached through token_rotation (display_name forces
-// replacement and every other attribute is Computed). It rotates the token
-// when tokenRotationRequested says so and otherwise only records the new
-// token_rotation value.
+// Update is reached through token_rotation, or through the unknown token
+// tokenFollowsRotation plans when state has none (the first apply after an
+// import); display_name forces replacement. It rotates the token when
+// tokenRotationRequested says so, reveals it when state has none, and
+// otherwise only records the new token_rotation value.
 func (r *TunnelResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan TunnelResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -263,7 +252,11 @@ func (r *TunnelResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	if tokenRotationRequested(plan.TokenRotation, state.TokenRotation) {
+	// On an error, returning without setting the state keeps the prior one
+	// (the framework starts the response from it), so the next plan asks for
+	// the same rotation or reveal again.
+	switch {
+	case tokenRotationRequested(plan.TokenRotation, state.TokenRotation):
 		token, err := r.client.Beta.Tunnels.RotateToken(ctx, state.ID.ValueString(), anthropic.BetaTunnelRotateTokenParams{
 			Reason: param.NewOpt(tunnelTokenRotationReason),
 		})
@@ -272,7 +265,15 @@ func (r *TunnelResource) Update(ctx context.Context, req resource.UpdateRequest,
 			return
 		}
 		mapTunnelTokenToState(token, &plan)
-	} else {
+	case state.Token.IsNull():
+		// The first apply after an import: the reveal Read never makes.
+		token, err := r.client.Beta.Tunnels.RevealToken(ctx, state.ID.ValueString(), anthropic.BetaTunnelRevealTokenParams{})
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to reveal the token of tunnel %s: %s", state.ID.ValueString(), err))
+			return
+		}
+		mapTunnelTokenToState(token, &plan)
+	default:
 		plan.Token = state.Token
 		plan.TokenID = state.TokenID
 	}
@@ -341,7 +342,9 @@ func tokenRotationRequested(plan, state types.String) bool {
 
 // tokenFollowsRotation is the plan modifier on token and token_id: it keeps
 // the state value (like UseStateForUnknown) unless the plan rotates the
-// token, in which case the value stays unknown until apply.
+// token, in which case the value stays unknown until apply. When state has
+// no token (after an import), it plans the value unknown, so the plan shows
+// an update and Update reveals the token: a plan never calls reveal_token.
 func tokenFollowsRotation() planmodifier.String {
 	return tokenFollowsRotationModifier{}
 }
@@ -349,7 +352,8 @@ func tokenFollowsRotation() planmodifier.String {
 type tokenFollowsRotationModifier struct{}
 
 func (m tokenFollowsRotationModifier) Description(_ context.Context) string {
-	return "Keeps the prior state value unless token_rotation changes to a different non-null value."
+	return "Keeps the prior state value unless token_rotation changes to a different non-null value, or the state has " +
+		"no token yet (after an import): the value is then known after apply."
 }
 
 func (m tokenFollowsRotationModifier) MarkdownDescription(ctx context.Context) string {
@@ -361,6 +365,17 @@ func (m tokenFollowsRotationModifier) PlanModifyString(ctx context.Context, req 
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
 	}
+
+	var stateToken types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("token"), &stateToken)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if stateToken.IsNull() {
+		resp.PlanValue = types.StringUnknown()
+		return
+	}
+
 	if !req.PlanValue.IsUnknown() {
 		return
 	}

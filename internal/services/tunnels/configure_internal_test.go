@@ -127,7 +127,8 @@ func containsSummary(diags diag.Diagnostics, prefix string) bool {
 }
 
 // TestTunnelResource_ImportState: the tunnel ID is imported as is; Read then
-// fills the rest, and reveals the token once (TestTunnelResource_Read_importRevealsOnce).
+// fills the rest without revealing the token, which the first apply does
+// (TestTunnelResource_importThenPlanAndApply).
 func TestTunnelResource_ImportState(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
