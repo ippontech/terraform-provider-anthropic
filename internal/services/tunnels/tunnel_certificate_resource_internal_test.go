@@ -175,6 +175,7 @@ func TestCACertificateChanged(t *testing.T) {
 		{"same certificate, re-wrapped text", fingerprint, types.StringValue(rewrapPEM(t, ca)), false},
 		{"imported (no PEM in state), same certificate", fingerprint, types.StringValue(ca), false},
 		{"fingerprint compared case-insensitively", strings.ToUpper(fingerprint), types.StringValue(ca), false},
+		{"fingerprint with a sha256: prefix and colons", "SHA256:" + colonHex(fingerprint), types.StringValue(ca), false},
 		{"different certificate", fingerprint, types.StringValue(other), true},
 		{"unknown plan value", fingerprint, types.StringUnknown(), true},
 		{"unparsable plan value", fingerprint, types.StringValue("garbage"), true},
@@ -201,6 +202,15 @@ func TestCACertificateChanged(t *testing.T) {
 			}
 		})
 	}
+}
+
+// colonHex spells a hex fingerprint as colon-separated upper-case pairs.
+func colonHex(hex string) string {
+	pairs := make([]string, 0, len(hex)/2)
+	for i := 0; i+1 < len(hex); i += 2 {
+		pairs = append(pairs, strings.ToUpper(hex[i:i+2]))
+	}
+	return strings.Join(pairs, ":")
 }
 
 func certificateJSON(archivedAt, expiresAt string) string {

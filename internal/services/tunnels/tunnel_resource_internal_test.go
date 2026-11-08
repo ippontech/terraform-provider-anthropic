@@ -384,7 +384,8 @@ func TestTunnelResource_Create_isNotRetried(t *testing.T) {
 
 // TestTunnelResource_Create_retries429: a 429 states the create was not
 // processed, so it is sent again, at most createRetries times; any other
-// failure is not (TestTunnelResource_Create_isNotRetried).
+// failure is not, even with x-should-retry: true
+// (TestTunnelResource_Create_isNotRetried too).
 func TestTunnelResource_Create_retries429(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -397,6 +398,11 @@ func TestTunnelResource_Create_retries429(t *testing.T) {
 		{"a 429 the server says not to retry", func(w http.ResponseWriter) {
 			w.Header().Set("x-should-retry", "false")
 			rateLimited(w)
+		}, 1, true},
+		{"a 5xx the server says to retry", func(w http.ResponseWriter) {
+			w.Header().Set("x-should-retry", "true")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"api_error","message":"boom"}}`)
 		}, 1, true},
 	}
 	for _, tc := range tests {

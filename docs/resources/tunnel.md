@@ -52,7 +52,7 @@ provider "anthropic" {
     organization_id     = "00000000-0000-0000-0000-000000000000"
     federation_rule_id  = "fdrl_..." # a rule scoped to workspace:manage_tunnels
     service_account_id  = "svac_..."
-    identity_token_file = "/var/run/secrets/anthropic.com/token"
+    identity_token_file = "/var/run/secrets/anthropic.com/tunnels/token"
   }
 }
 
@@ -61,6 +61,8 @@ resource "anthropic_tunnel" "corp" {
   display_name = "corp-mcp"
 }
 ```
+
+When the default provider block is federated too, for the `org:admin` resources, give each block its own identity token source. Both blocks exchange a token in the same run, and the exchange accepts an identity token carrying a `jti` claim (GitHub Actions and Kubernetes projected tokens do) only once per issuer, so two blocks reading the same token file fail with `jti_reused`. Use a second projected token at another path, as above, or an `identity_token_command` that fetches a fresh token on every exchange.
 
 > **API**: `POST /v1/tunnels`, `GET /v1/tunnels/{tunnel_id}`, `POST /v1/tunnels/{tunnel_id}/{archive,reveal_token,rotate_token}` (Tunnels API). The deprecated Admin API endpoints under `/v1/organizations/tunnels` are not used.
 > **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`). API keys are not accepted.

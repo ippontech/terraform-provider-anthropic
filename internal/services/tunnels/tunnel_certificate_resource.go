@@ -328,12 +328,22 @@ func caCertificateChanged(ctx context.Context, req planmodifier.StringRequest, r
 	if err != nil {
 		return
 	}
-	resp.RequiresReplace = !strings.EqualFold(planned, stateFingerprint.ValueString())
+	resp.RequiresReplace = normalizeFingerprint(planned) != normalizeFingerprint(stateFingerprint.ValueString())
+}
+
+// normalizeFingerprint lowercases a SHA-256 fingerprint and drops a sha256:
+// prefix and colon separators, so that the hex compares equal in any of the
+// usual spellings: the API's format was never checked against a live
+// response, and a false mismatch would replace, and so archive, a live CA.
+func normalizeFingerprint(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "sha256:")
+	return strings.ReplaceAll(s, ":", "")
 }
 
 // caCertificatePEMValidator checks the shape constraints the API documents
 // and that can be checked without parsing the certificate: size, exactly one
-// CERTIFICATE block, no other PEM block (a private key in particular). The
+// CERTIFICATE block, no other PEM block and no private-key text at all. The
 // X.509 requirements (CA flag, key usage, algorithms, validity) are left to
 // the API, which reports them precisely.
 type caCertificatePEMValidator struct{}

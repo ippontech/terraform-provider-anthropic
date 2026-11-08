@@ -27,13 +27,12 @@ var createRetryDelay = 500 * time.Millisecond
 
 // createRetrying429 runs create, a POST that is not idempotent and so is sent
 // with option.WithMaxRetries(0), and sends it again only when the API answers
-// 429, or tells it to with x-should-retry: true. A 429 states that the request
-// was not processed, whereas a 408, a 409, a 5xx or a dropped connection may
-// follow a create that landed, and replaying it would leave a duplicate
-// Terraform does not track. internal/admin applies the same rule to every
-// POST. Without it, a tunnel or a certificate created while Terraform runs
-// other creates in parallel would fail on the first 429, after a replacement
-// had already archived the old object.
+// 429. A 429 states that the request was not processed, whereas a 408, a 409,
+// a 5xx or a dropped connection may follow a create that landed, and
+// replaying it would leave a duplicate Terraform does not track. Without the
+// retry, a tunnel or a certificate created while Terraform runs other creates
+// in parallel would fail on the first 429, after a replacement had already
+// archived the old object.
 func createRetrying429[T any](ctx context.Context, create func() (T, error)) (T, error) {
 	for retry := 0; ; retry++ {
 		v, err := create()
@@ -51,18 +50,16 @@ func createRetrying429[T any](ctx context.Context, create func() (T, error)) (T,
 	}
 }
 
-// retryableCreate reports whether a failed create can be sent again: an
-// x-should-retry header settles it, as in the SDK; otherwise only a 429.
+// retryableCreate reports whether a failed create can be sent again: only on
+// a 429, and not when the server adds x-should-retry: false. Unlike the SDK,
+// which also retries when x-should-retry is true, the header never makes
+// another status retryable: a 5xx or a 409 may follow a create that landed,
+// whatever the server suggests.
 func retryableCreate(apierr *anthropic.Error) bool {
-	if apierr.Response != nil {
-		switch apierr.Response.Header.Get("x-should-retry") {
-		case "true":
-			return true
-		case "false":
-			return false
-		}
+	if apierr.StatusCode != http.StatusTooManyRequests {
+		return false
 	}
-	return apierr.StatusCode == http.StatusTooManyRequests
+	return apierr.Response == nil || apierr.Response.Header.Get("x-should-retry") != "false"
 }
 
 // createRetryWait returns the wait the server asks for in retry-after-ms or
