@@ -1,8 +1,7 @@
 # API keys cannot be created via Terraform — import an existing key first:
 #   terraform import anthropic_api_key.example <api_key_id>
 resource "anthropic_api_key" "example" {
-  name   = "My Managed Key"
-  status = "active"
+  name = "My Managed Key"
 }
 
 output "api_key_id" {
