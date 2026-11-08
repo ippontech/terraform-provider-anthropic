@@ -67,15 +67,17 @@ error issue on the repo.
 
 ## Custom managers
 
-The GoReleaser version is not visible to a built-in manager, so it was drifting unnoticed:
+The GoReleaser version was once visible to no built-in manager, so it was drifting unnoticed:
 
 | What | Where | How it is tracked |
 |---|---|---|
-| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line |
+| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line, and the `github-actions` manager, which now reads this input too (type `uses-with`) |
 
 The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
-well-known inputs such as `setup-node`'s `node-version`, but it does not read arbitrary action inputs —
-hence the annotation. To put another tool version under Renovate's control, add the same comment above it:
+well-known inputs such as `setup-node`'s `node-version` and the `version:` of `goreleaser-action`, but it
+does not read arbitrary action inputs, hence the annotation. A rule that targets such a pin matches both
+managers: the GoReleaser hold matched only `custom.regex`, so the `github-actions` manager put the check
+pin's v2.20.0 in the automerged `GitHub Actions` group, away from the release pin. To put another tool version under Renovate's control, add the same comment above it:
 
 ```yaml
         with:

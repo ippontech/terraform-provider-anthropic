@@ -112,8 +112,8 @@
       "semanticCommitType": "chore"
     },
     {
-      "description": "GoReleaser is pinned twice, in goreleaser-release.yml (above) and in goreleaser-check.yml, which validates .goreleaser.yml on every PR. Both pins must move in the same reviewed PR: otherwise the check job runs a newer GoReleaser than the release job for the three days before the ci-tools group automerges, and a config change it accepts can fail at tag time, after the GitHub release and the tag already exist.",
-      "matchManagers": ["custom.regex"],
+      "description": "GoReleaser is pinned twice, in goreleaser-release.yml (above) and in goreleaser-check.yml, which validates .goreleaser.yml on every PR. Both pins must move in the same reviewed PR: otherwise the check job runs a newer GoReleaser than the release job for the three days before the ci-tools group automerges, and a config change it accepts can fail at tag time, after the GitHub release and the tag already exist. Renovate reads these pins through two managers, the custom regex one (the # renovate: comments) and github-actions, which reads the version input of goreleaser/goreleaser-action (type uses-with): both are matched, or the check pin automerges alone in the GitHub Actions group, as it did for v2.20.0.",
+      "matchManagers": ["custom.regex", "github-actions"],
       "matchDepNames": ["goreleaser/goreleaser"],
       "groupName": "release tooling",
       "groupSlug": "release-tooling",
