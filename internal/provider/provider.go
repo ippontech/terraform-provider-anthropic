@@ -83,7 +83,8 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Optional:  true,
 				Sensitive: true,
 				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
-					"such as the Workload Identity Federation admin endpoints. " +
+					"such as the Workload Identity Federation admin endpoints, or a workspace:manage_tunnels one for MCP " +
+					"tunnels (configure each in its own, aliased provider block). " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
 			"federation":     federationSchema(),
@@ -235,7 +236,8 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) or an api_federation block for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
-				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an org:admin OAuth bearer token. "+
+				"or auth_token (ANTHROPIC_AUTH_TOKEN) or a federation block for endpoints that require an OAuth bearer token: "+
+				"org:admin scope for the Workload Identity Federation endpoints, workspace:manage_tunnels scope for MCP tunnels. "+
 				"For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or "+
 				"google_cloud block instead.",
 		)
@@ -300,7 +302,7 @@ type federatedCredential struct {
 var (
 	oauthFederationCredential = federatedCredential{
 		block: "federation", argument: "auth_token", envVar: "ANTHROPIC_AUTH_TOKEN",
-		conflictSummary: "Conflicting OAuth Credentials", what: "the org:admin bearer token",
+		conflictSummary: "Conflicting OAuth Credentials", what: "the OAuth bearer token",
 	}
 	apiFederationCredential = federatedCredential{
 		block: "api_federation", argument: "api_key", envVar: "ANTHROPIC_API_KEY",
@@ -317,7 +319,10 @@ var (
 // credential unknown at plan time is still set. The variable gives way as the
 // environment does to every other provider argument; the warning is there
 // because the SDKs rank the variable above their own federation, so an
-// operator used to them would expect the reverse.
+// operator used to them would expect the reverse. It must not tell them to
+// unset the variable: Configure cannot see the other provider blocks, and one
+// without the federation block or the credential (the org:admin block next to
+// a tunnels alias, a block with a plain api_key) still reads it.
 func (c federatedCredential) rejectCredentialBeside(diags *diag.Diagnostics, configured types.String, resolved string) {
 	if !configured.IsNull() {
 		diags.AddAttributeError(path.Root(c.block), c.conflictSummary,
@@ -326,8 +331,9 @@ func (c federatedCredential) rejectCredentialBeside(diags *diag.Diagnostics, con
 	}
 	if resolved != "" {
 		diags.AddAttributeWarning(path.Root(c.block), c.envVar+" Ignored",
-			fmt.Sprintf("%s is set, but the %s block supplies %s, so the variable is not used. Unset it to silence this warning.",
-				c.envVar, c.block, c.what))
+			fmt.Sprintf("%s is set, but this provider block takes %s from its %s block, so it does not use the variable. "+
+				"A provider block with neither %s nor %s still does: keep the variable if another block relies on it, unset it otherwise.",
+				c.envVar, c.what, c.block, c.block, c.argument))
 	}
 }
 
