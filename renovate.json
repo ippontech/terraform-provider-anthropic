@@ -9,9 +9,11 @@
   "labels": ["dependencies"],
   "platformAutomerge": true,
   "osvVulnerabilityAlerts": true,
+  "postUpdateOptions": ["gomodTidy"],
   "vulnerabilityAlerts": {
     "automerge": false,
-    "minimumReleaseAge": "3 days"
+    "minimumReleaseAge": "3 days",
+    "fetchChangeLogs": "pr"
   },
   "enabledManagers": [
     "github-actions",
@@ -44,6 +46,15 @@
       "groupSlug": "go-deps"
     },
     {
+      "description": "tools/go.mod (the generators behind make generate) gets its own group, so its updates keep automerging while those of the root go.mod wait for a maintainer (rule after the automerge one): Renovate automerges a grouped branch only when every update in it is automerged. No job that holds a secret builds this module. Its commits are typed chore: nothing in it is linked into the binary, and the require depType would otherwise get fix from config:recommended and publish a provider release for each bump.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["tools/go.mod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Go tools module",
+      "groupSlug": "go-tools",
+      "semanticCommitType": "chore"
+    },
+    {
       "description": "Go toolchain and indirect module updates change the shipped binary like direct ones, so they get the fix type and semantic-release publishes a patch release with them. The :semanticPrefixFixDepsChoreOthers preset of config:recommended gives fix to the require depType only, chore (no release) to the rest. Root go.mod only: tools/go.mod feeds make generate and is not linked into the binary.",
       "matchManagers": ["gomod"],
       "matchFileNames": ["go.mod"],
@@ -66,50 +77,65 @@
       "groupSlug": "ci-tools"
     },
     {
+      "description": "No upstream release notes in an automerged PR: its description becomes the body of the squash commit on main, which semantic-release reads with no maintainer in between, and a BREAKING CHANGE line written upstream would land in the release notes and CHANGELOG.md (.releaserc keeps it from cutting a major). The reviewed rules below turn the notes back on, for the maintainer who reads them before merging.",
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true,
-      "minimumReleaseAge": "3 days"
+      "minimumReleaseAge": "3 days",
+      "fetchChangeLogs": "off"
+    },
+    {
+      "description": "Root go.mod updates (direct and indirect modules, and the Go toolchain) are compiled into the acceptance tests, which run with the acctest keys on the push to main that the merge makes (make testacc, make terraform-test). Never automerged, whatever the update type, so a maintainer decides on each one before that run.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["go.mod"],
+      "automerge": false,
+      "fetchChangeLogs": "pr"
     },
     {
       "description": "tflint is installed from a pinned release zip whose sha256 is hardcoded next to the version (security.yml); Renovate can bump the version but not the hash, so its PR always fails the tflint job until TFLINT_SHA256 is updated by hand. Never automerge it (#241 was merged with the job red).",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["terraform-linters/tflint"],
-      "automerge": false
+      "automerge": false,
+      "fetchChangeLogs": "pr"
     },
     {
-      "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. Its updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser (custom.regex), the semantic-release packages and their lockfile (npm) and the actions those two workflows use (github-actions); the same action in other workflows keeps its usual automerged group. The commit type is forced to chore: the npm manager gives the semantic-release packages the dependencies depType, which config:recommended would title fix(deps), and a fix title would publish a provider patch release for a tooling bump.",
+      "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. The actions of testacc.yml run next to the acctest keys, on every push to main. Their updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers GoReleaser (custom.regex), the semantic-release packages and their lockfile (npm) and the actions those three workflows use (github-actions); the same action in other workflows keeps its usual automerged group. A new workflow whose jobs read any secret other than GITHUB_TOKEN, or run in a protected environment, joins this list. The commit type is forced to chore: the npm manager gives the semantic-release packages the dependencies depType, which config:recommended would title fix(deps), and a fix title would publish a provider patch release for a tooling bump.",
       "matchFileNames": [
         ".github/workflows/goreleaser-release.yml",
         ".github/workflows/semantic-release.yml",
-        ".github/semantic-release/package.json"
+        ".github/semantic-release/package.json",
+        ".github/workflows/testacc.yml"
       ],
       "groupName": "release tooling",
       "groupSlug": "release-tooling",
       "automerge": false,
+      "fetchChangeLogs": "pr",
       "semanticCommitType": "chore"
     },
     {
-      "description": "GoReleaser is pinned twice, in goreleaser-release.yml (above) and in goreleaser-check.yml, which validates .goreleaser.yml on every PR. Both pins must move in the same reviewed PR: otherwise the check job runs a newer GoReleaser than the release job for the three days before the ci-tools group automerges, and a config change it accepts can fail at tag time, after the GitHub release and the tag already exist.",
-      "matchManagers": ["custom.regex"],
+      "description": "GoReleaser is pinned twice, in goreleaser-release.yml (above) and in goreleaser-check.yml, which validates .goreleaser.yml on every PR. Both pins must move in the same reviewed PR: otherwise the check job runs a newer GoReleaser than the release job for the three days before the ci-tools group automerges, and a config change it accepts can fail at tag time, after the GitHub release and the tag already exist. Renovate reads these pins through two managers, the custom regex one (the # renovate: comments) and github-actions, which reads the version input of goreleaser/goreleaser-action (type uses-with): both are matched, or the check pin automerges alone in the GitHub Actions group, as it did for v2.20.0.",
+      "matchManagers": ["custom.regex", "github-actions"],
       "matchDepNames": ["goreleaser/goreleaser"],
       "groupName": "release tooling",
       "groupSlug": "release-tooling",
       "automerge": false,
+      "fetchChangeLogs": "pr",
       "semanticCommitType": "chore"
     },
     {
-      "description": "Hold anthropic-sdk-go below v1.68.0 until #192 is done: v1.68.0 renames skill fields the deployed API still returns under their old names. Patch releases within 1.67.x stay allowed. Remove this rule as part of #192, not on its own.",
+      "description": "Hold anthropic-sdk-go on v1 until #192 is done in major/2.0.0: v2 moves the client to API version 2026-10-21, which is breaking for this provider (temperature, api_keys.workspace_id and the rate-limit group_type are removed, skills come back in their GA shape only, and the API key is sent as Authorization: Bearer instead of x-api-key). v1 minor and patch releases stay allowed. Remove this rule as part of #192, not on its own.",
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
-      "allowedVersions": "<1.68.0"
+      "allowedVersions": "<2.0.0"
     },
     {
-      "description": "Same hold for OSV vulnerability-fix PRs, whose own allowedVersions (appended after this list) replaces the one above. While the SDK is below v1.68.0, every minor or major update is v1.68.0+, so disable those; a fix in a 1.67.x patch still gets its PR. The rule stops matching once the SDK is at v1.68.0 or later. allowedVersions and matchUpdateTypes cannot share a rule.",
+      "description": "Review every anthropic-sdk-go minor release before it merges, in its own PR: v1 minors have changed what goes over the wire without breaking the build (v1.68.0 stopped sending the skills beta header, v1.75.0 started sending extra input_schema keys, v1.80.0 turned multiagent into a union), and no check on a PR calls the live API. Its own PR, so that the routine Go dependencies PR can be merged while an SDK minor waits for a closer look. Patch releases stay in that group; like every root go.mod update, neither is automerged.",
       "matchManagers": ["gomod"],
       "matchDepNames": ["github.com/anthropics/anthropic-sdk-go"],
-      "matchCurrentVersion": "<1.68.0",
-      "matchUpdateTypes": ["minor", "major"],
-      "enabled": false
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Anthropic Go SDK",
+      "groupSlug": "anthropic-sdk-go",
+      "automerge": false,
+      "fetchChangeLogs": "pr"
     },
     {
       "description": "Never propose a major SDK update, OSV vulnerability-fix PRs included (their allowedVersions replaces any hold above): a new major is the #192 migration, not a dependency bump.",

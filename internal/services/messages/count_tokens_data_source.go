@@ -46,6 +46,7 @@ type CountTokensDataSourceModel struct {
 	Model        types.String `tfsdk:"model"`
 	Messages     types.List   `tfsdk:"messages"`
 	System       types.String `tfsdk:"system"`
+	Speed        types.String `tfsdk:"speed"`
 	Thinking     types.Object `tfsdk:"thinking"`
 	OutputConfig types.Object `tfsdk:"output_config"`
 	CacheControl types.Object `tfsdk:"cache_control"`
@@ -104,15 +105,20 @@ func (d *CountTokensDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 				Optional:            true,
 				MarkdownDescription: "System prompt providing context and instructions to the model.",
 			},
+			"speed": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Speed the real request would use. " + speedDescription,
+				Validators:          []validator.String{stringvalidator.OneOf("standard", "fast")},
+			},
 			"thinking": schema.SingleNestedAttribute{
 				Optional: true,
 				MarkdownDescription: "Extended thinking configuration, so the count includes the thinking overhead the real request would carry. Same shape as `anthropic_message`; no beta header is needed (verified against the live API on 2026-10-08). " +
-					"Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = \"disabled\"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools` instead, which this provider does not support). Other models were not verified.",
+					"Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = \"disabled\"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5`, which asks for `between_tools` instead. Other models were not verified.",
 				Attributes: map[string]schema.Attribute{
 					"type": schema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Thinking mode: `enabled` (requires `budget_tokens`), `disabled` or `adaptive`.",
-						Validators:          []validator.String{stringvalidator.OneOf("enabled", "disabled", "adaptive")},
+						MarkdownDescription: "Thinking mode: `enabled` (requires `budget_tokens`), `disabled`, `adaptive` or `between_tools` (thinking off, but progress updates between tool calls come back as thinking blocks).",
+						Validators:          []validator.String{stringvalidator.OneOf("enabled", "disabled", "adaptive", "between_tools")},
 					},
 					"budget_tokens": schema.Int64Attribute{
 						Optional:            true,
@@ -121,7 +127,7 @@ func (d *CountTokensDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 					},
 					"display": schema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "How thinking content appears in the response: `summarized` or `omitted`. Not allowed when `type` is `disabled`.",
+						MarkdownDescription: "How thinking content appears in the response: `summarized` or `omitted`. Only allowed when `type` is `enabled` or `adaptive`.",
 						Validators:          []validator.String{stringvalidator.OneOf("summarized", "omitted")},
 					},
 				},
@@ -213,12 +219,12 @@ func (d *CountTokensDataSource) ConfigValidators(_ context.Context) []datasource
 }
 
 // countTokensThinkingValidator requires budget_tokens iff type is "enabled"
-// and forbids display with type "disabled". Unknown values count as neither
+// and forbids display with type "disabled" or "between_tools". Unknown values count as neither
 // set nor missing, so configs fed by unresolved references still validate.
 type countTokensThinkingValidator struct{}
 
 func (countTokensThinkingValidator) Description(_ context.Context) string {
-	return "budget_tokens is required when thinking.type is enabled (and not allowed otherwise); display is not allowed when thinking.type is disabled"
+	return "budget_tokens is required when thinking.type is enabled (and not allowed otherwise); display is not allowed when thinking.type is disabled or between_tools"
 }
 
 func (v countTokensThinkingValidator) MarkdownDescription(ctx context.Context) string {
@@ -248,10 +254,10 @@ func (countTokensThinkingValidator) ValidateDataSource(ctx context.Context, req 
 			resp.Diagnostics.AddAttributeError(base.AtName("budget_tokens"), "Missing budget_tokens",
 				"`budget_tokens` is required when `thinking.type` is \"enabled\".")
 		}
-	case "disabled":
+	case "disabled", "between_tools":
 		if displaySet {
 			resp.Diagnostics.AddAttributeError(base.AtName("display"), "Invalid display",
-				"`display` is not allowed when `thinking.type` is \"disabled\".")
+				fmt.Sprintf("`display` is not allowed when `thinking.type` is %q.", m.Type.ValueString()))
 		}
 		if budgetSet {
 			resp.Diagnostics.AddAttributeError(base.AtName("budget_tokens"), "Invalid budget_tokens",
@@ -303,6 +309,10 @@ func buildCountTokensParams(ctx context.Context, data CountTokensDataSourceModel
 		}
 	}
 
+	if isKnownString(data.Speed) {
+		params.Speed = anthropic.MessageCountTokensParamsSpeed(data.Speed.ValueString())
+	}
+
 	if !data.Thinking.IsNull() && !data.Thinking.IsUnknown() {
 		var t countTokensThinkingModel
 		diags.Append(data.Thinking.As(ctx, &t, objectAsOptions)...)
@@ -318,6 +328,9 @@ func buildCountTokensParams(ctx context.Context, data CountTokensDataSourceModel
 			params.Thinking = anthropic.ThinkingConfigParamUnion{OfEnabled: &cfg}
 		case "disabled":
 			params.Thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
+		case "between_tools":
+			betweenTools := anthropic.NewThinkingConfigBetweenToolsParam()
+			params.Thinking = anthropic.ThinkingConfigParamUnion{OfBetweenTools: &betweenTools}
 		case "adaptive":
 			cfg := anthropic.ThinkingConfigAdaptiveParam{}
 			if !t.Display.IsNull() {
@@ -357,7 +370,10 @@ func buildCountTokensParams(ctx context.Context, data CountTokensDataSourceModel
 		if diags.HasError() {
 			return params, diags
 		}
-		cc := anthropic.CacheControlEphemeralParam{}
+		// Type is set explicitly: a zero-valued CacheControlEphemeralParam is
+		// dropped by the SDK's omitzero, so `cache_control = {}` (no ttl) would
+		// otherwise never reach the API (same trap as anthropic_message).
+		cc := anthropic.CacheControlEphemeralParam{Type: "ephemeral"}
 		if !c.TTL.IsNull() {
 			cc.TTL = anthropic.CacheControlEphemeralTTL(c.TTL.ValueString())
 		}

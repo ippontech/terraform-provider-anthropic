@@ -21,6 +21,10 @@ import (
 // resource or data source. Extra options are applied after the defaults, so
 // a test that counts requests can pass option.WithMaxRetries(0) to keep the
 // SDK's own retries out of the count.
+//
+// Standard-key tests use it too: the fake servers do not check the
+// credential, and WithoutEnvironmentDefaults keeps the environment's keys and
+// profile out of the test.
 func NewSDKClient(t *testing.T, srv *httptest.Server, opts ...option.RequestOption) *anthropic.Client {
 	t.Helper()
 	c := anthropic.NewClient(append([]option.RequestOption{

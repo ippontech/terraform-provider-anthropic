@@ -32,6 +32,7 @@ type WorkspacesDataSource struct {
 
 type WorkspacesDataSourceModel struct {
 	IncludeArchived types.Bool `tfsdk:"include_archived"`
+	IncludeDefault  types.Bool `tfsdk:"include_default"`
 	Workspaces      types.List `tfsdk:"workspaces"`
 }
 
@@ -76,6 +77,12 @@ func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 			"include_archived": schema.BoolAttribute{
 				Optional:            true,
 				MarkdownDescription: "When true, archived workspaces are included in the results.",
+			},
+			"include_default": schema.BoolAttribute{
+				Optional: true,
+				MarkdownDescription: "When true, the organization's Default Workspace is included in the results (the API leaves it out by default). " +
+					"It is the only way to get the Default Workspace's ID, which the Admin API reports in an API key's `scope.workspace_id` " +
+					"(the key's `workspace_id` is null for a key in the Default Workspace).",
 			},
 			"workspaces": schema.ListNestedAttribute{
 				Computed:            true,
@@ -132,7 +139,7 @@ func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 						},
 						"external_key_id": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.",
+							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace (on Claude Platform on AWS, the AWS KMS key ARN), or null.",
 						},
 						"compartment_id": schema.StringAttribute{
 							Computed:            true,
@@ -192,16 +199,7 @@ func (d *WorkspacesDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	var afterID string
 
 	for {
-		params := url.Values{}
-		params.Set("limit", "1000")
-		if afterID != "" {
-			params.Set("after_id", afterID)
-		}
-		if !data.IncludeArchived.IsNull() && !data.IncludeArchived.IsUnknown() && data.IncludeArchived.ValueBool() {
-			params.Set("include_archived", "true")
-		}
-
-		path := "/v1/organizations/workspaces?" + params.Encode()
+		path := "/v1/organizations/workspaces?" + buildWorkspacesListQuery(afterID, data.IncludeArchived, data.IncludeDefault).Encode()
 		respBytes, err := d.adminClient.DoRequest(ctx, "GET", path, nil)
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspaces: %s", err))
@@ -305,4 +303,21 @@ func mapWorkspaceToListObject(ws *workspaceAPIResponse) (attr.Value, diag.Diagno
 	})
 	diags.Append(d...)
 	return obj, diags
+}
+
+// buildWorkspacesListQuery builds the query of one page of GET /v1/organizations/workspaces.
+// Both filters are sent only when true: the API defaults them to false.
+func buildWorkspacesListQuery(afterID string, includeArchived, includeDefault types.Bool) url.Values {
+	params := url.Values{}
+	params.Set("limit", "1000")
+	if afterID != "" {
+		params.Set("after_id", afterID)
+	}
+	if includeArchived.ValueBool() {
+		params.Set("include_archived", "true")
+	}
+	if includeDefault.ValueBool() {
+		params.Set("include_default", "true")
+	}
+	return params
 }
