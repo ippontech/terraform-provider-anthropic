@@ -298,3 +298,161 @@ func TestListPluginSource_leavesOutGitMetadata(t *testing.T) {
 		t.Errorf("hash = %s, want %s: the same plugin with or without .git must hash the same", hash, want)
 	}
 }
+
+// A local user who can write under source_dir could swap a listed file, or
+// its directory, for a symbolic link once the walk has checked it, and have
+// any file the operator can read uploaded. Reads go through an os.Root on
+// source_dir and check that the opened file is the one the listing saw, so
+// each swap fails the hash and the upload, and the outside file is never
+// sent.
+func TestPluginSource_refusesAFileSwappedAfterTheListing(t *testing.T) {
+	t.Parallel()
+	const outsideContent = "outside-secret-content"
+
+	for name, swap := range map[string]func(t *testing.T, root, outside string){
+		"file for a link to an outside file": func(t *testing.T, root, outside string) {
+			target := filepath.Join(root, "skills", "account-research", "SKILL.md")
+			mustRemove(t, target)
+			mustSymlink(t, filepath.Join(outside, "SKILL.md"), target)
+		},
+		"directory for a link to an outside directory": func(t *testing.T, root, outside string) {
+			dir := filepath.Join(root, "skills", "account-research")
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
+			mustSymlink(t, outside, dir)
+		},
+		"file for a link to another file inside": func(t *testing.T, root, _ string) {
+			target := filepath.Join(root, "skills", "account-research", "SKILL.md")
+			mustRemove(t, target)
+			mustSymlink(t, filepath.Join(root, ".claude-plugin", "plugin.json"), target)
+		},
+		"file for another regular file": func(t *testing.T, root, outside string) {
+			other := filepath.Join(root, "other.md")
+			writeFile(t, other, outsideContent)
+			if err := os.Rename(other, filepath.Join(root, "skills", "account-research", "SKILL.md")); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := writePluginDir(t)
+			outside := t.TempDir()
+			writeFile(t, filepath.Join(outside, "SKILL.md"), outsideContent)
+
+			src, err := listPluginSource(root, "")
+			if err != nil {
+				t.Fatalf("listPluginSource: %v", err)
+			}
+			swap(t, root, outside)
+
+			if _, err := src.hash(); err == nil {
+				t.Error("hash succeeded on a file swapped after the listing")
+			}
+			body, _, err := src.uploadBody()
+			if err == nil {
+				t.Error("uploadBody succeeded on a file swapped after the listing")
+			}
+			if bytes.Contains(body.Data, []byte(outsideContent)) {
+				t.Error("the upload carries the swapped-in content")
+			}
+		})
+	}
+}
+
+func TestPluginSource_refusesAnArchiveSwappedAfterTheListing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "sales-toolkit.zip")
+	writeFile(t, archive, "PK\x03\x04 the listed archive")
+	src, err := listPluginSource("", archive)
+	if err != nil {
+		t.Fatalf("listPluginSource: %v", err)
+	}
+	other := filepath.Join(dir, "other")
+	writeFile(t, other, "outside-secret-content")
+	if err := os.Rename(other, archive); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := src.hash(); err == nil {
+		t.Error("hash succeeded on an archive swapped after the listing")
+	}
+	if _, _, err := src.uploadBody(); err == nil {
+		t.Error("uploadBody succeeded on an archive swapped after the listing")
+	}
+}
+
+func mustRemove(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+}
+
+// A directory swapped for a link to another directory inside source_dir (its
+// .git, say) while the walk runs would bring that directory's files in under
+// another name. Each directory is read from a handle checked against its
+// parent's listing, so the walk of the swapped directory fails.
+func TestWalkPluginDir_refusesADirectorySwappedForAnInRootLink(t *testing.T) {
+	t.Parallel()
+	root := writePluginDir(t)
+	writeFile(t, filepath.Join(root, ".git", "config"), "[http]\n\textraheader = AUTHORIZATION: basic secret\n")
+	sub := filepath.Join(root, "skills", "account-research")
+	listed, err := os.Lstat(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(sub); err != nil {
+		t.Fatal(err)
+	}
+	// A relative link: os.Root already refuses an absolute one as escaping.
+	mustSymlink(t, filepath.Join("..", ".git"), sub)
+
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	var files []pluginSourceFile
+	err = walkPluginDir(r, root, "skills/account-research", listed, &files)
+	if err == nil || !strings.Contains(err.Error(), "no longer the directory that was listed") {
+		t.Errorf("err = %v, want the swapped directory refused", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("files = %+v, want none from the link's target", files)
+	}
+}
+
+// A file that grows after the listing would take the upload past the size
+// checked before reading: the read stops at the listed size and fails.
+func TestPluginSource_refusesAFileThatGrewAfterTheListing(t *testing.T) {
+	t.Parallel()
+	root := writePluginDir(t)
+	src, err := listPluginSource(root, "")
+	if err != nil {
+		t.Fatalf("listPluginSource: %v", err)
+	}
+	f, err := os.OpenFile(filepath.Join(root, "skills", "account-research", "SKILL.md"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("appended after the listing\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	if _, err := src.hash(); err == nil || !strings.Contains(err.Error(), "changed size") {
+		t.Errorf("hash err = %v, want the size change refused", err)
+	}
+	if _, _, err := src.uploadBody(); err == nil || !strings.Contains(err.Error(), "changed size") {
+		t.Errorf("uploadBody err = %v, want the size change refused", err)
+	}
+}
