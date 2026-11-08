@@ -12,7 +12,7 @@ Lists Anthropic API keys via the Admin API. All pages are fetched automatically.
 Results can optionally be filtered by `status` (`active` or `inactive`) and by `workspace_id`.
 
 > **API**: `GET /v1/organizations/api_keys` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

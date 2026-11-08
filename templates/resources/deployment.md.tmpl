@@ -11,6 +11,8 @@ Manages a scheduled deployment (beta): a configured instance of an agent that bi
 
 `initial_events`, `resources`, and `budget` accept raw JSON matching the API's own request shape, since Terraform-native modeling of their deeply nested unions would dwarf the rest of this schema.
 
+On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws), each run creates its session as an IAM role in your AWS account: set `execution_identity` to an `aws_role` on the `anthropic_agent` first, or creating the deployment returns a 400 error. The Execution identity section of the `anthropic_agent` resource lists the role's trust policy and permissions.
+
 > **API**: `POST/GET/POST/POST/POST/POST /v1/deployments[/{id}][/pause|/unpause|/archive]` (Managed Agents API).
 > **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
 > **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
@@ -19,6 +21,12 @@ Manages a scheduled deployment (beta): a configured instance of an agent that bi
 ## Example Usage
 
 {{ codefile "hcl" "examples/resources/deployment/resource.tf" }}
+
+## Claude Platform on AWS
+
+The gateway serves `/v1/deployments`, although its [route table](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) does not list it.
+
+There, each run creates its session as an IAM role of your AWS account ([scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)). Creating a deployment for an agent whose execution identity is not an `aws_role` fails with a 400: `On Claude Platform on AWS a deployment runs as the agent's AWS role. This agent has no execution_identity of type aws_role, so the deployment could never run.` The role's trust policy must let the `aws-external-anthropic.amazonaws.com` service principal call `sts:AssumeRole` and `sts:SetSourceIdentity`, the role needs `aws-external-anthropic:CreateSession`, `sts:GetWebIdentityToken` and `sts:TagGetWebIdentityToken`, and whoever sets the role on the agent needs `iam:PassRole` on it, in the same account. Set it in the agent's `execution_identity` (see `anthropic_agent`).
 
 {{ .SchemaMarkdown | trimspace }}
 

@@ -16,8 +16,9 @@ import (
 )
 
 // The service-accounts Beta endpoint has not been probed for the same
-// read-after-write staleness measured on the vaults API (see CLAUDE.md and
-// #193/#199), but it shares the underlying Beta managed-agents infrastructure.
+// read-after-write staleness measured on the vaults API (see
+// internal/services/vaults/CLAUDE.md and #193/#199), but it shares the
+// underlying Beta managed-agents infrastructure.
 // CheckDestroy therefore polls rather than doing a single unpolled Get right
 // after destroy, mirroring internal/services/vaults/helpers_test.go's
 // awaitArchived so a stale read here doesn't fail the test the way it did for

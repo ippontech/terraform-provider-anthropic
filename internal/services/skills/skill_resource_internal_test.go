@@ -11,9 +11,11 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
@@ -193,4 +195,42 @@ func TestSkillResourceDelete_forceDestroyUsesBetaVersion(t *testing.T) {
 	if got := srv.Calls(); !slices.Equal(got, want) {
 		t.Fatalf("calls:\n got  %q\n want %q", got, want)
 	}
+}
+
+// force_destroy is the one attribute that does not force replacement, so
+// toggling it on an existing skill reaches Update, which must store it (the
+// framework pre-fills the response with the prior state) without an API call.
+func TestSkillResourceUpdate_forceDestroy(t *testing.T) {
+	t.Parallel()
+	sch, typ := skillResourceSchema(t)
+	attrs := map[string]tftypes.Value{
+		"id":             tfString(fixtureSkillID),
+		"files":          filesValue("test-skill/SKILL.md"),
+		"created_at":     tfString(fixtureSkillCreated),
+		"updated_at":     tfString(fixtureSkillUpdated),
+		"latest_version": tfString(fixtureSkillVersion),
+		"source":         tfString("custom"),
+		"force_destroy":  tftypes.NewValue(tftypes.Bool, false),
+	}
+	prior := tfsdk.State{Raw: tfObjectValue(typ, attrs), Schema: sch}
+	attrs["force_destroy"] = tftypes.NewValue(tftypes.Bool, true)
+	plan := tfsdk.Plan{Raw: tfObjectValue(typ, attrs), Schema: sch}
+
+	resp := &resource.UpdateResponse{State: prior}
+	// No client: any API call would panic.
+	(&SkillResource{}).Update(context.Background(), resource.UpdateRequest{Plan: plan, State: prior}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update: %v", resp.Diagnostics)
+	}
+
+	var forceDestroy types.Bool
+	resp.Diagnostics.Append(resp.State.GetAttribute(context.Background(), path.Root("force_destroy"), &forceDestroy)...)
+	if !forceDestroy.ValueBool() {
+		t.Errorf("force_destroy = %v, want true", forceDestroy)
+	}
+	assertStringAttrs(t, resp.State, map[string]*string{
+		"id":             ptr(fixtureSkillID),
+		"updated_at":     ptr(fixtureSkillUpdated),
+		"latest_version": ptr(fixtureSkillVersion),
+	})
 }

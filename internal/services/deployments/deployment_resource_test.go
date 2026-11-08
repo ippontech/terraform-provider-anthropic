@@ -47,8 +47,8 @@ func testAccCheckDeploymentArchived(s *terraform.State) error {
 
 // awaitDeploymentArchivedForTest polls Get until archived_at is set, riding
 // out the same read-after-write staleness window documented for the vaults
-// API (see CLAUDE.md); deployments share the underlying Beta managed-agents
-// infrastructure.
+// API (see internal/services/vaults/CLAUDE.md); deployments share the
+// underlying Beta managed-agents infrastructure.
 func awaitDeploymentArchivedForTest(client anthropic.Client, id string) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
