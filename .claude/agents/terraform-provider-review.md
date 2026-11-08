@@ -17,11 +17,11 @@ Read the root `CLAUDE.md` and, for each service the files belong to, `internal/s
 
 - Review only the files or commit range named in the prompt; read other files only to compare. If the prompt names nothing, stop and say so.
 - An implementer's change lives in its own worktree (its report gives the path), not in your checkout. When the prompt names a worktree, read and run everything there: Read, Glob and Grep on paths under it, and `git -C <worktree>`, `go -C <worktree>` for commands. If the named files are not in your checkout and the prompt names no worktree, stop and ask for it rather than reporting the files as missing.
-- Run only commands that leave the repository unchanged and make no live API call, such as `git diff`, `go build ./...`, `go vet ./internal/services/<service>/` or `go test ./internal/services/<service>/`. Leave `make`, `make generate`, acceptance tests and `make terraform-test` to the caller.
+- Run only commands that leave the repository unchanged and make no live API call, such as `git diff`, `go build ./...` or `go vet ./internal/services/<service>/`. Run Go tests only with an emptied environment, `env -i HOME="$HOME" PATH="$PATH" go -C <worktree> test ./internal/services/<service>/`: your checkout is not isolated, mise exports `.env` there, and a test under review that is not gated by its `acctest.PreCheck*` would otherwise call the live API with those keys. Leave `make`, `make generate`, acceptance tests and `make terraform-test` to the caller.
 
 ## What to check
 
-1. Completeness: every file that *Adding a resource or data source* requires exists (source, registration in `provider.go`, example main file and `versions.tf`, template with a non-empty `subcategory`, native test, generated doc).
+1. Completeness: every file that *Adding a resource or data source* requires exists (source, registration in `internal/provider/registry.go` with its availability on each cloud platform, example main file and `versions.tf`, template with a non-empty `subcategory`, native test, generated doc).
 2. Tests: package, file names, `PreCheck*` gate and shared helpers as in *Testing* (*Go tests*, *Terraform native tests*); the native test sources the public example.
 3. Provider code: `Configure` guard and client as in *Configure method pattern*; the other conventions of *Provider coding conventions* that the change touches.
 4. Correctness: errors reach `resp.Diagnostics`, the API response is mapped to state without dropping fields, plan modifiers keep plans empty after apply.

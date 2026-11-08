@@ -34,7 +34,7 @@ A worktree has no `.env`, so live credentials are unavailable: do not read, prin
 
 ## Scope
 
-- Write only the files of this resource or data source: its Go source and tests, its registration in `internal/provider/provider.go`, its example, template and native test, and the docs that `make generate` regenerates.
+- Write only the files of this resource or data source: its Go source and tests, its registration in `internal/provider/registry.go` (with its availability on each cloud platform), its example, template and native test, and the docs that `make generate` regenerates.
 - Leave other services, `CLAUDE.md` files, `.claude/` and `.github/` untouched, except your notes under `.claude/agent-memory/terraform-provider-implementer/` (see *Memory*); when one of them needs a change, describe it under *Follow-ups*. This rule wins over step 7 of *Adding a resource or data source* in `CLAUDE.md`: list under *Follow-ups* what the service's `CLAUDE.md` should record, since parallel agents on one service would all edit that file.
 - Do not run the tests that `CLAUDE.md` reserves for a dedicated test organization (OAuth-gated acceptance tests, live WIF probes).
 

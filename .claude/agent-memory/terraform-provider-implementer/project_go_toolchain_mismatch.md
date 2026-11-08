@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-Status on 2026-10-25: kept as a workaround, not re-observed during the memory purge. Diagnose with `go version; go env GOROOT GOTOOLCHAIN; which -a go` (the `go` found first must be the mise-managed one). The separate `go clean -cache` fix after a Go upgrade is in `CLAUDE.md`.
+Status: reproduced on 2026-11-08 by running a Go 1.26.2 `go` binary with `GOROOT` pointing at a Go 1.27.3 install (`GOROOT=<go1.27.3 root> <go1.26.2 root>/bin/go build ./internal/errors/`): `compile: version "go1.27.3" does not match go tool version "go1.26.2"` on every standard-library package; the same build passes once `GOROOT` is unset and the `go` found first matches the toolchain. Diagnose with `go version; go env GOROOT GOTOOLCHAIN; which -a go` (the `go` found first must be the mise-managed one). The separate `go clean -cache` fix after a Go upgrade is in `CLAUDE.md`.
 
 `go build`/`go test`/`make` can fail with `compile: version "go1.27.0" does not match go tool version "go1.26.2"` (or similar) across the whole stdlib, even in a fresh worktree. Cause: a `toolchain@*` binary under `$GOPATH/pkg/mod/golang.org/toolchain@v0.0.1-goX.Y.Z/bin/go` sits ahead of the mise-managed `go` on PATH (or `GOROOT` points at a different patch version than the invoked compiler), so the compiler and the GOROOT stdlib disagree.
 
