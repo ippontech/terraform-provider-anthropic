@@ -1,0 +1,21 @@
+---
+page_title: "anthropic_vaults Data Source - anthropic"
+subcategory: "Vaults"
+description: |-
+  Lists the vaults of the workspace (beta).
+---
+
+# anthropic_vaults (Data Source)
+
+Lists the vaults of the workspace the API key belongs to (beta), newest first. All pages are fetched automatically. Archived vaults are excluded by default, mirroring the API's default behavior; set `include_archived = true` to include them.
+
+> **API**: `GET /v1/vaults` (Managed Agents API).
+> **Auth**: Standard API key (`api_key` / `ANTHROPIC_API_KEY`).
+> **Beta header**: `anthropic-beta: managed-agents-2026-04-01`.
+> **Cost**: Free.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/vaults/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
