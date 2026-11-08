@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	"github.com/ippontech/terraform-provider-anthropic/internal/provider"
 )
 
@@ -107,10 +108,15 @@ func PreCheckMultiWorkspace(t *testing.T) {
 // the other exported credential (and any ant profile) out of the client, and
 // ANTHROPIC_BASE_URL is re-applied by hand since the marker option skips it
 // too. Without that second step a test's out-of-band reads would query the
-// production host while the provider under test talks to another one.
-func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
-	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
-	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+// production host while the provider under test talks to another one. As in
+// the provider, its user information leaves the URL, so no SDK error in the
+// CI log carries a password, and becomes a Basic header for an API key
+// client only (basicAuth).
+func newSDKClient(basicAuth bool, explicit ...option.RequestOption) *anthropic.Client {
+	baseURL, credentials := platform.BaseURLWithoutUserInfo("", "ANTHROPIC_BASE_URL", basicAuth)
+	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, credentials...)
+	opts = append(opts, explicit...)
+	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	c := anthropic.NewClient(opts...)
@@ -122,7 +128,7 @@ func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
 // anthropic-workspace-id header, for tests that check out of band which
 // workspace an object landed in. Call PreCheckMultiWorkspace first.
 func NewMultiWorkspaceClient(workspaceID string) *anthropic.Client {
-	return newSDKClient(
+	return newSDKClient(true,
 		option.WithAPIKey(os.Getenv(MultiWorkspaceAPIKeyEnv)),
 		option.WithHeader("anthropic-workspace-id", workspaceID),
 	)
@@ -137,7 +143,7 @@ func NewMultiWorkspaceClient(workspaceID string) *anthropic.Client {
 // ANTHROPIC_API_KEY (always present in a test run) is not sent alongside the
 // bearer, which these endpoints reject.
 func NewOAuthClient() *anthropic.Client {
-	return newSDKClient(option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
+	return newSDKClient(false, option.WithAuthToken(os.Getenv("ANTHROPIC_AUTH_TOKEN")))
 }
 
 // NewAPIKeyClient returns an SDK client authenticated with the standard API
@@ -147,5 +153,5 @@ func NewOAuthClient() *anthropic.Client {
 // defaults, so an exported ANTHROPIC_AUTH_TOKEN is not sent alongside the
 // key.
 func NewAPIKeyClient() *anthropic.Client {
-	return newSDKClient(option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
+	return newSDKClient(true, option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")))
 }

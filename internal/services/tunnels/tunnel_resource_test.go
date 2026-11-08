@@ -57,12 +57,12 @@ func TestAccTunnelResource_basic(t *testing.T) {
 				),
 			},
 			{
-				// Import reveals the current token once; token_rotation is
-				// configuration only.
+				// Import never reveals the token: the first apply after it
+				// does. token_rotation is configuration only.
 				ResourceName:            name,
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"token_rotation"},
+				ImportStateVerifyIgnore: []string{"token", "token_id", "token_rotation"},
 			},
 		},
 	})

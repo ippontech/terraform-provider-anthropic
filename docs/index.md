@@ -160,7 +160,7 @@ provider "anthropic" {
 }
 ```
 
-- `identity_token_file` is re-read on every exchange, for tokens a platform rotates on disk. The platform must have rotated the file by the next exchange: if it still holds a token with a `jti` the exchange has already accepted, that exchange fails with `jti_reused`.
+- `identity_token_file` is re-read on every exchange, for tokens a platform rotates on disk. The platform must have rotated the file by the next exchange: if it still holds a token with a `jti` the exchange has already accepted, that exchange fails with `jti_reused`. Two federated provider blocks (this one and the `tunnels` alias of [`anthropic_tunnel`](resources/tunnel), for instance) each exchange a token in the same run, so they need two token sources, such as two projected tokens at different paths.
 - `identity_token_command` runs a program on every exchange and reads the token from its stdout. Use it for tokens fetched from a CLI or an endpoint. The program is run directly, not through a shell, so a pipe or `$VARIABLE` expansion needs the shell as the program: `["sh", "-c", "..."]`.
 - `identity_token` is a literal and cannot be refreshed.
 
@@ -225,7 +225,7 @@ provider "anthropic" {
 - Setting the block selects the platform. `ANTHROPIC_GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_GOOGLE_CLOUD_LOCATION`, `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID` and `ANTHROPIC_GOOGLE_CLOUD_BASE_URL` fill its attributes but never select it on their own.
 - Requests carry a Google OAuth 2.0 access token with the `cloud-platform` scope, as `Authorization: Bearer`. It comes from `credentials` (the contents of a service account key, authorized user, external account or impersonated service account file, refreshed as needed), from `access_token` (not refreshed: about one hour), or else from Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, which must name a file of one of these types, `gcloud auth application-default login`, the metadata server of a workload on Google Cloud). The identity needs `roles/claude.user` on the project, or `roles/claude.admin` for the organization routes.
 - `project` falls back to the variables above, then to the project of the credentials when they carry one. `location` defaults to `global`, which the documentation recommends.
-- `workspace_id` goes into the request URL, never into a header (the gateway rejects `anthropic-workspace-id`). With the `google_cloud` block it is read from `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID`, never from `ANTHROPIC_WORKSPACE_ID`. It may be left unset only for a configuration limited to organization routes: then every type that calls workspace routes fails at plan, or at apply for a data source that Terraform reads only then. Workspaces are created in the Claude Console (Settings > Workspaces), where their IDs are shown.
+- `workspace_id` goes into the request URL, never into a header (the gateway rejects `anthropic-workspace-id`). With the `google_cloud` block it is read from `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID`, never from `ANTHROPIC_WORKSPACE_ID`. It may be left unset only for a configuration limited to organization routes (the external key types): then every type that calls workspace routes fails at plan, or at apply for a data source that Terraform reads only then. Workspaces are created in the Claude Console (Settings > Workspaces), where their IDs are shown.
 - `google_cloud` conflicts with `api_key`, `admin_api_key`, `auth_token`, `federation` and `aws`, and the first-party variables are not read.
 - `base_url` (or `ANTHROPIC_GOOGLE_CLOUD_BASE_URL`) replaces both derived endpoints, so every route, organization routes included, goes to it. User information in it (`user:password@`) is dropped from the request URLs: every request carries the Google token, which net/http already sent in its place.
 
@@ -241,6 +241,7 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 |---|---|---|---|
 | `anthropic_api_key` | resource, data source | Unavailable | Unavailable |
 | `anthropic_api_keys` | data source | Unavailable | Unavailable |
+| `anthropic_compliance_settings` | resource | Unavailable | Unavailable |
 | `anthropic_federation_issuer` | resource, data source | Unavailable | Unavailable |
 | `anthropic_federation_issuers` | data source | Unavailable | Unavailable |
 | `anthropic_federation_rule` | resource, data source | Unavailable | Unavailable |

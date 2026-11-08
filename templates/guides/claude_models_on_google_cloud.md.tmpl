@@ -98,14 +98,32 @@ resource "anthropic_agent" "triage" {
 }
 ```
 
-Organization routes (`/v1/organizations/...`) go to the organization endpoint (`.../claudeOrganization/invoke`) and need no workspace: a provider configuration without `workspace_id` serves those types only, and refuses every other type at plan time. On the provider's current resources, every type that works on this platform needs a workspace.
+Organization routes (`/v1/organizations/...`) go to the organization endpoint (`.../claudeOrganization/invoke`) and need no workspace: a provider configuration without `workspace_id` serves those types only, and refuses every other type at plan time. Of the provider's types, only the external key ones (`anthropic_external_key` and the `anthropic_external_key` and `anthropic_external_keys` data sources) call organization routes only; every other type that works on this platform needs a workspace. They need `roles/claude.admin`. A registered key is attached to a workspace in the Claude Console, where workspaces are managed:
+
+```hcl
+provider "anthropic" {
+  alias = "gc_organization"
+
+  google_cloud = {
+    project = var.project
+  }
+}
+
+resource "anthropic_external_key" "regulated" {
+  provider = anthropic.gc_organization
+
+  provider_config = {
+    type     = "gcp"
+    key_name = "projects/my-project/locations/us-east1/keyRings/anthropic/cryptoKeys/anthropic-cmek"
+  }
+}
+```
 
 ## 4. What the provider can and cannot manage
 
-- **Supported**: agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, scheduled deployments and their runs, messages and token counting, models.
+- **Supported**: agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, scheduled deployments and their runs, messages and token counting, models, external key registrations (`anthropic_external_key` and its data sources: Google Cloud KMS keys, attached to a workspace in the Console, with `roles/claude.admin`).
 - **Unverified**: user profiles. The platform's documentation does not mention them, and the SDK version this provider uses sends them to the workspace endpoint, while later versions send them to the organization endpoint.
 - **Unavailable**: workspaces (Console only), API keys, organization members, invites and workspace members (Google Cloud IAM controls access, with roles granted on the project for every workspace at once), rate limits, organization webhooks, telemetry destinations, the organization data source, Workload Identity Federation and MCP tunnels (no Anthropic OAuth token).
-- **Not in the provider yet**: external key registrations (Google Cloud KMS keys, attached to a workspace in the Console), which the gateway serves with `roles/claude.admin`.
 
 A session on a self-hosted environment cannot attach memory stores, and the SDKs' pre-built self-hosted workers do not support this platform.
 
@@ -117,6 +135,7 @@ Each of these needs a Claude Models on Google Cloud test organization:
 2. That `?beta=true`, which the SDK adds to beta routes, is accepted.
 3. Whether user profiles, the Compliance API and Managed Agents webhooks are served, and through which endpoint.
 4. That the request URLs the SDK derives (workspace and organization endpoints, location `global`) are the gateway's, beyond the documentation's examples.
+5. That the gateway accepts the external key requests the provider sends: no key was registered through it.
 
 ## See also
 

@@ -4,6 +4,7 @@
 package tunnels
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -145,12 +146,14 @@ func (r *TunnelCertificateResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	// Not retried, like the tunnel create: replaying a registration that had
-	// landed would take one of the tunnel's two certificate slots behind
-	// Terraform's back.
-	cert, err := r.client.Beta.Tunnels.Certificates.New(ctx, data.TunnelID.ValueString(), anthropic.BetaTunnelCertificateNewParams{
-		CACertificatePEM: data.CACertificatePEM.ValueString(),
-	}, option.WithMaxRetries(0))
+	// Retried only on a 429, like the tunnel create: replaying a
+	// registration that had landed would take one of the tunnel's two
+	// certificate slots behind Terraform's back.
+	cert, err := createRetrying429(ctx, func() (*anthropic.BetaTunnelCertificate, error) {
+		return r.client.Beta.Tunnels.Certificates.New(ctx, data.TunnelID.ValueString(), anthropic.BetaTunnelCertificateNewParams{
+			CACertificatePEM: data.CACertificatePEM.ValueString(),
+		}, option.WithMaxRetries(0))
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to register tunnel certificate: %s", err))
 		return
@@ -273,6 +276,11 @@ func mapTunnelCertificateToState(cert *anthropic.BetaTunnelCertificate, data *Tu
 // decodeSingleCertificatePEM returns the DER bytes of the one CERTIFICATE
 // block in s, or an error describing why s is not exactly that.
 func decodeSingleCertificatePEM(s string) ([]byte, error) {
+	// Checked on the raw text, so that key material pem.Decode cannot parse
+	// (a missing END line, a truncated paste) is refused as well.
+	if strings.Contains(s, "PRIVATE KEY") {
+		return nil, fmt.Errorf("found private-key material, expected only the CA certificate")
+	}
 	block, rest := pem.Decode([]byte(s))
 	if block == nil {
 		return nil, fmt.Errorf("no PEM block found")
@@ -280,7 +288,7 @@ func decodeSingleCertificatePEM(s string) ([]byte, error) {
 	if block.Type != "CERTIFICATE" {
 		return nil, fmt.Errorf("found a %q PEM block, expected CERTIFICATE (the value must not contain private-key material)", block.Type)
 	}
-	if next, _ := pem.Decode(rest); next != nil {
+	if next, _ := pem.Decode(rest); next != nil || bytes.Contains(rest, []byte("-----BEGIN")) {
 		return nil, fmt.Errorf("found more than one PEM block, expected exactly one certificate")
 	}
 	return block.Bytes, nil
@@ -320,12 +328,22 @@ func caCertificateChanged(ctx context.Context, req planmodifier.StringRequest, r
 	if err != nil {
 		return
 	}
-	resp.RequiresReplace = !strings.EqualFold(planned, stateFingerprint.ValueString())
+	resp.RequiresReplace = normalizeFingerprint(planned) != normalizeFingerprint(stateFingerprint.ValueString())
+}
+
+// normalizeFingerprint lowercases a SHA-256 fingerprint and drops a sha256:
+// prefix and colon separators, so that the hex compares equal in any of the
+// usual spellings: the API's format was never checked against a live
+// response, and a false mismatch would replace, and so archive, a live CA.
+func normalizeFingerprint(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "sha256:")
+	return strings.ReplaceAll(s, ":", "")
 }
 
 // caCertificatePEMValidator checks the shape constraints the API documents
 // and that can be checked without parsing the certificate: size, exactly one
-// CERTIFICATE block, no other PEM block (a private key in particular). The
+// CERTIFICATE block, no other PEM block and no private-key text at all. The
 // X.509 requirements (CA flag, key usage, algorithms, validity) are left to
 // the API, which reports them precisely.
 type caCertificatePEMValidator struct{}

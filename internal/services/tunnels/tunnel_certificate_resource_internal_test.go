@@ -110,7 +110,9 @@ func TestCACertificatePEMValidator(t *testing.T) {
 		{"unknown", types.StringUnknown(), ""},
 		{"not PEM", types.StringValue("not a certificate"), "no PEM block"},
 		{"private key", types.StringValue(keyPEM), "private-key material"},
-		{"certificate followed by a key", types.StringValue(ca + keyPEM), "more than one PEM block"},
+		{"certificate followed by a key", types.StringValue(ca + keyPEM), "private-key material"},
+		{"certificate followed by an unterminated key", types.StringValue(ca + "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg\n"), "private-key material"}, // gitleaks:allow: a truncated key, never valid
+		{"certificate followed by an unterminated block", types.StringValue(ca + "-----BEGIN CERTIFICATE-----\nMIIB\n"), "more than one PEM block"},
 		{"chain of two certificates", types.StringValue(ca + other), "more than one PEM block"},
 		{"too large", types.StringValue(ca + strings.Repeat("#", caCertificatePEMMaxBytes)), "at most 8192"},
 	}
@@ -135,6 +137,28 @@ func TestCACertificatePEMValidator(t *testing.T) {
 	}
 }
 
+// TestTunnelCertificateResource_Create_retries429: a 429 states the
+// registration was not processed, so it is the one answer sent again.
+func TestTunnelCertificateResource_Create_retries429(t *testing.T) {
+	srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+		"POST /v1/tunnels/tnl_01ABC/certificates": respondInTurn(
+			rateLimited,
+			respond(http.StatusOK, certificateJSON("", "2031-07-01T10:00:00Z")),
+		),
+	})
+	r := &TunnelCertificateResource{client: oauthtest.NewClient(t, srv)}
+	ca, _ := newTestCA(t, "throttled")
+
+	resp := &resource.CreateResponse{State: resourceState(t, r, nil)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: resourcePlan(t, r, map[string]string{"tunnel_id": "tnl_01ABC", "ca_certificate_pem": ca})}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create returned errors: %v", resp.Diagnostics)
+	}
+	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/certificates"); n != 2 {
+		t.Errorf("certificate POST sent %d times, want 2", n)
+	}
+}
+
 // TestCACertificateChanged pins when a PEM change replaces the certificate:
 // only when it encodes a different certificate.
 func TestCACertificateChanged(t *testing.T) {
@@ -151,6 +175,7 @@ func TestCACertificateChanged(t *testing.T) {
 		{"same certificate, re-wrapped text", fingerprint, types.StringValue(rewrapPEM(t, ca)), false},
 		{"imported (no PEM in state), same certificate", fingerprint, types.StringValue(ca), false},
 		{"fingerprint compared case-insensitively", strings.ToUpper(fingerprint), types.StringValue(ca), false},
+		{"fingerprint with a sha256: prefix and colons", "SHA256:" + colonHex(fingerprint), types.StringValue(ca), false},
 		{"different certificate", fingerprint, types.StringValue(other), true},
 		{"unknown plan value", fingerprint, types.StringUnknown(), true},
 		{"unparsable plan value", fingerprint, types.StringValue("garbage"), true},
@@ -177,6 +202,15 @@ func TestCACertificateChanged(t *testing.T) {
 			}
 		})
 	}
+}
+
+// colonHex spells a hex fingerprint as colon-separated upper-case pairs.
+func colonHex(hex string) string {
+	pairs := make([]string, 0, len(hex)/2)
+	for i := 0; i+1 < len(hex); i += 2 {
+		pairs = append(pairs, strings.ToUpper(hex[i:i+2]))
+	}
+	return strings.Join(pairs, ":")
 }
 
 func certificateJSON(archivedAt, expiresAt string) string {
