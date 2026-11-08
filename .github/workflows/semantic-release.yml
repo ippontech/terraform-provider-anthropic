@@ -14,13 +14,6 @@ on:
     - cron: '23 7 * * *'
     - cron: '23 12 * * *'
   workflow_dispatch:
-    inputs:
-      allow_major:
-        description: >-
-          Cut a major version if the commits since the last tag call for one. Tick it only for a
-          breaking change merged on purpose (RELEASE.md, "Major versions").
-        type: boolean
-        default: false
 
 permissions: {}
 
@@ -72,8 +65,6 @@ jobs:
         id: check
         env:
           SCHEDULE: ${{ github.event.schedule }}
-          # false on a scheduled run, which has no inputs.
-          ALLOW_MAJOR: ${{ inputs.allow_major == true }}
         run: |
           set -euo pipefail
           # Two lines on stdout, `last_tag=` and `release_type=`; the analysis log on stderr. Read
@@ -86,15 +77,19 @@ jobs:
           if [ "${type}" = none ]; then
             release=false
           fi
-          # A major is only cut on purpose. The analyzer reads a breaking change from any line of a
-          # commit body that starts with "BREAKING CHANGE" or "BREAKING-CHANGE", in any case, so a
-          # pull request description saying "Breaking change: none" is enough to call for one. Such
-          # a run fails here, before the live tests, and names the way out; the analysis log above
-          # names the commit.
-          if [ "${type}" = major ] && [ "${ALLOW_MAJOR}" != true ]; then
-            echo "::error title=Major version refused::The commits since ${last:-the first commit} call for a major version, which is only cut on purpose. If it is intended, run this workflow by hand with allow_major ticked. If not, revert the commit that carries the breaking change: semantic-release ignores a commit reverted before it is released (RELEASE.md, \"Major versions\")."
-            echo "Major version refused: the commits since ${last:-the first commit} call for one. See RELEASE.md, \"Major versions\"." >> "${GITHUB_STEP_SUMMARY}"
-            exit 1
+          # A major is only cut on purpose, confirmed by a line "Allow-Major: yes" in a commit since
+          # the last tag (the merge commit of a staging branch, RELEASE.md "Major versions"). The
+          # analyzer reads a breaking change from any line of a commit body that starts with
+          # "BREAKING CHANGE" or "BREAKING-CHANGE", in any case, so a pull request description
+          # saying "Breaking change: none" is enough to call for one. Such a run fails here, before
+          # the live tests; the analysis log above names the commit. Read from a variable, as above.
+          if [ "${type}" = major ]; then
+            messages=$(git log --format=%B "${last:+${last}..}HEAD")
+            if ! grep -qiE '^Allow-Major:[[:space:]]*yes[[:space:]]*$' <<< "${messages}"; then
+              echo "::error title=Major version refused::The commits since ${last:-the first commit} call for a major version, and none carries the line \"Allow-Major: yes\" that confirms one. If the major is not intended, add a release rule for the commit named in the log above (RELEASE.md, \"An unintended major\")."
+              echo "Major version refused: no \"Allow-Major: yes\" line since ${last:-the first commit}. See RELEASE.md, \"An unintended major\"." >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
           fi
           # The retry run never cuts a second version in a day.
           if [ "${SCHEDULE}" = "23 12 * * *" ] && [ -n "${last}" ] \
