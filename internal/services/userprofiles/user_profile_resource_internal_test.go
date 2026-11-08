@@ -639,8 +639,13 @@ func TestUserProfileResource_Delete_NotFoundIsAlreadyGone(t *testing.T) {
 		"type":  "error",
 		"error": map[string]any{"type": "not_found_error", "message": "user profile not found"},
 	})
-	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() > 0 {
+	if resp.Diagnostics.HasError() {
 		t.Fatalf("expected a 404 to count as already deleted, got %v", resp.Diagnostics)
+	}
+	// The 404 is ambiguous (beta disabled, access lost), so a warning says
+	// the profile may still exist.
+	if resp.Diagnostics.WarningsCount() != 1 || resp.Diagnostics.Warnings()[0].Summary() != "User Profile Not Found" {
+		t.Errorf("diagnostics = %v, want one User Profile Not Found warning", resp.Diagnostics)
 	}
 	if calls != 1 {
 		t.Errorf("expected exactly one request, got %d", calls)

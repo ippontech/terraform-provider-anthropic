@@ -26,7 +26,8 @@ resold-to company, on whose behalf the platform's API key calls the API.
 > was actually deleted.
 
 Destroying this resource (or removing it from configuration) deletes the profile at Anthropic with
-`DELETE /v1/user_profiles/{id}`. A profile that is already gone (`404`) counts as deleted.
+`DELETE /v1/user_profiles/{id}`. A profile that is already gone (`404`) counts as deleted, with a warning: the same
+`404` is returned when the beta is not enabled or the API key lost access, and the profile may then still exist.
 
 `metadata` uses merge semantics on update, not the null-based PATCH semantics used elsewhere in this provider
 (vaults, memory stores): a key present in config overwrites the stored value, a key omitted from config is left
