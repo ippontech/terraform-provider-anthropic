@@ -210,10 +210,6 @@ Two settings keep it out:
   updates that hold it; the others in the group (an automerged member of `CI tool versions` held
   by tflint, say) keep them off.
 
-`.releaserc` also gives `build`, `perf`, `refactor` and `docs` a `breaking` rule that cuts a major:
-their own patch rule matches first, and without it the analyzer never reaches its default breaking
-rule, so a `refactor!:` cut only a patch.
-
 ## Validating a config change
 
 Renovate ships a validator that catches unknown keys and malformed values:
