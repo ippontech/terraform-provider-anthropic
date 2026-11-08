@@ -6,6 +6,7 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -74,13 +75,59 @@ func createPlugin(ctx context.Context, client *admin.Client, src pluginSource, m
 // completePluginRegistration finishes a create the API answered with
 // `registration_pending`, as the API documents: by uploading the same files
 // again as a version of the plugin it stored.
+//
+// When that upload is itself still pending, the plugin is read back and
+// returned with a *pendingPluginError, so that Create saves it and Terraform
+// taints it: the next apply deletes it and creates it again, instead of the
+// plugin being left in the organization untracked.
 func completePluginRegistration(ctx context.Context, client *admin.Client, src pluginSource, pluginID, releaseNotes string) (*pluginAPIObject, error) {
 	if _, err := uploadPluginVersion(ctx, client, src, pluginID, releaseNotes); err != nil {
+		var pending *pendingVersionError
+		if errors.As(err, &pending) {
+			if plugin, getErr := getPlugin(ctx, client, pluginID); getErr == nil {
+				return plugin, &pendingPluginError{pluginID: pluginID, versionID: pending.versionID, err: pending.err}
+			}
+		}
+		if pending != nil {
+			err = pending.err
+		}
 		return nil, fmt.Errorf("plugin %s was created but its registration did not complete, and uploading the same files "+
 			"as a version to complete it failed: %w. Import the plugin with `terraform import`, then apply again", pluginID, err)
 	}
 	return getPlugin(ctx, client, pluginID)
 }
+
+// pendingVersionError is a version upload the API stored but answered with
+// `registration_pending`. err is the API error.
+type pendingVersionError struct {
+	pluginID, versionID string
+	err                 error
+}
+
+func (e *pendingVersionError) Error() string {
+	return fmt.Sprintf("%s\n\nThe API stored this upload as version %s of plugin %s, but its registration is still pending. "+
+		"That version stays in the plugin's version history, and `served_version_id` on `anthropic_plugin` can serve it "+
+		"once its registration completes. Applying again uploads the files again, as the API asks, which stores another "+
+		"version", e.err, e.versionID, e.pluginID)
+}
+
+func (e *pendingVersionError) Unwrap() error { return e.err }
+
+// pendingPluginError is a create whose plugin the API stored, but whose
+// registration was still pending after the version upload meant to complete
+// it. createPlugin returns the plugin with it, for Create to save.
+type pendingPluginError struct {
+	pluginID, versionID string
+	err                 error
+}
+
+func (e *pendingPluginError) Error() string {
+	return fmt.Sprintf("%s\n\nThe API created plugin %s, but its registration was still pending after the version upload "+
+		"that completes it (version %s). The plugin is saved in state as tainted, so the next apply deletes it and "+
+		"creates it again", e.err, e.pluginID, e.versionID)
+}
+
+func (e *pendingPluginError) Unwrap() error { return e.err }
 
 // servePluginVersion makes versionID the version members are served, which
 // pins the plugin to it.
@@ -135,10 +182,7 @@ func postPluginVersion(ctx context.Context, client *admin.Client, pluginID strin
 	if err != nil {
 		status, details := pluginErrorOf(err)
 		if status == http.StatusServiceUnavailable && details.ErrorCode == "registration_pending" && details.PluginVersionID != "" {
-			return nil, fmt.Errorf("%w\n\nThe API stored this upload as version %s of plugin %s, but its registration "+
-				"is still pending. That version stays in the plugin's version history, and `served_version_id` on "+
-				"`anthropic_plugin` can serve it once its registration completes. Applying again uploads the files "+
-				"again, as the API asks, which stores another version", err, details.PluginVersionID, pluginID)
+			return nil, &pendingVersionError{pluginID: pluginID, versionID: details.PluginVersionID, err: err}
 		}
 		return nil, err
 	}

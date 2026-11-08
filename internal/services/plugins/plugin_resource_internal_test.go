@@ -141,6 +141,55 @@ func TestPluginResource_CreateFromArchiveIntoAMarketplace(t *testing.T) {
 	}
 }
 
+// TestPluginResource_CreateSavesAPluginWhoseRegistrationStaysPending: the
+// version upload that completes a pending create is itself pending, and is
+// not resent (it was stored). The plugin is read back and saved with the
+// error, so Terraform taints it instead of leaving it untracked.
+func TestPluginResource_CreateSavesAPluginWhoseRegistrationStaysPending(t *testing.T) {
+	t.Parallel()
+	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
+		"POST /v1/organizations/plugins": {apiError(http.StatusServiceUnavailable, "api_error", "registration pending",
+			`{"error_code":"registration_pending","plugin_id":"plugin_01","plugin_version_id":"pluginver_01"}`,
+			map[string]string{"x-should-retry": "false"})},
+		"POST /v1/organizations/plugins/plugin_01/versions": {
+			apiError(http.StatusServiceUnavailable, "api_error", "registration pending",
+				`{"error_code":"registration_pending","plugin_version_id":"pluginver_02"}`,
+				map[string]string{"x-should-retry": "true"}),
+			ok(pluginVersionJSON),
+		},
+		"GET /v1/organizations/plugins/plugin_01": {ok(pluginJSON("pluginver_01", false))},
+	})
+	r := &PluginResource{client: client}
+
+	plan := newPluginModel()
+	plan.SourceDir = types.StringValue(writePluginDir(t))
+	plan.MarketplaceID = types.StringValue("marketplace_01")
+	resp, got := createPluginResource(t, r, plan)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	var calls []string
+	for _, req := range requests() {
+		calls = append(calls, req.Method+" "+req.Path)
+	}
+	want := "POST /v1/organizations/plugins,POST /v1/organizations/plugins/plugin_01/versions,GET /v1/organizations/plugins/plugin_01"
+	if strings.Join(calls, ",") != want {
+		t.Errorf("calls = %v, want the create, one version upload (not resent), then a read", calls)
+	}
+	if got.ID.ValueString() != "plugin_01" {
+		t.Errorf("id = %q, want the stored plugin saved in state", got.ID.ValueString())
+	}
+	detail := resp.Diagnostics.Errors()[0].Detail()
+	for _, want := range []string{"plugin_01", "pluginver_02", "tainted"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail = %q, want it to mention %q", detail, want)
+		}
+	}
+	if strings.Contains(detail, "Applying again uploads") || strings.Contains(detail, "terraform import") {
+		t.Errorf("detail = %q, want only the tainted-plugin advice", detail)
+	}
+}
+
 func TestPluginResource_CreateCompletesAPendingRegistration(t *testing.T) {
 	t.Parallel()
 	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
