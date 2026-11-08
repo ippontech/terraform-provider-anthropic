@@ -139,6 +139,18 @@ resource "aws_iam_policy" "terraform_anthropic" {
         Resource = "*"
       },
       {
+        Sid    = "ExternalKeys"
+        Effect = "Allow"
+        Action = [
+          "aws-external-anthropic:RegisterKey",
+          "aws-external-anthropic:GetKey",
+          "aws-external-anthropic:ListKeys",
+          "aws-external-anthropic:UpdateKey",
+          "aws-external-anthropic:DisableKey",
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "SupportWorkspaceContents"
         Effect = "Allow"
         Action = [
@@ -245,12 +257,12 @@ resource "aws_iam_policy" "pass_claude_sessions_role" {
 
 ## 5. Customer-managed keys in AWS KMS
 
-On this platform a workspace's `external_key_id` is the ARN of an AWS KMS key ([CMEK on Claude Platform on AWS](https://platform.claude.com/docs/en/manage-claude/cmek-claude-platform-on-aws)): a symmetric, single-Region key in the same account and region as the workspace, whose key policy grants the `aws-external-anthropic.amazonaws.com` service principal `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey` and `kms:DescribeKey`. The key must be registered with Anthropic before it is attached: in the Claude Console (Data retention, Encryption keys) or through the external key endpoints, which this provider does not manage yet. There is no validation step: attaching performs an encrypt and a decrypt, so a key policy problem fails that create or update. Attaching is permanent: the key can be neither detached nor replaced.
+On this platform a workspace's `external_key_id` is the ARN of an AWS KMS key ([CMEK on Claude Platform on AWS](https://platform.claude.com/docs/en/manage-claude/cmek-claude-platform-on-aws)): a symmetric, single-Region key in the same account and region as the workspace, whose key policy grants the `aws-external-anthropic.amazonaws.com` service principal `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey` and `kms:DescribeKey`. The key must be registered with Anthropic before it is attached: in the Claude Console (Data retention, Encryption keys) or with `anthropic_external_key`, whose `id` is then the key's ARN. There is no validation step: attaching performs an encrypt and a decrypt, so a key policy problem fails that create or update. Attaching is permanent: the key can be neither detached nor replaced.
 
 The documented key policy can restrict the key to the workspaces it lists, through their `compartment_id`, which the workspace only gets once created. Referencing `anthropic_workspace.x.compartment_id` from the key policy while the workspace's `external_key_id` references the key is a dependency cycle, which Terraform refuses. Break it with variables, in three applies of the same configuration:
 
 1. Apply with neither variable set: the workspace is created without a key, and its `compartment_id` is output.
-2. Apply with `compartment_id` set to that output: the key is created with the restricted policy. Register its ARN with Anthropic.
+2. Apply with `compartment_id` set to that output: the key is created with the restricted policy and registered with Anthropic.
 3. Apply with `attach_key = true`: the key is attached, in place.
 
 Keep both values set after the third apply, in a `terraform.tfvars` file next to the configuration rather than on the command line. Without `compartment_id`, the key's `count` drops to zero and the plan would destroy the key the workspace's data is encrypted with, while the workspace keeps it attached. `prevent_destroy` on the key makes such a plan fail instead.
@@ -271,7 +283,18 @@ variable "attach_key" {
 resource "anthropic_workspace" "regulated" {
   provider        = anthropic.usw2_admin
   name            = "regulated"
-  external_key_id = var.attach_key ? aws_kms_key.regulated[0].arn : null
+  external_key_id = var.attach_key ? anthropic_external_key.regulated[0].id : null
+}
+
+# The registration. Its id is the key ARN on this platform.
+resource "anthropic_external_key" "regulated" {
+  count    = var.compartment_id == null ? 0 : 1
+  provider = anthropic.usw2_admin
+
+  provider_config = {
+    type    = "aws"
+    kms_arn = aws_kms_key.regulated[0].arn
+  }
 }
 
 resource "aws_kms_key" "regulated" {
@@ -326,13 +349,12 @@ output "regulated_compartment_id" {
 
 Without the compartment condition (a policy scoped with `aws:SourceArn` to `arn:aws:aws-external-anthropic:*:<account-id>:workspace/*`, for instance) there is no cycle: the key can exist and be registered before the workspace, and be attached at creation. To attach the key to another workspace later, add that workspace's compartment ID to the condition first.
 
-The principal that attaches the key needs `kms:DescribeKey`, `kms:Encrypt` and `kms:Decrypt` on it, besides `CreateWorkspace` or `UpdateWorkspace`; registering it needs `aws-external-anthropic:RegisterKey`.
+The principal that attaches the key needs `kms:DescribeKey`, `kms:Encrypt` and `kms:Decrypt` on it, besides `CreateWorkspace` or `UpdateWorkspace`; registering it needs `aws-external-anthropic:RegisterKey`, and deleting the registration `aws-external-anthropic:DisableKey`, which the gateway rejects while a workspace uses the key. Neither action is matched by a `Create*` or `Delete*` wildcard.
 
 ## 6. What the provider manages on this platform
 
-- **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, user profiles (create, read, update; the provider never deletes them), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
+- **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, external key registrations (`anthropic_external_key`, whose `id` is the KMS key ARN, and its data sources), user profiles (create, read, update; the provider never deletes them), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
 - **Unavailable**: API keys (generated in the AWS Console), organization members, invites and workspace members (AWS IAM manages access), rate limits, organization webhooks, the organization data source, Workload Identity Federation and MCP tunnels (the gateway accepts no OAuth token).
-- **Not in the provider yet**: external key registrations, which the gateway serves.
 
 Managed Agents sessions differ on this platform, which matters for agents and environments managed here: a session runs at most 6 hours without a user event before it needs one, and a session on a self-hosted environment cannot attach memory stores. The `computer_toolset_20260801` and `browser_toolset_20260801` toolsets and fast mode are not available.
 
@@ -355,6 +377,7 @@ Not verified yet:
 3. Whether reading a workspace fails without `ListTagsForResource`, which CloudTrail records on every read.
 4. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
 5. Which IAM action authorizes the deployment routes, which the IAM actions page does not list ([section 3](#3-iam-permissions-of-the-terraform-principal)).
+6. Registering, updating and deleting a key with `anthropic_external_key`: the IAM actions page lists the routes, but the provider has not called them on this platform.
 
 ## See also
 
