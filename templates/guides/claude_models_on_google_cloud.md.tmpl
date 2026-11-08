@@ -123,7 +123,7 @@ resource "anthropic_external_key" "regulated" {
 
 - **Supported**: agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, scheduled deployments and their runs, messages and token counting, models, external key registrations (`anthropic_external_key` and its data sources: Google Cloud KMS keys, attached to a workspace in the Console, with `roles/claude.admin`).
 - **Unverified**: user profiles. The platform's documentation does not mention them, and the SDK version this provider uses sends them to the workspace endpoint, while later versions send them to the organization endpoint.
-- **Unavailable**: workspaces (Console only), API keys, organization members, invites and workspace members (Google Cloud IAM controls access, with roles granted on the project for every workspace at once), rate limits, organization webhooks, telemetry destinations, the organization data source, and Workload Identity Federation (no Anthropic OAuth token).
+- **Unavailable**: workspaces (Console only), API keys, organization members, invites and workspace members (Google Cloud IAM controls access, with roles granted on the project for every workspace at once), rate limits, organization webhooks, telemetry destinations, the organization data source, Workload Identity Federation and MCP tunnels (no Anthropic OAuth token).
 
 A session on a self-hosted environment cannot attach memory stores, and the SDKs' pre-built self-hosted workers do not support this platform.
 

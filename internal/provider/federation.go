@@ -51,7 +51,8 @@ type federationModel struct {
 func federationSchema() schema.SingleNestedAttribute {
 	return schema.SingleNestedAttribute{
 		Optional: true,
-		Description: "Obtain the org:admin OAuth bearer token through Workload Identity Federation instead of `auth_token`. " +
+		Description: "Obtain the org:admin OAuth bearer token through Workload Identity Federation instead of `auth_token`, " +
+			"or the workspace:manage_tunnels one for MCP tunnels: the federation rule's scope decides which. " +
 			"The provider exchanges an identity token from your platform (a CI OIDC token, a Kubernetes projected " +
 			"service account token, an Entra token...) for an Anthropic access token, and exchanges again before it " +
 			"expires, fetching a fresh identity token each time. Every attribute falls back to the environment " +

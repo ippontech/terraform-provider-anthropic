@@ -22,11 +22,12 @@ Anthropic issues several kinds of keys, and each endpoint accepts only some of t
 | `admin_api_key` | Personal or service account key **not** scoped to a workspace | `sk-ant-api03-` | Claude Console, [API keys](https://platform.claude.com/settings/keys) | The same resources as a Console Admin API key, with the permissions of the user or service account the key belongs to |
 | `admin_api_key` | Claude Enterprise Admin API key, with scopes | `sk-ant-api01-` | claude.ai, [Organization settings > API](https://claude.ai/admin-settings/api-access), by the primary owner | Organization members, invites, RBAC groups, member spend limits, plugins and plugin marketplaces only, according to its [scopes](https://platform.claude.com/docs/en/manage-claude/admin-api-keys#choose-scopes-for-a-claude-enterprise-key): `read:members` (or `read:org_audit`) to read them, `write:members` to change a member's role, remove a member, create or withdraw an invite, `read:rbac_groups` / `write:rbac_groups` for RBAC groups and their members (a key created for all linked organizations), `read:spend_limits` / `write:spend_limits` for spend limits, `read:plugins` / `write:plugins` for plugins, their installation settings and marketplaces |
 | `auth_token`, or the `federation` block | OAuth bearer token with the `org:admin` scope | `sk-ant-oat01-` | `ant auth login`, or a Workload Identity Federation token exchange | Service accounts, federation issuers and federation rules, which accept no API key |
+| `auth_token`, or the `federation` block, in a provider alias of its own | OAuth bearer token with the `workspace:manage_tunnels` scope | Not documented | A Workload Identity Federation token exchange, through a federation rule created in the Console | MCP tunnels and their certificates, which accept no API key (see [`anthropic_tunnel`](resources/tunnel)) |
 
 - `admin_api_key` is sent in the `x-api-key` header whichever kind of key it holds, so the provider needs no setting to tell them apart.
 - Of the Admin API endpoints this provider calls, a Claude Enterprise organization can use only the member, invite, RBAC group, spend limit, plugin and plugin marketplace ones; workspaces, API keys and rate limits are Claude Console only ([which endpoints each organization can use](https://platform.claude.com/docs/en/manage-claude/user-management#which-endpoints-can-your-organization-use)). Assigning the `managed` role, on an invite or a member, also needs the `write:rbac_groups` scope, which only a key created for all linked organizations can carry. A call outside the key's scopes returns `403` with the scopes the key has and the scopes the endpoint needs.
 - A key acts on the organization it was created in: the provider sends no organization selector. A Claude Enterprise key created for all linked organizations adds the group scopes, `write:rbac_groups` included, since groups belong to the enterprise as a whole; the documentation does not say which organization its member and invite calls act on. If your company uses both Claude Console and Claude Enterprise, create a key in each and configure one [provider alias](https://developer.hashicorp.com/terraform/language/providers/configuration#alias-multiple-provider-configurations) per organization.
-- The Admin API accepts the `org:admin` OAuth token on its other endpoints too, but the provider sends `auth_token` only to the service account and federation endpoints: the other organization resources need `admin_api_key`.
+- The Admin API accepts the `org:admin` OAuth token on its other endpoints too, but the provider sends `auth_token` only to the service account, federation and MCP tunnel endpoints: the other organization resources need `admin_api_key`.
 
 For example, a company with one Claude Console organization and one Claude Enterprise organization gives each its own key, and each resource names the configuration it uses (the default one when it names none):
 
@@ -134,7 +135,9 @@ provider "anthropic" {
 
 ~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` block below when it needs to.
 
-The `auth_token` is optional — you only need it for federation resources.
+The `auth_token` is optional — you only need it for federation resources and MCP tunnels.
+
+MCP tunnels (`anthropic_tunnel`, `anthropic_tunnel_certificate`, and the `anthropic_tunnel` / `anthropic_tunnels` data sources) reject API keys too, but need a bearer token with the `workspace:manage_tunnels` scope instead of `org:admin`. One provider block carries one bearer token, so give the tunnel resources their own aliased provider block; see [`anthropic_tunnel`](resources/tunnel).
 
 For the end-to-end setup (the one Console-only bootstrap rule, a complete GitHub Actions example, how the workload consumes the rule, importing wizard-created objects), see the [Workload Identity Federation guide](guides/workload_identity_federation).
 
@@ -157,7 +160,7 @@ provider "anthropic" {
 }
 ```
 
-- `identity_token_file` is re-read on every exchange, for tokens a platform rotates on disk. The platform must have rotated the file by the next exchange: if it still holds a token with a `jti` the exchange has already accepted, that exchange fails with `jti_reused`.
+- `identity_token_file` is re-read on every exchange, for tokens a platform rotates on disk. The platform must have rotated the file by the next exchange: if it still holds a token with a `jti` the exchange has already accepted, that exchange fails with `jti_reused`. Two federated provider blocks (this one and the `tunnels` alias of [`anthropic_tunnel`](resources/tunnel), for instance) each exchange a token in the same run, so they need two token sources, such as two projected tokens at different paths.
 - `identity_token_command` runs a program on every exchange and reads the token from its stdout. Use it for tokens fetched from a CLI or an endpoint. The program is run directly, not through a shell, so a pipe or `$VARIABLE` expansion needs the shell as the program: `["sh", "-c", "..."]`.
 - `identity_token` is a literal and cannot be refreshed.
 
@@ -165,7 +168,7 @@ The command is stopped after 30 seconds. Its stderr is not shown in the error, s
 
 Give the rule a `token_lifetime_seconds` well above 120 (the default, 3600, is fine). The SDK refreshes within the last 120 seconds of an access token's life, so with a shorter lifetime every request refreshes, and runs the identity source, which can hit the identity provider's rate limit on a large plan.
 
-Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation.
+Every attribute falls back to the environment variable the Anthropic SDKs read for their own federation (`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_IDENTITY_TOKEN`), so `federation = {}` with those exported is enough. The variables alone do nothing without the block: other tools in the same job often export them, and they must not change the provider's credential behind your back. `federation` conflicts with `auth_token`. An exported `ANTHROPIC_AUTH_TOKEN` is ignored, with a warning: the block wins, as configuration does over the environment everywhere else in the provider, although the Anthropic SDKs rank the variable above their own federation. Only the block with `federation` ignores it: a provider block with neither `federation` nor `auth_token` still uses the variable, so with an `org:admin` block fed by `ANTHROPIC_AUTH_TOKEN` next to a federated tunnels alias, the warning on the alias is expected and the variable must stay set.
 
 Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 
@@ -268,6 +271,9 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 | `anthropic_service_accounts` | data source | Unavailable | Unavailable |
 | `anthropic_spend_limit` | resource | Unavailable | Unavailable |
 | `anthropic_telemetry_destination` | resource | Supported | Unavailable |
+| `anthropic_tunnel` | resource, data source | Unavailable | Unavailable |
+| `anthropic_tunnel_certificate` | resource | Unavailable | Unavailable |
+| `anthropic_tunnels` | data source | Unavailable | Unavailable |
 | `anthropic_user_profile` | resource, data source | Supported | Unverified |
 | `anthropic_user_profiles` | data source | Supported | Unverified |
 | `anthropic_workspace` | resource, data source | Supported | Unavailable |
@@ -279,9 +285,9 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 
 <!-- platform-availability:end -->
 
-On Claude Platform on AWS, the gateway serves only the workspace, external key and telemetry destination routes of the Admin API: AWS IAM manages organization and workspace membership, and API keys are generated in the AWS Console. It accepts no OAuth token, so Workload Identity Federation does not apply. Scheduled deployments are served, though the gateway's route table does not list them; their agent needs an `aws_role` execution identity (see `anthropic_deployment`).
+On Claude Platform on AWS, the gateway serves only the workspace, external key and telemetry destination routes of the Admin API: AWS IAM manages organization and workspace membership, and API keys are generated in the AWS Console. It accepts no OAuth token, so neither Workload Identity Federation nor MCP tunnels apply. Scheduled deployments are served, though the gateway's route table does not list them; their agent needs an `aws_role` execution identity (see `anthropic_deployment`).
 
-On Claude Models on Google Cloud, the gateway serves the external key routes of the Admin API, but no workspace, member, invite, API key, rate limit, organization webhook, telemetry destination or organization route: workspaces are managed in the Claude Console. Google Cloud IAM controls access, and there are no API keys or Anthropic OAuth tokens. User profiles are absent from the platform's documentation, hence unverified.
+On Claude Models on Google Cloud, the gateway serves the external key routes of the Admin API, but no workspace, member, invite, API key, rate limit, organization webhook, telemetry destination or organization route: workspaces are managed in the Claude Console. Google Cloud IAM controls access, and there are no API keys or Anthropic OAuth tokens, so neither Workload Identity Federation nor MCP tunnels apply. User profiles are absent from the platform's documentation, hence unverified.
 
 On a platform, a `404` counts as "deleted outside Terraform" only when its body is the Claude API's own `not_found_error`. Any other 404, such as a gateway refusing a route it does not serve, fails the operation and keeps the object in state: on Claude Platform on AWS such a 404 has an empty body. A `403` from AWS IAM has the Claude API's error shape (`permission_error`) and names the action that was denied.
 

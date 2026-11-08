@@ -354,7 +354,7 @@ The principal that attaches the key needs `kms:DescribeKey`, `kms:Encrypt` and `
 ## 6. What the provider manages on this platform
 
 - **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, external key registrations (`anthropic_external_key`, whose `id` is the KMS key ARN, and its data sources), user profiles (create, read, update; the provider never deletes them), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
-- **Unavailable**: API keys (generated in the AWS Console), organization members, invites and workspace members (AWS IAM manages access), rate limits, organization webhooks, the organization data source, and Workload Identity Federation (the gateway accepts no OAuth token).
+- **Unavailable**: API keys (generated in the AWS Console), organization members, invites and workspace members (AWS IAM manages access), rate limits, organization webhooks, the organization data source, Workload Identity Federation and MCP tunnels (the gateway accepts no OAuth token).
 
 Managed Agents sessions differ on this platform, which matters for agents and environments managed here: a session runs at most 6 hours without a user event before it needs one, and a session on a self-hosted environment cannot attach memory stores. The `computer_toolset_20260801` and `browser_toolset_20260801` toolsets and fast mode are not available.
 
