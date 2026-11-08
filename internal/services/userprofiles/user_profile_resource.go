@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -22,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
@@ -37,6 +39,9 @@ func NewUserProfileResource() resource.Resource {
 // UserProfileResource defines the resource implementation.
 type UserProfileResource struct {
 	client *anthropic.Client
+	// platform is the one Configure resolved: Delete names the IAM action a
+	// Claude Platform on AWS policy may lack.
+	platform platform.Platform
 }
 
 // UserProfileResourceModel describes the resource data model.
@@ -162,6 +167,7 @@ func (r *UserProfileResource) Configure(_ context.Context, req resource.Configur
 	}
 
 	r.client = pd.Client
+	r.platform = pd.Platform
 }
 
 // --- Create ---
@@ -303,6 +309,14 @@ func (r *UserProfileResource) Delete(ctx context.Context, req resource.DeleteReq
 			// Already gone — treat as success. As in Read, a 404 is also what an
 			// organization without the beta gets; nothing more can be done for
 			// such a profile from here either.
+			return
+		}
+		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusForbidden && r.platform == platform.AWS {
+			// Provider versions that only forgot the profile never called
+			// this route, so a least-privilege policy written for them lacks
+			// the action.
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf(
+				"Unable to delete user profile: %s\n\nOn Claude Platform on AWS, deleting a user profile needs the aws-external-anthropic:DeleteUserProfile IAM action, which earlier provider versions did not use: add it to the policy of the principal the provider runs as.", err))
 			return
 		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete user profile: %s", err))

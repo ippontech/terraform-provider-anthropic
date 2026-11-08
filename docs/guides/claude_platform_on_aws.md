@@ -191,6 +191,8 @@ Workspace tags are AWS resource tags: they work with IAM conditions (`aws:Resour
 
 With `aws.api_key` instead of SigV4, the principal also needs `aws-external-anthropic:CallWithBearerToken` on `"Resource": "*"`. With a short-term key from AWS's token generator, CloudTrail logs each call under the IAM identity that minted the key, with the same event names as signed calls, so the policy above applies unchanged. Mind the IAM wildcard pitfalls the IAM page describes: `Delete*` does not match `Archive*` actions, and `*File` also matches the user profile actions.
 
+Provider versions before 2.0.0 never deleted user profiles, so a policy written for them may lack `DeleteUserProfile`. Add it before upgrading: without it, destroying or replacing an `anthropic_user_profile` fails with a 403, whose error names the missing action, and the profile stays in the state.
+
 ## 4. Execution role for scheduled deployments
 
 On this platform a scheduled deployment runs each session as an IAM role of your AWS account ([scheduled deployments](https://platform.claude.com/docs/en/managed-agents/scheduled-deployments)): the agent's execution identity must be an `aws_role` before a deployment is created for it, or the create returns a 400.
