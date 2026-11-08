@@ -345,7 +345,8 @@ Verified against the real gateway:
 - the signature of a path holding an encoded KMS key ARN, and `?beta=true` on beta routes, are accepted;
 - Admin API requests need no `anthropic-workspace-id` header;
 - API key authentication (`aws.api_key` and `ANTHROPIC_AWS_API_KEY`) with short-term keys from AWS's token generator: the gateway accepts the key as `x-api-key`, which the provider sends, and as `Authorization: Bearer`, which the platform page documents; CloudTrail logs each call under the IAM identity that minted the key, with the same event names as with SigV4, so the same IAM permissions apply;
-- `workspace_geo` accepts `us` or no value; tags merge as on the Claude API, but only in a request of their own, which CloudTrail records as `TagResource` and `UntagResource` as [section 3](#3-iam-permissions-of-the-terraform-principal) describes; a `name` or `data_residency` update is recorded as `UpdateWorkspace`, and one that changes no tag sends no tags request.
+- `workspace_geo` accepts `us` or no value; tags merge as on the Claude API, but only in a request of their own, which CloudTrail records as `TagResource` and `UntagResource` as [section 3](#3-iam-permissions-of-the-terraform-principal) describes; a `name` or `data_residency` update is recorded as `UpdateWorkspace`, and one that changes no tag sends no tags request;
+- telemetry destinations (`anthropic_telemetry_destination`): a disabled destination scoped to one workspace, with a write-only header, is created, renamed, has its `headers_wo_version` raised and is destroyed, with an empty plan after each step; `header_names`, `disabled_reason` and `traces` come back as configured. The gateway rejects an `endpoint_url` whose host is not under a public top-level domain (`hostname must be under a public top-level domain`).
 
 Not verified yet:
 
@@ -354,7 +355,6 @@ Not verified yet:
 3. Whether reading a workspace fails without `ListTagsForResource`, which CloudTrail records on every read.
 4. What `aws_iam_outbound_web_identity_federation` does on destroy, and whether its `issuer_identifier` is the issuer URL a first-party federation issuer would register.
 5. Which IAM action authorizes the deployment routes, which the IAM actions page does not list ([section 3](#3-iam-permissions-of-the-terraform-principal)).
-6. Telemetry destinations (`anthropic_telemetry_destination`): the gateway lists their routes and the OpenTelemetry setup page sends them to this endpoint with AWS credentials, so the provider declares them supported, but none was created through the gateway.
 
 ## See also
 
