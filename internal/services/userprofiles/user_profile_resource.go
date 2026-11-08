@@ -306,9 +306,17 @@ func (r *UserProfileResource) Delete(ctx context.Context, req resource.DeleteReq
 	if err != nil {
 		var apierr *anthropic.Error
 		if errors.As(err, &apierr) && apierr.StatusCode == 404 {
-			// Already gone — treat as success. As in Read, a 404 is also what an
-			// organization without the beta gets; nothing more can be done for
-			// such a profile from here either.
+			// Usually already gone, so the destroy succeeds. As in Read, a 404
+			// is also what an organization without the beta, or a key that
+			// lost access, gets: nothing more can be done for such a profile
+			// from here, but the warning says it may still exist.
+			resp.Diagnostics.AddWarning(
+				"User Profile Not Found",
+				fmt.Sprintf("User profile %q was not found (404) when deleting it, so it is removed from Terraform state. "+
+					"This also occurs if the user profiles beta is not enabled for the organization, or if the "+
+					"configured API key no longer has access to it: in either case the profile may still exist. "+
+					"Verify independently before assuming it was deleted.", data.ID.ValueString()),
+			)
 			return
 		}
 		if errors.As(err, &apierr) && apierr.StatusCode == http.StatusForbidden && r.platform == platform.AWS {
