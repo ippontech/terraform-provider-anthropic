@@ -151,6 +151,14 @@ func listPluginSource(dir, archive string) (pluginSource, error) {
 // directory outside source_dir or inside it (its .git, say), fails the
 // listing instead of adding that directory's files under another name. The
 // entries' FileInfo come from the same handle (lstatat).
+//
+// Limit: on Windows, Go reads the file IDs that os.SameFile compares with
+// the directory listing on NTFS, but on a file system that does not report
+// them (FAT, some network shares) it loads them later by opening the path
+// again, so a swap there goes unnoticed. Taking the ID from an open handle
+// at listing time would not help: Go has no way to open a file on Windows
+// without following a link in its last component, so the handle could be a
+// link's target.
 func walkPluginDir(r *os.Root, root, dir string, listed os.FileInfo, files *[]pluginSourceFile) error {
 	onDisk := filepath.Join(root, filepath.FromSlash(dir))
 	f, err := r.OpenFile(filepath.FromSlash(dir), openFlags, 0)
