@@ -7,13 +7,16 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 )
 
 const baseURLTestPassword = "s3cr3t-value"
@@ -159,18 +162,132 @@ func assertNoPassword[D interface {
 
 // TestGatewayBaseURL: the URL keeps everything but its user information,
 // and a URL without any is passed through with no header.
-func TestGatewayBaseURL(t *testing.T) {
+func TestBaseURLWithoutUserInfo(t *testing.T) {
 	isolateGoogleEnv(t)
-	got, opts := gatewayBaseURL("https://u:p@gateway.example.com/v1/projects/p", awsBaseURLEnv, true)
+	got, opts := platform.BaseURLWithoutUserInfo("https://u:p@gateway.example.com/v1/projects/p", awsBaseURLEnv, true)
 	if got != "https://gateway.example.com/v1/projects/p" || len(opts) != 1 {
 		t.Errorf("got %q with %d options", got, len(opts))
 	}
-	if got, opts := gatewayBaseURL("https://u:p@gateway.example.com", googleCloudBaseURLEnv, false); got != "https://gateway.example.com" || opts != nil {
+	if got, opts := platform.BaseURLWithoutUserInfo("https://u:p@gateway.example.com", googleCloudBaseURLEnv, false); got != "https://gateway.example.com" || opts != nil {
 		t.Errorf("without basic: got %q with %d options", got, len(opts))
 	}
 	for _, v := range []string{"", "https://vpce-0123.aws-external-anthropic.eu-west-1.vpce.amazonaws.com"} {
-		if got, opts := gatewayBaseURL(v, awsBaseURLEnv, true); got != v || opts != nil {
+		if got, opts := platform.BaseURLWithoutUserInfo(v, awsBaseURLEnv, true); got != v || opts != nil {
 			t.Errorf("%q: got %q with %d options", v, got, len(opts))
 		}
+	}
+}
+
+// TestFirstPartyBaseURLUserInfo: on the first-party API, user information in
+// ANTHROPIC_BASE_URL reaches the server as the Basic header net/http sent for
+// it next to an API key, is dropped for the bearer clients (net/http never
+// sent it there, and a Basic header would stand the federation middleware
+// down), and no SDK error repeats the password.
+func TestFirstPartyBaseURLUserInfo(t *testing.T) {
+	var mu sync.Mutex
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = r.Header.Clone()
+		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/broken") {
+			jsonResponse(w, 500, `{"type":"error","error":{"type":"api_error","message":"boom"}}`)
+			return
+		}
+		jsonResponse(w, 200, `{}`)
+	}))
+	defer srv.Close()
+
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_BASE_URL", withUserInfo(srv.URL))
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api03-env")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-oat01-env")
+	resp := configureProvider(t, nil)
+	assertNoPassword(t, resp.Diagnostics)
+	pd := providerDataFrom(t, resp)
+	header := func() http.Header {
+		mu.Lock()
+		defer mu.Unlock()
+		return got
+	}
+
+	t.Run("API key client", func(t *testing.T) {
+		if err := pd.Client.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		if h := header(); h.Get("Authorization") != wantBasic || h.Get("X-Api-Key") != "sk-ant-api03-env" {
+			t.Errorf("authorization = %q, x-api-key = %q, want the Basic credentials and the key", h.Get("Authorization"), h.Get("X-Api-Key"))
+		}
+		err := pd.Client.Get(context.Background(), "/v1/broken", nil, nil)
+		if err == nil || strings.Contains(err.Error(), baseURLTestPassword) {
+			t.Errorf("err = %v, want an error without the password", err)
+		}
+	})
+
+	t.Run("bearer client", func(t *testing.T) {
+		if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		if h := header(); h.Get("Authorization") != "Bearer sk-ant-oat01-env" {
+			t.Errorf("authorization = %q, want the bearer token", h.Get("Authorization"))
+		}
+		err := pd.OAuthClient.Get(context.Background(), "/v1/broken", nil, nil)
+		if err == nil || strings.Contains(err.Error(), baseURLTestPassword) {
+			t.Errorf("err = %v, want an error without the password", err)
+		}
+	})
+}
+
+// TestFirstPartyBaseURLUserInfoKeepsFederation: the federation middleware
+// still exchanges and attaches its token when ANTHROPIC_BASE_URL carries user
+// information.
+func TestFirstPartyBaseURLUserInfoKeepsFederation(t *testing.T) {
+	fs := newFederationServer(t, 3600)
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_BASE_URL", withUserInfo(fs.URL))
+
+	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
+		"federation": federationValue(t, map[string]tftypes.Value{
+			"organization_id":        tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+			"federation_rule_id":     tftypes.NewValue(tftypes.String, "fdrl_rule"),
+			"service_account_id":     tftypes.NewValue(tftypes.String, "svac_account"),
+			"identity_token_command": stringList(countingTokenScript(t)),
+		}),
+	}))
+	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	exchanges, authorized := fs.snapshot()
+	if len(exchanges) != 1 || len(authorized) != 1 || authorized[0] != "Bearer sk-ant-oat01-minted-1" {
+		t.Errorf("exchanges = %d, authorization = %v, want one exchange and its minted token", len(exchanges), authorized)
+	}
+}
+
+// TestConfigureRejectsAnUnparsableFirstPartyBaseURL: the error repeats
+// neither ANTHROPIC_BASE_URL nor the parse error, which quotes it.
+func TestConfigureRejectsAnUnparsableFirstPartyBaseURL(t *testing.T) {
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api03-env")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://user:"+baseURLTestPassword+"@api.invalid:port")
+	resp := configureProvider(t, nil)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("Configure succeeded")
+	}
+	if e := resp.Diagnostics.Errors()[0]; e.Summary() != "Invalid Base URL" || !strings.Contains(e.Detail(), "ANTHROPIC_BASE_URL environment variable is not a valid URL") {
+		t.Errorf("error = %q: %q", e.Summary(), e.Detail())
+	}
+	assertNoPassword(t, resp.Diagnostics)
+}
+
+// TestConfigureAdminOnlyIgnoresAnUnparsableBaseURL: the admin client has a
+// fixed base URL and never reads ANTHROPIC_BASE_URL, so an admin-only
+// configuration is not refused for it.
+func TestConfigureAdminOnlyIgnoresAnUnparsableBaseURL(t *testing.T) {
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_ADMIN_API_KEY", "sk-ant-admin01-env")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://user:"+baseURLTestPassword+"@api.invalid:port")
+	resp := configureProvider(t, nil)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Configure failed: %v", resp.Diagnostics)
 	}
 }
