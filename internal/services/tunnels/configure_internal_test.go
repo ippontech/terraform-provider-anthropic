@@ -34,6 +34,7 @@ func tunnelTypes() []tunnelType {
 	certificate := NewTunnelCertificateResource().(*TunnelCertificateResource)
 	tunnelDS := NewTunnelDataSource().(*TunnelDataSource)
 	tunnelsDS := NewTunnelsDataSource().(*TunnelsDataSource)
+	certificatesDS := NewTunnelCertificatesDataSource().(*TunnelCertificatesDataSource)
 
 	forResource := func(name, typeName string, r resource.ResourceWithConfigure, client func() *providerdata.OAuthClient) tunnelType {
 		return tunnelType{
@@ -70,6 +71,7 @@ func tunnelTypes() []tunnelType {
 		forResource("certificate resource", "anthropic_tunnel_certificate", certificate, func() *providerdata.OAuthClient { return certificate.client }),
 		forDataSource("tunnel data source", "anthropic_tunnel", tunnelDS, func() *providerdata.OAuthClient { return tunnelDS.client }),
 		forDataSource("tunnels data source", "anthropic_tunnels", tunnelsDS, func() *providerdata.OAuthClient { return tunnelsDS.client }),
+		forDataSource("certificates data source", "anthropic_tunnel_certificates", certificatesDS, func() *providerdata.OAuthClient { return certificatesDS.client }),
 	}
 }
 

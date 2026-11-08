@@ -1,0 +1,22 @@
+---
+page_title: "anthropic_tunnel_certificates Data Source - anthropic"
+subcategory: "Tunnels"
+description: |-
+  Lists the CA certificates registered on an MCP tunnel (research preview).
+---
+
+# anthropic_tunnel_certificates (Data Source)
+
+Lists the CA certificates registered on an MCP tunnel (research preview), for example to audit which CAs a tunnel managed partly outside Terraform trusts, or to find a certificate that expires soon. All pages are fetched automatically. Archived certificates are left out unless `include_archived = true`.
+
+The API never returns a certificate's PEM, so neither does this data source. To tell which CA a listed certificate is, compare its `fingerprint` (lowercase hex SHA-256 of the DER encoding, as on `anthropic_tunnel_certificate`) with the output of `openssl x509 -in ca.crt -outform DER | sha256sum`.
+
+> **API**: `GET /v1/tunnels/{tunnel_id}/certificates` (Tunnels API).
+> **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`; see `anthropic_tunnel`). API keys are not accepted.
+> **Beta header**: `anthropic-beta: mcp-tunnels-2026-06-22`.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/tunnel_certificates/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
