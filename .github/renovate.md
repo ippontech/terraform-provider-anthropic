@@ -118,7 +118,9 @@ decision at all. The `github-actions` manager tracks that input as the `terrafor
 same rule puts its updates in the reviewed group.
 
 A new workflow whose jobs read any secret other than `GITHUB_TOKEN`, or run in a protected environment,
-joins the rule's `matchFileNames` list.
+joins the rule's `matchFileNames` list. Its jobs restore no Actions cache either (`RELEASE.md`, "Caches"): the
+actions of other workflows keep automerging, and a cache entry they save on `main` must not reach
+a job that holds a secret.
 
 ## Go modules
 

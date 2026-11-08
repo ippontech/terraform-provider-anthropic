@@ -69,6 +69,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
+          # No cache next to the keys, as in goreleaser-release.yml: an entry restored here could
+          # have been saved by any job that ran on main, including one whose actions Renovate
+          # automerges, and Go does not re-hash extracted module sources. The modules come from
+          # proxy.golang.org instead, checked against go.sum as they download.
+          cache: false
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -116,6 +121,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
+          # No cache next to the keys, as in goreleaser-release.yml: an entry restored here could
+          # have been saved by any job that ran on main, including one whose actions Renovate
+          # automerges, and Go does not re-hash extracted module sources. The modules come from
+          # proxy.golang.org instead, checked against go.sum as they download.
+          cache: false
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
