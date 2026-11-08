@@ -36,10 +36,8 @@ func TestMapFederationIssuerDataSourceToState_Discovery(t *testing.T) {
 		JWKS: anthropic.BetaFederationIssuerJWKSUnion{
 			Type: "discovery",
 		},
-		PollStatus: anthropic.BetaFederationIssuerPollStatus{
-			ConsecutiveFailures: 0,
-			// LastFetchedAt / NextPollAt left zero.
-		},
+		// PollStatus left zero, and a struct built by hand carries no wire
+		// metadata for it, so it maps like an API null.
 	}
 
 	var data FederationIssuerDataSourceModel
@@ -96,12 +94,18 @@ func TestMapFederationIssuerDataSourceToState_Discovery(t *testing.T) {
 		t.Error("jwks.keys should be null for discovery mode")
 	}
 
-	pollAttrs := data.PollStatus.Attributes()
-	if !pollAttrs["last_fetched_at"].(types.String).IsNull() {
-		t.Error("poll_status.last_fetched_at should be null when never fetched")
+	// The data sources keep the all-zero object they have always returned
+	// for a poll_status the API sends as null: configurations read
+	// poll_status.consecutive_failures, and a null object would fail them.
+	if data.PollStatus.IsNull() {
+		t.Fatal("PollStatus is null, want the all-zero object the data source has always returned")
 	}
-	if !pollAttrs["next_poll_at"].(types.String).IsNull() {
-		t.Error("poll_status.next_poll_at should be null when paused")
+	pollAttrs := data.PollStatus.Attributes()
+	if got := pollAttrs["consecutive_failures"].(types.Int64).ValueInt64(); got != 0 {
+		t.Errorf("poll_status.consecutive_failures = %d, want 0", got)
+	}
+	if !pollAttrs["last_fetched_at"].(types.String).IsNull() || !pollAttrs["next_poll_at"].(types.String).IsNull() {
+		t.Errorf("poll_status = %v, want null timestamps", data.PollStatus)
 	}
 }
 
@@ -198,6 +202,18 @@ func TestMapFederationIssuerDataSourceToState_InlineKeys(t *testing.T) {
 	}
 	if got := keysVal.ValueString(); got == "" {
 		t.Error("expected jwks.keys to carry the raw JSON keys array")
+	}
+
+	// A decoded poll_status object is kept as an object, even all-zero.
+	if data.PollStatus.IsNull() {
+		t.Fatal("expected poll_status to be non-null when the response carries an object")
+	}
+	pollAttrs := data.PollStatus.Attributes()
+	if got := pollAttrs["consecutive_failures"].(types.Int64).ValueInt64(); got != 0 {
+		t.Errorf("poll_status.consecutive_failures = %d, want 0", got)
+	}
+	if !pollAttrs["last_fetched_at"].(types.String).IsNull() {
+		t.Error("poll_status.last_fetched_at should be null when never fetched")
 	}
 }
 

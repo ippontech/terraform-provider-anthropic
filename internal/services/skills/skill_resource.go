@@ -97,10 +97,12 @@ func (r *SkillResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"updated_at": schema.StringAttribute{
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				MarkdownDescription: "ISO 8601 timestamp of when the skill was last updated.",
 			},
 			"latest_version": schema.StringAttribute{
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				MarkdownDescription: "The latest version identifier for the skill.",
 			},
 			"source": schema.StringAttribute{
@@ -198,8 +200,18 @@ func (r *SkillResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-// Update is a no-op because all attributes are ForceNew.
-func (r *SkillResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+// Update only persists force_destroy, the one attribute that does not force
+// replacement; it makes no API call, so the API-owned attributes keep their
+// prior values.
+func (r *SkillResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state SkillResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	state.ForceDestroy = plan.ForceDestroy
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *SkillResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

@@ -36,14 +36,15 @@ type InvitesDataSourceModel struct {
 }
 
 var inviteAttrTypes = map[string]attr.Type{
-	"id":          types.StringType,
-	"email":       types.StringType,
-	"role":        types.StringType,
-	"status":      types.StringType,
-	"invited_at":  types.StringType,
-	"expires_at":  types.StringType,
-	"accepted_at": types.StringType,
-	"type":        types.StringType,
+	"id":             types.StringType,
+	"email":          types.StringType,
+	"role":           types.StringType,
+	"rbac_group_ids": types.SetType{ElemType: types.StringType},
+	"status":         types.StringType,
+	"invited_at":     types.StringType,
+	"expires_at":     types.StringType,
+	"accepted_at":    types.StringType,
+	"type":           types.StringType,
 }
 
 // invitesListResponse mirrors the paginated list envelope.
@@ -89,6 +90,11 @@ func (d *InvitesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 						"role": schema.StringAttribute{
 							Computed:            true,
 							MarkdownDescription: "Organization role the user will hold once the invite is accepted.",
+						},
+						"rbac_group_ids": schema.SetAttribute{
+							Computed:            true,
+							ElementType:         types.StringType,
+							MarkdownDescription: inviteRBACGroupIDsDataSourceDescription,
 						},
 						"status": schema.StringAttribute{
 							Computed:            true,
@@ -208,15 +214,21 @@ func (d *InvitesDataSource) Read(ctx context.Context, req datasource.ReadRequest
 
 	inviteObjs := make([]attr.Value, len(allInvites))
 	for i, invite := range allInvites {
+		rbacGroupIDs, diags := inviteRBACGroupIDsValue(invite.RBACGroupIDs)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 		obj, diags := types.ObjectValue(inviteAttrTypes, map[string]attr.Value{
-			"id":          types.StringValue(invite.ID),
-			"email":       types.StringValue(invite.Email),
-			"role":        types.StringValue(invite.Role),
-			"status":      types.StringValue(invite.Status),
-			"invited_at":  types.StringValue(invite.InvitedAt),
-			"expires_at":  types.StringValue(invite.ExpiresAt),
-			"accepted_at": types.StringValue(invite.AcceptedAt),
-			"type":        types.StringValue(invite.Type),
+			"id":             types.StringValue(invite.ID),
+			"email":          types.StringValue(invite.Email),
+			"role":           types.StringValue(invite.Role),
+			"rbac_group_ids": rbacGroupIDs,
+			"status":         types.StringValue(invite.Status),
+			"invited_at":     types.StringValue(invite.InvitedAt),
+			"expires_at":     types.StringValue(invite.ExpiresAt),
+			"accepted_at":    types.StringValue(invite.AcceptedAt),
+			"type":           types.StringValue(invite.Type),
 		})
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {

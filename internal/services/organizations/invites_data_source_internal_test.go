@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 )
 
@@ -147,4 +149,50 @@ func TestInvitesDataSource_buildQuery(t *testing.T) {
 			t.Errorf("statuses should be omitted when empty, got %v", q["statuses"])
 		}
 	})
+}
+
+// TestInvitesDataSource_readRBACGroupIDs drives Read end to end: each invite
+// of the list carries its own rbac_group_ids.
+func TestInvitesDataSource_readRBACGroupIDs(t *testing.T) {
+	t.Parallel()
+
+	groups := []string{rbacGroupA}
+	none := []string{}
+	page := makeInvitesPage([]inviteAPIResponse{
+		{ID: "invite_01A", Email: "a@example.com", Role: "managed", Status: "pending", Type: "invite", RBACGroupIDs: &groups},
+		{ID: "invite_01B", Email: "b@example.com", Role: "user", Status: "pending", Type: "invite", RBACGroupIDs: &none},
+		{ID: "invite_01C", Email: "c@example.com", Role: "developer", Status: "pending", Type: "invite"},
+	}, false, "invite_01C")
+	srv, rec := stub(t, func(recordedRequest) (int, string) { return http.StatusOK, page })
+	d := &InvitesDataSource{client: admintest.NewClient(t, srv)}
+
+	resp := readDataSource(t, d, nil)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+	assertBetaQuery(t, rec.all()[0])
+
+	var invites []types.Object
+	if diags := resp.State.GetAttribute(context.Background(), path.Root("invites"), &invites); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+	if len(invites) != 3 {
+		t.Fatalf("invites = %d, want 3", len(invites))
+	}
+	groupsOf := func(i int) []string {
+		set, ok := invites[i].Attributes()["rbac_group_ids"].(types.Set)
+		if !ok {
+			t.Fatalf("invites[%d].rbac_group_ids is not a set", i)
+		}
+		return rbacGroupIDsOf(t, set)
+	}
+	if ids := groupsOf(0); len(ids) != 1 || ids[0] != rbacGroupA {
+		t.Errorf("invites[0].rbac_group_ids = %v, want [%s]", ids, rbacGroupA)
+	}
+	if ids := groupsOf(1); ids == nil || len(ids) != 0 {
+		t.Errorf("invites[1].rbac_group_ids = %#v, want an empty set", ids)
+	}
+	if ids := groupsOf(2); ids != nil {
+		t.Errorf("invites[2].rbac_group_ids = %#v, want null when the API omits it", ids)
+	}
 }

@@ -35,6 +35,17 @@ func TestAccModelsDataSource(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.anthropic_models.test", "models.0.capabilities.context_management.compact_20260112"),
 					resource.TestCheckResourceAttrSet("data.anthropic_models.test", "models.0.capabilities.effort.high"),
 					resource.TestCheckResourceAttrSet("data.anthropic_models.test", "models.0.capabilities.effort.low"),
+					resource.TestCheckResourceAttrSet("data.anthropic_models.test", "models.0.lifecycle_stage"),
+					resource.TestCheckResourceAttrSet("data.anthropic_models.test", "models.0.capabilities.server_tools.web_search"),
+					resource.TestCheckResourceAttrSet("data.anthropic_models.test", "models.0.capabilities.thinking_types.between_tools"),
+				),
+			},
+			{
+				Config: testAccModelsDataSourceActiveConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.anthropic_models.active", "lifecycle_stages.#", "1"),
+					resource.TestCheckResourceAttr("data.anthropic_models.active", "models.0.lifecycle_stage", "active"),
+					resource.TestCheckNoResourceAttr("data.anthropic_models.active", "models.0.retires_at"),
 				),
 			},
 		},
@@ -43,4 +54,10 @@ func TestAccModelsDataSource(t *testing.T) {
 
 const testAccModelsDataSourceConfig = `
 data "anthropic_models" "test" {}
+`
+
+const testAccModelsDataSourceActiveConfig = `
+data "anthropic_models" "active" {
+  lifecycle_stages = ["active"]
+}
 `

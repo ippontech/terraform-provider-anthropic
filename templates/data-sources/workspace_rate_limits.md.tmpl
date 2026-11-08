@@ -2,15 +2,21 @@
 page_title: "anthropic_workspace_rate_limits Data Source - anthropic"
 subcategory: "Workspaces"
 description: |-
-  Lists workspace-level rate-limit overrides. Only entries with at least one override are returned; groups inheriting org-level limits are omitted.
+  Lists a workspace's rate limits: its overrides by default, or every group with the values it inherits from the organization when include_inherited is true.
 ---
 
 # anthropic_workspace_rate_limits (Data Source)
 
-Lists workspace-level rate-limit overrides for a given workspace. Only entries that have at least one override are returned; groups inheriting organization-level limits are **not** listed.
+Lists a workspace's rate limits, one entry per rate-limit group.
+
+By default only the groups and limiter types that have a workspace-level override are returned. With `include_inherited = true`, every group with organization-level limits that the workspace can see is listed, with the values the workspace inherits from the organization next to its own overrides; each value's `source.type` (`workspace` or `organization`) tells them apart.
+
+Each entry's `rate_limit_id` is the ID of the organization's rate-limit entry for the group, the one a workspace override for that group refers to.
+
+`group_type` is deprecated in favour of `group.type` (always equal), and Admin API version 2026-10-21 removes it. The `group_type` **filter** is unchanged.
 
 > **API**: `GET /v1/organizations/workspaces/{workspace_id}/rate_limits` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 
