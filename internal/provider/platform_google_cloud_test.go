@@ -600,7 +600,7 @@ func TestConfigureGoogleCloudEnvironment(t *testing.T) {
 
 // TestGoogleCloudGate: workspaces are unavailable on Google Cloud; without a
 // workspace, a type that calls workspace routes is refused at Configure,
-// while one limited to organization routes is served.
+// while one limited to organization routes (anthropic_external_key) is served.
 func TestGoogleCloudGate(t *testing.T) {
 	isolateGoogleEnv(t)
 	ctx := context.Background()
@@ -628,6 +628,9 @@ func TestGoogleCloudGate(t *testing.T) {
 
 		if got := configureErr("anthropic_workspace"); got != "anthropic_workspace Not Available on Claude Models on Google Cloud (Anthropic managed)" {
 			t.Errorf("workspace=%q: anthropic_workspace refusal = %q", workspace, got)
+		}
+		if _, refused := byName["anthropic_external_key"].(*refusedResource); refused {
+			t.Errorf("workspace=%q: anthropic_external_key refused, although it calls organization routes only", workspace)
 		}
 		_, agentRefused := byName["anthropic_agent"].(*refusedResource)
 		if workspace != "" && agentRefused {

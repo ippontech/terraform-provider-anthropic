@@ -180,7 +180,7 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel, tokenT
 	if diags.HasError() {
 		return nil, diags
 	}
-	diags.Append(checkGatewayBaseURL(path.Root("google_cloud").AtName("base_url"), "google_cloud.base_url", m.BaseURL.ValueString(), googleCloudBaseURLEnv)...)
+	diags.Append(checkBaseURL(path.Root("google_cloud").AtName("base_url"), "google_cloud.base_url", m.BaseURL.ValueString(), googleCloudBaseURLEnv)...)
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -313,7 +313,7 @@ func googleCredentialsType(source string, contents []byte) (string, error) {
 //
 // extra are request options for tests (an HTTP client).
 func newGoogleCloudClient(ctx context.Context, cfg googlecloud.ClientConfig, tokenTimeout time.Duration, extra ...option.RequestOption) (*anthropic.Client, error) {
-	cfg.BaseURL, _ = gatewayBaseURL(cfg.BaseURL, googleCloudBaseURLEnv, false)
+	cfg.BaseURL, _ = platform.BaseURLWithoutUserInfo(cfg.BaseURL, googleCloudBaseURLEnv, false)
 	gc, err := googlecloud.NewClient(googleTokenContext(ctx, tokenTimeout), cfg)
 	if err != nil {
 		return nil, err
