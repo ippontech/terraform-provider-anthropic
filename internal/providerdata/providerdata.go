@@ -10,9 +10,12 @@ import (
 )
 
 // OAuthClient is an SDK client authenticated with an org:admin OAuth bearer
-// token (Authorization: Bearer) instead of an API key. It is required by the
+// token (Authorization: Bearer) instead of an API key, or with a
+// workspace:manage_tunnels one for MCP tunnels. It is required by the
 // endpoints that reject API keys outright, such as the Workload Identity
-// Federation admin endpoints.
+// Federation admin endpoints (org:admin) and the MCP tunnels API
+// (workspace:manage_tunnels). A token carries one scope, so one provider
+// block serves one of the two.
 //
 // It is a distinct named type rather than a bare *anthropic.Client on purpose.
 // The SDK carries no notion of which credential a client holds, so two bare
@@ -35,8 +38,9 @@ type ProviderData struct {
 	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
 	// Nil when admin_api_key is not configured.
 	AdminClient *admin.Client
-	// OAuthClient handles endpoints that require an org:admin OAuth bearer
-	// token and reject API keys. Nil when auth_token is not configured.
+	// OAuthClient handles endpoints that require an OAuth bearer token
+	// (org:admin, or workspace:manage_tunnels for MCP tunnels) and reject API
+	// keys. Nil when auth_token is not configured.
 	OAuthClient *OAuthClient
 }
 

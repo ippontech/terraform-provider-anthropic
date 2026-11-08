@@ -128,8 +128,16 @@ func TestConfigureRequiresAtLeastOneCredential(t *testing.T) {
 	if got := resp.Diagnostics.Errors()[0].Summary(); got != "Missing Credentials" {
 		t.Errorf("summary = %q, want %q", got, "Missing Credentials")
 	}
-	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "auth_token") {
+	detail := resp.Diagnostics.Errors()[0].Detail()
+	if !strings.Contains(detail, "auth_token") {
 		t.Errorf("detail %q does not offer auth_token as a third option", detail)
+	}
+	// The bearer is org:admin for the WIF endpoints and
+	// workspace:manage_tunnels for MCP tunnels: the detail names both.
+	for _, scope := range []string{"org:admin", "workspace:manage_tunnels"} {
+		if !strings.Contains(detail, scope) {
+			t.Errorf("detail %q does not name the %s scope", detail, scope)
+		}
 	}
 }
 
