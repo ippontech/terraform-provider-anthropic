@@ -1,3 +1,15 @@
+## [1.91.3](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.91.2...v1.91.3) (2026-11-08)
+
+### 🐛 Bug Fixes
+
+* **plugins:** read plugin source files through an os.Root and check each one ([#550](https://github.com/ippontech/terraform-provider-anthropic/issues/550)) ([364ff26](https://github.com/ippontech/terraform-provider-anthropic/commit/364ff26cb5782689e4324b0e7d376bb45fc1b7d1))
+* **provider:** keep a gateway base URL password out of error messages ([#549](https://github.com/ippontech/terraform-provider-anthropic/issues/549)) ([5302c09](https://github.com/ippontech/terraform-provider-anthropic/commit/5302c0970596ef79d8359ad0b2b6d09d791316f3))
+
+### 📚 Documentation
+
+* **agent:** say what an unset version of a multiagent reference or skill follows ([#551](https://github.com/ippontech/terraform-provider-anthropic/issues/551)) ([8947696](https://github.com/ippontech/terraform-provider-anthropic/commit/89476968bb706cbc5d671ca36791112bfe8feb1c))
+* **guides:** telemetry destinations verified on Claude Platform on AWS ([#552](https://github.com/ippontech/terraform-provider-anthropic/issues/552)) ([fac6cb6](https://github.com/ippontech/terraform-provider-anthropic/commit/fac6cb6094d098e7aeac810faf72b3c5506fd86b))
+
 ## [1.91.2](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.91.1...v1.91.2) (2026-11-05)
 
 ### 📚 Documentation
