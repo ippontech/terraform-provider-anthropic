@@ -57,10 +57,10 @@ output "api_key_partial_hint" {
 ### Read-Only
 
 - `created_at` (String) RFC 3339 timestamp of when the API key was created.
-- `created_by` (Attributes) The actor that created this API key. `id` and `type` are null when the creator is not recorded (legacy, workload-identity-federated or system-created keys). (see [below for nested schema](#nestedatt--created_by))
+- `created_by` (Attributes) The actor that created this API key. `id` and `type` are empty strings when the creator is not recorded (legacy, workload-identity-federated or system-created keys). (see [below for nested schema](#nestedatt--created_by))
 - `expires_at` (String) RFC 3339 timestamp at which the API key expires, or null if it never expires.
 - `id` (String) Unique API key identifier. Set automatically on import.
-- `partial_key_hint` (String) Partially redacted hint of the API key, for identification. Null when the API returns none.
+- `partial_key_hint` (String) Partially redacted hint of the API key, for identification. Empty string when the API returns none.
 - `principal` (Attributes) The principal the API key acts as: `type = "user_actor"` with `user_id`, or `type = "service_account_actor"` with `service_account_id`. Null when the key is not bound to a principal (legacy workspace keys). (see [below for nested schema](#nestedatt--principal))
 - `scope` (Attributes) Where the API key belongs: `type = "workspace"` with the workspace's real `workspace_id` (the Default Workspace included), or `type = "organization"` (null `workspace_id`) for a principal-bound key that has no workspace. (see [below for nested schema](#nestedatt--scope))
 - `type` (String) Object type. Always `api_key`.

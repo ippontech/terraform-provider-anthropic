@@ -11,7 +11,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/admintest"
 )
 
 func TestAPIKeyDataSource_read(t *testing.T) {
@@ -71,5 +75,49 @@ func TestAPIKeyDataSource_notFound(t *testing.T) {
 	_, err := client.DoRequest(context.Background(), "GET", "/v1/organizations/api_keys/apikey_missing", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestAPIKeyDataSource_ReadLegacyKeyKeepsEmptyStrings(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/organizations/api_keys/apikey_01LEGACY" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, legacyAPIKeyJSON)
+	}))
+	defer srv.Close()
+
+	d := &APIKeyDataSource{adminClient: admintest.NewClient(t, srv)}
+	var schemaResp datasource.SchemaResponse
+	d.Schema(context.Background(), datasource.SchemaRequest{}, &schemaResp)
+	if schemaResp.Diagnostics.HasError() {
+		t.Fatalf("schema: %v", schemaResp.Diagnostics)
+	}
+	objType := schemaResp.Schema.Type().TerraformType(context.Background()).(tftypes.Object)
+	vals := map[string]tftypes.Value{}
+	for name, typ := range objType.AttributeTypes {
+		vals[name] = tftypes.NewValue(typ, nil)
+	}
+	vals["id"] = tftypes.NewValue(tftypes.String, "apikey_01LEGACY")
+
+	req := datasource.ReadRequest{Config: tfsdk.Config{Raw: tftypes.NewValue(objType, vals), Schema: schemaResp.Schema}}
+	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	d.Read(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+
+	var data APIKeyResourceModel
+	if diags := resp.State.Get(context.Background(), &data); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+	assertLegacyEmptyStrings(t, data.CreatedBy, data.PartialKeyHint)
+	if !data.Principal.IsNull() {
+		t.Errorf("principal = %v, want null", data.Principal)
+	}
+	if !data.ExpiresAt.IsNull() {
+		t.Errorf("expires_at = %v, want null", data.ExpiresAt)
 	}
 }

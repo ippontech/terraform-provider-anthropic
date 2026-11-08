@@ -64,10 +64,10 @@ func runAPIKeysRead(t *testing.T, srv *httptest.Server, filters map[string]strin
 func TestAPIKeysDataSourceRead_paginates(t *testing.T) {
 	wsID := "wrkspc_01WS"
 	page1 := []apiKeyAPIResponse{
-		{ID: "apikey_01A", Name: "Key A", Status: "active", WorkspaceID: &wsID, CreatedBy: &apiKeyCreatedBy{ID: "u", Type: "user"}, Type: "api_key"},
+		{ID: "apikey_01A", Name: "Key A", Status: "active", WorkspaceID: &wsID, CreatedBy: apiKeyCreatedBy{ID: "u", Type: "user"}, Type: "api_key"},
 	}
 	page2 := []apiKeyAPIResponse{
-		{ID: "apikey_01B", Name: "Key B", Status: "active", WorkspaceID: &wsID, CreatedBy: &apiKeyCreatedBy{ID: "u", Type: "user"}, Type: "api_key"},
+		{ID: "apikey_01B", Name: "Key B", Status: "active", WorkspaceID: &wsID, CreatedBy: apiKeyCreatedBy{ID: "u", Type: "user"}, Type: "api_key"},
 	}
 
 	var queries []url.Values
@@ -162,6 +162,34 @@ func TestAPIKeysDataSourceRead_filtersAndNewFields(t *testing.T) {
 	}
 }
 
+// Every list item maps like the single key: a legacy key keeps "" in
+// created_by.id, created_by.type and partial_key_hint.
+func TestAPIKeysDataSourceRead_legacyKeyKeepsEmptyStrings(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[`+legacyAPIKeyJSON+`],"has_more":false,"first_id":"apikey_01LEGACY","last_id":"apikey_01LEGACY"}`)
+	}))
+	defer srv.Close()
+
+	resp, got := runAPIKeysRead(t, srv, nil)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+	elems := got.APIKeys.Elements()
+	if len(elems) != 1 {
+		t.Fatalf("api_keys length = %d, want 1", len(elems))
+	}
+	item, ok := elems[0].(types.Object)
+	if !ok {
+		t.Fatalf("list item is %T, want types.Object", elems[0])
+	}
+	attrs := item.Attributes()
+	assertLegacyEmptyStrings(t, attrs["created_by"].(types.Object), attrs["partial_key_hint"].(types.String))
+	if p := attrs["principal"].(types.Object); !p.IsNull() {
+		t.Errorf("principal = %v, want null", p)
+	}
+}
+
 func TestBuildAPIKeysQuery_omitsUnsetFilters(t *testing.T) {
 	data := APIKeysDataSourceModel{
 		Status:          types.StringNull(),
@@ -210,7 +238,7 @@ func TestMapAPIKeyToListObject_withWorkspaceID(t *testing.T) {
 		WorkspaceID:    &wsID,
 		Scope:          &apiKeyScope{Type: "workspace", WorkspaceID: wsID},
 		CreatedAt:      "2026-01-01T00:00:00Z",
-		CreatedBy:      &apiKeyCreatedBy{ID: "user_01X", Type: "user"},
+		CreatedBy:      apiKeyCreatedBy{ID: "user_01X", Type: "user"},
 		PartialKeyHint: "abcd",
 		Type:           "api_key",
 	}
@@ -238,7 +266,7 @@ func TestMapAPIKeyToListObject_nullWorkspaceID(t *testing.T) {
 		Status:         "active",
 		WorkspaceID:    nil,
 		CreatedAt:      "2026-01-01T00:00:00Z",
-		CreatedBy:      &apiKeyCreatedBy{ID: "user_01X", Type: "user"},
+		CreatedBy:      apiKeyCreatedBy{ID: "user_01X", Type: "user"},
 		PartialKeyHint: "abcd",
 		Type:           "api_key",
 	}
