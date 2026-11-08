@@ -18,7 +18,8 @@ import (
 )
 
 // externalKeysPath is the collection endpoint. The GA reference documents it
-// without the `?beta=true` flag the pinned SDK's Beta service appends.
+// without the `?beta=true` flag the SDK's Beta service appends; SDK v1.84.0's
+// GA Organizations.ExternalKeys service omits the flag too.
 const externalKeysPath = "/v1/organizations/external_keys"
 
 // attachmentAttached is the attachment.type of a key some workspace uses (the
@@ -28,8 +29,7 @@ const attachmentAttached = "attached"
 
 // externalKeyPath returns the item endpoint. The ID is path-escaped because on
 // Claude Platform on AWS it is the KMS key ARN, whose `key/<uuid>` suffix would
-// otherwise add a path segment. SDK v1.84.0 escapes it the same way; the
-// pinned v1.67.0 does not.
+// otherwise add a path segment. SDK v1.84.0 escapes it the same way.
 func externalKeyPath(id string) string {
 	return externalKeysPath + "/" + url.PathEscape(id)
 }
