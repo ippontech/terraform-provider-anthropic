@@ -43,15 +43,25 @@ const (
 // `.plugin` archive named by its base name.
 type pluginSource struct {
 	archive bool
-	files   []pluginSourceFile
+	// root is the resolved source_dir, which a directory source lists and
+	// reads its files through (os.Root): a path that resolves outside it, a
+	// link included, is refused when it is opened, not only when it is
+	// listed. Empty for an archive.
+	root  string
+	files []pluginSourceFile
 }
 
 type pluginSourceFile struct {
 	// name is the multipart file name the API reads: the file's path within
 	// the plugin, with forward slashes, or an archive's base name.
 	name string
+	// path is the file on disk, for messages and, for an archive, to open it.
 	path string
 	size int64
+	// info is the file the listing saw. A read refuses any other file
+	// (os.SameFile), so a file swapped for a link or another file between
+	// the listing and the read is neither hashed nor uploaded.
+	info os.FileInfo
 }
 
 // formField is a plain (non-file) multipart field.
@@ -79,7 +89,7 @@ func listPluginSource(dir, archive string) (pluginSource, error) {
 		}
 		return pluginSource{
 			archive: true,
-			files:   []pluginSourceFile{{name: filepath.Base(archive), path: archive, size: info.Size()}},
+			files:   []pluginSourceFile{{name: filepath.Base(archive), path: archive, size: info.Size(), info: info}},
 		}, nil
 	}
 
@@ -95,15 +105,24 @@ func listPluginSource(dir, archive string) (pluginSource, error) {
 		return pluginSource{}, fmt.Errorf("source_dir %q is not a directory", dir)
 	}
 
+	// The walk goes through an os.Root: a subdirectory swapped for a link to
+	// another directory while the walk runs cannot bring that directory's
+	// files in.
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return pluginSource{}, fmt.Errorf("unable to read source_dir %q: %w", dir, err)
+	}
+	defer func() { _ = r.Close() }()
+
 	var files []pluginSourceFile
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(r.FS(), ".", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		// Git metadata is not plugin content: a .git directory (or the .git
 		// file of a worktree or submodule) is left out of the upload and of the
 		// hash, at any depth.
-		if d.Name() == gitMetadataName && p != root {
+		if d.Name() == gitMetadataName && p != "." {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -112,18 +131,18 @@ func listPluginSource(dir, archive string) (pluginSource, error) {
 		if d.IsDir() {
 			return nil
 		}
+		onDisk := filepath.Join(root, filepath.FromSlash(p))
 		if !d.Type().IsRegular() {
-			return fmt.Errorf("%q is not a regular file: symbolic links and special files cannot be uploaded", p)
+			return fmt.Errorf("%q is not a regular file: symbolic links and special files cannot be uploaded", onDisk)
 		}
-		info, err := d.Info()
+		info, err := r.Lstat(filepath.FromSlash(p))
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%q is not a regular file: symbolic links and special files cannot be uploaded", onDisk)
 		}
-		files = append(files, pluginSourceFile{name: filepath.ToSlash(rel), path: p, size: info.Size()})
+		files = append(files, pluginSourceFile{name: p, path: onDisk, size: info.Size(), info: info})
 		return nil
 	})
 	if err != nil {
@@ -145,7 +164,7 @@ func listPluginSource(dir, archive string) (pluginSource, error) {
 		return pluginSource{}, fmt.Errorf("source_dir %q has no %s: every plugin needs its manifest there", dir, pluginManifestPath)
 	}
 
-	return pluginSource{files: files}, nil
+	return pluginSource{root: root, files: files}, nil
 }
 
 // hash returns the SHA-256 of the source, streaming the files from disk: for
@@ -153,13 +172,18 @@ func listPluginSource(dir, archive string) (pluginSource, error) {
 // directory, a hash over each file's upload name and content hash, so a
 // renamed, added or removed file changes it as much as an edit does.
 func (s pluginSource) hash() (string, error) {
+	r, err := s.reader()
+	if err != nil {
+		return "", err
+	}
+	defer r.close()
 	sums := make([][]byte, len(s.files))
 	for i, f := range s.files {
-		sum, err := hashFile(f.path)
-		if err != nil {
+		h := sha256.New()
+		if err := r.copy(h, f); err != nil {
 			return "", err
 		}
-		sums[i] = sum
+		sums[i] = h.Sum(nil)
 	}
 	return s.combineHashes(sums), nil
 }
@@ -178,6 +202,12 @@ func (s pluginSource) uploadBody(fields ...formField) (admin.RawBody, string, er
 		return admin.RawBody{}, "", fmt.Errorf("the plugin's files total %d bytes, over the API's 200 MB upload limit", total)
 	}
 
+	r, err := s.reader()
+	if err != nil {
+		return admin.RawBody{}, "", err
+	}
+	defer r.close()
+
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	sums := make([][]byte, len(s.files))
@@ -187,7 +217,7 @@ func (s pluginSource) uploadBody(fields ...formField) (admin.RawBody, string, er
 			return admin.RawBody{}, "", fmt.Errorf("unable to encode %q: %w", f.path, err)
 		}
 		h := sha256.New()
-		if err := copyFile(io.MultiWriter(part, h), f.path); err != nil {
+		if err := r.copy(io.MultiWriter(part, h), f); err != nil {
 			return admin.RawBody{}, "", err
 		}
 		sums[i] = h.Sum(nil)
@@ -215,22 +245,56 @@ func (s pluginSource) combineHashes(sums [][]byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func hashFile(path string) ([]byte, error) {
-	h := sha256.New()
-	if err := copyFile(h, path); err != nil {
-		return nil, err
-	}
-	return h.Sum(nil), nil
+// sourceReader reads the files of one source for one pass (a hash or an
+// upload).
+type sourceReader struct {
+	// root is source_dir opened as an os.Root, nil for an archive.
+	root *os.Root
 }
 
-func copyFile(dst io.Writer, path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("unable to open %q: %w", path, err)
+func (s pluginSource) reader() (*sourceReader, error) {
+	if s.archive {
+		return &sourceReader{}, nil
 	}
-	defer func() { _ = f.Close() }()
-	if _, err := io.Copy(dst, f); err != nil {
-		return fmt.Errorf("unable to read %q: %w", path, err)
+	r, err := os.OpenRoot(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read source_dir %q: %w", s.root, err)
+	}
+	return &sourceReader{root: r}, nil
+}
+
+func (r *sourceReader) close() {
+	if r.root != nil {
+		_ = r.root.Close()
+	}
+}
+
+// copy writes the content of f to dst. A directory file is opened through the
+// root, which refuses a path that resolves outside source_dir; any file must
+// then be the regular file the listing saw, so a swap made after the listing
+// fails the read instead of sending another file's bytes.
+func (r *sourceReader) copy(dst io.Writer, f pluginSourceFile) error {
+	var file *os.File
+	var err error
+	if r.root != nil {
+		file, err = r.root.Open(filepath.FromSlash(f.name))
+	} else {
+		file, err = os.Open(f.path)
+	}
+	if err != nil {
+		return fmt.Errorf("unable to open %q: %w", f.path, err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("unable to read %q: %w", f.path, err)
+	}
+	if !info.Mode().IsRegular() || f.info == nil || !os.SameFile(info, f.info) {
+		return fmt.Errorf("%q is not a regular file, or is no longer the file that was listed: symbolic links and "+
+			"special files cannot be uploaded", f.path)
+	}
+	if _, err := io.Copy(dst, file); err != nil {
+		return fmt.Errorf("unable to read %q: %w", f.path, err)
 	}
 	return nil
 }
