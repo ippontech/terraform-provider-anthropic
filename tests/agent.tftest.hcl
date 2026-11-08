@@ -112,6 +112,11 @@ run "agent_resource_example" {
   }
 
   assert {
+    condition     = anthropic_agent.coordinator.multiagent.agents[0].version == anthropic_agent.assistant.version
+    error_message = "Expected the first roster entry to pin the assistant agent's current version."
+  }
+
+  assert {
     condition     = anthropic_agent.coordinator.multiagent.agents[1].type == "self"
     error_message = "Expected the second roster entry to be self."
   }
