@@ -34,6 +34,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `apikeys/`: `api_key` (import-only); `api_key`, `api_keys`. Admin key.
 - `deployments/`: `deployment`; `deployment_runs`. Standard key.
 - `environments/`: `environment`; `environment`, `environments`. Standard key.
+- `externalkeys/`: `external_key`; `external_key`, `external_keys` (CMEK key records). Admin key.
 - `federation/`: `federation_issuer`, `federation_rule`, `federation_rule_workspace`; `federation_issuer(s)`, `federation_rule(s)`, `federation_rule_workspaces`. OAuth bearer. Also holds the WIF staleness probe results.
 - `files/`: `file`; `file`, `files` (Files API GA). Standard key.
 - `memorystores/`: `memory_store`, `memory`; `memory_store(s)`, `memory`, `memories`. Standard key.
