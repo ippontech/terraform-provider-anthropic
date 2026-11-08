@@ -16,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 const (
@@ -35,17 +38,27 @@ const (
 	// up an apply. The SDK honours the header verbatim; a Terraform provider
 	// that blocked for an hour on a stray value would be worse than giving up.
 	maxRetryAfter = 60 * time.Second
+
+	// attemptTimeout bounds one attempt, response body included, so that a
+	// server that accepts the connection and never answers fails the attempt
+	// instead of hanging a plan or an apply.
+	attemptTimeout = 60 * time.Second
 )
 
 // Client makes authenticated requests to the Anthropic Admin API (/v1/organizations/*).
-// The Anthropic Go SDK does not expose admin endpoints, so this client handles them directly.
+// The provider's Admin API resources send raw JSON through this client rather
+// than through the SDK's organization services.
 //
 // Failed requests are retried with exponential backoff that honours the
 // retry-after headers Anthropic returns on 429. How much is retried depends on
 // the method: idempotent requests replay on connection errors and on the
 // transient statuses the SDK retries (408, 409, 429, and 5xx), while a POST
-// replays only on 429 — see shouldRetry. Retries are opt-in: the zero value
+// replays only on 429 unless the caller marks it WithIdempotent — see
+// shouldRetry. Retries are opt-in: the zero value
 // performs a single attempt, and NewClient enables DefaultMaxRetries.
+//
+// A client built by NewSDKClient sends its requests through an SDK client
+// instead of HTTPClient, with the same retry policy; see NewSDKClient.
 type Client struct {
 	ApiKey     string
 	BaseURL    string
@@ -60,6 +73,13 @@ type Client struct {
 	// It does not bound a server-supplied retry-after delay, which is honoured as
 	// sent and bounded only by maxRetryAfter.
 	MaxRetryDelay time.Duration
+
+	// sdk, when set, carries every request instead of HTTPClient, with its own
+	// base URL and authentication; ApiKey and BaseURL are then unused.
+	sdk *anthropic.Client
+	// sdkAttemptTimeout bounds each attempt through sdk, as HTTPClient's
+	// Timeout does for the direct client. Zero means no bound.
+	sdkAttemptTimeout time.Duration
 }
 
 // APIError is returned when the API responds with a non-2xx status code.
@@ -67,6 +87,11 @@ type APIError struct {
 	StatusCode int
 	ErrType    string
 	Message    string
+	// Details is the raw `error.details` object, when the API sends one. Some
+	// endpoints put a machine-readable cause there (the Plugins API's
+	// `error_code`, plus the ID of the plugin or version it involves), which a
+	// caller needs to tell apart causes that share a status code.
+	Details json.RawMessage
 }
 
 func (e *APIError) Error() string {
@@ -86,20 +111,109 @@ func NewClient(apiKey string) *Client {
 	return &Client{
 		ApiKey:     apiKey,
 		BaseURL:    adminAPIBaseURL,
-		HTTPClient: &http.Client{Timeout: 60 * time.Second},
+		HTTPClient: &http.Client{Timeout: attemptTimeout},
 		MaxRetries: DefaultMaxRetries,
 	}
 }
 
+// NewSDKClient returns an Admin API client that sends every request through
+// sdk, the provider's single client for a cloud gateway platform (Claude
+// Platform on AWS, Claude Models on Google Cloud). The direct client cannot
+// serve them: it sends x-api-key to api.anthropic.com, while a gateway has its
+// own base URL (per region, or per project and route) and signs each request
+// (AWS SigV4) or carries a Google access token. Going through sdk, the request
+// gets all of that, and the middlewares the provider installed on sdk, such as
+// platform.NotFoundGuard.
+//
+// The retry policy stays this package's: the SDK's own retries are turned off
+// for each request, so a POST not marked WithIdempotent is still replayed
+// only on 429. The SDK alone
+// would replay a POST on a 5xx or a dropped connection, and a second
+// POST /v1/organizations/workspaces creates a second workspace.
+func NewSDKClient(sdk *anthropic.Client) *Client {
+	return &Client{sdk: sdk, MaxRetries: DefaultMaxRetries, sdkAttemptTimeout: attemptTimeout}
+}
+
+// RawBody is a request body sent as is, with its own content type, instead of
+// being marshalled to JSON: a multipart upload, for instance.
+type RawBody struct {
+	ContentType string
+	Data        []byte
+}
+
+// RequestOption adjusts a single request: its headers, after the client has
+// set its own, so an option can add to them or override them, or how DoRequest
+// retries it.
+type RequestOption func(*requestConfig)
+
+// requestConfig is what a RequestOption adjusts.
+type requestConfig struct {
+	req *http.Request
+	// idempotent makes DoRequest retry the request as it retries an
+	// idempotent method, whatever the request's own method.
+	idempotent bool
+}
+
+// WithHeader sets a request header.
+func WithHeader(name, value string) RequestOption {
+	return func(cfg *requestConfig) {
+		cfg.req.Header.Set(name, value)
+	}
+}
+
+// WithBeta adds the given values to the `anthropic-beta` header,
+// comma-separated, as the Admin API expects for endpoints in beta (plugins,
+// webhooks, telemetry destinations, ...). A request without the header gets a
+// 404 from them. Several WithBeta options on one request add up: each keeps
+// the values set before it.
+func WithBeta(betas ...string) RequestOption {
+	return func(cfg *requestConfig) {
+		if len(betas) == 0 {
+			return
+		}
+		values := betas
+		if prior := cfg.req.Header.Get("anthropic-beta"); prior != "" {
+			values = append([]string{prior}, betas...)
+		}
+		cfg.req.Header.Set("anthropic-beta", strings.Join(values, ","))
+	}
+}
+
+// WithIdempotent marks a request as safe to replay although its method is
+// not idempotent, so that DoRequest retries it as it retries a GET or a
+// DELETE: on a connection error and on 408, 409, 429 and 5xx, where a POST is
+// otherwise retried on 429 only. Use it only for an endpoint whose reference
+// states that repeating the request leaves the same state as sending it once
+// (the compliance settings update, for instance), never for a POST that
+// creates an object.
+func WithIdempotent() RequestOption {
+	return func(cfg *requestConfig) {
+		cfg.idempotent = true
+	}
+}
+
 // DoRequest executes an HTTP request against the Admin API and returns the raw response body.
-func (c *Client) DoRequest(ctx context.Context, method, path string, body any) ([]byte, error) {
+// body is marshalled to JSON unless it is a RawBody or a *RawBody; opts apply to this request only.
+func (c *Client) DoRequest(ctx context.Context, method, path string, body any, opts ...RequestOption) ([]byte, error) {
 	var reqBody []byte
-	if body != nil {
-		b, err := json.Marshal(body)
+	contentType := "application/json"
+	switch b := body.(type) {
+	case nil:
+	case RawBody:
+		reqBody = b.Data
+		contentType = b.ContentType
+	case *RawBody:
+		if b == nil {
+			return nil, errors.New("request body is a nil *RawBody")
+		}
+		reqBody = b.Data
+		contentType = b.ContentType
+	default:
+		encoded, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request body: %w", err)
 		}
-		reqBody = b
+		reqBody = encoded
 	}
 
 	// Built once: a malformed method or URL is a programmer error, not
@@ -108,11 +222,18 @@ func (c *Client) DoRequest(ctx context.Context, method, path string, body any) (
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP request: %w", err)
 	}
-	req.Header.Set("x-api-key", c.ApiKey)
+	if c.sdk == nil {
+		req.Header.Set("x-api-key", c.ApiKey)
+	}
 	req.Header.Set("anthropic-version", AnthropicVersion)
 	if reqBody != nil {
-		req.Header.Set("content-type", "application/json")
+		req.Header.Set("content-type", contentType)
 	}
+	cfg := requestConfig{req: req}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	idempotent := cfg.idempotent || isIdempotent(req.Method)
 
 	for attempt := 0; ; attempt++ {
 		respBody, resp, err := c.attempt(req, reqBody)
@@ -120,7 +241,7 @@ func (c *Client) DoRequest(ctx context.Context, method, path string, body any) (
 			return respBody, nil
 		}
 
-		if attempt >= c.MaxRetries || !shouldRetry(req.Method, resp) {
+		if attempt >= c.MaxRetries || !shouldRetry(idempotent, resp) {
 			return nil, err
 		}
 
@@ -139,6 +260,10 @@ func (c *Client) DoRequest(ctx context.Context, method, path string, body any) (
 // body that stopped arriving mid-read — so the caller can decide whether to
 // retry.
 func (c *Client) attempt(template *http.Request, reqBody []byte) ([]byte, *http.Response, error) {
+	if c.sdk != nil {
+		return c.sdkAttempt(template, reqBody)
+	}
+
 	req := template.Clone(template.Context())
 	if reqBody != nil {
 		req.Body = io.NopCloser(bytes.NewReader(reqBody))
@@ -173,11 +298,86 @@ func (c *Client) attempt(template *http.Request, reqBody []byte) ([]byte, *http.
 	return respBody, resp, nil
 }
 
+// sdkAttempt is attempt through c.sdk. The template's method, path, query and
+// headers go out as they are, except anthropic-version, which the SDK sets to
+// the same value, and the body is sent verbatim. It returns what attempt does:
+// an *APIError built from the same body on an error status, with the response
+// so that shouldRetry sees its status and x-should-retry header, and no
+// response for a transport error, as with HTTPClient; see transportResponse.
+func (c *Client) sdkAttempt(template *http.Request, reqBody []byte) ([]byte, *http.Response, error) {
+	var res *http.Response
+	opts := []option.RequestOption{
+		option.WithMaxRetries(0),
+		// The SDK sets no per-request deadline by default. With this one, a
+		// stalled attempt fails like one of the direct client and goes back
+		// to DoRequest's retry loop (GET, DELETE and a request marked
+		// WithIdempotent retry it, POST does not).
+		option.WithRequestTimeout(c.sdkAttemptTimeout),
+		option.WithResponseInto(&res),
+		// The Admin API is organization-wide. Claude Platform on AWS sets a
+		// workspace header on every request of its SDK client, which its
+		// Admin API routes do not require; like the direct client, this one
+		// sends none. A template header, set by the caller, still goes out.
+		option.WithHeaderDel("anthropic-workspace-id"),
+	}
+	for name, values := range template.Header {
+		if http.CanonicalHeaderKey(name) == "Anthropic-Version" {
+			continue
+		}
+		for i, v := range values {
+			if i == 0 {
+				opts = append(opts, option.WithHeader(name, v))
+			} else {
+				opts = append(opts, option.WithHeaderAdd(name, v))
+			}
+		}
+	}
+
+	// A nil []byte would still be sent as an empty JSON body.
+	var params any
+	if reqBody != nil {
+		params = reqBody
+	}
+
+	// Relative to the SDK's base URL, which on a gateway carries a path of its
+	// own (/v1/projects/.../invoke on Google Cloud): a leading slash would
+	// resolve against the host instead.
+	path := strings.TrimPrefix(template.URL.RequestURI(), "/")
+
+	var body []byte
+	err := c.sdk.Execute(template.Context(), template.Method, path, params, &body, opts...)
+	if err != nil {
+		var apiErr *anthropic.Error
+		if errors.As(err, &apiErr) {
+			return nil, apiErr.Response, newAPIError(apiErr.StatusCode, []byte(apiErr.RawJSON()))
+		}
+		return nil, transportResponse(res), err
+	}
+	return body, res, nil
+}
+
+// transportResponse is the response sdkAttempt reports with an error that is
+// not an *anthropic.Error. When the body stops arriving after the status line,
+// the SDK returns its read error with the response it read the status from.
+// That status is no verdict, since its body never landed: as in attempt, the
+// failure is reported without the response, so that an idempotent request
+// replays it and a POST does not. A response marked x-should-retry is kept,
+// since shouldRetry then reads only that header, and the SDK honours it on a
+// dropped body too. That keeps the response of platform.NotFoundGuard's error,
+// which says not to retry.
+func transportResponse(res *http.Response) *http.Response {
+	if res == nil || res.Header.Get("x-should-retry") == "" {
+		return nil
+	}
+	return res
+}
+
 func newAPIError(statusCode int, respBody []byte) *APIError {
 	var envelope struct {
 		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
+			Type    string          `json:"type"`
+			Message string          `json:"message"`
+			Details json.RawMessage `json:"details"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(respBody, &envelope) == nil && envelope.Error.Message != "" {
@@ -185,6 +385,7 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 			StatusCode: statusCode,
 			ErrType:    envelope.Error.Type,
 			Message:    envelope.Error.Message,
+			Details:    envelope.Error.Details,
 		}
 	}
 	return &APIError{
@@ -195,7 +396,9 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 
 // shouldRetry reports whether a failed attempt is worth repeating. As in the
 // Anthropic Go SDK, an x-should-retry header from the server settles it either
-// way. Beyond that the answer depends on whether replaying the request is safe.
+// way. Beyond that the answer depends on whether replaying the request is
+// safe: idempotent is true for an idempotent method (see isIdempotent) and for
+// a request marked WithIdempotent.
 //
 // Idempotent requests replay freely: a nil response (a connection error, or a
 // body that never finished arriving) and the transient statuses the SDK retries
@@ -208,7 +411,7 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 // not unique) or burn the budget on a membership that already exists, leaving
 // the resource untracked either way. The SDK retries those because its POSTs are
 // inference calls, where a duplicate costs tokens rather than resources.
-func shouldRetry(method string, resp *http.Response) bool {
+func shouldRetry(idempotent bool, resp *http.Response) bool {
 	if resp != nil {
 		switch resp.Header.Get("x-should-retry") {
 		case "true":
@@ -218,7 +421,7 @@ func shouldRetry(method string, resp *http.Response) bool {
 		}
 	}
 
-	if !isIdempotent(method) {
+	if !idempotent {
 		return resp != nil && resp.StatusCode == http.StatusTooManyRequests
 	}
 
