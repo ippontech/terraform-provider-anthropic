@@ -5,6 +5,7 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -359,6 +360,13 @@ func (r *PluginResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	plugin, err := createPlugin(ctx, r.client, src, knownString(data.MarketplaceID), data.ReleaseNotes.ValueString())
 	if err != nil {
+		// A plugin the API stored but could not register is saved with the
+		// error, so Terraform taints it rather than losing track of it.
+		var pending *pendingPluginError
+		if errors.As(err, &pending) && plugin != nil {
+			resp.Diagnostics.Append(mapPluginToState(plugin, &data)...)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create plugin: %s", err))
 		return
 	}
