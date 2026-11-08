@@ -4,12 +4,10 @@
 package provider
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
 
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 )
@@ -39,44 +37,4 @@ func checkBaseURL(attr path.Path, name, value, envName string) diag.Diagnostics 
 		diags.AddAttributeError(attr, "Invalid Base URL", fmt.Sprintf("%s is not a valid URL.", source))
 	}
 	return diags
-}
-
-// baseURLWithoutUserInfo resolves the base URL of an SDK client (a gateway
-// platform, or first party with ANTHROPIC_BASE_URL), value or
-// else envName, and takes its user information (user:password@ before the
-// host) out of it.
-//
-// The SDK builds every request URL from the base URL and prints that URL in
-// its errors (*anthropic.Error), which resources paste into diagnostics: a
-// password left in it would reach the plan output and CI logs.
-//
-// net/http sends the user information as an Authorization: Basic header, but
-// only on a request that has no Authorization header when it is sent. With
-// basic set (AWS, a first-party API key), the information becomes that
-// header, so a reverse proxy in front of the API still gets it, and a SigV4
-// signature, set later by the SDK's middleware, still replaces it. Without it
-// (Google Cloud, a first-party bearer token or federation), the information
-// is dropped: the SDK sets the token before net/http looks, and its Google
-// and federation middlewares stand down when they find an Authorization
-// header, so a Basic one would replace the token.
-//
-// The URL is returned explicitly, so the SDK does not read envName again.
-func baseURLWithoutUserInfo(value, envName string, basic bool) (string, []option.RequestOption) {
-	if value == "" {
-		value = os.Getenv(envName)
-	}
-	if value == "" {
-		return "", nil
-	}
-	u, err := url.Parse(value)
-	if err != nil || u.User == nil {
-		return value, nil
-	}
-	password, _ := u.User.Password()
-	credentials := base64.StdEncoding.EncodeToString([]byte(u.User.Username() + ":" + password))
-	u.User = nil
-	if !basic {
-		return u.String(), nil
-	}
-	return u.String(), []option.RequestOption{option.WithHeader("Authorization", "Basic "+credentials)}
 }

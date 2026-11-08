@@ -16,6 +16,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 )
 
 const baseURLTestPassword = "s3cr3t-value"
@@ -163,15 +164,15 @@ func assertNoPassword[D interface {
 // and a URL without any is passed through with no header.
 func TestBaseURLWithoutUserInfo(t *testing.T) {
 	isolateGoogleEnv(t)
-	got, opts := baseURLWithoutUserInfo("https://u:p@gateway.example.com/v1/projects/p", awsBaseURLEnv, true)
+	got, opts := platform.BaseURLWithoutUserInfo("https://u:p@gateway.example.com/v1/projects/p", awsBaseURLEnv, true)
 	if got != "https://gateway.example.com/v1/projects/p" || len(opts) != 1 {
 		t.Errorf("got %q with %d options", got, len(opts))
 	}
-	if got, opts := baseURLWithoutUserInfo("https://u:p@gateway.example.com", googleCloudBaseURLEnv, false); got != "https://gateway.example.com" || opts != nil {
+	if got, opts := platform.BaseURLWithoutUserInfo("https://u:p@gateway.example.com", googleCloudBaseURLEnv, false); got != "https://gateway.example.com" || opts != nil {
 		t.Errorf("without basic: got %q with %d options", got, len(opts))
 	}
 	for _, v := range []string{"", "https://vpce-0123.aws-external-anthropic.eu-west-1.vpce.amazonaws.com"} {
-		if got, opts := baseURLWithoutUserInfo(v, awsBaseURLEnv, true); got != v || opts != nil {
+		if got, opts := platform.BaseURLWithoutUserInfo(v, awsBaseURLEnv, true); got != v || opts != nil {
 			t.Errorf("%q: got %q with %d options", v, got, len(opts))
 		}
 	}
@@ -276,4 +277,17 @@ func TestConfigureRejectsAnUnparsableFirstPartyBaseURL(t *testing.T) {
 		t.Errorf("error = %q: %q", e.Summary(), e.Detail())
 	}
 	assertNoPassword(t, resp.Diagnostics)
+}
+
+// TestConfigureAdminOnlyIgnoresAnUnparsableBaseURL: the admin client has a
+// fixed base URL and never reads ANTHROPIC_BASE_URL, so an admin-only
+// configuration is not refused for it.
+func TestConfigureAdminOnlyIgnoresAnUnparsableBaseURL(t *testing.T) {
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_ADMIN_API_KEY", "sk-ant-admin01-env")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://user:"+baseURLTestPassword+"@api.invalid:port")
+	resp := configureProvider(t, nil)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Configure failed: %v", resp.Diagnostics)
+	}
 }

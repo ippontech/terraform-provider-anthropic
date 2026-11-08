@@ -262,7 +262,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 // extra are request options for tests (an HTTP client); they go before the
 // SDK's SigV4 middleware, which signs whatever they change.
 func newAWSClient(ctx context.Context, cfg anthropicaws.ClientConfig, extra ...option.RequestOption) (*anthropic.Client, error) {
-	baseURL, credentials := baseURLWithoutUserInfo(cfg.BaseURL, awsBaseURLEnv, true)
+	baseURL, credentials := platform.BaseURLWithoutUserInfo(cfg.BaseURL, awsBaseURLEnv, true)
 	cfg.BaseURL = baseURL
 	opts := append([]option.RequestOption{option.WithMiddleware(platform.NotFoundGuard(platform.AWS))}, credentials...)
 	opts = append(opts, extra...)

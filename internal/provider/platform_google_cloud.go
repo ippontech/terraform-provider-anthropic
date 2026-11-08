@@ -312,7 +312,7 @@ func googleCredentialsType(source string, contents []byte) (string, error) {
 //
 // extra are request options for tests (an HTTP client).
 func newGoogleCloudClient(ctx context.Context, cfg googlecloud.ClientConfig, tokenTimeout time.Duration, extra ...option.RequestOption) (*anthropic.Client, error) {
-	cfg.BaseURL, _ = baseURLWithoutUserInfo(cfg.BaseURL, googleCloudBaseURLEnv, false)
+	cfg.BaseURL, _ = platform.BaseURLWithoutUserInfo(cfg.BaseURL, googleCloudBaseURLEnv, false)
 	gc, err := googlecloud.NewClient(googleTokenContext(ctx, tokenTimeout), cfg)
 	if err != nil {
 		return nil, err

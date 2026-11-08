@@ -215,11 +215,15 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	// The SDK would refuse an unparsable ANTHROPIC_BASE_URL with an error that
-	// quotes it, user information included.
-	resp.Diagnostics.Append(checkBaseURL(path.Empty(), "", "", "ANTHROPIC_BASE_URL")...)
-	if resp.Diagnostics.HasError() {
-		return
+	// The SDK clients would refuse an unparsable ANTHROPIC_BASE_URL with an
+	// error that quotes it, user information included. Only they read it: the
+	// admin client has a fixed base URL, so an admin-only configuration skips
+	// the check.
+	if apiKey != "" || authToken != "" || federation != nil {
+		resp.Diagnostics.Append(checkBaseURL(path.Empty(), "", "", "ANTHROPIC_BASE_URL")...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	// Each client carries exactly the credential resolved above and nothing
@@ -300,14 +304,15 @@ func resolveCredential(configValue types.String, envVar string) string {
 // value must not replace the SDK's production default with "".
 //
 // Its user information (user:password@) is taken out of the URL, so that no
-// request URL, and so no SDK error, carries the password (baseURLWithoutUserInfo).
-// basicAuth says whether the credential leaves the Authorization header free:
-// then, with an API key, the user information becomes the Basic header that
-// net/http sent for it. A bearer credential takes that header itself, and the
-// SDK's federation middleware stands down when it finds one set, so its
-// clients get no Basic header, as net/http sent them none.
+// request URL, and so no SDK error, carries the password
+// (platform.BaseURLWithoutUserInfo). basicAuth says whether the credential
+// leaves the Authorization header free: then, with an API key, the user
+// information becomes the Basic header that net/http sent for it. A bearer
+// token sets that header itself, and the SDK's federation middleware stands
+// down when it finds one already set, so those clients get no Basic header,
+// as net/http sent them none.
 func newSDKClient(basicAuth bool, explicit ...option.RequestOption) *anthropic.Client {
-	baseURL, credentials := baseURLWithoutUserInfo("", "ANTHROPIC_BASE_URL", basicAuth)
+	baseURL, credentials := platform.BaseURLWithoutUserInfo("", "ANTHROPIC_BASE_URL", basicAuth)
 	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, credentials...)
 	opts = append(opts, explicit...)
 	if baseURL != "" {
