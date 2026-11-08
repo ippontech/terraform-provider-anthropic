@@ -167,7 +167,9 @@ resource "anthropic_agent" "coordinator" {
 # Agent of the multiagent_20261001 type: it may delegate only to the support
 # agent and to copies of itself (inline agents off), and dynamic workflows are
 # turned off. Both settings are on by default with this type; an advisor
-# model can be added with advisor = { model = "..." }.
+# model can be added with advisor = { model = "..." }. The reference pins the
+# support agent's current version, so a version changed outside Terraform
+# shows as a change, and an update of the support agent moves the pin with it.
 resource "anthropic_agent" "orchestrator" {
   model       = "claude-sonnet-4-6"
   name        = "Support Orchestrator"
@@ -179,8 +181,9 @@ resource "anthropic_agent" "orchestrator" {
       inline_agents_enabled = false
       predefined_agents = [
         {
-          type = "agent"
-          id   = anthropic_agent.assistant.id
+          type    = "agent"
+          id      = anthropic_agent.assistant.id
+          version = anthropic_agent.assistant.version
         },
         {
           type = "self"
@@ -234,6 +237,8 @@ Those defaults are also the provider's: a toolset that leaves `default_permissio
 - `multiagent_20261001`: three settings, each turned on or off on its own. `subagents` lets the agent delegate to subagents in their own session threads, `workflows` lets it write dynamic workflows that the server runs in the background with many agents, and `advisor` gives the session's primary thread a model to consult mid-turn. `subagents` and `workflows` are on by default, each with inline agents (agents defined on the fly, never saved) besides the agents listed in its own `predefined_agents`; the advisor is off by default. To allow only the agents you list, set `inline_agents_enabled = false` under both settings and list at least one agent in each. Every agent in a run uses tokens, so set a session budget when you create sessions for an agent with workflows on.
 
 The provider sends the whole `multiagent_20261001` object on every create and update, defaults included, so the API's level-by-level merge of an update into the stored configuration always leaves exactly what the configuration says. A setting left out of the configuration stays null in state while the API holds its default, and shows as a change when it was modified outside Terraform. To move an agent from `coordinator` to `multiagent_20261001`, list its agents in `subagents.predefined_agents` and its advisor in `advisor`: the API replaces the whole object when the type changes.
+
+The `version` of a referenced agent, in `agents` or in a `predefined_agents` list, decides the tools, permission policies, MCP servers and system prompt the delegated agent runs with. Left unset, the API pins the latest version at the first write and Terraform keeps whatever version the API holds afterwards: a version changed outside Terraform, by anyone who can update agents in the workspace, shows no change in the plan, and the provider sends it back on later updates. Set `version` on each reference whose version matters, such as an agent list restricted with `inline_agents_enabled = false`: a change made outside Terraform then shows as a change, and the next apply sets the configured version again.
 
 ## Execution identity
 
@@ -471,7 +476,7 @@ Optional:
 
 - `id` (String) ID of the referenced agent. Required when `type` is `agent`, forbidden otherwise.
 - `model` (String) Advisor model ID. Required when `type` is `advisor`, forbidden otherwise.
-- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.
+- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back. Left unset, Terraform keeps the version the API holds, including one changed outside Terraform, without showing a change, and sends it back on later updates: set it to have Terraform enforce the version.
 
 
 <a id="nestedatt--multiagent--subagents"></a>
@@ -493,7 +498,7 @@ Required:
 Optional:
 
 - `id` (String) ID of the referenced agent. Required when `type` is `agent`, forbidden otherwise.
-- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.
+- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back. Left unset, Terraform keeps the version the API holds, including one changed outside Terraform, without showing a change, and sends it back on later updates: set it to have Terraform enforce the version.
 
 
 
@@ -516,7 +521,7 @@ Required:
 Optional:
 
 - `id` (String) ID of the referenced agent. Required when `type` is `agent`, forbidden otherwise.
-- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.
+- `version` (Number) Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back. Left unset, Terraform keeps the version the API holds, including one changed outside Terraform, without showing a change, and sends it back on later updates: set it to have Terraform enforce the version.
 
 
 
@@ -531,7 +536,7 @@ Required:
 
 Optional:
 
-- `version` (String) Version to pin. Defaults to latest if omitted.
+- `version` (String) Version to pin. Defaults to latest if omitted. Left unset, a version changed outside Terraform does not show as a change, and the next update of the agent pins the latest again: set it to have Terraform enforce the version.
 
 ## Import
 

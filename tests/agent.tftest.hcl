@@ -127,6 +127,11 @@ run "agent_resource_example" {
   }
 
   assert {
+    condition     = anthropic_agent.orchestrator.multiagent.subagents.predefined_agents[0].version == anthropic_agent.assistant.version
+    error_message = "Expected the first predefined subagent to pin the assistant agent's current version."
+  }
+
+  assert {
     condition     = anthropic_agent.orchestrator.multiagent.subagents.predefined_agents[1].type == "self"
     error_message = "Expected the second predefined subagent to be self."
   }

@@ -148,7 +148,9 @@ resource "anthropic_agent" "coordinator" {
 # Agent of the multiagent_20261001 type: it may delegate only to the support
 # agent and to copies of itself (inline agents off), and dynamic workflows are
 # turned off. Both settings are on by default with this type; an advisor
-# model can be added with advisor = { model = "..." }.
+# model can be added with advisor = { model = "..." }. The reference pins the
+# support agent's current version, so a version changed outside Terraform
+# shows as a change, and an update of the support agent moves the pin with it.
 resource "anthropic_agent" "orchestrator" {
   model       = "claude-sonnet-4-6"
   name        = "Support Orchestrator"
@@ -160,8 +162,9 @@ resource "anthropic_agent" "orchestrator" {
       inline_agents_enabled = false
       predefined_agents = [
         {
-          type = "agent"
-          id   = anthropic_agent.assistant.id
+          type    = "agent"
+          id      = anthropic_agent.assistant.id
+          version = anthropic_agent.assistant.version
         },
         {
           type = "self"
