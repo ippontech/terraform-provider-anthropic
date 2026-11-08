@@ -375,8 +375,9 @@ func TestComplianceSettingsResource_Create_stateNotApplied(t *testing.T) {
 	}
 }
 
-// Update reports the mismatch with its own error and keeps the planned value,
-// so Terraform does not add its inconsistent-result error on top.
+// Update reports the mismatch with its own error and stores the state the
+// API answered, never the value it did not apply, so the next plan shows the
+// difference again even with -refresh=false.
 func TestComplianceSettingsResource_Update_stateNotApplied(t *testing.T) {
 	srv, _ := newSettingsServer(t, `{"type":"compliance_settings","state":{"type":"enabled"}}`)
 	r := &ComplianceSettingsResource{client: admintest.NewClient(t, srv)}
@@ -393,8 +394,8 @@ func TestComplianceSettingsResource_Update_stateNotApplied(t *testing.T) {
 	if diags := resp.State.Get(context.Background(), &data); diags.HasError() {
 		t.Fatalf("state: %v", diags)
 	}
-	if data.State.ValueString() != "disabled" {
-		t.Errorf("state = %q, want the planned value", data.State.ValueString())
+	if data.State.ValueString() != "enabled" || data.ID.ValueString() != testOrgID {
+		t.Errorf("id/state = %q/%q, want %q and the state the API answered", data.ID.ValueString(), data.State.ValueString(), testOrgID)
 	}
 }
 

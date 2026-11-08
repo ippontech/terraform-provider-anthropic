@@ -213,10 +213,12 @@ func (r *ComplianceSettingsResource) Update(ctx context.Context, req resource.Up
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// On a mismatch the planned value is kept along with the error, so the
-	// error says why instead of Terraform's inconsistent-result message; the
-	// next refresh reads the actual state.
+	// On a mismatch the state the API answered is stored with the error, so
+	// the next plan shows the difference again, even with -refresh=false.
+	// Terraform skips its inconsistent-result check when an apply returns
+	// errors, so the error is the only message.
 	resp.Diagnostics.Append(stateNotApplied(plan.State.ValueString(), state)...)
+	plan.State = types.StringValue(state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
