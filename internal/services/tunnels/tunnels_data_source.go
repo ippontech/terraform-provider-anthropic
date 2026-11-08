@@ -5,6 +5,7 @@ package tunnels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdkpage"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
@@ -34,6 +36,10 @@ func NewTunnelsDataSource() datasource.DataSource {
 type TunnelsDataSource struct {
 	client *providerdata.OAuthClient
 }
+
+// errTunnelMapping stops the list walk once a tunnel fails to map; its
+// diagnostics are already in the response.
+var errTunnelMapping = errors.New("tunnel mapping failed")
 
 // tunnelsDSModel describes the "anthropic_tunnels" data source data model.
 type tunnelsDSModel struct {
@@ -103,18 +109,23 @@ func (d *TunnelsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		params.IncludeArchived = param.NewOpt(data.IncludeArchived.ValueBool())
 	}
 
-	pager := d.client.Beta.Tunnels.ListAutoPaging(ctx, params)
+	// sdkpage.Cursor rather than ListAutoPaging: a next_page cursor the API
+	// repeats is an error instead of a loop that hangs the plan.
 	tunnelObjs := make([]attr.Value, 0)
-	for pager.Next() {
-		tunnel := pager.Current()
+	first, err := d.client.Beta.Tunnels.List(ctx, params)
+	err = sdkpage.Cursor(first, err, func(tunnel anthropic.BetaTunnel) error {
 		obj, diags := mapTunnelDSToListObject(&tunnel)
 		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
+		if diags.HasError() {
+			return errTunnelMapping
 		}
 		tunnelObjs = append(tunnelObjs, obj)
+		return nil
+	})
+	if errors.Is(err, errTunnelMapping) {
+		return
 	}
-	if err := pager.Err(); err != nil {
+	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list tunnels: %s", err))
 		return
 	}

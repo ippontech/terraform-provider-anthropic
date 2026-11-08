@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -118,5 +119,25 @@ func TestTunnelsDataSource_Read_error(t *testing.T) {
 
 	if _, hasErr := readTunnels(t, srv, nil); !hasErr {
 		t.Fatal("expected diagnostics for a 403 response")
+	}
+}
+
+// TestTunnelsDataSource_Read_repeatedCursorFails: a next_page cursor the API
+// already returned fails the read (sdkpage.Cursor) instead of looping until
+// the plan's deadline.
+func TestTunnelsDataSource_Read_repeatedCursorFails(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[],"next_page":"cursor-2"}`)
+	}))
+	defer srv.Close()
+
+	if _, hasErr := readTunnels(t, srv, nil); !hasErr {
+		t.Fatal("expected diagnostics for a repeated cursor")
+	}
+	if n := requests.Load(); n != 2 {
+		t.Errorf("requests = %d, want 2 (the first page and the cursor's page)", n)
 	}
 }
