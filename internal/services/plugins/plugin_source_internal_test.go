@@ -396,3 +396,63 @@ func mustSymlink(t *testing.T, target, link string) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 }
+
+// A directory swapped for a link to another directory inside source_dir (its
+// .git, say) while the walk runs would bring that directory's files in under
+// another name. Each directory is read from a handle checked against its
+// parent's listing, so the walk of the swapped directory fails.
+func TestWalkPluginDir_refusesADirectorySwappedForAnInRootLink(t *testing.T) {
+	t.Parallel()
+	root := writePluginDir(t)
+	writeFile(t, filepath.Join(root, ".git", "config"), "[http]\n\textraheader = AUTHORIZATION: basic secret\n")
+	sub := filepath.Join(root, "skills", "account-research")
+	listed, err := os.Lstat(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(sub); err != nil {
+		t.Fatal(err)
+	}
+	// A relative link: os.Root already refuses an absolute one as escaping.
+	mustSymlink(t, filepath.Join("..", ".git"), sub)
+
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	var files []pluginSourceFile
+	err = walkPluginDir(r, root, "skills/account-research", listed, &files)
+	if err == nil || !strings.Contains(err.Error(), "no longer the directory that was listed") {
+		t.Errorf("err = %v, want the swapped directory refused", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("files = %+v, want none from the link's target", files)
+	}
+}
+
+// A file that grows after the listing would take the upload past the size
+// checked before reading: the read stops at the listed size and fails.
+func TestPluginSource_refusesAFileThatGrewAfterTheListing(t *testing.T) {
+	t.Parallel()
+	root := writePluginDir(t)
+	src, err := listPluginSource(root, "")
+	if err != nil {
+		t.Fatalf("listPluginSource: %v", err)
+	}
+	f, err := os.OpenFile(filepath.Join(root, "skills", "account-research", "SKILL.md"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("appended after the listing\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	if _, err := src.hash(); err == nil || !strings.Contains(err.Error(), "changed size") {
+		t.Errorf("hash err = %v, want the size change refused", err)
+	}
+	if _, _, err := src.uploadBody(); err == nil || !strings.Contains(err.Error(), "changed size") {
+		t.Errorf("uploadBody err = %v, want the size change refused", err)
+	}
+}
