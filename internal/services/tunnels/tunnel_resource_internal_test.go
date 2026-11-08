@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -71,6 +73,27 @@ func respond(status int, body string) func(w http.ResponseWriter) {
 	return func(w http.ResponseWriter) {
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
+	}
+}
+
+// rateLimited answers 429 with a 1 ms retry-after-ms, so a retry waits
+// next to nothing.
+func rateLimited(w http.ResponseWriter) {
+	w.Header().Set("retry-after-ms", "1")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_, _ = io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`)
+}
+
+// respondInTurn answers with each handler in turn, then with the last one.
+func respondInTurn(handlers ...func(w http.ResponseWriter)) func(w http.ResponseWriter) {
+	var mu sync.Mutex
+	next := 0
+	return func(w http.ResponseWriter) {
+		mu.Lock()
+		h := handlers[min(next, len(handlers)-1)]
+		next++
+		mu.Unlock()
+		h(w)
 	}
 }
 
@@ -356,6 +379,74 @@ func TestTunnelResource_Create_isNotRetried(t *testing.T) {
 	resp.State.Get(context.Background(), &data)
 	if !data.ID.IsNull() {
 		t.Errorf("id = %v after a failed create, want null", data.ID)
+	}
+}
+
+// TestTunnelResource_Create_retries429: a 429 states the create was not
+// processed, so it is sent again, at most createRetries times; any other
+// failure is not (TestTunnelResource_Create_isNotRetried).
+func TestTunnelResource_Create_retries429(t *testing.T) {
+	tests := []struct {
+		name      string
+		handler   func(http.ResponseWriter)
+		wantPosts int
+		wantErr   bool
+	}{
+		{"a 429 then a success", respondInTurn(rateLimited, respond(http.StatusOK, tunnelLiveJSON)), 2, false},
+		{"429 on every attempt", rateLimited, 1 + createRetries, true},
+		{"a 429 the server says not to retry", func(w http.ResponseWriter) {
+			w.Header().Set("x-should-retry", "false")
+			rateLimited(w)
+		}, 1, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+				"POST /v1/tunnels": tc.handler,
+			})
+			r := &TunnelResource{client: oauthtest.NewClient(t, srv)}
+
+			plan := resourcePlan(t, r, map[string]string{"store_token": "false"})
+			resp := &resource.CreateResponse{State: resourceState(t, r, nil)}
+			r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Errorf("errors = %v, want an error: %v", resp.Diagnostics, tc.wantErr)
+			}
+			if n := log.count(http.MethodPost, "/v1/tunnels"); n != tc.wantPosts {
+				t.Errorf("POST /v1/tunnels sent %d times, want %d", n, tc.wantPosts)
+			}
+		})
+	}
+}
+
+func TestCreateRetryWait(t *testing.T) {
+	header := func(kv ...string) *http.Response {
+		h := http.Header{}
+		for i := 0; i < len(kv); i += 2 {
+			h.Set(kv[i], kv[i+1])
+		}
+		return &http.Response{Header: h}
+	}
+	tests := []struct {
+		name  string
+		resp  *http.Response
+		retry int
+		want  time.Duration
+	}{
+		{"retry-after-ms wins", header("retry-after-ms", "250", "retry-after", "9"), 0, 250 * time.Millisecond},
+		{"retry-after in seconds", header("retry-after", "2"), 0, 2 * time.Second},
+		{"bounded", header("retry-after", "3600"), 0, maxCreateRetryAfter},
+		{"negative is no wait", header("retry-after-ms", "-5"), 0, 0},
+		{"no header: base delay", header(), 0, createRetryDelay},
+		{"no header: doubles", header(), 1, 2 * createRetryDelay},
+		{"no response", nil, 1, 2 * createRetryDelay},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := createRetryWait(tc.resp, tc.retry); got != tc.want {
+				t.Errorf("createRetryWait = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

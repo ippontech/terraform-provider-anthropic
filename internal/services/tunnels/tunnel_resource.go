@@ -176,9 +176,13 @@ func (r *TunnelResource) Create(ctx context.Context, req resource.CreateRequest,
 	// would retry this POST on a 408, 409, 5xx or dropped connection, any of
 	// which may follow a create that landed, and each duplicate is an
 	// unmanaged tunnel holding one of the organization's 10 active-tunnel
-	// slots. So no retry at all: a failed apply is re-run by the operator,
-	// who can check the Console's MCP tunnels list first.
-	tunnel, err := r.client.Beta.Tunnels.New(ctx, params, option.WithMaxRetries(0))
+	// slots. So the SDK's retries are off, and only a 429, which states the
+	// request was not processed, is sent again (createRetrying429). Any
+	// other failed apply is re-run by the operator, who can check the
+	// Console's MCP tunnels list first.
+	tunnel, err := createRetrying429(ctx, func() (*anthropic.BetaTunnel, error) {
+		return r.client.Beta.Tunnels.New(ctx, params, option.WithMaxRetries(0))
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create tunnel: %s", err))
 		return

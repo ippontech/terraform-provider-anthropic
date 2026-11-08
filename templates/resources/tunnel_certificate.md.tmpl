@@ -9,7 +9,7 @@ description: |-
 
 Registers a public CA certificate on an MCP tunnel (research preview). Anthropic terminates the inner TLS session at your proxy and verifies the proxy's server certificate against the tunnel's registered CAs; it does not connect to a tunnel until at least one is registered, so a tunnel without a certificate rejects all MCP traffic.
 
-Only the CA certificate is sent, never a private key. The API checks the [certificate requirements](https://platform.claude.com/docs/en/agents-and-tools/mcp-tunnels/reference#ca-certificate) (single PEM certificate up to 8 kB, critical `BasicConstraints` with `CA:TRUE`, `SubjectKeyIdentifier`, `keyCertSign` usage, current validity, RSA ≥ 2048-bit or ECDSA ≥ P-256 with SHA-256 or stronger); the provider checks the PEM shape and size at plan time.
+Only the CA certificate is sent, never a private key. The API checks the [certificate requirements](https://platform.claude.com/docs/en/agents-and-tools/mcp-tunnels/reference#ca-certificate) (single PEM certificate up to 8 kB, critical `BasicConstraints` with `CA:TRUE`, `SubjectKeyIdentifier`, `keyCertSign` usage, current validity, RSA ≥ 2048-bit or ECDSA ≥ P-256 with SHA-256 or stronger); the provider checks the PEM shape and size at plan time, and refuses any value that contains private-key text.
 
 ## Lifecycle
 

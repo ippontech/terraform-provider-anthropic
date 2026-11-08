@@ -15,7 +15,7 @@ A new tunnel rejects MCP traffic until at least one CA certificate is registered
 
 ## Lifecycle
 
-- **Creation is not idempotent**: each create allocates a fresh, globally unique domain. The provider never retries it, so one resource never creates two tunnels; but a create that failed after reaching the API (a timeout, a dropped connection) can leave a tunnel Terraform does not track. Check the Console's MCP tunnels list before re-running such an apply, and import or archive what you find.
+- **Creation is not idempotent**: each create allocates a fresh, globally unique domain. The provider retries it only when the API answers `429` (rate limited), which means the request was not processed, so one resource never creates two tunnels; but a create that failed after reaching the API (a timeout, a dropped connection) can leave a tunnel Terraform does not track. Check the Console's MCP tunnels list before re-running such an apply, and import or archive what you find.
 - **No update endpoint**: changing `display_name` replaces the tunnel, which allocates a new `domain` and `token`.
 - **Destroy archives the tunnel, irreversibly.** There is no delete endpoint. Archiving also archives every certificate on the tunnel, retires its domain for good and invalidates its token.
 - A tunnel **archived outside Terraform** (for example in response to a suspected compromise) can never carry traffic again: the next refresh drops it from state and the next apply creates a replacement, with a new domain.
