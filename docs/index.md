@@ -273,6 +273,7 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 |---|---|---|---|
 | `anthropic_api_key` | resource, data source | Unavailable | Unavailable |
 | `anthropic_api_keys` | data source | Unavailable | Unavailable |
+| `anthropic_compliance_settings` | resource | Unavailable | Unavailable |
 | `anthropic_federation_issuer` | resource, data source | Unavailable | Unavailable |
 | `anthropic_federation_issuers` | data source | Unavailable | Unavailable |
 | `anthropic_federation_rule` | resource, data source | Unavailable | Unavailable |

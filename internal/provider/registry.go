@@ -9,6 +9,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/agents"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/compliance"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/externalkeys"
@@ -100,6 +101,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 	return []registration[resource.Resource]{
 		{New: agents.NewAgentResource, AWS: supported, GoogleCloud: supported},
 		{New: apikeys.NewAPIKeyResource, AWS: awsAPIKeys, GoogleCloud: gcAdminRoutes},
+		{New: compliance.NewComplianceSettingsResource, AWS: awsAdminRoutes, GoogleCloud: gcAdminRoutes},
 		// Served on AWS, though the gateway's route table does not list them.
 		{New: deployments.NewDeploymentResource, AWS: supported, GoogleCloud: supported},
 		{New: environments.NewEnvironmentResource, AWS: supported, GoogleCloud: supported},
