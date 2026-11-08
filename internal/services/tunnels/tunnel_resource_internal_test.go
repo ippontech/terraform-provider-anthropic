@@ -776,6 +776,67 @@ func TestTunnelResource_importThenPlanAndApply(t *testing.T) {
 	}
 }
 
+// TestTunnelResource_rotateFailureKeepsPriorState drives a failed rotation
+// through the protocol. The framework starts the update response from the
+// prior state, so the apply returns the old token_rotation and token with
+// the error, and the next plan asks for the same rotation again.
+func TestTunnelResource_rotateFailureKeepsPriorState(t *testing.T) {
+	srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+		"POST /v1/tunnels/tnl_01ABC/rotate_token": respond(http.StatusInternalServerError, `{"type":"error","error":{"type":"api_error","message":"boom"}}`),
+	})
+	r := &TunnelResource{client: oauthtest.NewClient(t, srv, option.WithMaxRetries(0))}
+	p := newTunnelProtocol(t, r)
+
+	common := map[string]string{
+		"id": "tnl_01ABC", "display_name": "corp-mcp", "domain": "abc123.tunnel.anthropic.com",
+		"token": "secret-token-1", "token_id": "ttok_01", "store_token": "true",
+	}
+	withRotation := func(rotation string) map[string]string {
+		m := map[string]string{"token_rotation": rotation}
+		for k, v := range common {
+			m[k] = v
+		}
+		return m
+	}
+	prior := resourceValue(t, r, withRotation("1"))
+	config := resourceValue(t, r, map[string]string{"display_name": "corp-mcp", "token_rotation": "2"})
+	proposed := resourceValue(t, r, withRotation("2"))
+
+	planned, plan := p.plan(prior, config, proposed)
+	if !plan.Token.IsUnknown() {
+		t.Fatalf("planned token = %v, want unknown for a rotation", plan.Token)
+	}
+
+	resp, err := p.server.ApplyResourceChange(context.Background(), &tfprotov6.ApplyResourceChangeRequest{
+		TypeName: "anthropic_tunnel", PriorState: p.dynamic(prior), Config: p.dynamic(config), PlannedState: p.dynamic(planned),
+	})
+	if err != nil {
+		t.Fatalf("apply: %s", err)
+	}
+	hasError := false
+	for _, d := range resp.Diagnostics {
+		hasError = hasError || d.Severity == tfprotov6.DiagnosticSeverityError
+	}
+	if !hasError {
+		t.Fatal("expected an error when the rotation fails")
+	}
+	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/rotate_token"); n != 1 {
+		t.Errorf("rotate_token called %d times, want 1", n)
+	}
+	newState, err := resp.NewState.Unmarshal(schematest.ResourceObjectType(t, r))
+	if err != nil {
+		t.Fatalf("unmarshal: %s", err)
+	}
+	if !newState.Equal(prior) {
+		t.Errorf("state after the failed rotation:\n%s\nwant the prior state\n%s", newState, prior)
+	}
+
+	_, replan := p.plan(newState, config, proposed)
+	if !replan.Token.IsUnknown() {
+		t.Errorf("next planned token = %v, want unknown: the rotation is planned again", replan.Token)
+	}
+}
+
 // TestTunnelResource_Create_withoutStoringToken: with store_token = false,
 // Create never reveals the token and leaves token and token_id null.
 func TestTunnelResource_Create_withoutStoringToken(t *testing.T) {

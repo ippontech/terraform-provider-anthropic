@@ -193,13 +193,15 @@ func (r *TunnelResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	token, err := r.client.Beta.Tunnels.RevealToken(ctx, tunnel.ID, anthropic.BetaTunnelRevealTokenParams{})
 	if err != nil {
-		// The tunnel exists: save it, so Terraform marks it tainted and the
-		// next apply archives it and creates a replacement, rather than
-		// losing track of it (creation is not idempotent).
+		// The tunnel exists: save it rather than lose track of it (creation
+		// is not idempotent). The error stops the apply, so nothing reads a
+		// missing token, and Terraform marks the tunnel tainted. Untainting
+		// it keeps the tunnel and its domain: with no token in state, the
+		// next plan plans one and Update reveals it.
 		clearTunnelToken(&data)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf(
-			"Tunnel %s was created, but its token could not be revealed: %s. The tunnel is saved in state as tainted, so the next apply archives it and creates a new one.",
+			"Tunnel %s was created, but its token could not be revealed: %s. The tunnel is saved in state as tainted, so the next apply archives it and creates a new one with a new domain. To keep this tunnel instead, run terraform untaint on it: the next apply then reveals its token.",
 			tunnel.ID, err))
 		return
 	}
