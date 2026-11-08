@@ -27,7 +27,7 @@ Deleting the key record never touches the key in your KMS. Deleting or disabling
 
 This resource does not check that Anthropic can reach the key. Use **Verify** in the Claude Console, or `POST /v1/organizations/external_keys/{id}/validate`, before attaching it.
 
-On Claude Platform on AWS, the API identifies a key by its AWS KMS key ARN instead of an `ekey_...` ID, so `id` holds the ARN; registering a key needs the `aws-external-anthropic:RegisterKey` IAM action and deleting it `aws-external-anthropic:DisableKey`. On Claude Models on Google Cloud, a key is registered through a provider configuration that may leave `workspace_id` unset, and attached to a workspace in the Claude Console, since the gateway serves no workspace route. The deprecated `role_arn` field is ignored by the API and not exposed.
+On Claude Platform on AWS, the API identifies a key by its AWS KMS key ARN instead of an `ekey_...` ID, so `id` holds the ARN; registering a key needs the `aws-external-anthropic:RegisterKey` IAM action and deleting it `aws-external-anthropic:DisableKey`. The gateway serves no validate route there: the key is checked when a workspace attaches it, which performs an encrypt and a decrypt. On Claude Models on Google Cloud, a key is registered through a provider configuration that may leave `workspace_id` unset, and attached to a workspace in the Claude Console, since the gateway serves no workspace route. The deprecated `role_arn` field is ignored by the API and not exposed.
 
 ## Example Usage
 
