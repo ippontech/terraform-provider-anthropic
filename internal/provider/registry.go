@@ -191,6 +191,7 @@ func dataSourceRegistrations() []registration[datasource.DataSource] {
 		{New: skills.NewSkillVersionDataSource, AWS: supported, GoogleCloud: supported},
 		{New: skills.NewSkillVersionsDataSource, AWS: supported, GoogleCloud: supported},
 		{New: skills.NewSkillsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: tunnels.NewTunnelCertificatesDataSource, AWS: awsTunnels, GoogleCloud: gcTunnels},
 		{New: tunnels.NewTunnelDataSource, AWS: awsTunnels, GoogleCloud: gcTunnels},
 		{New: tunnels.NewTunnelsDataSource, AWS: awsTunnels, GoogleCloud: gcTunnels},
 		{New: userprofiles.NewUserProfileDataSource, AWS: supported, GoogleCloud: gcUserProfiles},

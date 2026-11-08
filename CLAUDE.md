@@ -49,7 +49,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
 - `spendlimits/`: `spend_limit`; none. Admin key (Claude Enterprise scoped key for `user` limits; Console key for `organization`/`workspace` limits, early access).
 - `telemetrydestinations/`: `telemetry_destination`; none. Admin key (beta `telemetry-destinations-2026-08-11`).
-- `tunnels/`: `tunnel`, `tunnel_certificate`; `tunnel`, `tunnels`. OAuth bearer with the `workspace:manage_tunnels` scope (MCP tunnels, research preview, beta `mcp-tunnels-2026-06-22`).
+- `tunnels/`: `tunnel`, `tunnel_certificate`; `tunnel(s)`, `tunnel_certificates`. OAuth bearer with the `workspace:manage_tunnels` scope (MCP tunnels, research preview, beta `mcp-tunnels-2026-06-22`).
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
 - `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
 - `workspaces/`: `workspace`, `workspace_member`, `workspace_rate_limit`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key.

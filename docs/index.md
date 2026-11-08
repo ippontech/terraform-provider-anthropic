@@ -137,7 +137,7 @@ provider "anthropic" {
 
 The `auth_token` is optional — you only need it for federation resources and MCP tunnels.
 
-MCP tunnels (`anthropic_tunnel`, `anthropic_tunnel_certificate`, and the `anthropic_tunnel` / `anthropic_tunnels` data sources) reject API keys too, but need a bearer token with the `workspace:manage_tunnels` scope instead of `org:admin`. One provider block carries one bearer token, so give the tunnel resources their own aliased provider block; see [`anthropic_tunnel`](resources/tunnel).
+MCP tunnels (`anthropic_tunnel`, `anthropic_tunnel_certificate`, and the `anthropic_tunnel`, `anthropic_tunnels` and `anthropic_tunnel_certificates` data sources) reject API keys too, but need a bearer token with the `workspace:manage_tunnels` scope instead of `org:admin`. One provider block carries one bearer token, so give the tunnel resources their own aliased provider block; see [`anthropic_tunnel`](resources/tunnel).
 
 For the end-to-end setup (the one Console-only bootstrap rule, a complete GitHub Actions example, how the workload consumes the rule, importing wizard-created objects), see the [Workload Identity Federation guide](guides/workload_identity_federation).
 
@@ -273,6 +273,7 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 | `anthropic_telemetry_destination` | resource | Supported | Unavailable |
 | `anthropic_tunnel` | resource, data source | Unavailable | Unavailable |
 | `anthropic_tunnel_certificate` | resource | Unavailable | Unavailable |
+| `anthropic_tunnel_certificates` | data source | Unavailable | Unavailable |
 | `anthropic_tunnels` | data source | Unavailable | Unavailable |
 | `anthropic_user_profile` | resource, data source | Supported | Unverified |
 | `anthropic_user_profiles` | data source | Supported | Unverified |
