@@ -94,7 +94,7 @@ func awsSchema() schema.SingleNestedAttribute {
 				Optional: true,
 				Description: "Gateway base URL, in place of the one derived from region (an AWS PrivateLink endpoint, " +
 					"for instance). Can also be set via the ANTHROPIC_AWS_BASE_URL environment variable; ANTHROPIC_BASE_URL " +
-					"is not read. Must not carry user information (user:password@), which error messages would repeat.",
+					"is not read. User information (user:password@) is sent as a Basic Authorization header and kept out of error messages.",
 			},
 		},
 	}
@@ -262,7 +262,10 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 // extra are request options for tests (an HTTP client); they go before the
 // SDK's SigV4 middleware, which signs whatever they change.
 func newAWSClient(ctx context.Context, cfg anthropicaws.ClientConfig, extra ...option.RequestOption) (*anthropic.Client, error) {
-	opts := append([]option.RequestOption{option.WithMiddleware(platform.NotFoundGuard(platform.AWS))}, extra...)
+	baseURL, credentials := gatewayBaseURL(cfg.BaseURL, awsBaseURLEnv, true)
+	cfg.BaseURL = baseURL
+	opts := append([]option.RequestOption{option.WithMiddleware(platform.NotFoundGuard(platform.AWS))}, credentials...)
+	opts = append(opts, extra...)
 	awsClient, err := anthropicaws.NewClient(ctx, cfg, opts...)
 	if err != nil {
 		return nil, err
