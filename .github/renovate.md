@@ -67,15 +67,17 @@ error issue on the repo.
 
 ## Custom managers
 
-The GoReleaser version is not visible to a built-in manager, so it was drifting unnoticed:
+The GoReleaser version was once visible to no built-in manager, so it was drifting unnoticed:
 
 | What | Where | How it is tracked |
 |---|---|---|
-| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line |
+| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line, and the `github-actions` manager, which now reads this input too (type `uses-with`) |
 
 The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
-well-known inputs such as `setup-node`'s `node-version`, but it does not read arbitrary action inputs —
-hence the annotation. To put another tool version under Renovate's control, add the same comment above it:
+well-known inputs such as `setup-node`'s `node-version` and the `version:` of `goreleaser-action`, but it
+does not read arbitrary action inputs, hence the annotation. A rule that targets such a pin matches both
+managers: the GoReleaser hold matched only `custom.regex`, so the `github-actions` manager put the check
+pin's v2.20.0 in the automerged `GitHub Actions` group, away from the release pin. To put another tool version under Renovate's control, add the same comment above it:
 
 ```yaml
         with:
@@ -118,7 +120,9 @@ decision at all. The `github-actions` manager tracks that input as the `terrafor
 same rule puts its updates in the reviewed group.
 
 A new workflow whose jobs read any secret other than `GITHUB_TOKEN`, or run in a protected environment,
-joins the rule's `matchFileNames` list.
+joins the rule's `matchFileNames` list. Its jobs restore no Actions cache either (`RELEASE.md`, "Caches"): the
+actions of other workflows keep automerging, and a cache entry they save on `main` must not reach
+a job that holds a secret.
 
 ## Go modules
 
@@ -188,6 +192,27 @@ Three consequences worth knowing:
   `govulncheck` run reports it if the provider reaches the vulnerable code, and it goes through #192.
 
 Remove the rule as part of #192, in `major/2.0.0` — never on its own.
+
+## Release notes
+
+A squash merge makes the PR description the body of the commit on `main`, and semantic-release reads
+that body. Renovate puts the upstream release notes in its PR description, so a `BREAKING CHANGE:`
+line written upstream could reach the release decision, the release notes and `CHANGELOG.md`.
+Two settings keep it out:
+
+- `.releaserc` gives the `deps` scope its own rules: a `chore(deps)` commit cuts no release and a
+  `fix(deps)` commit a patch, whatever its body says. Without them, the analyzer's default rule
+  (a breaking note cuts a major) applies to any commit type. The `---` line Renovate puts before its
+  release notes already hides them from the commit parser, but a line of two dashes in the upstream
+  text ends that and lets the next `BREAKING CHANGE:` line through.
+- The automerge rule sets `fetchChangeLogs` to `off`, so an automerged PR, which no maintainer reads,
+  carries no upstream text. The rules that hold an update for review set it back to `pr`, and so does
+  `vulnerabilityAlerts`: the maintainer reads the notes before merging. The merge queue builds the
+  commit body from the PR description, with no step to edit it, so before queueing a reviewed
+  dependency PR, delete from its description any upstream text that should not reach the release
+  notes and `CHANGELOG.md`, such as a `BREAKING CHANGE` line. A held group shows the notes of the
+  updates that hold it; the others in the group (an automerged member of `CI tool versions` held
+  by tflint, say) keep them off.
 
 ## Validating a config change
 
