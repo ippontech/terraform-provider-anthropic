@@ -183,7 +183,7 @@ func mapTunnelCertificateDSToListObject(cert *anthropic.BetaTunnelCertificate) (
 	return types.ObjectValue(tunnelCertificateDSAttrTypes, map[string]attr.Value{
 		"id":          types.StringValue(cert.ID),
 		"tunnel_id":   types.StringValue(cert.TunnelID),
-		"fingerprint": types.StringValue(cert.Fingerprint),
+		"fingerprint": types.StringValue(normalizeFingerprint(cert.Fingerprint)),
 		"created_at":  tfvalue.TimeOrNull(cert.CreatedAt),
 		"expires_at":  tfvalue.TimeOrNull(cert.ExpiresAt),
 		"archived_at": tfvalue.TimeOrNull(cert.ArchivedAt),

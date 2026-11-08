@@ -268,7 +268,7 @@ func parseTunnelCertificateImportID(id string) (tunnelID, certificateID string, 
 func mapTunnelCertificateToState(cert *anthropic.BetaTunnelCertificate, data *TunnelCertificateResourceModel) {
 	data.ID = types.StringValue(cert.ID)
 	data.TunnelID = types.StringValue(cert.TunnelID)
-	data.Fingerprint = types.StringValue(cert.Fingerprint)
+	data.Fingerprint = types.StringValue(normalizeFingerprint(cert.Fingerprint))
 	data.CreatedAt = tfvalue.TimeOrNull(cert.CreatedAt)
 	data.ExpiresAt = tfvalue.TimeOrNull(cert.ExpiresAt)
 }
@@ -335,6 +335,8 @@ func caCertificateChanged(ctx context.Context, req planmodifier.StringRequest, r
 // prefix and colon separators, so that the hex compares equal in any of the
 // usual spellings: the API's format was never checked against a live
 // response, and a false mismatch would replace, and so archive, a live CA.
+// The resource and the list data source also store it in this form, the
+// lowercase hex their schemas document.
 func normalizeFingerprint(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimPrefix(s, "sha256:")

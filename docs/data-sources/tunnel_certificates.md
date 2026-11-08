@@ -9,7 +9,7 @@ description: |-
 
 Lists the CA certificates registered on an MCP tunnel (research preview), for example to audit which CAs a tunnel managed partly outside Terraform trusts, or to find a certificate that expires soon. All pages are fetched automatically. Archived certificates are left out unless `include_archived = true`.
 
-The API never returns a certificate's PEM, so neither does this data source. To tell which CA a listed certificate is, compare its `fingerprint` (lowercase hex SHA-256 of the DER encoding, as on `anthropic_tunnel_certificate`) with the output of `openssl x509 -in ca.crt -outform DER | sha256sum`.
+The API never returns a certificate's PEM, so neither does this data source. To tell which CA a listed certificate is, compare its `fingerprint` (lowercase hex SHA-256 of the DER encoding, as on `anthropic_tunnel_certificate`) with the hash printed by `openssl x509 -in ca.crt -outform DER | sha256sum` (the first field: `sha256sum` appends `  -`). The same CA can be registered twice on one tunnel, so key a map by `id` rather than by `fingerprint`.
 
 > **API**: `GET /v1/tunnels/{tunnel_id}/certificates` (Tunnels API).
 > **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`; see `anthropic_tunnel`). API keys are not accepted.
@@ -28,8 +28,13 @@ data "anthropic_tunnel_certificates" "all" {
 }
 
 output "trusted_certificate_expiry" {
-  description = "Expiry (RFC 3339, null if none) of each CA certificate the tunnel trusts, by fingerprint."
-  value       = { for c in data.anthropic_tunnel_certificates.trusted.certificates : c.fingerprint => c.expires_at }
+  description = "Fingerprint and expiry (RFC 3339, null if none) of each CA certificate the tunnel trusts, by certificate ID."
+  value = {
+    for c in data.anthropic_tunnel_certificates.trusted.certificates : c.id => {
+      fingerprint = c.fingerprint
+      expires_at  = c.expires_at
+    }
+  }
 }
 
 output "archived_certificate_count" {

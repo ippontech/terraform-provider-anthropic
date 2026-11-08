@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -201,6 +202,17 @@ func TestCACertificateChanged(t *testing.T) {
 				t.Errorf("RequiresReplace = %v, want %v", resp.RequiresReplace, tc.wantReplace)
 			}
 		})
+	}
+}
+
+// TestMapTunnelCertificateToState_normalizesFingerprint: the stored
+// fingerprint is the lowercase hex the schema documents, whatever spelling the
+// API uses.
+func TestMapTunnelCertificateToState_normalizesFingerprint(t *testing.T) {
+	var data TunnelCertificateResourceModel
+	mapTunnelCertificateToState(&anthropic.BetaTunnelCertificate{ID: "tcrt_01", TunnelID: "tnl_01ABC", Fingerprint: "SHA256:AB:CD"}, &data)
+	if got := data.Fingerprint.ValueString(); got != "abcd" {
+		t.Errorf("fingerprint = %q, want abcd", got)
 	}
 }
 

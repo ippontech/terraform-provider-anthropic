@@ -208,6 +208,10 @@ func TestMapTunnelCertificateDSToListObject(t *testing.T) {
 				"created_at": "2026-07-01T10:00:00Z", "expires_at": "<null>", "archived_at": "<null>",
 			},
 		},
+		"fingerprint in another spelling": {
+			cert: anthropic.BetaTunnelCertificate{ID: "tcrt_03", TunnelID: "tnl_01ABC", Fingerprint: "SHA256:AB:CD", CreatedAt: created},
+			want: map[string]string{"id": "tcrt_03", "fingerprint": "abcd"},
+		},
 		"archived, expiring": {
 			cert: anthropic.BetaTunnelCertificate{
 				ID: "tcrt_02", TunnelID: "tnl_01ABC", Fingerprint: "ef01", CreatedAt: created,

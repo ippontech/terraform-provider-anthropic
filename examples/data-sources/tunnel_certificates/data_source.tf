@@ -8,8 +8,13 @@ data "anthropic_tunnel_certificates" "all" {
 }
 
 output "trusted_certificate_expiry" {
-  description = "Expiry (RFC 3339, null if none) of each CA certificate the tunnel trusts, by fingerprint."
-  value       = { for c in data.anthropic_tunnel_certificates.trusted.certificates : c.fingerprint => c.expires_at }
+  description = "Fingerprint and expiry (RFC 3339, null if none) of each CA certificate the tunnel trusts, by certificate ID."
+  value = {
+    for c in data.anthropic_tunnel_certificates.trusted.certificates : c.id => {
+      fingerprint = c.fingerprint
+      expires_at  = c.expires_at
+    }
+  }
 }
 
 output "archived_certificate_count" {
