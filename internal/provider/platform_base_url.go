@@ -20,12 +20,12 @@ const (
 	googleCloudBaseURLEnv = "ANTHROPIC_GOOGLE_CLOUD_BASE_URL"
 )
 
-// checkGatewayBaseURL refuses the base URL of a gateway platform, configured
-// (value) or else read from envName, when it does not parse. The SDK would
+// checkBaseURL refuses the base URL of an SDK client, configured (value) or
+// else read from envName, when it does not parse. The SDK would
 // refuse it too, with a parse error that quotes the URL, user information
 // included: this message names the attribute or the variable and repeats
 // neither.
-func checkGatewayBaseURL(attr path.Path, name, value, envName string) diag.Diagnostics {
+func checkBaseURL(attr path.Path, name, value, envName string) diag.Diagnostics {
 	var diags diag.Diagnostics
 	source := name
 	if value == "" {
@@ -41,7 +41,8 @@ func checkGatewayBaseURL(attr path.Path, name, value, envName string) diag.Diagn
 	return diags
 }
 
-// gatewayBaseURL resolves the base URL of a gateway platform client, value or
+// baseURLWithoutUserInfo resolves the base URL of an SDK client (a gateway
+// platform, or first party with ANTHROPIC_BASE_URL), value or
 // else envName, and takes its user information (user:password@ before the
 // host) out of it.
 //
@@ -51,15 +52,16 @@ func checkGatewayBaseURL(attr path.Path, name, value, envName string) diag.Diagn
 //
 // net/http sends the user information as an Authorization: Basic header, but
 // only on a request that has no Authorization header when it is sent. With
-// basic set (AWS), the information becomes that header, so a reverse proxy in
-// front of an API key gateway still gets it, and a SigV4 signature, set later
-// by the SDK's middleware, still replaces it. Without it (Google Cloud), the
-// information is dropped: the SDK sets the Google token before net/http
-// looks, and keeps an Authorization header it finds, so a Basic one would
-// replace the token.
+// basic set (AWS, a first-party API key), the information becomes that
+// header, so a reverse proxy in front of the API still gets it, and a SigV4
+// signature, set later by the SDK's middleware, still replaces it. Without it
+// (Google Cloud, a first-party bearer token or federation), the information
+// is dropped: the SDK sets the token before net/http looks, and its Google
+// and federation middlewares stand down when they find an Authorization
+// header, so a Basic one would replace the token.
 //
 // The URL is returned explicitly, so the SDK does not read envName again.
-func gatewayBaseURL(value, envName string, basic bool) (string, []option.RequestOption) {
+func baseURLWithoutUserInfo(value, envName string, basic bool) (string, []option.RequestOption) {
 	if value == "" {
 		value = os.Getenv(envName)
 	}

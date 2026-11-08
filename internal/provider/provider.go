@@ -215,6 +215,13 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
+	// The SDK would refuse an unparsable ANTHROPIC_BASE_URL with an error that
+	// quotes it, user information included.
+	resp.Diagnostics.Append(checkBaseURL(path.Empty(), "", "", "ANTHROPIC_BASE_URL")...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Each client carries exactly the credential resolved above and nothing
 	// the environment contributed on its own — see newSDKClient.
 	pd := &providerdata.ProviderData{Platform: platform.FirstParty}
@@ -226,18 +233,18 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		if workspaceID != "" {
 			opts = append(opts, option.WithHeader("anthropic-workspace-id", workspaceID))
 		}
-		pd.Client = newSDKClient(opts...)
+		pd.Client = newSDKClient(true, opts...)
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
 	}
 	if authToken != "" {
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken))}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false, option.WithAuthToken(authToken))}
 	}
 	if federation != nil {
 		// The SDK caches the exchanged token and exchanges again shortly
 		// before it expires, calling the identity source each time.
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false,
 			option.WithFederationTokenProvider(federation.identity, federation.options),
 		)}
 	}
@@ -291,9 +298,19 @@ func resolveCredential(configValue types.String, envVar string) string {
 // still worth honouring is ANTHROPIC_BASE_URL, which the marker option also
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
-func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
-	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
-	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+//
+// Its user information (user:password@) is taken out of the URL, so that no
+// request URL, and so no SDK error, carries the password (baseURLWithoutUserInfo).
+// basicAuth says whether the credential leaves the Authorization header free:
+// then, with an API key, the user information becomes the Basic header that
+// net/http sent for it. A bearer credential takes that header itself, and the
+// SDK's federation middleware stands down when it finds one set, so its
+// clients get no Basic header, as net/http sent them none.
+func newSDKClient(basicAuth bool, explicit ...option.RequestOption) *anthropic.Client {
+	baseURL, credentials := baseURLWithoutUserInfo("", "ANTHROPIC_BASE_URL", basicAuth)
+	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, credentials...)
+	opts = append(opts, explicit...)
+	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 
