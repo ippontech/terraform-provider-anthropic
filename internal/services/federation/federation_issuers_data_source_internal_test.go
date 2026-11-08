@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -260,47 +261,6 @@ func TestMapJWKSResponseToObject_InlineKeys(t *testing.T) {
 	}
 }
 
-func TestMapFederationIssuerPollStatus_Zero(t *testing.T) {
-	var status anthropic.BetaFederationIssuerPollStatus
-	if err := json.Unmarshal([]byte(`{"consecutive_failures":0,"last_fetched_at":null,"next_poll_at":null}`), &status); err != nil {
-		t.Fatalf("unmarshal poll status: %v", err)
-	}
-
-	obj, diags := mapFederationIssuerPollStatus(status)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
-
-	attrs := obj.Attributes()
-	if !attrs["last_fetched_at"].(interface{ IsNull() bool }).IsNull() {
-		t.Error("expected last_fetched_at to be null when never fetched")
-	}
-	if !attrs["next_poll_at"].(interface{ IsNull() bool }).IsNull() {
-		t.Error("expected next_poll_at to be null when paused")
-	}
-}
-
-func TestMapFederationIssuerPollStatus_Populated(t *testing.T) {
-	var status anthropic.BetaFederationIssuerPollStatus
-	raw := `{"consecutive_failures":3,"last_fetched_at":"2024-06-01T12:00:00Z","next_poll_at":"2024-06-01T13:00:00Z"}`
-	if err := json.Unmarshal([]byte(raw), &status); err != nil {
-		t.Fatalf("unmarshal poll status: %v", err)
-	}
-
-	obj, diags := mapFederationIssuerPollStatus(status)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
-
-	attrs := obj.Attributes()
-	if got := attrs["last_fetched_at"].(interface{ ValueString() string }).ValueString(); got != "2024-06-01T12:00:00Z" {
-		t.Errorf("last_fetched_at = %q, want 2024-06-01T12:00:00Z", got)
-	}
-	if got := attrs["next_poll_at"].(interface{ ValueString() string }).ValueString(); got != "2024-06-01T13:00:00Z" {
-		t.Errorf("next_poll_at = %q, want 2024-06-01T13:00:00Z", got)
-	}
-}
-
 func TestMapFederationIssuersListEntry_Archived(t *testing.T) {
 	raw := `{
 		"id": "fdis_01ARCHIVED",
@@ -335,5 +295,36 @@ func TestMapFederationIssuersListEntry_Archived(t *testing.T) {
 	}
 	if got := attrs["jwks_polling_disabled_at"].(interface{ ValueString() string }).ValueString(); got != "2024-05-01T00:00:00Z" {
 		t.Errorf("jwks_polling_disabled_at = %q, want 2024-05-01T00:00:00Z", got)
+	}
+	pollAttrs := attrs["poll_status"].(types.Object).Attributes()
+	if got := pollAttrs["consecutive_failures"].(types.Int64).ValueInt64(); got != 5 {
+		t.Errorf("poll_status.consecutive_failures = %d, want 5", got)
+	}
+	if !pollAttrs["next_poll_at"].(types.String).IsNull() {
+		t.Error("poll_status.next_poll_at should be null while polling is paused")
+	}
+}
+
+// An inline-key issuer has nothing to poll, and the API sends poll_status as
+// null: each list entry keeps the all-zero object the data source has always
+// returned, so a `for` expression reading poll_status.consecutive_failures
+// over every issuer still plans.
+func TestMapFederationIssuersListEntry_NullPollStatus(t *testing.T) {
+	raw := strings.Replace(sprintfIssuer("fdis_01INLINE"),
+		`"poll_status": {"consecutive_failures": 0, "last_fetched_at": null, "next_poll_at": null}`,
+		`"poll_status": null`, 1)
+	issuer := unmarshalIssuer(t, raw)
+
+	objVal, diags := mapFederationIssuersListEntry(context.Background(), issuer)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+
+	poll := objVal.(types.Object).Attributes()["poll_status"].(types.Object)
+	if poll.IsNull() {
+		t.Fatal("poll_status is null, want the all-zero object")
+	}
+	if got := poll.Attributes()["consecutive_failures"].(types.Int64).ValueInt64(); got != 0 {
+		t.Errorf("poll_status.consecutive_failures = %d, want 0", got)
 	}
 }

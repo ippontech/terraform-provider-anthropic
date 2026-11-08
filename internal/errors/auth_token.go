@@ -33,8 +33,8 @@ func requireOAuthClient(client *providerdata.OAuthClient, diags *diag.Diagnostic
 		"Missing OAuth Token",
 		"This "+kind+" requires an OAuth bearer token: org:admin scope for the Workload Identity Federation endpoints, "+
 			"workspace:manage_tunnels scope for MCP tunnels. "+
-			"Configure it via the auth_token provider argument, the ANTHROPIC_AUTH_TOKEN environment variable or the federation block. "+
-			"API keys (api_key, admin_api_key) are not accepted on these endpoints.",
+			"Configure it via the auth_token provider argument or the ANTHROPIC_AUTH_TOKEN environment variable. "+
+			"An Admin API key (admin_api_key / ANTHROPIC_ADMIN_API_KEY) is not accepted on these endpoints.",
 	)
 	return false
 }

@@ -14,10 +14,14 @@ A Terraform provider for managing [Anthropic's Claude API resources](https://pla
 [![GoReleaser Check](https://github.com/ippontech/terraform-provider-anthropic/actions/workflows/goreleaser-check.yml/badge.svg)](https://github.com/ippontech/terraform-provider-anthropic/actions/workflows/goreleaser-check.yml)
 [![GoReleaser Release](https://github.com/ippontech/terraform-provider-anthropic/actions/workflows/goreleaser-release.yml/badge.svg)](https://github.com/ippontech/terraform-provider-anthropic/actions/workflows/goreleaser-release.yml)
 
-## Authors
-
-- Timothée Aufort [taufort@ippon.fr]
-
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). There is no small contribution: a bug report, a doc fix or a new resource are all welcome.
+
+Thanks to everyone who has contributed so far:
+
+<a href="https://github.com/ippontech/terraform-provider-anthropic/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ippontech/terraform-provider-anthropic" alt="Contributors" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).

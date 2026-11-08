@@ -19,7 +19,13 @@ resource "anthropic_agent" "assistant" {
   }
 }
 
-# Agent with built-in toolset configuration
+# Agent with built-in toolset configuration. The web tools take domain lists
+# (allowed_domains or blocked_domains), web_search a user_location and
+# web_fetch a max_content_tokens cap. With `limited` environment networking,
+# allowed_domains entries must also be within the environment's allowed_hosts.
+# web_fetch only fetches URLs already seen in the session; url_sources narrows
+# where they may come from, here user messages and web_search results only, so
+# a URL planted in a custom tool result is never fetched.
 resource "anthropic_agent" "developer" {
   model       = "claude-sonnet-4-6"
   name        = "Developer Agent"
@@ -33,12 +39,32 @@ resource "anthropic_agent" "developer" {
         name              = "bash"
         enabled           = true
         permission_policy = "always_ask"
+      },
+      {
+        name            = "web_search"
+        allowed_domains = ["docs.example.com", "arxiv.org"]
+        user_location = {
+          country  = "US"
+          timezone = "America/Los_Angeles"
+        }
+      },
+      {
+        name               = "web_fetch"
+        blocked_domains    = ["ads.example.com"]
+        max_content_tokens = 50000
+        url_sources = {
+          client_tool_results = { type = "none" }
+          server_tool_results = { type = "only", tools = ["web_search"] }
+        }
       }
     ]
   }
 }
 
-# Agent with MCP server and skills
+# Agent with MCP server and skills. With the `auto` permission policy the
+# server evaluates each call and runs it, denies it or waits for approval; a
+# call it judges safe runs before anyone sees it, so tools whose calls a
+# person must review keep `always_ask`.
 resource "anthropic_agent" "mcp_agent" {
   model       = "claude-sonnet-4-6"
   name        = "MCP Agent"
@@ -55,7 +81,13 @@ resource "anthropic_agent" "mcp_agent" {
     {
       mcp_server_name           = "my_server"
       default_enabled           = true
-      default_permission_policy = "always_allow"
+      default_permission_policy = "auto"
+      configs = [
+        {
+          name              = "delete_record"
+          permission_policy = "always_ask"
+        }
+      ]
     }
   ]
 
@@ -85,14 +117,17 @@ resource "anthropic_agent" "custom_tools" {
             description = "The user's email address"
           }
         }
-        required = ["email"]
+        required             = ["email"]
+        additionalProperties = false
       })
     }
   ]
 }
 
 # Coordinator agent that can delegate to another agent and to itself.
-# The members must not have their own multiagent roster (depth limit 1).
+# The members must not have their own multiagent roster (depth limit 1). The
+# reference pins the support agent's current version, as in the orchestrator
+# below.
 resource "anthropic_agent" "coordinator" {
   model       = "claude-sonnet-4-6"
   name        = "Support Coordinator"
@@ -102,13 +137,50 @@ resource "anthropic_agent" "coordinator" {
     type = "coordinator"
     agents = [
       {
-        type = "agent"
-        id   = anthropic_agent.assistant.id
+        type    = "agent"
+        id      = anthropic_agent.assistant.id
+        version = anthropic_agent.assistant.version
       },
       {
         type = "self"
       },
     ]
+  }
+}
+
+# Agent of the multiagent_20261001 type: it may delegate only to the support
+# agent and to copies of itself (inline agents off), and dynamic workflows are
+# turned off. Both settings are on by default with this type; an advisor
+# model can be added with advisor = { model = "..." }. The reference pins the
+# support agent's current version: a re-pin made outside Terraform shows as a
+# change, and an update of the support agent moves the pin with it. That
+# version also follows a new version of the support agent made outside
+# Terraform, when the change is to an attribute its resource leaves unset and
+# the API fills in (model_effort, say), which it does not revert. For a
+# version that never moves, write its number.
+resource "anthropic_agent" "orchestrator" {
+  model       = "claude-sonnet-4-6"
+  name        = "Support Orchestrator"
+  description = "Delegates support inquiries to the support agent only"
+
+  multiagent = {
+    type = "multiagent_20261001"
+    subagents = {
+      inline_agents_enabled = false
+      predefined_agents = [
+        {
+          type    = "agent"
+          id      = anthropic_agent.assistant.id
+          version = anthropic_agent.assistant.version
+        },
+        {
+          type = "self"
+        },
+      ]
+    }
+    workflows = {
+      enabled = false
+    }
   }
 }
 

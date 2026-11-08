@@ -46,6 +46,13 @@ type organizationMemberAPIResponse struct {
 	Type    string `json:"type"`
 }
 
+// memberRoleReadDescription describes the role a member read returns. The
+// Claude Enterprise set is exhaustive per
+// https://platform.claude.com/docs/en/manage-claude/user-management#organization-roles;
+// the Claude Console one lists the roles of the Admin API guide.
+const memberRoleReadDescription = "Organization role of the user: for example `user`, `developer`, `billing`, `claude_code_user` or `admin` in a Claude Console organization, " +
+	"and `user`, `managed`, `owner`, `membership_admin` or `primary_owner` in a Claude Enterprise organization."
+
 func (d *OrganizationMemberDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_organization_member"
 }
@@ -70,7 +77,7 @@ func (d *OrganizationMemberDataSource) Schema(_ context.Context, _ datasource.Sc
 			},
 			"role": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Organization role of the user (e.g. `user`, `developer`, `billing`, `admin`, `claude_code_user`).",
+				MarkdownDescription: memberRoleReadDescription,
 			},
 			"added_at": schema.StringAttribute{
 				Computed:            true,

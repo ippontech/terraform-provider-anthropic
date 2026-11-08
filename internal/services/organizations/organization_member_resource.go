@@ -91,11 +91,13 @@ func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.Schema
 			},
 			"role": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Organization role of the user. The valid set depends on the organization's type: " +
-					"Console organizations use `user`, `developer`, `billing`, `admin`, `claude_code_user`; Enterprise " +
-					"organizations use `user`, `managed`, `owner`, `membership_admin`, `primary_owner` (though the API " +
-					"currently only assigns `user`/`managed` via this endpoint). Not validated against a fixed list here " +
-					"since the valid set is organization-type-dependent; an invalid value is rejected by the API at apply time.",
+				MarkdownDescription: "Organization role of the user. " + assignableRolesDescription + " " +
+					"A member holding `admin` cannot be removed through the API, and one holding a Claude Enterprise administrative role can be neither changed nor removed through it. " +
+					"Not checked against a list, since the accepted set depends on the organization type and a member can hold a role the API cannot assign; " +
+					"the API rejects an invalid change at apply time.",
+				// No OneOf: a member, imported or adopted on create, can hold admin
+				// or an Enterprise administrative role, and the configuration must be
+				// able to match it; only changing to such a role is impossible.
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
 				},
@@ -199,6 +201,23 @@ func (r *OrganizationMemberResource) Update(ctx context.Context, req resource.Up
 	var plan OrganizationMemberResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var state OrganizationMemberResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// remove_on_destroy is local-only and has no API counterpart. If it's the
+	// only thing that changed, there's nothing to send: skip the API call
+	// entirely (keeping server-derived fields from state) rather than
+	// resending unchanged role, which might cause issues for example
+	// if the role is `admin` which cannot be set via the API.
+	apiFieldsChanged := !plan.Role.Equal(state.Role)
+	if !apiFieldsChanged {
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
 
