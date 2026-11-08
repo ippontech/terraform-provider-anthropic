@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -613,6 +614,79 @@ func TestAdminClient_doRequest_doesNotReplayPostOnADroppedConnection(t *testing.
 	}
 }
 
+// A POST marked WithIdempotent is replayed on a 503, with the same body, as a
+// GET would be; the same POST without the option is sent once.
+func TestAdminClient_doRequest_withIdempotentRetriesAPostOn5xx(t *testing.T) {
+	tests := []struct {
+		name      string
+		opts      []RequestOption
+		wantCalls int32
+		wantErr   bool
+	}{
+		{"marked idempotent", []RequestOption{WithIdempotent()}, 2, false},
+		{"unmarked", nil, 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int32
+			var mu sync.Mutex
+			var bodies []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				bodies = append(bodies, string(b))
+				mu.Unlock()
+				if calls.Add(1) == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"state":{"type":"enabled"}}`)
+			}))
+			defer srv.Close()
+
+			_, err := newRetryingTestClient(t, srv, 2).DoRequest(context.Background(), "POST",
+				"/v1/organizations/compliance_settings", map[string]any{"state": map[string]string{"type": "enabled"}}, tt.opts...)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("err = %v, want error %v", err, tt.wantErr)
+			}
+			if got := calls.Load(); got != tt.wantCalls {
+				t.Errorf("calls = %d, want %d", got, tt.wantCalls)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, b := range bodies {
+				if b != `{"state":{"type":"enabled"}}` {
+					t.Errorf("body = %q, want the same body on every attempt", b)
+				}
+			}
+		})
+	}
+}
+
+// A POST marked WithIdempotent is replayed after a dropped connection too.
+func TestAdminClient_doRequest_withIdempotentRetriesAPostOnADroppedConnection(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			hijackAndClose(t, w, "")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"state":{"type":"enabled"}}`)
+	}))
+	defer srv.Close()
+
+	_, err := newRetryingTestClient(t, srv, 2).DoRequest(context.Background(), "POST",
+		"/v1/organizations/compliance_settings", map[string]any{"state": map[string]string{"type": "enabled"}}, WithIdempotent())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("calls = %d, want 2", got)
+	}
+}
+
 func TestAdminClient_doRequest_retriesATruncatedResponseBody(t *testing.T) {
 	// Headers arrive, then the connection dies mid-payload. The status line says
 	// 200, but nothing usable came back: exactly the transient this loop exists
@@ -830,10 +904,10 @@ func TestClient_retryDelay_ignoresUnparseableRetryAfter(t *testing.T) {
 // --- shouldRetry ---
 
 func TestShouldRetry_nilResponseIsAConnectionError(t *testing.T) {
-	if !shouldRetry(http.MethodGet, nil) {
+	if !shouldRetry(isIdempotent(http.MethodGet), nil) {
 		t.Error("expected true for a nil response on an idempotent method")
 	}
-	if shouldRetry(http.MethodPost, nil) {
+	if shouldRetry(isIdempotent(http.MethodPost), nil) {
 		t.Error("expected false for a nil response on a POST: the write may have landed")
 	}
 }
@@ -850,7 +924,7 @@ func TestShouldRetry_dependsOnIdempotency(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodDelete, "get"} {
 		for _, status := range statuses {
 			resp := &http.Response{StatusCode: status, Header: http.Header{}}
-			if !shouldRetry(method, resp) {
+			if !shouldRetry(isIdempotent(method), resp) {
 				t.Errorf("%s %d: want retry", method, status)
 			}
 		}
@@ -859,7 +933,7 @@ func TestShouldRetry_dependsOnIdempotency(t *testing.T) {
 	for _, status := range statuses {
 		resp := &http.Response{StatusCode: status, Header: http.Header{}}
 		want := status == http.StatusTooManyRequests
-		if got := shouldRetry(http.MethodPost, resp); got != want {
+		if got := shouldRetry(isIdempotent(http.MethodPost), resp); got != want {
 			t.Errorf("POST %d: retry = %v, want %v", status, got, want)
 		}
 	}
@@ -868,13 +942,13 @@ func TestShouldRetry_dependsOnIdempotency(t *testing.T) {
 func TestShouldRetry_xShouldRetryOverridesIdempotency(t *testing.T) {
 	forced := &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{}}
 	forced.Header.Set("x-should-retry", "true")
-	if !shouldRetry(http.MethodPost, forced) {
+	if !shouldRetry(isIdempotent(http.MethodPost), forced) {
 		t.Error("expected the server's explicit opt-in to replay a POST")
 	}
 
 	refused := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
 	refused.Header.Set("x-should-retry", "false")
-	if shouldRetry(http.MethodPost, refused) {
+	if shouldRetry(isIdempotent(http.MethodPost), refused) {
 		t.Error("expected the server's explicit opt-out to win")
 	}
 }
