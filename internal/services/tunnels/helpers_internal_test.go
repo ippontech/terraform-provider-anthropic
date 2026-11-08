@@ -6,6 +6,7 @@ package tunnels
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -64,14 +65,23 @@ func (l *requestLog) count(method, path string) int {
 }
 
 // resourceValue builds a full object value for r's schema: every attribute
-// null except the given overrides. Every attribute of the tunnel resources is
-// a string, so the overrides are too.
+// null except the given overrides. The tunnel resources' attributes are
+// strings, except store_token, a bool given as "true" or "false".
 func resourceValue(t *testing.T, r resource.Resource, overrides map[string]string) tftypes.Value {
 	t.Helper()
 	objType := schematest.ResourceObjectType(t, r)
 	vals := schematest.NullValues(t, r)
 	for k, v := range overrides {
-		vals[k] = tftypes.NewValue(objType.AttributeTypes[k], v)
+		typ := objType.AttributeTypes[k]
+		if typ.Is(tftypes.Bool) {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				t.Fatalf("%s = %q: %s", k, v, err)
+			}
+			vals[k] = tftypes.NewValue(typ, b)
+			continue
+		}
+		vals[k] = tftypes.NewValue(typ, v)
 	}
 	return tftypes.NewValue(objType, vals)
 }

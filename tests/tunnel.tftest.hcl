@@ -27,4 +27,9 @@ run "tunnel_plan" {
     condition     = anthropic_tunnel.corp.token_rotation == "1"
     error_message = "Expected token_rotation to be '1'."
   }
+
+  assert {
+    condition     = anthropic_tunnel.corp.store_token == true
+    error_message = "Expected store_token to default to true."
+  }
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -49,6 +50,7 @@ type TunnelResourceModel struct {
 	Domain        types.String `tfsdk:"domain"`
 	CreatedAt     types.String `tfsdk:"created_at"`
 	TokenRotation types.String `tfsdk:"token_rotation"`
+	StoreToken    types.Bool   `tfsdk:"store_token"`
 	Token         types.String `tfsdk:"token"`
 	TokenID       types.String `tfsdk:"token_id"`
 }
@@ -86,6 +88,16 @@ func (r *TunnelResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"value set (at creation, on import, or added to an existing tunnel) is recorded without rotating, and removing it " +
 					"does not rotate either.",
 			},
+			"store_token": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(true),
+				MarkdownDescription: "Whether the provider keeps the connector token in the Terraform state. Default: `true`. With " +
+					"`false`, the provider never reveals the token: `token` and `token_id` stay null, and a `token_rotation` change " +
+					"still rotates the token, without storing the new value. Use it when the connector fetches its token itself, so " +
+					"that no tunnel secret reaches the state. Switching to `false` removes the stored token from the state at the " +
+					"next apply; switching back to `true` reveals the token at the next apply.",
+			},
 
 			// --- Computed ---
 			"id": schema.StringAttribute{
@@ -109,13 +121,15 @@ func (r *TunnelResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Sensitive: true,
 				MarkdownDescription: "The connector token `cloudflared` runs the tunnel with. Treat it as a credential: it is stored " +
 					"in the Terraform state. Revealed once at creation, or by the first apply after an import, then kept from state; " +
-					"it changes only when `token_rotation` triggers a rotation. A rotation made outside Terraform is not detected.",
-				PlanModifiers: []planmodifier.String{tokenFollowsRotation()},
+					"it changes only when `token_rotation` triggers a rotation. A rotation made outside Terraform is not detected. " +
+					"Null when `store_token` is `false`.",
+				PlanModifiers: []planmodifier.String{tokenPlan()},
 			},
 			"token_id": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "Stable, non-secret identifier of the current token value. Changes when the token is rotated.",
-				PlanModifiers:       []planmodifier.String{tokenFollowsRotation()},
+				Computed: true,
+				MarkdownDescription: "Stable, non-secret identifier of the current token value. Changes when the token is rotated. " +
+					"Null when `store_token` is `false`.",
+				PlanModifiers: []planmodifier.String{tokenPlan()},
 			},
 		},
 	}
@@ -171,13 +185,18 @@ func (r *TunnelResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	mapTunnelToState(tunnel, &data)
 
+	if !storesToken(data.StoreToken) {
+		clearTunnelToken(&data)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		return
+	}
+
 	token, err := r.client.Beta.Tunnels.RevealToken(ctx, tunnel.ID, anthropic.BetaTunnelRevealTokenParams{})
 	if err != nil {
 		// The tunnel exists: save it, so Terraform marks it tainted and the
 		// next apply archives it and creates a replacement, rather than
 		// losing track of it (creation is not idempotent).
-		data.Token = types.StringNull()
-		data.TokenID = types.StringNull()
+		clearTunnelToken(&data)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf(
 			"Tunnel %s was created, but its token could not be revealed: %s. The tunnel is saved in state as tainted, so the next apply archives it and creates a new one.",
@@ -225,20 +244,26 @@ func (r *TunnelResource) Read(ctx context.Context, req resource.ReadRequest, res
 	// has none: Read runs on every plan and refresh, a plan never saves its
 	// refreshed state, and the API logs every reveal as a
 	// tunnel_token_revealed compliance event, so a pending import would add
-	// one per plan. tokenFollowsRotation plans the missing token unknown
-	// instead, and Update reveals it at apply.
+	// one per plan. tokenPlan plans the missing token unknown instead, and
+	// Update reveals it at apply.
 	mapTunnelToState(tunnel, &data)
+	// The API does not hold store_token: an import starts from the default.
+	if data.StoreToken.IsNull() {
+		data.StoreToken = types.BoolValue(true)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 // --- Update ---
 
-// Update is reached through token_rotation, or through the unknown token
-// tokenFollowsRotation plans when state has none (the first apply after an
-// import); display_name forces replacement. It rotates the token when
-// tokenRotationRequested says so, reveals it when state has none, and
-// otherwise only records the new token_rotation value.
+// Update is reached through token_rotation, store_token, or the unknown
+// token tokenPlan plans when state has none (the first apply after an import
+// or after store_token is set back to true); display_name forces
+// replacement. It rotates the token when tokenRotationRequested says so
+// (storing the new value only with store_token), clears it from state
+// without store_token, reveals it when state has none, and otherwise only
+// records the new token_rotation and store_token values.
 func (r *TunnelResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan TunnelResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -255,6 +280,7 @@ func (r *TunnelResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// On an error, returning without setting the state keeps the prior one
 	// (the framework starts the response from it), so the next plan asks for
 	// the same rotation or reveal again.
+	storeToken := storesToken(plan.StoreToken)
 	switch {
 	case tokenRotationRequested(plan.TokenRotation, state.TokenRotation):
 		token, err := r.client.Beta.Tunnels.RotateToken(ctx, state.ID.ValueString(), anthropic.BetaTunnelRotateTokenParams{
@@ -264,9 +290,16 @@ func (r *TunnelResource) Update(ctx context.Context, req resource.UpdateRequest,
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to rotate tunnel token: %s", err))
 			return
 		}
-		mapTunnelTokenToState(token, &plan)
+		if storeToken {
+			mapTunnelTokenToState(token, &plan)
+		} else {
+			clearTunnelToken(&plan)
+		}
+	case !storeToken:
+		clearTunnelToken(&plan)
 	case state.Token.IsNull():
-		// The first apply after an import: the reveal Read never makes.
+		// The first apply after an import, or after store_token is set back
+		// to true: the reveal Read never makes.
 		token, err := r.client.Beta.Tunnels.RevealToken(ctx, state.ID.ValueString(), anthropic.BetaTunnelRevealTokenParams{})
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to reveal the token of tunnel %s: %s", state.ID.ValueString(), err))
@@ -318,6 +351,19 @@ func mapTunnelToState(tunnel *anthropic.BetaTunnel, data *TunnelResourceModel) {
 	data.CreatedAt = tfvalue.TimeOrNull(tunnel.CreatedAt)
 }
 
+// storesToken reports whether a store_token value keeps the token in state.
+// Null, which the schema default rules out but a state written before the
+// attribute existed holds, means the default: true.
+func storesToken(v types.Bool) bool {
+	return v.IsNull() || v.IsUnknown() || v.ValueBool()
+}
+
+// clearTunnelToken leaves no token in state.
+func clearTunnelToken(data *TunnelResourceModel) {
+	data.Token = types.StringNull()
+	data.TokenID = types.StringNull()
+}
+
 // mapTunnelTokenToState records a revealed or rotated token.
 func mapTunnelTokenToState(token *anthropic.BetaTunnelToken, data *TunnelResourceModel) {
 	data.Token = types.StringValue(token.TunnelToken)
@@ -340,29 +386,48 @@ func tokenRotationRequested(plan, state types.String) bool {
 	return plan.ValueString() != state.ValueString()
 }
 
-// tokenFollowsRotation is the plan modifier on token and token_id: it keeps
-// the state value (like UseStateForUnknown) unless the plan rotates the
-// token, in which case the value stays unknown until apply. When state has
-// no token (after an import), it plans the value unknown, so the plan shows
-// an update and Update reveals the token: a plan never calls reveal_token.
-func tokenFollowsRotation() planmodifier.String {
-	return tokenFollowsRotationModifier{}
+// tokenPlan is the plan modifier on token and token_id. It plans:
+//   - null when store_token is false: the provider holds no token;
+//   - unknown when state has no token (after an import, or when store_token
+//     goes back to true), so the plan shows an update and Update reveals the
+//     token: a plan never calls reveal_token;
+//   - unknown when the plan rotates the token;
+//   - the state value otherwise (like UseStateForUnknown).
+//
+// On create, with store_token true, the value stays unknown until apply.
+func tokenPlan() planmodifier.String {
+	return tokenPlanModifier{}
 }
 
-type tokenFollowsRotationModifier struct{}
+type tokenPlanModifier struct{}
 
-func (m tokenFollowsRotationModifier) Description(_ context.Context) string {
-	return "Keeps the prior state value unless token_rotation changes to a different non-null value, or the state has " +
-		"no token yet (after an import): the value is then known after apply."
+func (m tokenPlanModifier) Description(_ context.Context) string {
+	return "Null when store_token is false. Otherwise keeps the prior state value, unless token_rotation changes to a " +
+		"different non-null value or the state has no token yet (after an import): the value is then known after apply."
 }
 
-func (m tokenFollowsRotationModifier) MarkdownDescription(ctx context.Context) string {
+func (m tokenPlanModifier) MarkdownDescription(ctx context.Context) string {
 	return m.Description(ctx)
 }
 
-func (m tokenFollowsRotationModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	// Creation (no prior state) and destruction (no plan) keep the default.
-	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+func (m tokenPlanModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	// Destruction (no plan) keeps the default.
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var storeToken types.Bool
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("store_token"), &storeToken)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !storesToken(storeToken) {
+		resp.PlanValue = types.StringNull()
+		return
+	}
+	// Creation (no prior state), or a store_token unknown until apply,
+	// keeps the default: unknown.
+	if req.State.Raw.IsNull() || storeToken.IsUnknown() {
 		return
 	}
 

@@ -101,10 +101,10 @@ func TestTokenRotationRequested(t *testing.T) {
 	}
 }
 
-// TestTokenFollowsRotation drives the plan modifier through the framework
-// request types: the token keeps its state value unless token_rotation
-// changes between two non-null values.
-func TestTokenFollowsRotation(t *testing.T) {
+// TestTokenPlan drives the plan modifier through the framework request
+// types: the token keeps its state value unless token_rotation changes
+// between two non-null values.
+func TestTokenPlan(t *testing.T) {
 	r := &TunnelResource{}
 	base := map[string]string{"id": "tnl_01ABC", "domain": "d", "created_at": "2026-07-01T10:00:00Z", "token": "secret-token-1", "token_id": "ttok_01"}
 	with := func(rotation string) map[string]string {
@@ -139,7 +139,7 @@ func TestTokenFollowsRotation(t *testing.T) {
 				PlanValue:  types.StringUnknown(),
 			}
 			resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
-			tokenFollowsRotation().PlanModifyString(context.Background(), req, resp)
+			tokenPlan().PlanModifyString(context.Background(), req, resp)
 			if resp.Diagnostics.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
 			}
@@ -152,27 +152,6 @@ func TestTokenFollowsRotation(t *testing.T) {
 		})
 	}
 
-	// After an import, state has no token. With no configuration change the
-	// framework plans the state's null, and the modifier turns it unknown,
-	// so the plan shows an update and the apply reveals the token.
-	t.Run("state without a token plans it unknown", func(t *testing.T) {
-		imported := map[string]string{"id": "tnl_01ABC", "domain": "d", "created_at": "2026-07-01T10:00:00Z"}
-		req := planmodifier.StringRequest{
-			State:      resourceState(t, r, imported),
-			Plan:       resourcePlan(t, r, imported),
-			StateValue: types.StringNull(),
-			PlanValue:  types.StringNull(),
-		}
-		resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
-		tokenFollowsRotation().PlanModifyString(context.Background(), req, resp)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
-		}
-		if !resp.PlanValue.IsUnknown() {
-			t.Errorf("plan value = %v, want unknown", resp.PlanValue)
-		}
-	})
-
 	t.Run("create leaves the value unknown", func(t *testing.T) {
 		req := planmodifier.StringRequest{
 			State: tfsdk.State{
@@ -183,11 +162,98 @@ func TestTokenFollowsRotation(t *testing.T) {
 			PlanValue: types.StringUnknown(),
 		}
 		resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
-		tokenFollowsRotation().PlanModifyString(context.Background(), req, resp)
+		tokenPlan().PlanModifyString(context.Background(), req, resp)
 		if !resp.PlanValue.IsUnknown() {
 			t.Errorf("plan value = %v, want unknown on create", resp.PlanValue)
 		}
 	})
+}
+
+// TestTokenPlan_stateWithoutToken: after an import, state has no token.
+// With no configuration change the framework plans the state's null, and the
+// modifier turns it unknown, so the plan shows an update and the apply
+// reveals the token.
+func TestTokenPlan_stateWithoutToken(t *testing.T) {
+	r := &TunnelResource{}
+	imported := map[string]string{"id": "tnl_01ABC", "domain": "d", "created_at": "2026-07-01T10:00:00Z"}
+	req := planmodifier.StringRequest{
+		State:      resourceState(t, r, imported),
+		Plan:       resourcePlan(t, r, imported),
+		StateValue: types.StringNull(),
+		PlanValue:  types.StringNull(),
+	}
+	resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+	tokenPlan().PlanModifyString(context.Background(), req, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+	}
+	if !resp.PlanValue.IsUnknown() {
+		t.Errorf("plan value = %v, want unknown", resp.PlanValue)
+	}
+}
+
+// TestTokenPlan_storeToken: store_token = false plans a null token whatever
+// else changes, on create, when it turns false (the stored token is
+// cleared) and with a rotation; turning it back to true plans the missing
+// token unknown, for Update to reveal.
+func TestTokenPlan_storeToken(t *testing.T) {
+	r := &TunnelResource{}
+	storeTests := []struct {
+		name       string
+		state      map[string]string // nil: create
+		plan       map[string]string
+		stateValue types.String // the zero value is null
+		wantNull   bool
+	}{
+		{
+			name:     "store_token false on create",
+			plan:     map[string]string{"store_token": "false"},
+			wantNull: true,
+		},
+		{
+			name:       "store_token turned false",
+			state:      map[string]string{"id": "tnl_01ABC", "store_token": "true", "token": "secret-token-1", "token_id": "ttok_01"},
+			plan:       map[string]string{"id": "tnl_01ABC", "store_token": "false", "token": "secret-token-1", "token_id": "ttok_01"},
+			stateValue: types.StringValue("secret-token-1"),
+			wantNull:   true,
+		},
+		{
+			name:     "store_token false with a rotation",
+			state:    map[string]string{"id": "tnl_01ABC", "store_token": "false", "token_rotation": "1"},
+			plan:     map[string]string{"id": "tnl_01ABC", "store_token": "false", "token_rotation": "2"},
+			wantNull: true,
+		},
+		{
+			name:  "store_token turned back to true",
+			state: map[string]string{"id": "tnl_01ABC", "store_token": "false"},
+			plan:  map[string]string{"id": "tnl_01ABC", "store_token": "true"},
+		},
+	}
+	for _, tc := range storeTests {
+		t.Run(tc.name, func(t *testing.T) {
+			state := tfsdk.State{Raw: tftypes.NewValue(schematest.ResourceObjectType(t, r), nil), Schema: schematest.ResourceSchema(t, r)}
+			if tc.state != nil {
+				state = resourceState(t, r, tc.state)
+			}
+			req := planmodifier.StringRequest{
+				State:      state,
+				Plan:       resourcePlan(t, r, tc.plan),
+				StateValue: tc.stateValue,
+				PlanValue:  types.StringUnknown(),
+			}
+			resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+			tokenPlan().PlanModifyString(context.Background(), req, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+			}
+			if tc.wantNull && !resp.PlanValue.IsNull() {
+				t.Errorf("plan value = %v, want null", resp.PlanValue)
+			}
+			if !tc.wantNull && !resp.PlanValue.IsUnknown() {
+				t.Errorf("plan value = %v, want unknown", resp.PlanValue)
+			}
+		})
+	}
 }
 
 // TestTunnelResource_Create pins the create flow: POST /v1/tunnels with the
@@ -707,5 +773,133 @@ func TestTunnelResource_importThenPlanAndApply(t *testing.T) {
 	}
 	if n := reveals(); n != 1 {
 		t.Errorf("reveal_token called %d times in all, want 1", n)
+	}
+}
+
+// TestTunnelResource_Create_withoutStoringToken: with store_token = false,
+// Create never reveals the token and leaves token and token_id null.
+func TestTunnelResource_Create_withoutStoringToken(t *testing.T) {
+	srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+		"POST /v1/tunnels":                        respond(http.StatusOK, tunnelLiveJSON),
+		"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusOK, tunnelTokenJSON),
+	})
+	r := &TunnelResource{client: oauthtest.NewClient(t, srv)}
+
+	plan := resourcePlan(t, r, map[string]string{"display_name": "corp-mcp", "store_token": "false"})
+	resp := &resource.CreateResponse{State: resourceState(t, r, nil)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create returned errors: %v", resp.Diagnostics)
+	}
+	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/reveal_token"); n != 0 {
+		t.Errorf("reveal_token called %d times, want 0", n)
+	}
+	var data TunnelResourceModel
+	resp.State.Get(context.Background(), &data)
+	if data.ID.ValueString() != "tnl_01ABC" || data.StoreToken.ValueBool() {
+		t.Errorf("id/store_token = %v/%v, want the tunnel saved with store_token false", data.ID, data.StoreToken)
+	}
+	if !data.Token.IsNull() || !data.TokenID.IsNull() {
+		t.Errorf("token/token_id = %v/%v, want null", data.Token, data.TokenID)
+	}
+}
+
+// TestTunnelResource_Update_storeToken covers both directions of a
+// store_token change and a rotation without storing the token.
+func TestTunnelResource_Update_storeToken(t *testing.T) {
+	tests := []struct {
+		name               string
+		state, plan        map[string]string
+		wantReveal         int
+		wantRotate         int
+		wantToken, wantTID string // "" for null
+	}{
+		{
+			name:  "turned false clears the stored token without an API call",
+			state: map[string]string{"store_token": "true", "token": "secret-token-1", "token_id": "ttok_01"},
+			plan:  map[string]string{"store_token": "false"},
+		},
+		{
+			name:       "turned back to true reveals the token",
+			state:      map[string]string{"store_token": "false"},
+			plan:       map[string]string{"store_token": "true"},
+			wantReveal: 1,
+			wantToken:  "secret-token-1",
+			wantTID:    "ttok_01",
+		},
+		{
+			name:       "a rotation without store_token rotates and stores nothing",
+			state:      map[string]string{"store_token": "false", "token_rotation": "1"},
+			plan:       map[string]string{"store_token": "false", "token_rotation": "2"},
+			wantRotate: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+				"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusOK, tunnelTokenJSON),
+				"POST /v1/tunnels/tnl_01ABC/rotate_token": respond(http.StatusOK, tunnelRotatedJSON),
+			})
+			r := &TunnelResource{client: oauthtest.NewClient(t, srv)}
+			tc.state["id"], tc.plan["id"] = "tnl_01ABC", "tnl_01ABC"
+
+			resp := updateTunnel(t, r, tc.state, tc.plan)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Update returned errors: %v", resp.Diagnostics)
+			}
+			if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/reveal_token"); n != tc.wantReveal {
+				t.Errorf("reveal_token called %d times, want %d", n, tc.wantReveal)
+			}
+			if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/rotate_token"); n != tc.wantRotate {
+				t.Errorf("rotate_token called %d times, want %d", n, tc.wantRotate)
+			}
+			var data TunnelResourceModel
+			resp.State.Get(context.Background(), &data)
+			if data.Token.ValueString() != tc.wantToken || data.TokenID.ValueString() != tc.wantTID ||
+				data.Token.IsNull() != (tc.wantToken == "") || data.TokenID.IsNull() != (tc.wantTID == "") {
+				t.Errorf("token/token_id = %v/%v, want %q/%q (\"\" for null)", data.Token, data.TokenID, tc.wantToken, tc.wantTID)
+			}
+			if got, want := data.StoreToken.ValueBool(), tc.plan["store_token"] == "true"; got != want {
+				t.Errorf("store_token = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestTunnelResource_importWithoutStoringToken: an import configured with
+// store_token = false plans a null token, and neither the plan nor the
+// apply reveals it.
+func TestTunnelResource_importWithoutStoringToken(t *testing.T) {
+	srv, log := fakeTunnelsAPI(t, map[string]func(http.ResponseWriter){
+		"GET /v1/tunnels/tnl_01ABC":               respond(http.StatusOK, tunnelLiveJSON),
+		"POST /v1/tunnels/tnl_01ABC/reveal_token": respond(http.StatusOK, tunnelTokenJSON),
+	})
+	r := &TunnelResource{client: oauthtest.NewClient(t, srv)}
+	p := newTunnelProtocol(t, r)
+
+	refreshed, imported := p.read(resourceValue(t, r, map[string]string{"id": "tnl_01ABC"}))
+	if !imported.StoreToken.ValueBool() {
+		t.Errorf("store_token after import = %v, want the default true", imported.StoreToken)
+	}
+	config := resourceValue(t, r, map[string]string{"display_name": "corp-mcp", "store_token": "false"})
+	proposed := resourceValue(t, r, map[string]string{
+		"id": "tnl_01ABC", "display_name": "corp-mcp", "domain": "abc123.tunnel.anthropic.com",
+		"created_at": "2026-07-01T10:00:00Z", "store_token": "false",
+	})
+
+	planned, plan := p.plan(refreshed, config, proposed)
+	if !plan.Token.IsNull() || !plan.TokenID.IsNull() {
+		t.Errorf("planned token/token_id = %v/%v, want null", plan.Token, plan.TokenID)
+	}
+	applied, state := p.apply(refreshed, config, planned)
+	if !state.Token.IsNull() || state.StoreToken.ValueBool() {
+		t.Errorf("token/store_token = %v/%v, want null/false", state.Token, state.StoreToken)
+	}
+	refreshed, _ = p.read(applied)
+	if planned, _ = p.plan(refreshed, config, refreshed); !planned.Equal(refreshed) {
+		t.Errorf("second plan differs from state:\n%s\nwant\n%s", planned, refreshed)
+	}
+	if n := log.count(http.MethodPost, "/v1/tunnels/tnl_01ABC/reveal_token"); n != 0 {
+		t.Errorf("reveal_token called %d times, want 0", n)
 	}
 }

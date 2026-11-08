@@ -156,7 +156,7 @@ func TestTunnelSchemaHelpers_descriptions(t *testing.T) {
 		Description(context.Context) string
 		MarkdownDescription(context.Context) string
 	}{
-		"tokenFollowsRotation":      tokenFollowsRotation(),
+		"tokenPlan":                 tokenPlan(),
 		"caCertificatePEMValidator": caCertificatePEMValidator{},
 	} {
 		if d.Description(ctx) == "" || d.MarkdownDescription(ctx) != d.Description(ctx) {

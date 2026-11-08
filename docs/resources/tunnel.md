@@ -22,9 +22,23 @@ A new tunnel rejects MCP traffic until at least one CA certificate is registered
 
 ## Token
 
-`token` is the connector token `cloudflared` runs the tunnel with. The provider reveals it once, right after creation (or at the first apply after an import), and keeps it in the Terraform state, marked sensitive: protect the state like any other secret store. A plan or a refresh never reveals it, because each reveal is recorded as a `tunnel_token_revealed` compliance event and every plan would otherwise add one.
+`token` is the connector token `cloudflared` runs the tunnel with. The provider reveals it once, right after creation (or at the first apply after an import), and keeps it in the Terraform state, marked sensitive: protect the state like any other secret store, or set `store_token = false` (see below). A plan or a refresh never reveals it, because each reveal is recorded as a `tunnel_token_revealed` compliance event and every plan would otherwise add one.
 
 To rotate the token, change `token_rotation` (any value, like the setup component's `--token-version`): the provider calls `rotate_token`, and `token` and `token_id` change in place. Established connections are not severed, but a restarted connector needs the new value. The first value you set, including on an existing or imported tunnel, is recorded without rotating. A rotation made outside Terraform is not detected; change `token_rotation` to bring the state back in line.
+
+### Keeping the token out of the state
+
+Set `store_token = false` when something other than Terraform hands the connector its token, for example a setup that fetches it with its own `workspace:manage_tunnels` credential, so that no tunnel secret reaches the state. The provider then never reveals the token, not after creation and not after an import: `token` and `token_id` stay null. Changing `token_rotation` still rotates the token, without storing the new value, so the connector must fetch the new token itself before it restarts.
+
+```terraform
+resource "anthropic_tunnel" "corp" {
+  provider     = anthropic.tunnels
+  display_name = "corp-mcp"
+  store_token  = false
+}
+```
+
+Switching an existing tunnel to `false` removes the token from the state at the next apply, with no API call. Switching back to `true` shows an in-place update, and the apply reveals the token and stores it.
 
 ## Authentication
 
@@ -81,6 +95,7 @@ output "tunnel_token" {
 ### Optional
 
 - `display_name` (String) Human-readable name for the tunnel, 1-255 characters. The API cannot rename a tunnel, so changing this forces replacement: a new tunnel with a new `domain` and `token`, and the old one archived.
+- `store_token` (Boolean) Whether the provider keeps the connector token in the Terraform state. Default: `true`. With `false`, the provider never reveals the token: `token` and `token_id` stay null, and a `token_rotation` change still rotates the token, without storing the new value. Use it when the connector fetches its token itself, so that no tunnel secret reaches the state. Switching to `false` removes the stored token from the state at the next apply; switching back to `true` reveals the token at the next apply.
 - `token_rotation` (String) Arbitrary change-detection value, like the setup component's `--token-version`. Changing it from one non-null value to another rotates the tunnel token in place (`rotate_token`): the old token stops working for new connections, established ones are not severed, and a restarted connector must use the new `token`. The first value set (at creation, on import, or added to an existing tunnel) is recorded without rotating, and removing it does not rotate either.
 
 ### Read-Only
@@ -88,8 +103,8 @@ output "tunnel_token" {
 - `created_at` (String) Creation timestamp (RFC 3339).
 - `domain` (String) Anthropic-assigned hostname for the tunnel. MCP server URLs whose host is a subdomain of this value (`<route>.<domain>`) are routed through the tunnel. Globally unique and never reused.
 - `id` (String) Unique tunnel identifier assigned by the API (`tnl_...`).
-- `token` (String, Sensitive) The connector token `cloudflared` runs the tunnel with. Treat it as a credential: it is stored in the Terraform state. Revealed once at creation, or by the first apply after an import, then kept from state; it changes only when `token_rotation` triggers a rotation. A rotation made outside Terraform is not detected.
-- `token_id` (String) Stable, non-secret identifier of the current token value. Changes when the token is rotated.
+- `token` (String, Sensitive) The connector token `cloudflared` runs the tunnel with. Treat it as a credential: it is stored in the Terraform state. Revealed once at creation, or by the first apply after an import, then kept from state; it changes only when `token_rotation` triggers a rotation. A rotation made outside Terraform is not detected. Null when `store_token` is `false`.
+- `token_id` (String) Stable, non-secret identifier of the current token value. Changes when the token is rotated. Null when `store_token` is `false`.
 
 ## Import
 

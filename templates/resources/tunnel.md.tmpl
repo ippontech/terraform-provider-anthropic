@@ -22,9 +22,23 @@ A new tunnel rejects MCP traffic until at least one CA certificate is registered
 
 ## Token
 
-`token` is the connector token `cloudflared` runs the tunnel with. The provider reveals it once, right after creation (or at the first apply after an import), and keeps it in the Terraform state, marked sensitive: protect the state like any other secret store. A plan or a refresh never reveals it, because each reveal is recorded as a `tunnel_token_revealed` compliance event and every plan would otherwise add one.
+`token` is the connector token `cloudflared` runs the tunnel with. The provider reveals it once, right after creation (or at the first apply after an import), and keeps it in the Terraform state, marked sensitive: protect the state like any other secret store, or set `store_token = false` (see below). A plan or a refresh never reveals it, because each reveal is recorded as a `tunnel_token_revealed` compliance event and every plan would otherwise add one.
 
 To rotate the token, change `token_rotation` (any value, like the setup component's `--token-version`): the provider calls `rotate_token`, and `token` and `token_id` change in place. Established connections are not severed, but a restarted connector needs the new value. The first value you set, including on an existing or imported tunnel, is recorded without rotating. A rotation made outside Terraform is not detected; change `token_rotation` to bring the state back in line.
+
+### Keeping the token out of the state
+
+Set `store_token = false` when something other than Terraform hands the connector its token, for example a setup that fetches it with its own `workspace:manage_tunnels` credential, so that no tunnel secret reaches the state. The provider then never reveals the token, not after creation and not after an import: `token` and `token_id` stay null. Changing `token_rotation` still rotates the token, without storing the new value, so the connector must fetch the new token itself before it restarts.
+
+```terraform
+resource "anthropic_tunnel" "corp" {
+  provider     = anthropic.tunnels
+  display_name = "corp-mcp"
+  store_token  = false
+}
+```
+
+Switching an existing tunnel to `false` removes the token from the state at the next apply, with no API call. Switching back to `true` shows an in-place update, and the apply reveals the token and stores it.
 
 ## Authentication
 
