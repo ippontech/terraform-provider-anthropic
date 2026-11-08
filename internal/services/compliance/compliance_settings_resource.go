@@ -322,10 +322,14 @@ func stateNotApplied(planned, got string) diag.Diagnostics {
 }
 
 // update sends the desired state in its canonical object form and returns the
-// state the API answers with.
+// state the API answers with. The reference documents the update as
+// idempotent (a request that sets the current state leaves the settings
+// unchanged), so the POST is marked admin.WithIdempotent: the admin client
+// then replays it on a connection error or a 5xx too, where it replays a
+// POST on 429 only by default.
 func (r *ComplianceSettingsResource) update(ctx context.Context, state string) (string, diag.Diagnostics) {
 	body := complianceSettingsUpdateRequest{State: complianceSettingsState{Type: state}}
-	respBytes, err := r.client.DoRequest(ctx, "POST", complianceSettingsPath, body)
+	respBytes, err := r.client.DoRequest(ctx, "POST", complianceSettingsPath, body, admin.WithIdempotent())
 	if err != nil {
 		var diags diag.Diagnostics
 		diags.AddError("Client Error", fmt.Sprintf("Unable to update compliance settings: %s", err))

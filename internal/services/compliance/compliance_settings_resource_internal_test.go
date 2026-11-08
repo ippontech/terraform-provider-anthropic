@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -394,5 +395,51 @@ func TestComplianceSettingsResource_Update_stateNotApplied(t *testing.T) {
 	}
 	if data.State.ValueString() != "disabled" {
 		t.Errorf("state = %q, want the planned value", data.State.ValueString())
+	}
+}
+
+// --- Retries ---
+
+// The update is idempotent, so its POST is replayed after a 5xx, as a GET
+// would be, where the admin client replays a POST on 429 only by default.
+func TestComplianceSettingsResource_Update_retriesThePostOn5xx(t *testing.T) {
+	var mu sync.Mutex
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		if r.URL.Path == "/v1/organizations/me" {
+			_, _ = io.WriteString(w, `{"id":"`+testOrgID+`"}`)
+			return
+		}
+		mu.Lock()
+		posts++
+		first := posts == 1
+		mu.Unlock()
+		if first {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"type":"compliance_settings","state":{"type":"disabled"}}`)
+	}))
+	defer srv.Close()
+
+	client := admintest.NewClient(t, srv)
+	client.MaxRetries = 2
+	client.BaseRetryDelay = time.Millisecond
+	client.MaxRetryDelay = 4 * time.Millisecond
+	r := &ComplianceSettingsResource{client: client}
+	s := schematest.ResourceSchema(t, r)
+	state := tfsdk.State{Schema: s, Raw: settingsValue(t, testOrgID, "enabled")}
+	plan := tfsdk.Plan{Schema: s, Raw: settingsValue(t, testOrgID, "disabled")}
+
+	resp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Update: %v", resp.Diagnostics)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 2 {
+		t.Errorf("POSTs = %d, want 2 (the 503 replayed once)", posts)
 	}
 }
