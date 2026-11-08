@@ -146,7 +146,9 @@ func multiagentMemberSchema(name, description string) schema.SingleNestedAttribu
 							Optional: true,
 							Computed: true,
 							MarkdownDescription: "Pinned version of the referenced agent (`agent` entries only). " +
-								"The API pins the latest version when omitted and echoes it back.",
+								"The API pins the latest version when omitted and echoes it back. Left unset, Terraform keeps the version " +
+								"the API holds, including one changed outside Terraform, without showing a change, and sends it back on " +
+								"later updates: set it to have Terraform enforce the version.",
 						},
 					},
 				},
