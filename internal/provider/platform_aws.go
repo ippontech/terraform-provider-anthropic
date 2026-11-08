@@ -163,7 +163,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 				fmt.Sprintf("aws.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
 		}
 	}
-	diags.Append(checkGatewayBaseURL(path.Root("aws").AtName("base_url"), "aws.base_url", m.BaseURL.ValueString(), awsBaseURLEnv)...)
+	diags.Append(checkBaseURL(path.Root("aws").AtName("base_url"), "aws.base_url", m.BaseURL.ValueString(), awsBaseURLEnv)...)
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -262,7 +262,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 // extra are request options for tests (an HTTP client); they go before the
 // SDK's SigV4 middleware, which signs whatever they change.
 func newAWSClient(ctx context.Context, cfg anthropicaws.ClientConfig, extra ...option.RequestOption) (*anthropic.Client, error) {
-	baseURL, credentials := gatewayBaseURL(cfg.BaseURL, awsBaseURLEnv, true)
+	baseURL, credentials := platform.BaseURLWithoutUserInfo(cfg.BaseURL, awsBaseURLEnv, true)
 	cfg.BaseURL = baseURL
 	opts := append([]option.RequestOption{option.WithMiddleware(platform.NotFoundGuard(platform.AWS))}, credentials...)
 	opts = append(opts, extra...)

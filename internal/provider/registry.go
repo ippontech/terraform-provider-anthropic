@@ -11,6 +11,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/apikeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/deployments"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/environments"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/externalkeys"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/federation"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/files"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/memorystores"
@@ -62,6 +63,10 @@ func (r registration[T]) on(p platform.Platform) platform.Support {
 // page, whose 111 routes are the only ones with a permission.
 var (
 	supported = platform.Supported()
+	// gcOrganizationRoutes is a type Google Cloud serves whose requests all go
+	// to /v1/organizations routes, so it also works on a provider alias that
+	// sets no workspace.
+	gcOrganizationRoutes = platform.Supported().OnOrganizationRoutes()
 
 	awsAdminRoutesReason = "Its gateway serves only the workspace, external key and telemetry destination " +
 		"routes of the Admin API."
@@ -98,6 +103,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 		// Served on AWS, though the gateway's route table does not list them.
 		{New: deployments.NewDeploymentResource, AWS: supported, GoogleCloud: supported},
 		{New: environments.NewEnvironmentResource, AWS: supported, GoogleCloud: supported},
+		{New: externalkeys.NewExternalKeyResource, AWS: supported, GoogleCloud: gcOrganizationRoutes},
 		{New: federation.NewFederationIssuerResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: federation.NewFederationRuleResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: federation.NewFederationRuleWorkspaceResource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
@@ -139,6 +145,8 @@ func dataSourceRegistrations() []registration[datasource.DataSource] {
 		{New: deployments.NewDeploymentRunsDataSource, AWS: supported, GoogleCloud: supported},
 		{New: environments.NewEnvironmentDataSource, AWS: supported, GoogleCloud: supported},
 		{New: environments.NewEnvironmentsDataSource, AWS: supported, GoogleCloud: supported},
+		{New: externalkeys.NewExternalKeyDataSource, AWS: supported, GoogleCloud: gcOrganizationRoutes},
+		{New: externalkeys.NewExternalKeysDataSource, AWS: supported, GoogleCloud: gcOrganizationRoutes},
 		{New: federation.NewFederationIssuersDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: federation.NewFederationRulesDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
 		{New: federation.NewFederationIssuerDataSource, AWS: awsNoOAuth, GoogleCloud: gcNoOAuth},
