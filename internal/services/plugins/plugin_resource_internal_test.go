@@ -5,6 +5,7 @@ package plugins
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -142,20 +143,23 @@ func TestPluginResource_CreateFromArchiveIntoAMarketplace(t *testing.T) {
 }
 
 // TestPluginResource_CreateSavesAPluginWhoseRegistrationStaysPending: the
-// version upload that completes a pending create is itself pending, and is
-// not resent (it was stored). The plugin is read back and saved with the
-// error, so Terraform taints it instead of leaving it untracked.
+// version upload that completes a pending create is resent while the API asks
+// (x-should-retry: true), and is still pending after the retries. The plugin
+// is read back and saved with the error, so Terraform taints it instead of
+// leaving it untracked.
 func TestPluginResource_CreateSavesAPluginWhoseRegistrationStaysPending(t *testing.T) {
 	t.Parallel()
+	pending := func(versionID string) fakeResponse {
+		return apiError(http.StatusServiceUnavailable, "api_error", "registration pending",
+			`{"error_code":"registration_pending","plugin_version_id":"`+versionID+`"}`,
+			map[string]string{"x-should-retry": "true"})
+	}
 	client, requests := fakePluginsAPI(t, map[string][]fakeResponse{
 		"POST /v1/organizations/plugins": {apiError(http.StatusServiceUnavailable, "api_error", "registration pending",
 			`{"error_code":"registration_pending","plugin_id":"plugin_01","plugin_version_id":"pluginver_01"}`,
 			map[string]string{"x-should-retry": "false"})},
 		"POST /v1/organizations/plugins/plugin_01/versions": {
-			apiError(http.StatusServiceUnavailable, "api_error", "registration pending",
-				`{"error_code":"registration_pending","plugin_version_id":"pluginver_02"}`,
-				map[string]string{"x-should-retry": "true"}),
-			ok(pluginVersionJSON),
+			pending("pluginver_02"), pending("pluginver_03"), pending("pluginver_04"), pending("pluginver_05"),
 		},
 		"GET /v1/organizations/plugins/plugin_01": {ok(pluginJSON("pluginver_01", false))},
 	})
@@ -168,19 +172,25 @@ func TestPluginResource_CreateSavesAPluginWhoseRegistrationStaysPending(t *testi
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected an error")
 	}
-	var calls []string
-	for _, req := range requests() {
-		calls = append(calls, req.Method+" "+req.Path)
+	reqs := requests()
+	uploads := 0
+	for _, req := range reqs {
+		if req.Method == http.MethodPost && req.Path == "/v1/organizations/plugins/plugin_01/versions" {
+			uploads++
+		}
 	}
-	want := "POST /v1/organizations/plugins,POST /v1/organizations/plugins/plugin_01/versions,GET /v1/organizations/plugins/plugin_01"
-	if strings.Join(calls, ",") != want {
-		t.Errorf("calls = %v, want the create, one version upload (not resent), then a read", calls)
+	if len(reqs) != uploads+2 || reqs[0].Path != "/v1/organizations/plugins" || reqs[len(reqs)-1].Method != http.MethodGet {
+		t.Errorf("requests = %+v, want the create, the version uploads, then a read", reqs)
+	}
+	if uploads < 2 {
+		t.Errorf("version uploads = %d, want the upload resent as x-should-retry asks", uploads)
 	}
 	if got.ID.ValueString() != "plugin_01" {
 		t.Errorf("id = %q, want the stored plugin saved in state", got.ID.ValueString())
 	}
 	detail := resp.Diagnostics.Errors()[0].Detail()
-	for _, want := range []string{"plugin_01", "pluginver_02", "tainted"} {
+	last := fmt.Sprintf("pluginver_%02d", uploads+1)
+	for _, want := range []string{"plugin_01", last, "tainted"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("detail = %q, want it to mention %q", detail, want)
 		}

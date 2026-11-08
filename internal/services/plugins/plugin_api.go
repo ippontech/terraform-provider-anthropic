@@ -37,7 +37,7 @@ const (
 // pluginsRequest sends one Plugins API request. Every call carries the beta
 // header and, like the SDK's own requests to these endpoints, the `beta=true`
 // query flag. An upload (a raw multipart body) gets a timeout sized for it.
-func pluginsRequest(ctx context.Context, client *admin.Client, method, path string, query url.Values, body any, opts ...admin.RequestOption) ([]byte, error) {
+func pluginsRequest(ctx context.Context, client *admin.Client, method, path string, query url.Values, body any) ([]byte, error) {
 	q := url.Values{}
 	for k, v := range query {
 		q[k] = v
@@ -46,7 +46,7 @@ func pluginsRequest(ctx context.Context, client *admin.Client, method, path stri
 	if raw, ok := body.(admin.RawBody); ok {
 		client = withUploadTimeout(client, len(raw.Data))
 	}
-	return client.DoRequest(ctx, method, path+"?"+q.Encode(), body, append([]admin.RequestOption{admin.WithBeta(pluginsBeta)}, opts...)...)
+	return client.DoRequest(ctx, method, path+"?"+q.Encode(), body, admin.WithBeta(pluginsBeta))
 }
 
 // pluginPath returns the path of one plugin, or of one of its sub-resources

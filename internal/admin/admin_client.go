@@ -362,8 +362,8 @@ func (c *Client) sdkAttempt(template *http.Request, reqBody []byte) ([]byte, *ht
 // That status is no verdict, since its body never landed: as in attempt, the
 // failure is reported without the response, so that an idempotent request
 // replays it and a POST does not. A response marked x-should-retry is kept,
-// so that shouldRetry still reads that header, as the SDK does on a dropped
-// body. That keeps the response of platform.NotFoundGuard's error,
+// since shouldRetry then reads only that header, and the SDK honours it on a
+// dropped body too. That keeps the response of platform.NotFoundGuard's error,
 // which says not to retry.
 func transportResponse(res *http.Response) *http.Response {
 	if res == nil || res.Header.Get("x-should-retry") == "" {
@@ -394,30 +394,31 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 	}
 }
 
-// shouldRetry reports whether a failed attempt is worth repeating. An
-// x-should-retry: false header from the server always prevents it. Beyond that
-// the answer depends on whether replaying the request is safe: idempotent is
-// true for an idempotent method (see isIdempotent) and for a request marked
-// WithIdempotent.
+// shouldRetry reports whether a failed attempt is worth repeating. As in the
+// Anthropic Go SDK, an x-should-retry header from the server settles it either
+// way. Beyond that the answer depends on whether replaying the request is
+// safe: idempotent is true for an idempotent method (see isIdempotent) and for
+// a request marked WithIdempotent.
 //
 // Idempotent requests replay freely: a nil response (a connection error, or a
-// body that never finished arriving), the transient statuses the SDK retries
-// (408, 409, 429 and 5xx), and, as in the SDK, any status the server marks
-// x-should-retry: true.
+// body that never finished arriving) and the transient statuses the SDK retries
+// — 408, 409, 429 and 5xx — are all worth another attempt.
 //
 // A non-idempotent request replays only on 429. POST is how the Admin API
-// creates a workspace, adds a member and uploads a plugin version, and 429 is
-// the one answer that states the call was not processed. On a 5xx, a 409 or a
-// dropped connection the write may well have landed: replaying it would create
-// a second workspace (names are not unique), burn the budget on a membership
-// that already exists, or store one more plugin version, which cannot be
-// deleted. An x-should-retry: true header does not change that: the API sends
-// it on a plugin version upload whose registration is pending, a write that
-// did land, and the SDK honours it because its POSTs are inference calls,
-// where a duplicate costs tokens rather than resources.
+// creates a workspace and adds a member, and 429 is the one answer that states
+// the call was not processed. On a 5xx, a 409 or a dropped connection the write
+// may well have landed: replaying it would create a second workspace (names are
+// not unique) or burn the budget on a membership that already exists, leaving
+// the resource untracked either way. The SDK retries those because its POSTs are
+// inference calls, where a duplicate costs tokens rather than resources.
 func shouldRetry(idempotent bool, resp *http.Response) bool {
-	if resp != nil && resp.Header.Get("x-should-retry") == "false" {
-		return false
+	if resp != nil {
+		switch resp.Header.Get("x-should-retry") {
+		case "true":
+			return true
+		case "false":
+			return false
+		}
 	}
 
 	if !idempotent {
@@ -428,8 +429,7 @@ func shouldRetry(idempotent bool, resp *http.Response) bool {
 		return true
 	}
 
-	return resp.Header.Get("x-should-retry") == "true" ||
-		resp.StatusCode == http.StatusRequestTimeout ||
+	return resp.StatusCode == http.StatusRequestTimeout ||
 		resp.StatusCode == http.StatusConflict ||
 		resp.StatusCode == http.StatusTooManyRequests ||
 		resp.StatusCode >= http.StatusInternalServerError
