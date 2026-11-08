@@ -123,6 +123,7 @@ resource "aws_iam_policy" "terraform_anthropic" {
           "aws-external-anthropic:GetUserProfile",
           "aws-external-anthropic:ListUserProfiles",
           "aws-external-anthropic:UpdateUserProfile",
+          "aws-external-anthropic:DeleteUserProfile",
         ]
         Resource = "*"
       },
@@ -330,7 +331,7 @@ The principal that attaches the key needs `kms:DescribeKey`, `kms:Encrypt` and `
 
 ## 6. What the provider manages on this platform
 
-- **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, user profiles (create, read, update; the provider never deletes them), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
+- **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, user profiles (destroying one deletes it, `DeleteUserProfile`), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
 - **Unavailable**: API keys (generated in the AWS Console), organization members, invites and workspace members (AWS IAM manages access), rate limits, organization webhooks, the organization data source, and Workload Identity Federation (the gateway accepts no OAuth token).
 - **Not in the provider yet**: external key registrations, which the gateway serves.
 
