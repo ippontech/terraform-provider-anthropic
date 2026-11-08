@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
@@ -572,6 +573,11 @@ func TestUserProfileResource_Update(t *testing.T) {
 // and body, and returns the diagnostics plus the single request received.
 func userProfileDeleteRequest(t *testing.T, status int, body any) (*resource.DeleteResponse, *http.Request, int) {
 	t.Helper()
+	return userProfileDeleteRequestOn(t, platform.FirstParty, status, body)
+}
+
+func userProfileDeleteRequestOn(t *testing.T, p platform.Platform, status int, body any) (*resource.DeleteResponse, *http.Request, int) {
+	t.Helper()
 	var got *http.Request
 	calls := 0
 
@@ -584,7 +590,7 @@ func userProfileDeleteRequest(t *testing.T, status int, body any) (*resource.Del
 	}))
 	defer srv.Close()
 
-	r := &UserProfileResource{client: oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0))}
+	r := &UserProfileResource{client: oauthtest.NewSDKClient(t, srv, option.WithMaxRetries(0)), platform: p}
 
 	objType := schematest.ResourceObjectType(t, r)
 	schema := schematest.ResourceSchema(t, r)
@@ -649,7 +655,25 @@ func TestUserProfileResource_Delete_ErrorIsReported(t *testing.T) {
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected an error diagnostic for a 403")
 	}
-	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "Unable to delete user profile") {
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "Unable to delete user profile") ||
+		strings.Contains(detail, "DeleteUserProfile") {
 		t.Errorf("unexpected error detail: %s", detail)
+	}
+}
+
+// TestUserProfileResource_Delete_AWSForbiddenNamesTheAction: on Claude
+// Platform on AWS a 403 names the IAM action, since a policy written for
+// versions that never deleted profiles lacks it.
+func TestUserProfileResource_Delete_AWSForbiddenNamesTheAction(t *testing.T) {
+	resp, _, _ := userProfileDeleteRequestOn(t, platform.AWS, http.StatusForbidden, map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": "permission_error", "message": "forbidden"},
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error diagnostic for a 403")
+	}
+	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "Unable to delete user profile") ||
+		!strings.Contains(detail, "aws-external-anthropic:DeleteUserProfile") {
+		t.Errorf("error detail = %s, want the IAM action named", detail)
 	}
 }
