@@ -207,6 +207,10 @@ On `release`, leave **Required reviewers** unticked: the modules are reviewed wh
 
 Then **delete the four secrets at repository level** (`Settings > Secrets and variables > Actions`), and check that no organization secret carries them. Until they are deleted, the environments protect nothing.
 
+## Caches
+
+A job that holds one of these secrets restores no Actions cache. A cache entry saved on `main` can be restored by every later run on `main` and on tags, whatever the workflow that saved it: a compromised action in any job on `main`, such as the automerged actions of the weekly `govulncheck.yml` run, could save module sources that a job holding the keys then compiles, and Go does not re-hash extracted module sources. `goreleaser-release.yml` and both jobs of `testacc.yml` therefore set `cache: false` on `actions/setup-go` and download the modules from `proxy.golang.org`, checked against `go.sum`. `semantic-release.yml` sets no cache and installs from the lockfile with `npm ci`, which checks every package against its integrity hash. A new job that holds a secret follows the same rule.
+
 ## Tag ruleset
 
 Create a tag ruleset (`Settings > Rules > Rulesets > New ruleset > New tag ruleset`):

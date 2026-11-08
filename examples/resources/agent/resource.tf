@@ -125,7 +125,9 @@ resource "anthropic_agent" "custom_tools" {
 }
 
 # Coordinator agent that can delegate to another agent and to itself.
-# The members must not have their own multiagent roster (depth limit 1).
+# The members must not have their own multiagent roster (depth limit 1). The
+# reference pins the support agent's current version, as in the orchestrator
+# below.
 resource "anthropic_agent" "coordinator" {
   model       = "claude-sonnet-4-6"
   name        = "Support Coordinator"
@@ -135,8 +137,9 @@ resource "anthropic_agent" "coordinator" {
     type = "coordinator"
     agents = [
       {
-        type = "agent"
-        id   = anthropic_agent.assistant.id
+        type    = "agent"
+        id      = anthropic_agent.assistant.id
+        version = anthropic_agent.assistant.version
       },
       {
         type = "self"
@@ -148,7 +151,13 @@ resource "anthropic_agent" "coordinator" {
 # Agent of the multiagent_20261001 type: it may delegate only to the support
 # agent and to copies of itself (inline agents off), and dynamic workflows are
 # turned off. Both settings are on by default with this type; an advisor
-# model can be added with advisor = { model = "..." }.
+# model can be added with advisor = { model = "..." }. The reference pins the
+# support agent's current version: a re-pin made outside Terraform shows as a
+# change, and an update of the support agent moves the pin with it. That
+# version also follows a new version of the support agent made outside
+# Terraform, when the change is to an attribute its resource leaves unset and
+# the API fills in (model_effort, say), which it does not revert. For a
+# version that never moves, write its number.
 resource "anthropic_agent" "orchestrator" {
   model       = "claude-sonnet-4-6"
   name        = "Support Orchestrator"
@@ -160,8 +169,9 @@ resource "anthropic_agent" "orchestrator" {
       inline_agents_enabled = false
       predefined_agents = [
         {
-          type = "agent"
-          id   = anthropic_agent.assistant.id
+          type    = "agent"
+          id      = anthropic_agent.assistant.id
+          version = anthropic_agent.assistant.version
         },
         {
           type = "self"

@@ -337,7 +337,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 						"version": schema.StringAttribute{
 							Optional:            true,
 							Computed:            true,
-							MarkdownDescription: "Version to pin. Defaults to latest if omitted.",
+							MarkdownDescription: "Version to pin. Defaults to latest if omitted. Left unset, a version changed outside Terraform does not show as a change, and the next update of the agent pins the latest again: set it to have Terraform enforce the version.",
 						},
 					},
 				},
@@ -581,7 +581,7 @@ func (r *AgentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 								"version": schema.Int64Attribute{
 									Optional:            true,
 									Computed:            true,
-									MarkdownDescription: "Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back.",
+									MarkdownDescription: "Pinned version of the referenced agent (`agent` entries only). The API pins the latest version when omitted and echoes it back. Left unset, Terraform keeps the version the API holds, including one changed outside Terraform, without showing a change, and sends it back on later updates: set it to have Terraform enforce the version.",
 								},
 								"model": schema.StringAttribute{
 									Optional:            true,
