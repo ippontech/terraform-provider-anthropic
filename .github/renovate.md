@@ -203,8 +203,16 @@ Two settings keep it out:
   text ends that and lets the next `BREAKING CHANGE:` line through.
 - The automerge rule sets `fetchChangeLogs` to `off`, so an automerged PR, which no maintainer reads,
   carries no upstream text. The rules that hold an update for review set it back to `pr`, and so does
-  `vulnerabilityAlerts`: the maintainer reads the notes before merging, and removes from the squash
-  message anything that should not reach the release notes.
+  `vulnerabilityAlerts`: the maintainer reads the notes before merging. The merge queue builds the
+  commit body from the PR description, with no step to edit it, so before queueing a reviewed
+  dependency PR, delete from its description any upstream text that should not reach the release
+  notes and `CHANGELOG.md`, such as a `BREAKING CHANGE` line. A held group shows the notes of the
+  updates that hold it; the others in the group (an automerged member of `CI tool versions` held
+  by tflint, say) keep them off.
+
+`.releaserc` also gives `build`, `perf`, `refactor` and `docs` a `breaking` rule that cuts a major:
+their own patch rule matches first, and without it the analyzer never reaches its default breaking
+rule, so a `refactor!:` cut only a patch.
 
 ## Validating a config change
 
