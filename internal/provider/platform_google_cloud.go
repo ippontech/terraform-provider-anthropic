@@ -105,7 +105,7 @@ func googleCloudSchema() schema.SingleNestedAttribute {
 				Description: "Base URL for every route, in place of the ones derived from project, location and " +
 					"workspace (the workspace endpoint, and the organization endpoint for /v1/organizations routes). " +
 					"Can also be set via the ANTHROPIC_GOOGLE_CLOUD_BASE_URL environment variable; ANTHROPIC_BASE_URL is " +
-					"not read.",
+					"not read. Must not carry user information (user:password@), which error messages would repeat.",
 			},
 		},
 	}
@@ -176,6 +176,10 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel, tokenT
 				fmt.Sprintf("google_cloud.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
 		}
 	}
+	if diags.HasError() {
+		return nil, diags
+	}
+	diags.Append(checkGatewayBaseURL(path.Root("google_cloud").AtName("base_url"), "google_cloud.base_url", m.BaseURL.ValueString(), googleCloudBaseURLEnv)...)
 	if diags.HasError() {
 		return nil, diags
 	}

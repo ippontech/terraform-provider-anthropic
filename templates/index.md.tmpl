@@ -201,7 +201,7 @@ provider "anthropic" {
 - `workspace_id` is required: the gateway needs the `anthropic-workspace-id` header on every inference and resource request. It is not sent on Admin API requests, which do not require it. With the `aws` block it is read from `ANTHROPIC_AWS_WORKSPACE_ID`, never from `ANTHROPIC_WORKSPACE_ID`. A configuration that only manages workspaces needs one too: any workspace of the same region.
 - A workspace is bound to the region of the endpoint it was created through and is reachable there only, so use one provider alias per region and workspace.
 - `aws` conflicts with `api_key`, `admin_api_key`, `auth_token`, `federation` and `google_cloud`. `ANTHROPIC_API_KEY`, `ANTHROPIC_ADMIN_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and `ANTHROPIC_WORKSPACE_ID` are not read: no first-party credential is valid on this platform.
-- `base_url` (or `ANTHROPIC_AWS_BASE_URL`) replaces the regional endpoint, with an AWS PrivateLink endpoint for instance.
+- `base_url` (or `ANTHROPIC_AWS_BASE_URL`) replaces the regional endpoint, with an AWS PrivateLink endpoint for instance. Configure refuses one that carries user information (`user:password@`): error messages repeat the request URL.
 - Every AWS account must enable outbound web identity federation once (`aws iam enable-outbound-web-identity-federation`) before its first request; until then every request fails with `Outbound web identity federation is disabled for your account`.
 
 ### Claude Models on Google Cloud (`google_cloud`)
@@ -224,7 +224,7 @@ provider "anthropic" {
 - `project` falls back to the variables above, then to the project of the credentials when they carry one. `location` defaults to `global`, which the documentation recommends.
 - `workspace_id` goes into the request URL, never into a header (the gateway rejects `anthropic-workspace-id`). With the `google_cloud` block it is read from `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID`, never from `ANTHROPIC_WORKSPACE_ID`. It may be left unset only for a configuration limited to organization routes: then every type that calls workspace routes fails at plan, or at apply for a data source that Terraform reads only then. Workspaces are created in the Claude Console (Settings > Workspaces), where their IDs are shown.
 - `google_cloud` conflicts with `api_key`, `admin_api_key`, `auth_token`, `federation` and `aws`, and the first-party variables are not read.
-- `base_url` (or `ANTHROPIC_GOOGLE_CLOUD_BASE_URL`) replaces both derived endpoints, so every route, organization routes included, goes to it.
+- `base_url` (or `ANTHROPIC_GOOGLE_CLOUD_BASE_URL`) replaces both derived endpoints, so every route, organization routes included, goes to it. Configure refuses one that carries user information (`user:password@`), as for `aws`.
 
 The [Claude Platform on AWS](guides/claude_platform_on_aws) and [Claude Models on Google Cloud](guides/claude_models_on_google_cloud) guides cover the cloud-side setup: IAM permissions, roles, keys and credentials.
 
