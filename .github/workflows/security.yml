@@ -110,8 +110,8 @@ jobs:
       - name: Install tflint
         env:
           # renovate: datasource=github-releases depName=terraform-linters/tflint
-          TFLINT_VERSION: v0.64.0
-          TFLINT_SHA256: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+          TFLINT_VERSION: v0.65.0
+          TFLINT_SHA256: d4c545ed2e29d6338604b586f34f544f380f70f243aa72f7b484713835eaec61
         run: |
           set -euo pipefail
           base="https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}"
