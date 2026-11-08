@@ -16,6 +16,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdkpage"
 )
 
 var _ datasource.DataSource = &ExternalKeysDataSource{}
@@ -91,10 +92,18 @@ func buildExternalKeysQuery(page string) url.Values {
 	return params
 }
 
+// Read walks every page. Only a null or empty next_page ends the walk: a
+// cursor already sent, or more than sdkpage.MaxPages pages, is an error, so a
+// misbehaving API can neither hang a plan nor cut the list short.
 func (d *ExternalKeysDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
 	elems := []attr.Value{}
 	page := ""
-	for {
+	sent := map[string]bool{}
+	for pages := 1; ; pages++ {
+		if pages > sdkpage.MaxPages {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list external keys: more than %d pages, stopping.", sdkpage.MaxPages))
+			return
+		}
 		respBytes, err := d.client.DoRequest(ctx, "GET", externalKeysPath+"?"+buildExternalKeysQuery(page).Encode(), nil)
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list external keys: %s", err))
@@ -118,9 +127,14 @@ func (d *ExternalKeysDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 			elems = append(elems, obj)
 		}
 
-		// Stop on an absent cursor, and on a repeated one rather than loop forever.
-		if list.NextPage == nil || *list.NextPage == "" || *list.NextPage == page {
+		if list.NextPage == nil || *list.NextPage == "" {
 			break
+		}
+		sent[page] = true
+		if sent[*list.NextPage] {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf(
+				"Unable to list external keys: the API returned next_page %q, a cursor already sent: stopping instead of looping.", *list.NextPage))
+			return
 		}
 		page = *list.NextPage
 	}
