@@ -314,6 +314,46 @@ func TestConfigureFederationIgnoresAuthTokenEnvironment(t *testing.T) {
 	}
 }
 
+// TestConfigureFederationLeavesAuthTokenEnvironmentToOtherBlocks covers the
+// two-block setup the docs describe: ANTHROPIC_AUTH_TOKEN exported for the
+// org:admin block, and a tunnels alias with a federation block. The alias
+// ignores the variable, but its warning must not tell the operator to unset
+// it, since the org:admin block reads it.
+func TestConfigureFederationLeavesAuthTokenEnvironmentToOtherBlocks(t *testing.T) {
+	fs := newFederationServer(t, 3600)
+
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_BASE_URL", fs.URL)
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-oat01-org-admin")
+
+	tunnels := configureProvider(t, map[string]tftypes.Value{
+		"federation": federationValue(t, map[string]tftypes.Value{
+			"organization_id":    tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_tunnels"),
+			"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
+		}),
+	})
+	w := tunnels.Diagnostics.Warnings()
+	if len(w) != 1 || w[0].Summary() != "ANTHROPIC_AUTH_TOKEN Ignored" {
+		t.Fatalf("warnings = %v, want ANTHROPIC_AUTH_TOKEN Ignored", w)
+	}
+	if detail := w[0].Detail(); !strings.Contains(detail, "keep the variable if another block relies on it") {
+		t.Errorf("detail %q does not say to keep the variable for another block", detail)
+	}
+
+	orgAdmin := configureProvider(t, nil)
+	if w := orgAdmin.Diagnostics.Warnings(); len(w) != 0 {
+		t.Errorf("org:admin block warnings = %v, want none", w)
+	}
+	pd := providerDataFrom(t, orgAdmin)
+	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if _, authorized := fs.snapshot(); len(authorized) != 1 || authorized[0] != "Bearer sk-ant-oat01-org-admin" {
+		t.Errorf("authorization headers = %v, want the exported token", authorized)
+	}
+}
+
 func TestConfigureFederationRequiresOrganizationAndRule(t *testing.T) {
 	clearCredentialEnv(t)
 

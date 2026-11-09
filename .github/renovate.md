@@ -34,7 +34,7 @@ shows its recent runs and their logs.
 | `postUpdateOptions` | `gomodTidy`: Renovate runs `go mod tidy` after bumping a Go module, so the `go.sum` entries of the transitive dependencies the bump pulls in are written too. Without it a bump of a module with new requirements (the `[SECURITY]` PRs on `tools/go.mod` of 2026-10, #501 to #505) leaves a `go.sum` that `go` rejects with `missing go.sum entry`, and every job that builds the module fails ([docs](https://docs.renovatebot.com/configuration-options/#postupdateoptions)). `go mod tidy` would also drop the root `toolchain` line if it were not newer than the `go` line (see [Go version](#go-version)), so keep it newer |
 | `enabledManagers` | `github-actions`, `gomod`, `mise`, `pre-commit`, `custom.regex`, `npm` |
 | `customManagers` | Two regex managers, see [Custom managers](#custom-managers) below |
-| `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, except release tooling and the root `go.mod` (see [Release tooling](#release-tooling) and [Go modules](#go-modules)), plus a version hold on the Anthropic Go SDK (see [Version holds](#version-holds)) |
+| `packageRules` | One grouped PR per manager, automerge for `minor` / `patch` / `pin` / `digest` updates after a 3-day `minimumReleaseAge` cooldown, except release tooling and the root `go.mod` (see [Release tooling](#release-tooling) and [Go modules](#go-modules)), plus a version hold on the Anthropic Go SDK's next major and a PR of its own for its minor releases (see [Version holds](#version-holds)) |
 
 Two of these entries are less obvious than they look:
 
@@ -67,15 +67,17 @@ error issue on the repo.
 
 ## Custom managers
 
-The GoReleaser version is not visible to a built-in manager, so it was drifting unnoticed:
+The GoReleaser version was once visible to no built-in manager, so it was drifting unnoticed:
 
 | What | Where | How it is tracked |
 |---|---|---|
-| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line |
+| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line, and the `github-actions` manager, which now reads this input too (type `uses-with`) |
 
 The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
-well-known inputs such as `setup-node`'s `node-version`, but it does not read arbitrary action inputs —
-hence the annotation. To put another tool version under Renovate's control, add the same comment above it:
+well-known inputs such as `setup-node`'s `node-version` and the `version:` of `goreleaser-action`, but it
+does not read arbitrary action inputs, hence the annotation. A rule that targets such a pin matches both
+managers: the GoReleaser hold matched only `custom.regex`, so the `github-actions` manager put the check
+pin's v2.20.0 in the automerged `GitHub Actions` group, away from the release pin. To put another tool version under Renovate's control, add the same comment above it:
 
 ```yaml
         with:
@@ -118,7 +120,9 @@ decision at all. The `github-actions` manager tracks that input as the `terrafor
 same rule puts its updates in the reviewed group.
 
 A new workflow whose jobs read any secret other than `GITHUB_TOKEN`, or run in a protected environment,
-joins the rule's `matchFileNames` list.
+joins the rule's `matchFileNames` list. Its jobs restore no Actions cache either (`RELEASE.md`, "Caches"): the
+actions of other workflows keep automerging, and a cache entry they save on `main` must not reach
+a job that holds a secret.
 
 ## Go modules
 
@@ -127,8 +131,8 @@ The root `go.mod` is compiled into the acceptance tests: `make testacc` runs `go
 the push to `main` that merges an update. Its updates (direct and indirect modules, and the `toolchain`
 line) are therefore never automerged, whatever the update type. They still come grouped in the
 `Go dependencies` PR, which a maintainer reviews and merges. Each of them is a `fix(deps)` commit that
-publishes a release, whose signing a maintainer approves anyway (`RELEASE.md`): the review takes place
-before the new code runs next to the keys, instead of after.
+publishes a release that nothing else holds back (`RELEASE.md`, "Review the modules a release
+ships"): the review takes place before the new code runs next to the keys, and before it ships signed.
 
 `tools/go.mod` (the generators behind `make generate`) has its own `Go tools module` group and keeps
 automerging: no job that holds a secret builds it. It cannot share the `Go dependencies` group, because
@@ -160,31 +164,55 @@ One dependency is deliberately capped rather than tracked to latest:
 
 | Dependency | Cap | Why |
 |---|---|---|
-| `github.com/anthropics/anthropic-sdk-go` | `<1.68.0` | v1.68.0 renames skill fields (`display_title` -> `display_name`, `latest_version` -> `latest_version_id`) and drops `directory` / `version` from the skill-version response, but the deployed API still returns the old names. Tracked in [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192) |
+| `github.com/anthropics/anthropic-sdk-go` | `<2.0.0` | v2 moves the client to API version `2026-10-21`, which is breaking for this provider: `temperature`, `api_keys.workspace_id` and the rate-limit `group_type` are removed, skills are served in their GA shape only, and the API key is sent as `Authorization: Bearer` instead of `x-api-key`. The migration is [#192](https://github.com/ippontech/terraform-provider-anthropic/issues/192), on the `major/2.0.0` staging branch |
 
-The cap matters because v1.67.0 -> v1.68.0 is a **minor** update: without it, it would come in the
-`Go dependencies` PR with every other root `go.mod` update, and holding it back would hold the whole
-group. The provider happens not to compile against v1.68.0 (11 errors in `internal/services/skills`), so
-CI would go red, but that is a side effect, not a policy, and it would not hold for a release that
-changes behaviour without breaking the build.
+The cap keeps that major update off `main`: breaking changes go through `major/2.0.0` (see `RELEASE.md`,
+section "Major versions"), and a v2 PR opened against `main` would only be noise, or worse, get merged
+there. The v1 line itself is no longer held: the provider runs on v1.84.0 with no change on the wire.
+
+Until that bump the cap was `<1.68.0`. v1.68.0 had retyped `client.Beta.Skills` to the GA shape and
+stopped sending the `skills-2025-10-02` header, and the provider read the skills attributes from the typed
+fields, so a plain bump would have read empty values. The provider now sends the header itself and decodes
+the beta shape from the raw response (`internal/services/skills/skill_beta_shape.go`), so that hold was
+lifted together with the code change rather than on its own.
 
 Three consequences worth knowing:
 
 - `allowedVersions` filters the version out entirely, so the SDK will keep appearing **up to date** on
-  the Dependency Dashboard. #192 is the reminder, not the dashboard.
-- Patch releases within `1.67.x` are still allowed and come in the `Go dependencies` PR, reviewed like
-  every other root `go.mod` update.
-- An `osvVulnerabilityAlerts` PR brings its own `allowedVersions` (the fixed versions), which Renovate
-  appends after `packageRules` and which replaces the cap. Two more rules keep the cap for those PRs
-  (`allowedVersions` and `matchUpdateTypes` cannot share a rule): one disables the SDK's `minor` and
-  `major` updates while its current version is below v1.68.0 (`matchCurrentVersion`), since from `1.67.x`
-  each of them is v1.68.0 or later; the other always disables `major` updates, a new major being the #192
-  migration. A fix released in a `1.67.x` patch still gets its `[SECURITY]` PR; a fix released only in
-  v1.68.0 or later gets none, the weekly `govulncheck` run reports it if the provider reaches the
-  vulnerable code, and it goes through #192.
+  the Dependency Dashboard while v2 releases ship. #192 is the reminder, not the dashboard.
+- v1 patch releases come in the `Go dependencies` PR, reviewed like every other root `go.mod` update. v1
+  minor releases (v1.84.0 is the last one at the time of writing) get a PR of their own, `Anthropic Go SDK`:
+  three v1 minors changed what goes over the wire without breaking the build (v1.68.0 stopped sending the
+  skills beta header, v1.75.0 started sending extra `input_schema` keys, v1.80.0 turned `multiagent` into
+  a union), and no check on a PR calls the live API, so a green build says nothing about them. Keeping them
+  apart lets a maintainer merge the routine `Go dependencies` PR while an SDK minor waits for a closer look.
+- An `osvVulnerabilityAlerts` PR brings its own `allowedVersions` (the fixed versions), which Renovate appends
+  after `packageRules` and which replaces the hold. A second rule therefore always disables the SDK's `major`
+  updates, a new major being the #192 migration: a fix released only in v2 gets no `[SECURITY]` PR, the weekly
+  `govulncheck` run reports it if the provider reaches the vulnerable code, and it goes through #192.
 
-Remove the cap as part of #192, once the API rename has shipped and the migration is written, never on
-its own. The `minor` rule stops matching by itself once the SDK is at v1.68.0 or later.
+Remove the rule as part of #192, in `major/2.0.0` — never on its own.
+
+## Release notes
+
+A squash merge makes the PR description the body of the commit on `main`, and semantic-release reads
+that body. Renovate puts the upstream release notes in its PR description, so a `BREAKING CHANGE:`
+line written upstream could reach the release decision, the release notes and `CHANGELOG.md`.
+Two settings keep it out:
+
+- `.releaserc` gives the `deps` scope its own rules: a `chore(deps)` commit cuts no release and a
+  `fix(deps)` commit a patch, whatever its body says. Without them, the analyzer's default rule
+  (a breaking note cuts a major) applies to any commit type. The `---` line Renovate puts before its
+  release notes already hides them from the commit parser, but a line of two dashes in the upstream
+  text ends that and lets the next `BREAKING CHANGE:` line through.
+- The automerge rule sets `fetchChangeLogs` to `off`, so an automerged PR, which no maintainer reads,
+  carries no upstream text. The rules that hold an update for review set it back to `pr`, and so does
+  `vulnerabilityAlerts`: the maintainer reads the notes before merging. The merge queue builds the
+  commit body from the PR description, with no step to edit it, so before queueing a reviewed
+  dependency PR, delete from its description any upstream text that should not reach the release
+  notes and `CHANGELOG.md`, such as a `BREAKING CHANGE` line. A held group shows the notes of the
+  updates that hold it; the others in the group (an automerged member of `CI tool versions` held
+  by tflint, say) keep them off.
 
 ## Validating a config change
 

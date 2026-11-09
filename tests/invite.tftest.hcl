@@ -25,4 +25,14 @@ run "invite_plan" {
     condition     = anthropic_invite.example.role == "developer"
     error_message = "Expected invite role to be 'developer'."
   }
+
+  assert {
+    condition     = anthropic_invite.example.rbac_group_ids == null
+    error_message = "Expected the Console invite to carry no rbac_group_ids."
+  }
+
+  assert {
+    condition     = anthropic_invite.engineer.role == "managed"
+    error_message = "Expected the Enterprise invite role to be 'managed'."
+  }
 }

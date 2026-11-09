@@ -150,7 +150,7 @@ To generate changelog, Pull Requests and Commit messages must follow [convention
 
 We use the `chore` prefix to generate a new release and for changelog generation (the label '[skip ci]' allows us to skip CI). It can be used for `chore: update changelog` commit message by example.
 
-We squash-merge PRs. The title of the PR is the commit title (commit type + scope + short description) and the description of the PR is the commit body.
+We squash-merge PRs. The title of the PR is the commit title (commit type + scope + short description) and the description of the PR is the commit body. A `deps` scope never cuts a major release, whatever the body says (`RELEASE.md`): give a breaking dependency migration another scope, such as `feat(sdk)!:`.
 
 ## Dependency Updates
 

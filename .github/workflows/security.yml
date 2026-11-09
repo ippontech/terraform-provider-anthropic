@@ -110,8 +110,8 @@ jobs:
       - name: Install tflint
         env:
           # renovate: datasource=github-releases depName=terraform-linters/tflint
-          TFLINT_VERSION: v0.64.0
-          TFLINT_SHA256: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+          TFLINT_VERSION: v0.65.0
+          TFLINT_SHA256: d4c545ed2e29d6338604b586f34f544f380f70f243aa72f7b484713835eaec61
         run: |
           set -euo pipefail
           base="https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}"
@@ -150,7 +150,7 @@ jobs:
           persist-credentials: false
 
       - name: Run checkov
-        uses: bridgecrewio/checkov-action@c10e2438743528f9e4549758fad8b7a62052541d # v12.3136.0
+        uses: bridgecrewio/checkov-action@45edc9d8856b664db2ec251f5f8632361f0a67aa # v12.3139.0
         with:
           directory: .github/workflows
           framework: github_actions
