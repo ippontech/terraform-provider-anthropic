@@ -34,7 +34,7 @@ A worktree has no `.env`, so live credentials are unavailable: do not read, prin
 
 ## Scope
 
-- Write only the files of this resource or data source: its Go source and tests, its registration in `internal/provider/registry.go` (with its availability on each cloud platform), its example, template and native test, and the docs that `make generate` regenerates.
+- Write only the files of this resource or data source: its Go source and tests, its registration in `internal/provider/registry.go` (with its availability on each cloud platform), its example, template and native test, its rows in `templates/index.md.tmpl`, and the docs that `make generate` regenerates. The index rows are its line in the platform availability table, between the `platform-availability` markers, when a cloud platform does not serve the type (`TestIndexDocumentsPlatformAvailability`, run by `make`, fails until the table matches the registry), and, for an organization (Admin API) resource, its line in the Admin key table that *Credentials and clients* asks to keep in step with the template's `> **Auth**:` line.
 - Leave other services, `CLAUDE.md` files, `.claude/` and `.github/` untouched, except your notes under `.claude/agent-memory/terraform-provider-implementer/` (see *Memory*); when one of them needs a change, describe it under *Follow-ups*. This rule wins over step 7 of *Adding a resource or data source* in `CLAUDE.md`: list under *Follow-ups* what the service's `CLAUDE.md` should record, since parallel agents on one service would all edit that file.
 - Do not run the tests that `CLAUDE.md` reserves for a dedicated test organization (OAuth-gated acceptance tests, live WIF probes).
 
