@@ -186,17 +186,17 @@ provider "anthropic" {
     profile = "admin"
     # Or, with no profile named, find the one org:admin login for:
     # organization_id = "00000000-0000-0000-0000-000000000000"
-    # workspace_id    = "wrkspc_..."   # only to tell several apart
   }
 }
 ```
 
 The `cli` block is a fallback. It is used only when neither `auth_token` (or `ANTHROPIC_AUTH_TOKEN`) nor `federation` supplies the token, so one configuration can carry both: CI provides its token and never reads a profile, and an operator without one uses their own login. An `auth_token` unknown at plan time counts as supplied. An exported `ANTHROPIC_AUTH_TOKEN` wins too, so unset it when switching to `cli`; the provider logs that the block was skipped.
 
-- The profile is `profile`, else `ANTHROPIC_PROFILE`. With neither set, the provider looks among the usable `user_oauth` profiles with the `org:admin` scope for the one whose login is for `organization_id` (else `ANTHROPIC_ORGANIZATION_ID`) and, when set, `workspace_id`. Finding none or several is an error. `workspace_id` has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is read by `federation.workspace_id` only.
+- The profile is `profile`, else `ANTHROPIC_PROFILE`. With neither set, the provider looks among the usable `user_oauth` profiles with the `org:admin` scope for the one whose login is for `organization_id` (else `ANTHROPIC_ORGANIZATION_ID`). Finding none or several is an error: name the profile when several `org:admin` logins of the same organization exist. The workspace picked at login, if any, plays no part: an `org:admin` token is organization-wide whatever the profile records.
 - A profile without the `org:admin` scope is an error when it comes from `ANTHROPIC_PROFILE`, which is usually an everyday login exported for other tools, and only a warning when `profile` names it.
 - Each attribute must be known at plan time; an unknown one is an error rather than a fallback to the environment.
-- The profile must be logged in, and an expired login must be refreshable; otherwise the error names the `ant auth login` command to run.
+- The profile must be logged in, and an expired login must be refreshable; otherwise the error names the `ant auth login` command to run. Its credentials file must be a regular file that only its owner can read (`chmod 600`), as the SDK refuses any other on every request.
+- Use one `cli` block per profile, and avoid running `ant` against that profile during an apply: each process refreshes the login on its own, and two refreshes of the same login within its last 30 seconds may invalidate each other.
 - A profile whose `base_url` differs from the provider's (`ANTHROPIC_BASE_URL`, else production) is rejected. The profile's `workspace_id` is never sent: an `org:admin` token is organization-wide.
 
 Without a `cli` block, profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.

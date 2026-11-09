@@ -221,7 +221,6 @@ func identityTokenSource(ctx context.Context, m federationModel) (option.Identit
 		"or the ANTHROPIC_IDENTITY_TOKEN_FILE or ANTHROPIC_IDENTITY_TOKEN environment variable")
 }
 
-// containsUnknown reports whether v, or any element of a list v, is unknown.
 // namedAttribute is one attribute of a provider block, for
 // rejectUnknownAttributes.
 type namedAttribute struct {
@@ -245,6 +244,7 @@ func rejectUnknownAttributes(root, summary string, attrs []namedAttribute) diag.
 	return diags
 }
 
+// containsUnknown reports whether v, or any element of a list v, is unknown.
 func containsUnknown(v attr.Value) bool {
 	if v.IsUnknown() {
 		return true

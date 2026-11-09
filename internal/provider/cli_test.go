@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -283,27 +284,6 @@ func TestConfigureCLIFindsProfileByOrganization(t *testing.T) {
 	}
 }
 
-func TestConfigureCLIWorkspaceNarrowsTheSearch(t *testing.T) {
-	cs := newCLIServer(t)
-	clearCredentialEnv(t)
-	t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
-	dir := cliConfigDir(t)
-	writeCLIProfile(t, dir, "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
-	second := adminLogin(testOrg, "sk-ant-oat01-second")
-	second.workspace = "wrkspc_second"
-	writeCLIProfile(t, dir, "second", second)
-
-	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
-		"cli": cliValue(t, map[string]string{"organization_id": testOrg, "workspace_id": "wrkspc_second"}),
-	}))
-	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	if _, headers := cs.snapshot(); headers[0].Get("Authorization") != "Bearer sk-ant-oat01-second" {
-		t.Errorf("authorization = %q, want the second profile's token", headers[0].Get("Authorization"))
-	}
-}
-
 func TestConfigureCLIRejectsAmbiguousProfiles(t *testing.T) {
 	clearCredentialEnv(t)
 	dir := cliConfigDir(t)
@@ -466,19 +446,6 @@ func TestConfigureCLIRejectsEnvironmentProfileWithoutAdminScope(t *testing.T) {
 	wantContains(t, cliError(t, map[string]string{"organization_id": testOrg}), "ANTHROPIC_PROFILE", "user:inference")
 }
 
-// TestConfigureCLIIgnoresWorkspaceEnvironment: ANTHROPIC_WORKSPACE_ID is the
-// SDKs' federation variable and must not filter the search.
-func TestConfigureCLIIgnoresWorkspaceEnvironment(t *testing.T) {
-	clearCredentialEnv(t)
-	writeCLIProfile(t, cliConfigDir(t), "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
-	t.Setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_other")
-
-	resp := configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, map[string]string{"organization_id": testOrg})})
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("Configure returned errors: %v", resp.Diagnostics)
-	}
-}
-
 // TestConfigureCLISkipsUnusableCandidates: a stale login beside a working one
 // must not make discovery ambiguous.
 func TestConfigureCLISkipsUnusableCandidates(t *testing.T) {
@@ -610,4 +577,79 @@ func TestConfigureCLIAcceptsProductionBaseURL(t *testing.T) {
 	if sent != defaultBaseURL {
 		t.Errorf("default client sent to %q, want defaultBaseURL %q", sent, defaultBaseURL)
 	}
+}
+
+// TestConfigureCLIRejectsCredentialsReadableByOthers: the SDK refuses, on
+// every request, a credentials file readable by group or other. Configure
+// must say so first, with the chmod to run.
+func TestConfigureCLIRejectsCredentialsReadableByOthers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the SDK skips the permission check on Windows")
+	}
+	clearCredentialEnv(t)
+	dir := cliConfigDir(t)
+	writeCLIProfile(t, dir, "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
+	credsPath := filepath.Join(dir, "credentials", "admin.json")
+	if err := os.Chmod(credsPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wantContains(t, cliError(t, map[string]string{"profile": "admin"}), `"admin"`, "permissions 0644", "chmod 600 "+credsPath)
+}
+
+// TestConfigureCLIRejectsSymlinkedCredentials: the SDK refuses a symlinked
+// credentials file on every request, so Configure must refuse it first.
+func TestConfigureCLIRejectsSymlinkedCredentials(t *testing.T) {
+	clearCredentialEnv(t)
+	dir := cliConfigDir(t)
+	writeCLIProfile(t, dir, "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
+	credsPath := filepath.Join(dir, "credentials", "admin.json")
+	realPath := filepath.Join(dir, "credentials", "admin.real.json")
+	if err := os.Rename(credsPath, realPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realPath, credsPath); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+
+	wantContains(t, cliError(t, map[string]string{"profile": "admin"}), `"admin"`, "is a symlink")
+}
+
+// TestConfigureCLIUnparsableBaseURLHidesPassword: an ANTHROPIC_BASE_URL that
+// url.Parse rejects cannot have its user information stripped, so it must be
+// refused as invalid before the profile's base_url is compared with it and
+// quoted in the mismatch diagnostic (#553).
+func TestConfigureCLIUnparsableBaseURLHidesPassword(t *testing.T) {
+	clearCredentialEnv(t)
+	login := adminLogin(testOrg, "sk-ant-oat01-admin")
+	login.baseURL = "https://staging.example.invalid"
+	writeCLIProfile(t, cliConfigDir(t), "admin", login)
+	t.Setenv("ANTHROPIC_BASE_URL", "https://user:hunter2@gateway.example.invalid:80x")
+
+	resp := configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, map[string]string{"profile": "admin"})})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected Configure to fail")
+	}
+	for _, d := range resp.Diagnostics.Errors() {
+		if strings.Contains(d.Detail(), "hunter2") || strings.Contains(d.Detail(), "user:") {
+			t.Errorf("diagnostic leaks the base URL's user information: %q", d.Detail())
+		}
+	}
+	if got := resp.Diagnostics.Errors()[0].Summary(); got != "Invalid Base URL" {
+		t.Errorf("summary = %q, want Invalid Base URL", got)
+	}
+}
+
+// TestConfigureCLIReportsUnreadableOnlyCandidate: a profile that cannot be
+// read is set aside, and named with the reason when nothing else matches,
+// instead of the error claiming that no profile exists.
+func TestConfigureCLIReportsUnreadableOnlyCandidate(t *testing.T) {
+	clearCredentialEnv(t)
+	dir := cliConfigDir(t)
+	writeCLIProfile(t, dir, "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
+	if err := os.WriteFile(filepath.Join(dir, "configs", "admin.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	wantContains(t, cliError(t, map[string]string{"organization_id": testOrg}), "no usable org:admin profile", `parse profile "admin"`)
 }

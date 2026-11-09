@@ -8,18 +8,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/config"
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
@@ -48,7 +48,6 @@ var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 type cliModel struct {
 	Profile        types.String `tfsdk:"profile"`
 	OrganizationID types.String `tfsdk:"organization_id"`
-	WorkspaceID    types.String `tfsdk:"workspace_id"`
 }
 
 func cliSchema() schema.SingleNestedAttribute {
@@ -57,7 +56,7 @@ func cliSchema() schema.SingleNestedAttribute {
 		Description: "Experimental: may change or be removed in a minor release if the `ant` CLI's profile layout changes. Obtain the org:admin OAuth bearer token from a profile written by `ant auth login`, refreshing it " +
 			"with the profile's refresh token. Used only when neither `auth_token` nor `federation` supplies the token, " +
 			"so the same configuration runs locally as the operator and in CI as a workload. Without `profile`, the " +
-			"provider looks for the one org:admin profile that matches `organization_id` (and `workspace_id`, when set).",
+			"provider looks for the one org:admin profile that matches `organization_id`.",
 		Attributes: map[string]schema.Attribute{
 			"profile": schema.StringAttribute{
 				Optional:    true,
@@ -66,11 +65,6 @@ func cliSchema() schema.SingleNestedAttribute {
 			"organization_id": schema.StringAttribute{
 				Optional:    true,
 				Description: "UUID of the Anthropic organization, used to find the profile when none is named. Can also be set via the ANTHROPIC_ORGANIZATION_ID environment variable.",
-			},
-			"workspace_id": schema.StringAttribute{
-				Optional:    true,
-				Validators:  []validator.String{stringvalidator.RegexMatches(workspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits)")},
-				Description: "Workspace (`wrkspc_...`) the profile was logged in to, used to narrow the search when none is named. Has no environment fallback: ANTHROPIC_WORKSPACE_ID is read by `federation.workspace_id` only.",
 			},
 		},
 	}
@@ -90,13 +84,6 @@ func (p cliProfile) organizationID() string {
 		return p.creds.OrganizationUUID
 	}
 	return p.config.OrganizationID
-}
-
-func (p cliProfile) workspaceID() string {
-	if p.creds != nil && p.creds.WorkspaceID != "" {
-		return p.creds.WorkspaceID
-	}
-	return p.config.WorkspaceID
 }
 
 func (p cliProfile) scope() string {
@@ -135,7 +122,6 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 	diags.Append(rejectUnknownAttributes("cli", "Unknown CLI Configuration", []namedAttribute{
 		{"profile", m.Profile},
 		{"organization_id", m.OrganizationID},
-		{"workspace_id", m.WorkspaceID},
 	})...)
 	if diags.HasError() {
 		return nil, diags
@@ -150,10 +136,6 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 
 	name := resolveCredential(m.Profile, "ANTHROPIC_PROFILE")
 	orgID := resolveCredential(m.OrganizationID, "ANTHROPIC_ORGANIZATION_ID")
-	// No environment fallback: ANTHROPIC_WORKSPACE_ID is the SDKs' federation
-	// variable, often exported for other tools, and as a filter it would only
-	// hide the operator's org:admin login.
-	workspaceID := m.WorkspaceID.ValueString()
 
 	var p *cliProfile
 	var err error
@@ -169,7 +151,7 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 			err = fmt.Errorf("profile %q is for organization %s, not %s", name, p.organizationID(), configured)
 		}
 	} else {
-		p, err = findCLIProfile(dir, orgID, workspaceID)
+		p, err = findCLIProfile(dir, orgID)
 	}
 	if err == nil {
 		err = checkCLIProfile(p)
@@ -196,18 +178,22 @@ func resolveCLI(ctx context.Context, obj types.Object) (*config.Config, diag.Dia
 	}
 
 	// The profile's base_url was checked against the provider's own, and its
-	// workspace_id must not become a header: an org:admin token is not bound
-	// to a workspace, and the provider's other clients never send one.
+	// workspace_id (the workspace picked in the browser at login, if any) must
+	// not become a header: an org:admin token is organization-wide whatever
+	// the profile records, and the provider's other clients never send one.
+	// For the same reason the block has no workspace_id attribute: it could
+	// only select a login by that recorded value, never narrow the token.
 	cfg := *p.config
 	cfg.BaseURL = ""
 	cfg.WorkspaceID = ""
 	return &cfg, diags
 }
 
-// findCLIProfile returns the one org:admin user_oauth profile for orgID, and
-// for workspaceID when it is set. Profiles that cannot be read are skipped:
-// they are someone else's problem until they are the only candidate.
-func findCLIProfile(dir, orgID, workspaceID string) (*cliProfile, error) {
+// findCLIProfile returns the one org:admin user_oauth profile for orgID.
+// Profiles that cannot be read are set aside with the unusable ones: they
+// are someone else's problem until nothing else matches, and then the error
+// says why each was rejected.
+func findCLIProfile(dir, orgID string) (*cliProfile, error) {
 	if orgID == "" {
 		return nil, errors.New("name a profile with cli.profile or ANTHROPIC_PROFILE, or set cli.organization_id or " +
 			"ANTHROPIC_ORGANIZATION_ID so the provider can find one")
@@ -222,13 +208,14 @@ func findCLIProfile(dir, orgID, workspaceID string) (*cliProfile, error) {
 	var unusable []error
 	for _, name := range names {
 		p, err := readCLIProfile(dir, name)
-		if err != nil || p.config.AuthenticationInfo.Type != config.AuthenticationTypeUserOAuth {
+		if err != nil {
+			unusable = append(unusable, err)
+			continue
+		}
+		if p.config.AuthenticationInfo.Type != config.AuthenticationTypeUserOAuth {
 			continue
 		}
 		if p.organizationID() != orgID || !p.hasAdminScope() {
-			continue
-		}
-		if workspaceID != "" && p.workspaceID() != workspaceID {
 			continue
 		}
 		// A stale login beside a working one is common after logging in
@@ -241,9 +228,6 @@ func findCLIProfile(dir, orgID, workspaceID string) (*cliProfile, error) {
 	}
 
 	target := "organization " + orgID
-	if workspaceID != "" {
-		target += " and workspace " + workspaceID
-	}
 	switch len(matches) {
 	case 0:
 		if len(unusable) > 0 {
@@ -300,14 +284,16 @@ func checkCLIProfile(p *cliProfile) error {
 // readCLIProfile reads a profile without the SDK's environment fill-in
 // (config.LoadProfile copies ANTHROPIC_ORGANIZATION_ID into a profile that
 // lacks one, which would make every profile match). A missing credentials
-// file is not an error here; it means the profile is logged out.
+// file is not an error here; it means the profile is logged out. A
+// credentials file the SDK would refuse on every request (a symlink, or one
+// readable by group or other) is, so the fix is named at configure time.
 func readCLIProfile(dir, name string) (*cliProfile, error) {
 	if name == "." || name == ".." || !profileNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("profile name %q may contain only letters, digits, '_', '.' and '-'", name)
 	}
 	data, err := os.ReadFile(config.ProfilePath(dir, name))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read profile %q: %w", name, err)
 	}
 	var cfg config.Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
@@ -321,11 +307,14 @@ func readCLIProfile(dir, name string) (*cliProfile, error) {
 	}
 
 	p := &cliProfile{name: name, config: &cfg}
-	data, err = os.ReadFile(cfg.AuthenticationInfo.CredentialsPath)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
+	credsPath := cfg.AuthenticationInfo.CredentialsPath
+	if err := checkCredentialsFileSafety(credsPath); errors.Is(err, os.ErrNotExist) {
 		return p, nil
-	case err != nil:
+	} else if err != nil {
+		return nil, fmt.Errorf("profile %q: %w", name, err)
+	}
+	data, err = os.ReadFile(credsPath)
+	if err != nil {
 		return nil, fmt.Errorf("read credentials for profile %q: %w", name, err)
 	}
 	var creds config.Credentials
@@ -334,6 +323,27 @@ func readCLIProfile(dir, name string) (*cliProfile, error) {
 	}
 	p.creds = &creds
 	return p, nil
+}
+
+// checkCredentialsFileSafety mirrors the SDK's internal/auth
+// checkCredentialsFileSafety, applied on every request: a symlink or a file
+// readable by group or other is refused. Unexported in the SDK, so copied
+// here. A missing file returns os.ErrNotExist for the caller to tell apart.
+func checkCredentialsFileSafety(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Type()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("credentials file %s is a symlink, which the SDK refuses to read; point the profile's credentials_path at the real file", path)
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return fmt.Errorf("credentials file %s has permissions %#o, which the SDK refuses to read; run `chmod 600 %s`", path, mode, path)
+	}
+	return nil
 }
 
 func loginHint(profile string) string {

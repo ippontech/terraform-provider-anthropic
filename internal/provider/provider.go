@@ -213,6 +213,19 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		}
 	}
 
+	// The SDK clients would refuse an unparsable ANTHROPIC_BASE_URL with an
+	// error that quotes it, user information included. Only they read it: the
+	// admin client has a fixed base URL, so an admin-only configuration skips
+	// the check. It runs before resolveCLI, which compares the variable with
+	// the profile's base_url and quotes it when they differ: stripping the
+	// user information needs a parsable URL (#553).
+	if apiKey != "" || authToken != "" || federation != nil || !data.CLI.IsNull() {
+		resp.Diagnostics.Append(checkBaseURL(path.Empty(), "", "", "ANTHROPIC_BASE_URL")...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	// The cli block is the fallback for an operator's workstation: CI supplies
 	// auth_token or federation, and the same configuration then never reads
 	// a profile left on the runner.
@@ -248,17 +261,6 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 				"google_cloud block instead.",
 		)
 		return
-	}
-
-	// The SDK clients would refuse an unparsable ANTHROPIC_BASE_URL with an
-	// error that quotes it, user information included. Only they read it: the
-	// admin client has a fixed base URL, so an admin-only configuration skips
-	// the check.
-	if apiKey != "" || authToken != "" || federation != nil || cliConfig != nil {
-		resp.Diagnostics.Append(checkBaseURL(path.Empty(), "", "", "ANTHROPIC_BASE_URL")...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
 	}
 
 	// Each client carries exactly the credential resolved above and nothing
