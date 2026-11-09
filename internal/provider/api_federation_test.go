@@ -174,6 +174,19 @@ func TestConfigureBothFederationBlocksWarnOnSharedIdentitySource(t *testing.T) {
 			warn:       true,
 		},
 		{
+			// One file, two spellings: compared as cleaned absolute paths.
+			name:       "same file spelled differently",
+			federation: map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, tokenFile)},
+			api:        map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, filepath.Join(filepath.Dir(tokenFile), ".", "sub", "..", "token"))},
+			warn:       true,
+		},
+		{
+			name:       "same file, relative in one block",
+			env:        map[string]string{"ANTHROPIC_IDENTITY_TOKEN_FILE": tokenFile},
+			federation: map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, relativeTo(t, tokenFile))},
+			warn:       true,
+		},
+		{
 			name:       "different files",
 			federation: map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, tokenFile)},
 			api:        map[string]tftypes.Value{"identity_token_file": tftypes.NewValue(tftypes.String, tokenFile+".other")},
@@ -374,6 +387,33 @@ func TestConfigureAPIFederationWorkspace(t *testing.T) {
 			workspaceID: tftypes.NewValue(tftypes.String, "wrkspc_provider"),
 			block:       tftypes.NewValue(tftypes.String, ""),
 			want:        "wrkspc_provider",
+		},
+		{
+			// The empty attribute is unset all the way down: without a
+			// provider-level workspace_id it falls through to the environment.
+			name:  "empty block workspace_id falls back to the environment",
+			block: tftypes.NewValue(tftypes.String, ""),
+			env:   "wrkspc_env",
+			want:  "wrkspc_env",
+		},
+		{
+			name:  "block workspace_id wins over the environment",
+			block: tftypes.NewValue(tftypes.String, "wrkspc_block"),
+			env:   "wrkspc_env",
+			want:  "wrkspc_block",
+		},
+		{
+			name:  "default scopes the exchange",
+			block: tftypes.NewValue(tftypes.String, "default"),
+			want:  "default",
+		},
+		{
+			// Compared as written: the provider cannot tell at plan time
+			// whether wrkspc_provider is the default workspace.
+			name:        "default beside a provider-level ID",
+			workspaceID: tftypes.NewValue(tftypes.String, "wrkspc_provider"),
+			block:       tftypes.NewValue(tftypes.String, "default"),
+			wantError:   "Conflicting Workspace Configuration",
 		},
 		{
 			// Configuration over environment, as everywhere else.
@@ -591,4 +631,19 @@ func TestConfigureFederationEnvironmentAloneEnablesNeitherBlock(t *testing.T) {
 	if detail := resp.Diagnostics.Errors()[0].Detail(); !strings.Contains(detail, "api_federation") {
 		t.Errorf("detail %q does not offer api_federation", detail)
 	}
+}
+
+// relativeTo spells path relative to the test's working directory, so a
+// test can present the same file under two spellings.
+func relativeTo(t *testing.T, path string) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	rel, err := filepath.Rel(wd, path)
+	if err != nil {
+		t.Fatalf("rel: %v", err)
+	}
+	return rel
 }

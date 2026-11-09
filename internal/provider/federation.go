@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -76,13 +77,16 @@ func apiFederationSchema() schema.SingleNestedAttribute {
 	return schema.SingleNestedAttribute{
 		Optional: true,
 		Description: "Obtain the standard client's credential through Workload Identity Federation instead of `api_key`, " +
-			"from a federation rule whose OAuth scope is `workspace:developer` or `workspace:inference`. The exchange " +
+			"from a federation rule whose OAuth scope is `workspace:developer`. The exchange " +
 			"is the same as for `federation`, with the same attributes and environment variables, and the minted token " +
 			"backs every standard resource and data source (agents, skills, environments, vaults, memory stores, files, " +
-			"messages...), so a workload manages its workspace with no stored API key. Conflicts with `api_key`; an " +
+			"messages...), so a workload manages its workspace with no stored API key. A `workspace:inference` rule " +
+			"is meant for inference only: use it for a configuration limited to `anthropic_message` and " +
+			"`anthropic_count_tokens`, since whether such a token can manage the other resources is not verified. " +
+			"Conflicts with `api_key`; an " +
 			"exported ANTHROPIC_API_KEY is ignored, with a warning. The token is scoped to one workspace at exchange time: " +
-			"the provider-level `workspace_id` selects it when `api_federation.workspace_id` is unset, and the two must " +
-			"agree when both are set; no `anthropic-workspace-id` header is sent.",
+			"the provider-level `workspace_id` selects it when `api_federation.workspace_id` is unset or empty, and the two must " +
+			"agree, as written, when both are set (`default` is not matched against an ID); no `anthropic-workspace-id` header is sent.",
 		Attributes: federationAttributes("Workspace (`wrkspc_...`) to scope the token to at exchange time. Required only when the rule is enabled for " +
 			"more than one workspace. Falls back to the provider-level `workspace_id`, then to the ANTHROPIC_WORKSPACE_ID " +
 			"environment variable, which the SDKs' own federation reads the same way."),
@@ -158,10 +162,22 @@ type federationSettings struct {
 // identitySource names an identity token source: a file path, a literal
 // token or a command. Two blocks sharing a file or a literal present the
 // same assertion to two exchanges, which fails when the token carries a
-// jti; a command is run per exchange, so it is never shared in that sense.
+// jti; a command is run per exchange, so it is never shared in that sense
+// and carries no value. A file is held as an absolute, cleaned path, so that
+// one file spelled two ways (`./token` in one block, ANTHROPIC_IDENTITY_TOKEN_FILE
+// with an absolute path in the other) still compares equal. A symlink and
+// its target are not followed: the file need not exist at plan time.
 type identitySource struct {
 	kind  string // "file", "literal" or "command"
 	value string
+}
+
+// fileIdentitySource builds the source of an identity token file.
+func fileIdentitySource(file string) identitySource {
+	if abs, err := filepath.Abs(file); err == nil {
+		file = abs
+	}
+	return identitySource{kind: "file", value: filepath.Clean(file)}
 }
 
 // sharedWith reports whether the two sources would present the same
@@ -219,17 +235,25 @@ func resolveFederation(ctx context.Context, name string, obj types.Object, works
 		return nil, diags
 	}
 
-	// An empty block attribute counts as unset, as isSet does in the config
-	// validators, so `workspace_id = var.x` with an empty default conflicts
-	// with nothing. The conflict is reported with the other diagnostics, not
-	// instead of them.
-	if blockWorkspaceID := m.WorkspaceID.ValueString(); workspaceID != "" && blockWorkspaceID != "" && blockWorkspaceID != workspaceID {
+	// An empty block attribute counts as unset, so `workspace_id = var.x`
+	// with an empty default conflicts with nothing and falls through to the
+	// provider-level workspace_id, then to the environment, like a null one.
+	// The conflict is reported with the other diagnostics, not instead of
+	// them. The two values are compared as written: the literal `default`
+	// names the organization's default workspace, which the provider cannot
+	// match against an ID at plan time, so `default` beside an ID is a
+	// conflict too, and the message says to write the ID in both.
+	blockWorkspaceID := m.WorkspaceID.ValueString()
+	switch {
+	case blockWorkspaceID != "" && workspaceID != "" && blockWorkspaceID != workspaceID:
 		diags.AddAttributeError(root.AtName("workspace_id"), "Conflicting Workspace Configuration",
-			fmt.Sprintf("%s.workspace_id (%s) and workspace_id (%s) both select the workspace of the standard client. Set one, or the same workspace in both.",
+			fmt.Sprintf("%s.workspace_id (%s) and workspace_id (%s) both select the workspace of the standard client. "+
+				"Set one, or the same workspace in both; `default` is compared as written, not resolved to an ID.",
 				name, blockWorkspaceID, workspaceID))
-	}
-	if workspaceID == "" {
-		workspaceID = resolveCredential(m.WorkspaceID, "ANTHROPIC_WORKSPACE_ID")
+	case blockWorkspaceID != "":
+		workspaceID = blockWorkspaceID
+	case workspaceID == "":
+		workspaceID = os.Getenv("ANTHROPIC_WORKSPACE_ID")
 	}
 
 	s := &federationSettings{options: option.FederationOptions{
@@ -294,9 +318,9 @@ func identityTokenSource(ctx context.Context, m federationModel) (option.Identit
 
 	switch {
 	case argv != nil:
-		return commandIdentityToken(argv, identityTokenCommandTimeout), identitySource{kind: "command", value: strings.Join(argv, "\x00")}, nil
+		return commandIdentityToken(argv, identityTokenCommandTimeout), identitySource{kind: "command"}, nil
 	case file != "":
-		return option.IdentityTokenFile(file), identitySource{kind: "file", value: file}, nil
+		return option.IdentityTokenFile(file), fileIdentitySource(file), nil
 	case literal != "":
 		return staticIdentityToken(literal), identitySource{kind: "literal", value: strings.TrimSpace(literal)}, nil
 	}
