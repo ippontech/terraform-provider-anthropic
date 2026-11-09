@@ -26,9 +26,9 @@ on:
 
 permissions: {}
 
-# On a push or a manual run, the same group as semantic-release.yml, so one live test run exists
-# at a time: two would collide in the test workspace. When several pushes queue up, only the
-# newest waiting run starts. A called run already sits in its caller's group: giving it the same
+# On a push or a manual run, the same group as the acceptance-tests job of semantic-release.yml, so
+# one live test run exists at a time: two would collide in the test workspace. When several pushes
+# queue up, only the newest waiting run starts. A called run already sits in its caller's group: giving it the same
 # one here would queue it behind the caller that holds it (the GitHub docs warn of the
 # cancellation variant of this, "Reusing workflow configurations"), hence a group of its own, its
 # run id. The called run is told apart by `github.workflow`, which then carries the caller's name
@@ -40,8 +40,15 @@ concurrency:
 
 jobs:
   testacc:
-    # Skipped on the push of a release commit; a called or manual run always goes on.
-    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):')
+    # Skipped on the push of the release commit, told apart by its subject and by its content,
+    # CHANGELOG.md alone (.releaserc, the git plugin): a squash-merged pull request titled
+    # chore(release) that changes code still gets its run. A called or manual run always goes on.
+    if: >-
+      !(github.event_name == 'push'
+        && startsWith(github.event.head_commit.message, 'chore(release):')
+        && join(github.event.head_commit.added) == ''
+        && join(github.event.head_commit.removed) == ''
+        && join(github.event.head_commit.modified) == 'CHANGELOG.md')
     runs-on: ubuntu-latest
     timeout-minutes: 130
     environment: acctest
@@ -91,8 +98,15 @@ jobs:
           ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
 
   terraform-test:
-    # Skipped on the push of a release commit; a called or manual run always goes on.
-    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(release):')
+    # Skipped on the push of the release commit, told apart by its subject and by its content,
+    # CHANGELOG.md alone (.releaserc, the git plugin): a squash-merged pull request titled
+    # chore(release) that changes code still gets its run. A called or manual run always goes on.
+    if: >-
+      !(github.event_name == 'push'
+        && startsWith(github.event.head_commit.message, 'chore(release):')
+        && join(github.event.head_commit.added) == ''
+        && join(github.event.head_commit.removed) == ''
+        && join(github.event.head_commit.modified) == 'CHANGELOG.md')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: acctest
