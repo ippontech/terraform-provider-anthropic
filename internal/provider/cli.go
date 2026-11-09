@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 )
 
 // defaultBaseURL is the SDK's production default, which a profile's base_url
@@ -39,7 +40,8 @@ const mandatoryRefreshThreshold = 30 * time.Second
 // profileNamePattern mirrors the SDK's config.validateProfileName, which
 // config.LoadProfile applies and readCLIProfile, reading the files itself,
 // must apply too: a name with a path separator or ".." would read a file
-// outside the profile directories.
+// outside the profile directories. The SDK also refuses "." and "..", which
+// the pattern alone accepts.
 var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // cliModel is the provider's cli block.
@@ -267,7 +269,10 @@ func checkCLIProfile(p *cliProfile) error {
 		return fmt.Errorf("profile %q authenticates with %s, not an interactive login; configure the federation block instead", p.name, t)
 	}
 
-	providerBaseURL := os.Getenv("ANTHROPIC_BASE_URL")
+	// Without its user information, as newSDKClient sends it (the bearer
+	// client drops it): a password in ANTHROPIC_BASE_URL must not reach the
+	// diagnostic below, and a profile never carries one.
+	providerBaseURL, _ := platform.BaseURLWithoutUserInfo("", "ANTHROPIC_BASE_URL", false)
 	if providerBaseURL == "" {
 		providerBaseURL = defaultBaseURL
 	}
@@ -297,7 +302,7 @@ func checkCLIProfile(p *cliProfile) error {
 // lacks one, which would make every profile match). A missing credentials
 // file is not an error here; it means the profile is logged out.
 func readCLIProfile(dir, name string) (*cliProfile, error) {
-	if !profileNamePattern.MatchString(name) {
+	if name == "." || name == ".." || !profileNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("profile name %q may contain only letters, digits, '_', '.' and '-'", name)
 	}
 	data, err := os.ReadFile(config.ProfilePath(dir, name))
