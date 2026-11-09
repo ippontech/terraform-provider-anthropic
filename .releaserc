@@ -91,7 +91,8 @@
     [
       "@semantic-release/github",
       {
-        "draftRelease": true
+        "draftRelease": true,
+        "successComment": "This ${issue.pull_request ? 'pull request' : 'issue'} is included in version ${nextRelease.version}.\n\nThe release is available on [GitHub](https://github.com/ippontech/terraform-provider-anthropic/releases/tag/${nextRelease.gitTag}) once its archives are signed."
       }
     ]
   ]

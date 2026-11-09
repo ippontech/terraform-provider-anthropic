@@ -67,6 +67,10 @@ release:
   # see, until the run is retried (RELEASE.md, "Review the modules a release ships").
   mode: keep-existing
   draft: false
+  # GitHub's get-release-by-tag call, which GoReleaser uses to find an existing release, answers
+  # 404 for a draft: without this key keep-existing never sees semantic-release's draft and a
+  # second, published release is created for the tag.
+  use_existing_draft: true
 # The notes are semantic-release's (.releaserc); GoReleaser writes none and keeps them.
 changelog:
   disable: true

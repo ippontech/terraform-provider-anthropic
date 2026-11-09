@@ -17,6 +17,13 @@ on:
 
 permissions: {}
 
+# Release runs wait for one another, without sharing the push runs' group (see the job below): a
+# manual or retry run started during another release would otherwise run a second live test that
+# releases nothing.
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+
 jobs:
   # Goes on only when a commit since the last tag would cut a version; otherwise the two-hour
   # live test run would create objects in the test workspace every morning for a release that
