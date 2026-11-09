@@ -389,12 +389,13 @@ func TestConfigureAPIFederationWorkspace(t *testing.T) {
 			want:        "wrkspc_provider",
 		},
 		{
-			// The empty attribute is unset all the way down: without a
-			// provider-level workspace_id it falls through to the environment.
-			name:  "empty block workspace_id falls back to the environment",
+			// Only a null attribute reads the environment, as for every
+			// provider argument (#567 revisits that rule): a known empty
+			// value names no workspace.
+			name:  "empty block workspace_id keeps the environment out",
 			block: tftypes.NewValue(tftypes.String, ""),
 			env:   "wrkspc_env",
-			want:  "wrkspc_env",
+			want:  "",
 		},
 		{
 			name:  "block workspace_id wins over the environment",
@@ -573,6 +574,47 @@ func TestConfigureWorkspaceIDStaysOffTheOAuthExchange(t *testing.T) {
 	}
 	if exchanges, _ := fs.snapshot(); len(exchanges) != 1 || exchanges[0]["workspace_id"] != "" {
 		t.Errorf("exchanges = %v, want one with no workspace", exchanges)
+	}
+}
+
+// TestConfigureFederationWorkspaceIDFromEnvironment pins the federation
+// block's workspace as it was before api_federation: a null attribute reads
+// ANTHROPIC_WORKSPACE_ID, a known empty one keeps the variable out, so an
+// org:admin exchange never picks up a workspace another tool exported.
+func TestConfigureFederationWorkspaceIDFromEnvironment(t *testing.T) {
+	tests := []struct {
+		name  string
+		block tftypes.Value
+		want  string
+	}{
+		{name: "null reads the environment", want: "wrkspc_env"},
+		{name: "empty keeps the environment out", block: tftypes.NewValue(tftypes.String, ""), want: ""},
+		{name: "set wins over the environment", block: tftypes.NewValue(tftypes.String, "wrkspc_block"), want: "wrkspc_block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := newFederationServer(t, 3600)
+
+			clearCredentialEnv(t)
+			t.Setenv("ANTHROPIC_BASE_URL", fs.URL)
+			t.Setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_env")
+
+			block := map[string]tftypes.Value{
+				"organization_id":    tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+				"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_admin"),
+				"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
+			}
+			if tt.block.IsKnown() && !tt.block.IsNull() {
+				block["workspace_id"] = tt.block
+			}
+			pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{"federation": federationValue(t, block)}))
+			if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if exchanges, _ := fs.snapshot(); len(exchanges) != 1 || exchanges[0]["workspace_id"] != tt.want {
+				t.Errorf("exchanges = %v, want one with workspace_id %q", exchanges, tt.want)
+			}
+		})
 	}
 }
 

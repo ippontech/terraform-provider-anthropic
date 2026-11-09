@@ -175,28 +175,22 @@ Every attribute falls back to the environment variable the Anthropic SDKs read f
 
 ### Workload Identity Federation for the standard client (`api_federation`)
 
-The same exchange, against a rule whose OAuth scope is `workspace:developer`, yields a workspace-scoped token that backs the standard client in place of `api_key`: every standard resource and data source (agents, skills, environments, vaults, memory stores, files, deployments, messages...) then runs on a token minted from the workload's own identity, and the pipeline stores no API key: the [WIF reference](https://platform.claude.com/docs/en/manage-claude/wif-reference) gives `workspace:developer` the access of a workspace API key (Messages, Models, Managed Agents, Files, Skills). A `workspace:inference` rule covers Messages and Models only, so it fits a configuration limited to `anthropic_message` and `anthropic_count_tokens`; any other endpoint answers 403. The `api_federation` block takes the same attributes and environment variables as `federation`, so in a job set up as in the [guide's workload section](guides/workload_identity_federation#4-how-the-workload-consumes-the-rule), the whole configuration is:
+The same exchange, against a rule whose OAuth scope is `workspace:developer`, yields a workspace-scoped token that backs the standard client in place of `api_key`: every standard resource and data source (agents, skills, environments, vaults, memory stores, files, deployments, messages...) then runs on a token minted from the workload's own identity, and the pipeline stores no API key: the [WIF reference](https://platform.claude.com/docs/en/manage-claude/wif-reference) gives `workspace:developer` the access of a workspace API key (Messages, Models, Managed Agents, Files, Skills). A `workspace:inference` rule covers Messages and Models only, so it fits a configuration limited to `anthropic_message` and `anthropic_count_tokens`; any other endpoint answers 403. The `api_federation` block takes the same attributes and environment variables as `federation`. In GitHub Actions, with the IDs exported as in the [guide's workload section](guides/workload_identity_federation#4-how-the-workload-consumes-the-rule), the configuration fetches a fresh identity token per exchange:
 
 ```hcl
 provider "anthropic" {
-  # ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_FEDERATION_RULE_ID,
-  # ANTHROPIC_SERVICE_ACCOUNT_ID and ANTHROPIC_IDENTITY_TOKEN_FILE fill it.
-  api_federation = {}
-}
-```
-
-Or, with the rule written out and an identity token fetched per exchange:
-
-```hcl
-provider "anthropic" {
+  # ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_FEDERATION_RULE_ID and
+  # ANTHROPIC_SERVICE_ACCOUNT_ID fill the rest.
   api_federation = {
-    organization_id     = "00000000-0000-0000-0000-000000000000"
-    federation_rule_id  = "fdrl_..." # oauth_scope = "workspace:developer"
-    service_account_id  = "svac_..."
-    identity_token_file = "/var/run/secrets/anthropic.com/token"
+    identity_token_command = [
+      "sh", "-c",
+      "curl -sSf --max-time 20 -H \"Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com\" | jq -r .value",
+    ]
   }
 }
 ```
+
+A GitHub token carries a `jti`, which the exchange accepts once, and a single `terraform apply` exchanges at least twice: Terraform configures the provider once for the plan and again for the apply, and each exchanges on its own. A token written once to `ANTHROPIC_IDENTITY_TOKEN_FILE` therefore passes the plan and fails the apply with `jti_reused`. `api_federation = {}` filled entirely from the environment fits only an identity token the platform rotates on disk before the next exchange, or one without a `jti`.
 
 - **It replaces `api_key`.** Configuring both is an error, and an exported `ANTHROPIC_API_KEY` is ignored with a warning, as `federation` does with `auth_token`. Like every first-party credential, it conflicts with the `aws` and `google_cloud` blocks.
 - **The token is scoped to one workspace at exchange time**, and the `anthropic-workspace-id` header does not apply to it, so the provider never sends that header on a federated standard client. The workspace is `api_federation.workspace_id`, else the provider-level `workspace_id`, else `ANTHROPIC_WORKSPACE_ID` (an empty attribute counts as unset); the two attributes must name the same workspace ID when both are set. A rule enabled for a single workspace needs none of them. One workspace per provider alias, as with an identity-linked key.

@@ -142,8 +142,8 @@ func federationAttributes(workspaceDescription string) map[string]schema.Attribu
 }
 
 // federationWorkspaceIDPattern is the shape of the workspace an exchange is
-// scoped to: a workspace ID, or empty, which has always meant unset here (a
-// variable with an empty default). The literal `default`, which the exchange
+// scoped to: a workspace ID, or empty, which has always been accepted (a
+// variable with an empty default) and names no workspace. The literal `default`, which the exchange
 // still accepts for the organization's default workspace, stays tolerated
 // because the WIF reference marks it deprecated: it is not advertised, and
 // the validator message does not name it. Checked at plan time, as
@@ -237,10 +237,13 @@ func resolveFederation(ctx context.Context, name string, obj types.Object, works
 		return nil, diags
 	}
 
-	// An empty block attribute counts as unset, so `workspace_id = var.x`
-	// with an empty default conflicts with nothing and falls through to the
-	// provider-level workspace_id, then to the environment, like a null one.
-	// The conflict is reported with the other diagnostics, not instead of
+	// An empty block attribute names no workspace, so `workspace_id = var.x`
+	// with an empty default conflicts with nothing and takes the
+	// provider-level workspace_id when there is one. Only a null attribute
+	// reads ANTHROPIC_WORKSPACE_ID, as resolveCredential does for every
+	// provider argument: a known "" kept the variable out before
+	// api_federation existed, and the federation block must keep doing so
+	// (#567 revisits the rule for every argument at once). The conflict is reported with the other diagnostics, not instead of
 	// them. The two values are compared as written: the deprecated literal
 	// `default` names the organization's default workspace, which the provider
 	// cannot match against an ID at plan time, so `default` beside an ID is a
@@ -255,7 +258,7 @@ func resolveFederation(ctx context.Context, name string, obj types.Object, works
 	case blockWorkspaceID != "":
 		workspaceID = blockWorkspaceID
 	case workspaceID == "":
-		workspaceID = os.Getenv("ANTHROPIC_WORKSPACE_ID")
+		workspaceID = resolveCredential(m.WorkspaceID, "ANTHROPIC_WORKSPACE_ID")
 	}
 
 	s := &federationSettings{options: option.FederationOptions{

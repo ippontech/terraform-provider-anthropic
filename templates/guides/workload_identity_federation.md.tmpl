@@ -437,11 +437,16 @@ None of those three IDs is a secret: a token can only be minted by presenting a 
 
 ```hcl
 provider "anthropic" {
-  api_federation = {}
+  api_federation = {
+    identity_token_command = [
+      "sh", "-c",
+      "curl -sSf --max-time 20 -H \"Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com\" | jq -r .value",
+    ]
+  }
 }
 ```
 
-The provider exchanges the identity token itself and exchanges again before the access token expires. With a GitHub token (single-use `jti`), prefer `identity_token_command` over the file, as in [section 1](#letting-the-provider-mint-the-token-in-ci), so each exchange presents a fresh assertion. Managing both WIF and the workspace from one configuration takes two rules, since a rule carries a single scope: `federation` against the `org:admin` bootstrap rule, `api_federation` against the workspace rule (the same rule in both is a plan-time error). The two blocks exchange separately, so with a single-use token each needs its own `identity_token_command`: a file shared by both presents the same assertion twice, and the second exchange fails with `jti_reused` (the provider warns at plan time when both blocks read the same file or literal). Leave `ANTHROPIC_API_KEY` unset too: the block ignores it, with a warning.
+The provider exchanges the identity token itself and exchanges again before the access token expires. The command, as in [section 1](#letting-the-provider-mint-the-token-in-ci), is required with a GitHub token rather than the file the step above writes: the token's `jti` is accepted once, and `terraform apply` exchanges at least twice, since Terraform configures the provider for the plan and again for the apply. The file would pass the plan and fail the apply with `jti_reused`; the step that writes it is then only for the SDK workload. Managing both WIF and the workspace from one configuration takes two rules, since a rule carries a single scope: `federation` against the `org:admin` bootstrap rule, `api_federation` against the workspace rule (the same rule in both is a plan-time error). The two blocks exchange separately, so with a single-use token each needs its own `identity_token_command`: a file shared by both presents the same assertion twice, and the second exchange fails with `jti_reused` (the provider warns at plan time when both blocks read the same file or literal). Leave `ANTHROPIC_API_KEY` unset too: the block ignores it, with a warning.
 
 **Other platforms.** Everything above transposes to any OIDC issuer: register its URL as an `anthropic_federation_issuer`, match its `sub` format in the rule, and give the workload its token in `ANTHROPIC_IDENTITY_TOKEN_FILE` (or `ANTHROPIC_IDENTITY_TOKEN`). On GitLab CI the job requests the token with
 
