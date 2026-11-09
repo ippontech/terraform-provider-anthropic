@@ -39,7 +39,7 @@ type awsModel struct {
 func awsSchema() schema.SingleNestedAttribute {
 	return schema.SingleNestedAttribute{
 		Optional: true,
-		Description: "**Beta.** Reach Claude Platform on AWS instead of the Claude API: the provider configuration (the default one or an alias) then manages the " +
+		Description: "**Experimental.** Reach Claude Platform on AWS instead of the Claude API: the provider configuration (the default one or an alias) then manages the " +
 			"Anthropic organization tied to an AWS account, through the aws-external-anthropic gateway of one AWS " +
 			"region. Setting the block is what selects the platform; the AWS and ANTHROPIC_AWS_* environment " +
 			"variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token, federation, " +
@@ -48,8 +48,8 @@ func awsSchema() schema.SingleNestedAttribute {
 			"required. Requests are signed with AWS SigV4 (service aws-external-anthropic), with credentials from " +
 			"access_key/secret_key, profile or the AWS default chain, unless api_key is set. A type the gateway does " +
 			"not serve fails at plan, or at apply for a data source that Terraform reads only then. Support for this " +
-			"platform is in beta, verified mostly with offline tests, " +
-			"and the provider prints a warning saying so.",
+			"platform is experimental: it rests on the SDK's beta AWS client, may change in a minor release, " +
+			"is verified mostly with offline tests, and the provider prints a warning saying so.",
 		Attributes: map[string]schema.Attribute{
 			"region": schema.StringAttribute{
 				Optional: true,

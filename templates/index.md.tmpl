@@ -9,6 +9,15 @@ description: |-
 The Anthropic provider is used to interact with [Anthropic](https://anthropic.com) APIs.
 It allows you to manage and query Anthropic resources such as models.
 
+## Stability
+
+Two words on these pages describe maturity, and they come from two different sources.
+
+- **Experimental** is this provider's own label. An experimental block or attribute works and is tested, but rests on something outside the provider's control (a beta client of the Anthropic SDK, the `ant` CLI's on-disk layout), so it **may change or be removed in a minor release** instead of waiting for the next major version. Its description says so, and a block prints a warning on every plan or apply where that is warranted. Everything not marked experimental follows [semantic versioning](https://semver.org/): a breaking change waits for a major release.
+- **Beta** is Anthropic's label for the status of an API: a beta endpoint is called with an `anthropic-beta` header, which each resource page lists in its **Beta header** line, and Anthropic may change it on its own schedule. The provider's compatibility promise still applies to the Terraform schema: when a beta API changes, the provider absorbs the change in a minor release where it can, and otherwise stages the breaking change for the next major. Pages also repeat Anthropic's other status words where they apply, such as *research preview* or *early access*.
+
+A block can be both: the cloud platform blocks below are experimental in this provider and reach APIs that Anthropic serves through beta SDK clients.
+
 ## Authentication
 
 The provider accepts three distinct credentials, depending on which resources you manage. At least one must be configured, unless a [cloud platform](#cloud-platforms) block is; they are independent, and configuring one never substitutes for another. Two of them, the API key and the OAuth bearer token, can also be minted by the provider itself through [Workload Identity Federation](#workload-identity-federation-federation), so a workload stores no credential at all.
@@ -200,7 +209,7 @@ Everything said of `federation` applies: the identity token source is re-read or
 
 ### `ant` CLI login (`cli`)
 
-~> **Experimental.** This block depends on the `ant` CLI's profile and credentials layout, read through the Anthropic Go SDK's `config` package. If Anthropic changes `ant` or that package, the block may have to change or be removed in a minor release rather than wait for the next major version.
+~> **Experimental** (see [Stability](#stability)). This block depends on the `ant` CLI's profile and credentials layout, read through the Anthropic Go SDK's `config` package. If Anthropic changes `ant` or that package, the block may have to change or be removed in a minor release rather than wait for the next major version.
 
 On an operator's workstation, the provider can use the `org:admin` login that the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) stores, and refresh it with the profile's refresh token, so an apply never outlives the login:
 
@@ -236,7 +245,7 @@ Use environment variables or a secrets manager instead.
 
 Anthropic also serves the Claude API through cloud gateways, each in front of an Anthropic organization of its own: an existing organization cannot be converted, and API keys, workspaces and Console settings do not carry over. A platform block makes a provider configuration, the default one or an alias, manage such an organization instead of one on the Claude API. Amazon Bedrock, Claude Models on Google Cloud (Google managed, on Vertex AI) and Microsoft Foundry serve the Messages API only, with no organization to manage, so this provider does not cover them.
 
-~> **Beta.** Claude Platform on AWS and Claude Models on Google Cloud support is in beta: it relies on the Anthropic SDK's clients for these platforms, themselves in beta, and its verification against the real gateways is still partial on AWS and limited to offline tests on Google Cloud. Each plan or apply with an `aws` or `google_cloud` block prints a warning saying so. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
+~> **Experimental** (see [Stability](#stability)). Claude Platform on AWS and Claude Models on Google Cloud support is experimental: it relies on the Anthropic SDK's clients for these platforms, which Anthropic labels beta, so the blocks may change in a minor release, and its verification against the real gateways is still partial on AWS and limited to offline tests on Google Cloud. Each plan or apply with an `aws` or `google_cloud` block prints a warning saying so. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 The [Claude Platform on AWS](guides/claude_platform_on_aws#7-what-is-not-verified) and [Claude Models on Google Cloud](guides/claude_models_on_google_cloud#5-what-is-not-verified) guides list what is verified and what is not.
 
