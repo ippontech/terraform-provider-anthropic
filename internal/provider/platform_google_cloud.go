@@ -105,7 +105,7 @@ func googleCloudSchema() schema.SingleNestedAttribute {
 				Description: "Base URL for every route, in place of the ones derived from project, location and " +
 					"workspace (the workspace endpoint, and the organization endpoint for /v1/organizations routes). " +
 					"Can also be set via the ANTHROPIC_GOOGLE_CLOUD_BASE_URL environment variable; ANTHROPIC_BASE_URL is " +
-					"not read.",
+					"not read. User information (user:password@) is dropped, as the Google token always took its place, and kept out of error messages.",
 			},
 		},
 	}
@@ -177,6 +177,10 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel, tokenT
 				fmt.Sprintf("google_cloud.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
 		}
 	}
+	if diags.HasError() {
+		return nil, diags
+	}
+	diags.Append(checkBaseURL(path.Root("google_cloud").AtName("base_url"), "google_cloud.base_url", m.BaseURL.ValueString(), googleCloudBaseURLEnv)...)
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -309,6 +313,7 @@ func googleCredentialsType(source string, contents []byte) (string, error) {
 //
 // extra are request options for tests (an HTTP client).
 func newGoogleCloudClient(ctx context.Context, cfg googlecloud.ClientConfig, tokenTimeout time.Duration, extra ...option.RequestOption) (*anthropic.Client, error) {
+	cfg.BaseURL, _ = platform.BaseURLWithoutUserInfo(cfg.BaseURL, googleCloudBaseURLEnv, false)
 	gc, err := googlecloud.NewClient(googleTokenContext(ctx, tokenTimeout), cfg)
 	if err != nil {
 		return nil, err

@@ -10,7 +10,7 @@ description: |-
 Manages an [OpenTelemetry destination](https://platform.claude.com/docs/en/manage-claude/opentelemetry/api): an OTLP/HTTP endpoint of your observability platform to which the API exports a span for each model request and tool use of your Messages API requests and Managed Agents sessions, for the workspaces the destination covers. It is what **Add destination** does on the Console's OpenTelemetry settings page.
 
 > **API**: `POST /v1/organizations/telemetry_destinations`, `GET/POST/DELETE /v1/organizations/telemetry_destinations/{id}`, `GET /v1/organizations/telemetry_destinations/{id}/workspaces` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. A Claude Enterprise Admin API key covers organization members and invites only, not this endpoint.
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. A Claude Enterprise Admin API key does not reach this endpoint.
 > **Beta header**: `telemetry-destinations-2026-08-11`, sent by the provider on every request.
 > **Cost**: Free.
 

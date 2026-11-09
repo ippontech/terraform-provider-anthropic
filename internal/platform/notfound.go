@@ -29,7 +29,9 @@ const maxBodyExcerpt = 512
 type UnservedRouteError struct {
 	Platform Platform
 	Method   string
-	URL      string
+	// URL is the request URL with any password masked (url.URL.Redacted): the
+	// error ends up in diagnostics and CI logs.
+	URL string
 	// Body is the start of the response body, at most maxBodyExcerpt bytes.
 	Body string
 }
@@ -75,7 +77,7 @@ func NotFoundGuard(p Platform) option.Middleware {
 		return res, &UnservedRouteError{
 			Platform: p,
 			Method:   req.Method,
-			URL:      req.URL.String(),
+			URL:      req.URL.Redacted(),
 			Body:     string(excerpt),
 		}
 	}

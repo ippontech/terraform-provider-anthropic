@@ -53,7 +53,8 @@ const (
 // retry-after headers Anthropic returns on 429. How much is retried depends on
 // the method: idempotent requests replay on connection errors and on the
 // transient statuses the SDK retries (408, 409, 429, and 5xx), while a POST
-// replays only on 429 — see shouldRetry. Retries are opt-in: the zero value
+// replays only on 429 unless the caller marks it WithIdempotent — see
+// shouldRetry. Retries are opt-in: the zero value
 // performs a single attempt, and NewClient enables DefaultMaxRetries.
 //
 // A client built by NewSDKClient sends its requests through an SDK client
@@ -86,6 +87,11 @@ type APIError struct {
 	StatusCode int
 	ErrType    string
 	Message    string
+	// Details is the raw `error.details` object, when the API sends one. Some
+	// endpoints put a machine-readable cause there (the Plugins API's
+	// `error_code`, plus the ID of the plugin or version it involves), which a
+	// caller needs to tell apart causes that share a status code.
+	Details json.RawMessage
 }
 
 func (e *APIError) Error() string {
@@ -120,7 +126,8 @@ func NewClient(apiKey string) *Client {
 // platform.NotFoundGuard.
 //
 // The retry policy stays this package's: the SDK's own retries are turned off
-// for each request, so a POST is still replayed only on 429. The SDK alone
+// for each request, so a POST not marked WithIdempotent is still replayed
+// only on 429. The SDK alone
 // would replay a POST on a 5xx or a dropped connection, and a second
 // POST /v1/organizations/workspaces creates a second workspace.
 func NewSDKClient(sdk *anthropic.Client) *Client {
@@ -134,14 +141,23 @@ type RawBody struct {
 	Data        []byte
 }
 
-// RequestOption adjusts a single request, after the client has set its own
-// headers, so an option can add to them or override them.
-type RequestOption func(*http.Request)
+// RequestOption adjusts a single request: its headers, after the client has
+// set its own, so an option can add to them or override them, or how DoRequest
+// retries it.
+type RequestOption func(*requestConfig)
+
+// requestConfig is what a RequestOption adjusts.
+type requestConfig struct {
+	req *http.Request
+	// idempotent makes DoRequest retry the request as it retries an
+	// idempotent method, whatever the request's own method.
+	idempotent bool
+}
 
 // WithHeader sets a request header.
 func WithHeader(name, value string) RequestOption {
-	return func(req *http.Request) {
-		req.Header.Set(name, value)
+	return func(cfg *requestConfig) {
+		cfg.req.Header.Set(name, value)
 	}
 }
 
@@ -151,15 +167,28 @@ func WithHeader(name, value string) RequestOption {
 // 404 from them. Several WithBeta options on one request add up: each keeps
 // the values set before it.
 func WithBeta(betas ...string) RequestOption {
-	return func(req *http.Request) {
+	return func(cfg *requestConfig) {
 		if len(betas) == 0 {
 			return
 		}
 		values := betas
-		if prior := req.Header.Get("anthropic-beta"); prior != "" {
+		if prior := cfg.req.Header.Get("anthropic-beta"); prior != "" {
 			values = append([]string{prior}, betas...)
 		}
-		req.Header.Set("anthropic-beta", strings.Join(values, ","))
+		cfg.req.Header.Set("anthropic-beta", strings.Join(values, ","))
+	}
+}
+
+// WithIdempotent marks a request as safe to replay although its method is
+// not idempotent, so that DoRequest retries it as it retries a GET or a
+// DELETE: on a connection error and on 408, 409, 429 and 5xx, where a POST is
+// otherwise retried on 429 only. Use it only for an endpoint whose reference
+// states that repeating the request leaves the same state as sending it once
+// (the compliance settings update, for instance), never for a POST that
+// creates an object.
+func WithIdempotent() RequestOption {
+	return func(cfg *requestConfig) {
+		cfg.idempotent = true
 	}
 }
 
@@ -200,9 +229,11 @@ func (c *Client) DoRequest(ctx context.Context, method, path string, body any, o
 	if reqBody != nil {
 		req.Header.Set("content-type", contentType)
 	}
+	cfg := requestConfig{req: req}
 	for _, opt := range opts {
-		opt(req)
+		opt(&cfg)
 	}
+	idempotent := cfg.idempotent || isIdempotent(req.Method)
 
 	for attempt := 0; ; attempt++ {
 		respBody, resp, err := c.attempt(req, reqBody)
@@ -210,7 +241,7 @@ func (c *Client) DoRequest(ctx context.Context, method, path string, body any, o
 			return respBody, nil
 		}
 
-		if attempt >= c.MaxRetries || !shouldRetry(req.Method, resp) {
+		if attempt >= c.MaxRetries || !shouldRetry(idempotent, resp) {
 			return nil, err
 		}
 
@@ -279,7 +310,8 @@ func (c *Client) sdkAttempt(template *http.Request, reqBody []byte) ([]byte, *ht
 		option.WithMaxRetries(0),
 		// The SDK sets no per-request deadline by default. With this one, a
 		// stalled attempt fails like one of the direct client and goes back
-		// to DoRequest's retry loop (GET and DELETE retry it, POST does not).
+		// to DoRequest's retry loop (GET, DELETE and a request marked
+		// WithIdempotent retry it, POST does not).
 		option.WithRequestTimeout(c.sdkAttemptTimeout),
 		option.WithResponseInto(&res),
 		// The Admin API is organization-wide. Claude Platform on AWS sets a
@@ -328,11 +360,11 @@ func (c *Client) sdkAttempt(template *http.Request, reqBody []byte) ([]byte, *ht
 // not an *anthropic.Error. When the body stops arriving after the status line,
 // the SDK returns its read error with the response it read the status from.
 // That status is no verdict, since its body never landed: as in attempt, the
-// failure is reported without the response, so that GET and DELETE replay it
-// and POST does not. A response marked x-should-retry is kept, since shouldRetry
-// then reads only that header, and the SDK honours it on a dropped body too.
-// That keeps the response of platform.NotFoundGuard's error, which says not to
-// retry.
+// failure is reported without the response, so that an idempotent request
+// replays it and a POST does not. A response marked x-should-retry is kept,
+// since shouldRetry then reads only that header, and the SDK honours it on a
+// dropped body too. That keeps the response of platform.NotFoundGuard's error,
+// which says not to retry.
 func transportResponse(res *http.Response) *http.Response {
 	if res == nil || res.Header.Get("x-should-retry") == "" {
 		return nil
@@ -343,8 +375,9 @@ func transportResponse(res *http.Response) *http.Response {
 func newAPIError(statusCode int, respBody []byte) *APIError {
 	var envelope struct {
 		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
+			Type    string          `json:"type"`
+			Message string          `json:"message"`
+			Details json.RawMessage `json:"details"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(respBody, &envelope) == nil && envelope.Error.Message != "" {
@@ -352,6 +385,7 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 			StatusCode: statusCode,
 			ErrType:    envelope.Error.Type,
 			Message:    envelope.Error.Message,
+			Details:    envelope.Error.Details,
 		}
 	}
 	return &APIError{
@@ -362,7 +396,9 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 
 // shouldRetry reports whether a failed attempt is worth repeating. As in the
 // Anthropic Go SDK, an x-should-retry header from the server settles it either
-// way. Beyond that the answer depends on whether replaying the request is safe.
+// way. Beyond that the answer depends on whether replaying the request is
+// safe: idempotent is true for an idempotent method (see isIdempotent) and for
+// a request marked WithIdempotent.
 //
 // Idempotent requests replay freely: a nil response (a connection error, or a
 // body that never finished arriving) and the transient statuses the SDK retries
@@ -375,7 +411,7 @@ func newAPIError(statusCode int, respBody []byte) *APIError {
 // not unique) or burn the budget on a membership that already exists, leaving
 // the resource untracked either way. The SDK retries those because its POSTs are
 // inference calls, where a duplicate costs tokens rather than resources.
-func shouldRetry(method string, resp *http.Response) bool {
+func shouldRetry(idempotent bool, resp *http.Response) bool {
 	if resp != nil {
 		switch resp.Header.Get("x-should-retry") {
 		case "true":
@@ -385,7 +421,7 @@ func shouldRetry(method string, resp *http.Response) bool {
 		}
 	}
 
-	if !isIdempotent(method) {
+	if !idempotent {
 		return resp != nil && resp.StatusCode == http.StatusTooManyRequests
 	}
 

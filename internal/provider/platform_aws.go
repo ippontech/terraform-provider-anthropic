@@ -94,7 +94,7 @@ func awsSchema() schema.SingleNestedAttribute {
 				Optional: true,
 				Description: "Gateway base URL, in place of the one derived from region (an AWS PrivateLink endpoint, " +
 					"for instance). Can also be set via the ANTHROPIC_AWS_BASE_URL environment variable; ANTHROPIC_BASE_URL " +
-					"is not read.",
+					"is not read. User information (user:password@) is sent as a Basic Authorization header and kept out of error messages.",
 			},
 		},
 	}
@@ -164,6 +164,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 				fmt.Sprintf("aws.%s depends on a value that is not known until apply. Provider configuration must be known at plan time.", a.name))
 		}
 	}
+	diags.Append(checkBaseURL(path.Root("aws").AtName("base_url"), "aws.base_url", m.BaseURL.ValueString(), awsBaseURLEnv)...)
 	if diags.HasError() {
 		return nil, diags
 	}
@@ -225,7 +226,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 	// the error on the attribute instead of in an SDK message.
 	region := firstNonEmpty(m.Region.ValueString(), os.Getenv("AWS_REGION"), os.Getenv("AWS_DEFAULT_REGION"))
 	signs := apiKey == ""
-	derivesURL := firstNonEmpty(m.BaseURL.ValueString(), os.Getenv("ANTHROPIC_AWS_BASE_URL")) == ""
+	derivesURL := firstNonEmpty(m.BaseURL.ValueString(), os.Getenv(awsBaseURLEnv)) == ""
 	if region == "" && (signs || derivesURL) {
 		diags.AddAttributeError(path.Root("aws").AtName("region"), "Missing AWS Region",
 			"Set aws.region or the AWS_REGION environment variable: it selects the gateway endpoint and the SigV4 "+
@@ -262,7 +263,10 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 // extra are request options for tests (an HTTP client); they go before the
 // SDK's SigV4 middleware, which signs whatever they change.
 func newAWSClient(ctx context.Context, cfg anthropicaws.ClientConfig, extra ...option.RequestOption) (*anthropic.Client, error) {
-	opts := append([]option.RequestOption{option.WithMiddleware(platform.NotFoundGuard(platform.AWS))}, extra...)
+	baseURL, credentials := platform.BaseURLWithoutUserInfo(cfg.BaseURL, awsBaseURLEnv, true)
+	cfg.BaseURL = baseURL
+	opts := append([]option.RequestOption{option.WithMiddleware(platform.NotFoundGuard(platform.AWS))}, credentials...)
+	opts = append(opts, extra...)
 	awsClient, err := anthropicaws.NewClient(ctx, cfg, opts...)
 	if err != nil {
 		return nil, err

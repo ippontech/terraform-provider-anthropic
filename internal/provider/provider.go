@@ -75,7 +75,7 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Sensitive: true,
 				Description: "The key for the Admin API's organization management endpoints (workspaces and their members, " +
 					"workspace rate limits, API keys, the organization, organization members and invites): " +
-					"a Claude Console Admin API key (`sk-ant-admin01-...`), a Claude Enterprise Admin API key with scopes (`sk-ant-api01-...`, members and invites only), " +
+					"a Claude Console Admin API key (`sk-ant-admin01-...`), a Claude Enterprise Admin API key with scopes (`sk-ant-api01-...`, members, invites, RBAC groups, spend limits, plugins and plugin marketplaces only), " +
 					"or a personal or service account key not scoped to a workspace. Sent in the `x-api-key` header. " +
 					"Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
 			},
@@ -83,7 +83,8 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Optional:  true,
 				Sensitive: true,
 				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
-					"such as the Workload Identity Federation admin endpoints. " +
+					"such as the Workload Identity Federation admin endpoints, or a workspace:manage_tunnels one for MCP " +
+					"tunnels (configure each in its own, aliased provider block). " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
 			"federation": federationSchema(),
@@ -194,15 +195,20 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	if federation != nil {
 		if !data.AuthToken.IsNull() {
 			resp.Diagnostics.AddAttributeError(path.Root("federation"), "Conflicting OAuth Credentials",
-				"federation and auth_token both supply the org:admin bearer token. Configure one.")
+				"federation and auth_token both supply the OAuth bearer token. Configure one.")
 			return
 		}
 		// The SDKs give ANTHROPIC_AUTH_TOKEN precedence over their own
 		// federation, so an operator used to them would expect the reverse.
+		// The warning must not tell them to unset it: Configure cannot see
+		// the other provider blocks, and one without federation or
+		// auth_token (the org:admin block next to a tunnels alias) still
+		// reads it.
 		if authToken != "" {
 			resp.Diagnostics.AddAttributeWarning(path.Root("federation"), "ANTHROPIC_AUTH_TOKEN Ignored",
-				"ANTHROPIC_AUTH_TOKEN is set, but the federation block supplies the org:admin bearer token, so the variable is not used. "+
-					"Unset it to silence this warning.")
+				"ANTHROPIC_AUTH_TOKEN is set, but this provider block takes its OAuth bearer token from its federation block, "+
+					"so it does not use the variable. A provider block with neither federation nor auth_token still does: "+
+					"keep the variable if another block relies on it, unset it otherwise.")
 			authToken = ""
 		}
 	}
@@ -236,11 +242,23 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) for standard resources, "+
 				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
-				"or auth_token (ANTHROPIC_AUTH_TOKEN), a federation block or a cli block for endpoints that require an org:admin OAuth bearer token. "+
+				"or auth_token (ANTHROPIC_AUTH_TOKEN), a federation block or a cli block for endpoints that require an OAuth bearer token: "+
+				"org:admin scope for the Workload Identity Federation endpoints, workspace:manage_tunnels scope for MCP tunnels. "+
 				"For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or "+
 				"google_cloud block instead.",
 		)
 		return
+	}
+
+	// The SDK clients would refuse an unparsable ANTHROPIC_BASE_URL with an
+	// error that quotes it, user information included. Only they read it: the
+	// admin client has a fixed base URL, so an admin-only configuration skips
+	// the check.
+	if apiKey != "" || authToken != "" || federation != nil || cliConfig != nil {
+		resp.Diagnostics.Append(checkBaseURL(path.Empty(), "", "", "ANTHROPIC_BASE_URL")...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	// Each client carries exactly the credential resolved above and nothing
@@ -254,25 +272,25 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		if workspaceID != "" {
 			opts = append(opts, option.WithHeader("anthropic-workspace-id", workspaceID))
 		}
-		pd.Client = newSDKClient(opts...)
+		pd.Client = newSDKClient(true, opts...)
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
 	}
 	if authToken != "" {
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithAuthToken(authToken))}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false, option.WithAuthToken(authToken))}
 	}
 	if federation != nil {
 		// The SDK caches the exchanged token and exchanges again shortly
 		// before it expires, calling the identity source each time.
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false,
 			option.WithFederationTokenProvider(federation.identity, federation.options),
 		)}
 	}
 	if cliConfig != nil {
 		// Quiet: the provider already rejects the static credentials the
 		// SDK's shadowing warning is about.
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(option.WithConfigQuiet(cliConfig))}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false, option.WithConfigQuiet(cliConfig))}
 	}
 
 	p.serve(resp, pd)
@@ -324,9 +342,20 @@ func resolveCredential(configValue types.String, envVar string) string {
 // still worth honouring is ANTHROPIC_BASE_URL, which the marker option also
 // skips. It is read with an explicit emptiness check: an exported-but-empty
 // value must not replace the SDK's production default with "".
-func newSDKClient(explicit ...option.RequestOption) *anthropic.Client {
-	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
-	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+//
+// Its user information (user:password@) is taken out of the URL, so that no
+// request URL, and so no SDK error, carries the password
+// (platform.BaseURLWithoutUserInfo). basicAuth says whether the credential
+// leaves the Authorization header free: then, with an API key, the user
+// information becomes the Basic header that net/http sent for it. A bearer
+// token sets that header itself, and the SDK's federation middleware stands
+// down when it finds one already set, so those clients get no Basic header,
+// as net/http sent them none.
+func newSDKClient(basicAuth bool, explicit ...option.RequestOption) *anthropic.Client {
+	baseURL, credentials := platform.BaseURLWithoutUserInfo("", "ANTHROPIC_BASE_URL", basicAuth)
+	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, credentials...)
+	opts = append(opts, explicit...)
+	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 

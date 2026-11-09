@@ -67,6 +67,121 @@ provider "anthropic" {
 
 The three IDs are those of the bootstrap rule, your organization and the rule's target service account; they can also come from `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID` and `ANTHROPIC_SERVICE_ACCOUNT_ID`, with `federation = {}` in the configuration. Other platforms only change the identity token source: `identity_token_file` for a token the platform writes to disk (a Kubernetes projected service account token), or a command that prints one (`az account get-access-token --resource <app-client-id> --query accessToken -o tsv` for an Entra application, `gcloud auth print-identity-token --audiences=...` on Google Cloud).
 
+### Identity tokens from AWS and Google Cloud workloads
+
+This section is about an organization on the Claude API (`api.anthropic.com`) whose workloads run on AWS or Google Cloud. It does not apply to an organization on Claude Platform on AWS or Claude Models on Google Cloud, whose gateways accept no Anthropic OAuth token: the provider's `aws` and `google_cloud` blocks authenticate there with the cloud's own credentials.
+
+**AWS**: the STS `GetWebIdentityToken` API returns an AWS-signed token asserting the caller's IAM role, wherever the workload has AWS credentials (Lambda, EC2, ECS, EKS, CodeBuild); see [Use WIF with AWS](https://platform.claude.com/docs/en/manage-claude/wif-providers/aws). The AWS account must enable outbound web identity federation once (`aws iam enable-outbound-web-identity-federation`), the role needs `sts:GetWebIdentityToken`, and the API is only served by regional STS endpoints, hence `--region`. The issuer URL is unique to the AWS account: `aws iam get-outbound-web-identity-federation-info` prints it.
+
+```hcl
+resource "anthropic_federation_issuer" "aws_sts" {
+  name       = "aws-sts"
+  issuer_url = "https://00000000-0000-0000-0000-000000000000.tokens.sts.global.api.aws"
+
+  jwks = {
+    type = "discovery"
+  }
+}
+
+resource "anthropic_service_account" "aws_worker" {
+  name = "aws-inference-worker"
+}
+
+resource "anthropic_federation_rule" "aws_worker" {
+  name      = "aws-inference-worker"
+  issuer_id = anthropic_federation_issuer.aws_sts.id
+
+  # sub is the calling role's ARN: match the exact role.
+  match = {
+    subject_prefix = "arn:aws:iam::123456789012:role/inference-worker"
+    audience       = "https://api.anthropic.com"
+  }
+
+  target = {
+    service_account_id = anthropic_service_account.aws_worker.id
+  }
+
+  oauth_scope            = "workspace:developer"
+  workspace_id           = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
+  token_lifetime_seconds = 900
+}
+```
+
+A Terraform run on AWS whose bootstrap rule (section 2) matches its role fetches its identity token the same way, through the AWS CLI:
+
+```hcl
+provider "anthropic" {
+  alias = "from_aws"
+
+  federation = {
+    organization_id    = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id = "fdrl_..."
+    service_account_id = "svac_..."
+    identity_token_command = [
+      "aws", "sts", "get-web-identity-token",
+      "--region", "us-east-1",
+      "--audience", "https://api.anthropic.com",
+      "--signing-algorithm", "RS256",
+      "--duration-seconds", "900",
+      "--query", "WebIdentityToken", "--output", "text",
+    ]
+  }
+}
+```
+
+**Google Cloud**: the metadata server of Cloud Run, Cloud Functions, Compute Engine, App Engine and GKE with Workload Identity returns a Google-signed identity token for the attached service account; see [Use WIF with Google Cloud](https://platform.claude.com/docs/en/manage-claude/wif-providers/gcp). One issuer, `https://accounts.google.com`, covers them all. Its `sub` is the service account's numeric unique ID, which has no stable prefix, so match it exactly with `claims` (with the `email` beside it), never with `subject_prefix`: a prefix with a trailing `*` would match service accounts of every Google Cloud project. `gcloud iam service-accounts describe <email> --format='value(uniqueId)'` prints the ID.
+
+```hcl
+resource "anthropic_federation_issuer" "google" {
+  name       = "gcp"
+  issuer_url = "https://accounts.google.com"
+
+  jwks = {
+    type = "discovery"
+  }
+}
+
+resource "anthropic_service_account" "gcp_worker" {
+  name = "gcp-inference-worker"
+}
+
+resource "anthropic_federation_rule" "gcp_worker" {
+  name      = "gcp-inference-worker"
+  issuer_id = anthropic_federation_issuer.google.id
+
+  match = {
+    audience = "https://api.anthropic.com"
+    claims = {
+      sub   = "104892101234567890123"
+      email = "inference-worker@my-project.iam.gserviceaccount.com"
+    }
+  }
+
+  target = {
+    service_account_id = anthropic_service_account.gcp_worker.id
+  }
+
+  oauth_scope            = "workspace:developer"
+  workspace_id           = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
+  token_lifetime_seconds = 900
+}
+
+provider "anthropic" {
+  alias = "from_google_cloud"
+
+  federation = {
+    organization_id    = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id = "fdrl_..."
+    service_account_id = "svac_..."
+    # format=full adds the email claim the rule matches.
+    identity_token_command = [
+      "sh", "-c",
+      "curl -sSf --max-time 20 -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https://api.anthropic.com&format=full'",
+    ]
+  }
+}
+```
+
 ## 2. The once-per-organization bootstrap
 
 An OAuth caller can only create or modify federation rules whose `oauth_scope` is `workspace:developer` or `workspace:inference`. The scope that lets a workload manage WIF itself, `org:admin`, can only be granted from the Claude Console: giving automation organization-admin access is a deliberate human action, so the API refuses to bootstrap it.
