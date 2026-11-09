@@ -157,6 +157,14 @@ func adminLogin(org, token string) testLogin {
 	return testLogin{org: org, workspace: "wrkspc_default", scope: "org:admin", token: token, expiresAt: time.Now().Add(time.Hour)}
 }
 
+// login is adminLogin for a profile that targets this server, as the
+// provider must refuse a profile whose host differs from ANTHROPIC_BASE_URL.
+func (cs *cliServer) login(org, token string) testLogin {
+	l := adminLogin(org, token)
+	l.baseURL = cs.URL
+	return l
+}
+
 // cliError runs Configure with the cli block and returns its one error detail.
 func cliError(t *testing.T, attrs map[string]string) string {
 	t.Helper()
@@ -188,7 +196,7 @@ func TestConfigureCLIUsesNamedProfile(t *testing.T) {
 	cs := newCLIServer(t)
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
-	writeCLIProfile(t, cliConfigDir(t), "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
+	writeCLIProfile(t, cliConfigDir(t), "admin", cs.login(testOrg, "sk-ant-oat01-admin"))
 
 	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
 		"cli": cliValue(t, map[string]string{"profile": "admin"}),
@@ -214,8 +222,8 @@ func TestConfigureCLIProfileFromEnvironment(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
 	dir := cliConfigDir(t)
-	writeCLIProfile(t, dir, "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
-	writeCLIProfile(t, dir, "admin-2", adminLogin(testOrg, "sk-ant-oat01-admin-2"))
+	writeCLIProfile(t, dir, "admin", cs.login(testOrg, "sk-ant-oat01-admin"))
+	writeCLIProfile(t, dir, "admin-2", cs.login(testOrg, "sk-ant-oat01-admin-2"))
 	t.Setenv("ANTHROPIC_PROFILE", "admin-2")
 
 	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, nil)}))
@@ -235,7 +243,7 @@ func TestConfigureCLIRefreshesExpiredLogin(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
 	dir := cliConfigDir(t)
-	login := adminLogin(testOrg, "sk-ant-oat01-stale")
+	login := cs.login(testOrg, "sk-ant-oat01-stale")
 	login.clientID, login.refreshToken, login.expiresAt = "client", "rt-0", time.Now().Add(-time.Minute)
 	writeCLIProfile(t, dir, "admin", login)
 
@@ -268,11 +276,11 @@ func TestConfigureCLIFindsProfileByOrganization(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
 	dir := cliConfigDir(t)
-	everyday := adminLogin(testOrg, "sk-ant-oat01-everyday")
+	everyday := cs.login(testOrg, "sk-ant-oat01-everyday")
 	everyday.scope = "user:inference"
 	writeCLIProfile(t, dir, "default", everyday)
-	writeCLIProfile(t, dir, "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
-	writeCLIProfile(t, dir, "other-org", adminLogin(otherTestOrg, "sk-ant-oat01-other"))
+	writeCLIProfile(t, dir, "admin", cs.login(testOrg, "sk-ant-oat01-admin"))
+	writeCLIProfile(t, dir, "other-org", cs.login(otherTestOrg, "sk-ant-oat01-other"))
 	t.Setenv("ANTHROPIC_ORGANIZATION_ID", testOrg)
 
 	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, nil)}))
@@ -335,6 +343,18 @@ func TestConfigureCLIRejectsProfileForAnotherOrganization(t *testing.T) {
 	writeCLIProfile(t, cliConfigDir(t), "admin", adminLogin(otherTestOrg, "sk-ant-oat01-other"))
 
 	wantContains(t, cliError(t, map[string]string{"profile": "admin", "organization_id": testOrg}), otherTestOrg)
+}
+
+// TestConfigureCLIRejectsProductionLoginForAnotherHost: a profile with no
+// base_url targets production, so an ANTHROPIC_BASE_URL exported for a
+// gateway or a staging host must not receive that login and its refresh
+// token.
+func TestConfigureCLIRejectsProductionLoginForAnotherHost(t *testing.T) {
+	clearCredentialEnv(t)
+	writeCLIProfile(t, cliConfigDir(t), "admin", adminLogin(testOrg, "sk-ant-oat01-admin"))
+	t.Setenv("ANTHROPIC_BASE_URL", "https://gateway.example.invalid")
+
+	wantContains(t, cliError(t, map[string]string{"profile": "admin"}), `"admin" targets `+defaultBaseURL, "https://gateway.example.invalid")
 }
 
 // TestConfigureCLIRejectsProfileBaseURL: a profile pointed at another API host
@@ -453,10 +473,10 @@ func TestConfigureCLISkipsUnusableCandidates(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
 	dir := cliConfigDir(t)
-	stale := adminLogin(testOrg, "sk-ant-oat01-stale")
+	stale := cs.login(testOrg, "sk-ant-oat01-stale")
 	stale.expiresAt = time.Now().Add(-time.Hour)
 	writeCLIProfile(t, dir, "admin", stale)
-	writeCLIProfile(t, dir, "admin-2", adminLogin(testOrg, "sk-ant-oat01-admin-2"))
+	writeCLIProfile(t, dir, "admin-2", cs.login(testOrg, "sk-ant-oat01-admin-2"))
 
 	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
 		"cli": cliValue(t, map[string]string{"organization_id": testOrg}),

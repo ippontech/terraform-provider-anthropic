@@ -255,14 +255,21 @@ func checkCLIProfile(p *cliProfile) error {
 
 	// Without its user information, as newSDKClient sends it (the bearer
 	// client drops it): a password in ANTHROPIC_BASE_URL must not reach the
-	// diagnostic below, and a profile never carries one.
+	// diagnostic below, and a profile never carries one. A profile with no
+	// base_url targets production and is compared too: otherwise an
+	// ANTHROPIC_BASE_URL exported for a gateway or a staging host would
+	// receive the production login, refresh token included.
 	providerBaseURL, _ := platform.BaseURLWithoutUserInfo("", "ANTHROPIC_BASE_URL", false)
 	if providerBaseURL == "" {
 		providerBaseURL = defaultBaseURL
 	}
-	if b := p.config.BaseURL; b != "" && strings.TrimRight(b, "/") != strings.TrimRight(providerBaseURL, "/") {
+	profileBaseURL := p.config.BaseURL
+	if profileBaseURL == "" {
+		profileBaseURL = defaultBaseURL
+	}
+	if strings.TrimRight(profileBaseURL, "/") != strings.TrimRight(providerBaseURL, "/") {
 		return fmt.Errorf("profile %q targets %s but the provider targets %s; set ANTHROPIC_BASE_URL to match or use another profile",
-			p.name, b, providerBaseURL)
+			p.name, profileBaseURL, providerBaseURL)
 	}
 
 	if p.creds == nil || p.creds.AccessToken == "" {
