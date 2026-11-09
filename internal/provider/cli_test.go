@@ -541,7 +541,34 @@ func TestConfigureCLIRejectsProfileNameOutsideTheDirectory(t *testing.T) {
 	clearCredentialEnv(t)
 	cliConfigDir(t)
 
-	wantContains(t, cliError(t, map[string]string{"profile": "../admin"}), "may contain only")
+	for _, name := range []string{"../admin", `..\admin`, "..", "."} {
+		wantContains(t, cliError(t, map[string]string{"profile": name}), "may contain only")
+	}
+}
+
+// TestConfigureCLIBaseURLMismatchHidesPassword: the base-URL mismatch
+// diagnostic names the provider's URL, so the user information of
+// ANTHROPIC_BASE_URL must be out of it, as it is out of every other error
+// (#553). The comparison ignores it too: the bearer client never sends it.
+func TestConfigureCLIBaseURLMismatchHidesPassword(t *testing.T) {
+	clearCredentialEnv(t)
+	login := adminLogin(testOrg, "sk-ant-oat01-admin")
+	login.baseURL = "https://staging.example.invalid"
+	writeCLIProfile(t, cliConfigDir(t), "admin", login)
+	t.Setenv("ANTHROPIC_BASE_URL", "https://user:hunter2@gateway.example.invalid")
+
+	detail := cliError(t, map[string]string{"profile": "admin"})
+	wantContains(t, detail, "staging.example.invalid", "https://gateway.example.invalid")
+	if strings.Contains(detail, "hunter2") || strings.Contains(detail, "user:") {
+		t.Errorf("diagnostic leaks the base URL's user information: %q", detail)
+	}
+
+	login.baseURL = "https://gateway.example.invalid/"
+	writeCLIProfile(t, os.Getenv("ANTHROPIC_CONFIG_DIR"), "admin", login)
+	resp := configureProvider(t, map[string]tftypes.Value{"cli": cliValue(t, map[string]string{"profile": "admin"})})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("a profile for the same host without user information must be accepted: %v", resp.Diagnostics)
+	}
 }
 
 // TestConfigureCLINamedProfileIgnoresOrganizationEnvironment: an
@@ -574,7 +601,7 @@ func TestConfigureCLIAcceptsProductionBaseURL(t *testing.T) {
 
 	var sent string
 	errStop := fmt.Errorf("stop")
-	client := newSDKClient(option.WithAPIKey("unused"), option.WithMaxRetries(0),
+	client := newSDKClient(true, option.WithAPIKey("unused"), option.WithMaxRetries(0),
 		option.WithMiddleware(func(r *http.Request, _ option.MiddlewareNext) (*http.Response, error) {
 			sent = r.URL.Scheme + "://" + r.URL.Host
 			return nil, errStop
