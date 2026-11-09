@@ -43,7 +43,7 @@ func awsSchema() schema.SingleNestedAttribute {
 			"Anthropic organization tied to an AWS account, through the aws-external-anthropic gateway of one AWS " +
 			"region. Setting the block is what selects the platform; the AWS and ANTHROPIC_AWS_* environment " +
 			"variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token, federation, " +
-			"api_federation and google_cloud, and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and " +
+			"api_federation, cli and google_cloud, and the ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_API_KEY, ANTHROPIC_AUTH_TOKEN and " +
 			"ANTHROPIC_BASE_URL variables are ignored: no first-party credential is valid there. workspace_id is " +
 			"required. Requests are signed with AWS SigV4 (service aws-external-anthropic), with credentials from " +
 			"access_key/secret_key, profile or the AWS default chain, unless api_key is set. A type the gateway does " +
@@ -119,6 +119,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 		{"auth_token", data.AuthToken},
 		{"federation", data.Federation},
 		{"api_federation", data.APIFederation},
+		{"cli", data.CLI},
 	} {
 		if !other.value.IsNull() {
 			diags.AddAttributeError(path.Root("aws"), "Conflicting Platform Configuration",

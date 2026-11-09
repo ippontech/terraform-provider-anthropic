@@ -136,7 +136,7 @@ provider "anthropic" {
 }
 ```
 
-~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` block below when it needs to.
+~> **Warning**: These tokens are short-lived. A long `terraform apply` can outlive the token and start failing with `401`. Mint a fresh token immediately before the run; the provider cannot refresh a token it was handed. Use the `federation` or `cli` block below when it needs to.
 
 The `auth_token` is optional — you only need it for federation resources and MCP tunnels.
 
@@ -205,7 +205,36 @@ provider "anthropic" {
 
 Everything said of `federation` applies: the identity token source is re-read or re-run per exchange, the block alone enables it (the environment variables never do), and every attribute must be known at plan time.
 
-Profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
+### `ant` CLI login (`cli`)
+
+~> **Experimental.** This block depends on the `ant` CLI's profile and credentials layout, read through the Anthropic Go SDK's `config` package. If Anthropic changes `ant` or that package, the block may have to change or be removed in a minor release rather than wait for the next major version.
+
+On an operator's workstation, the provider can use the `org:admin` login that the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) stores, and refresh it with the profile's refresh token, so an apply never outlives the login:
+
+```bash
+ant auth login --profile admin --scope "org:admin"
+```
+
+```hcl
+provider "anthropic" {
+  cli = {
+    profile = "admin"
+    # Or, with no profile named, find the one org:admin login for:
+    # organization_id = "00000000-0000-0000-0000-000000000000"
+  }
+}
+```
+
+The `cli` block is a fallback. It is used only when neither `auth_token` (or `ANTHROPIC_AUTH_TOKEN`) nor `federation` supplies the token, so one configuration can carry both: CI provides its token and never reads a profile, and an operator without one uses their own login. An `auth_token` unknown at plan time counts as supplied. An exported `ANTHROPIC_AUTH_TOKEN` wins too, so unset it when switching to `cli`; the provider logs that the block was skipped.
+
+- The profile is `profile`, else `ANTHROPIC_PROFILE`. With neither set, the provider looks among the usable `user_oauth` profiles with the `org:admin` scope for the one whose login is for `organization_id` (else `ANTHROPIC_ORGANIZATION_ID`). Finding none or several is an error: name the profile when several `org:admin` logins of the same organization exist. The workspace picked at login, if any, plays no part: an `org:admin` token is organization-wide whatever the profile records.
+- A profile without the `org:admin` scope is an error when it comes from `ANTHROPIC_PROFILE`, which is usually an everyday login exported for other tools, and only a warning when `profile` names it.
+- Each attribute must be known at plan time; an unknown one is an error rather than a fallback to the environment.
+- The profile must be logged in, and an expired login must be refreshable; otherwise the error names the `ant auth login` command to run. Its credentials file must be a regular file that only its owner can read (`chmod 600`), as the SDK refuses any other on every request.
+- Use one `cli` block per profile, and avoid running `ant` against that profile during an apply: each process refreshes the login on its own, and two refreshes of the same login within its last 30 seconds may invalidate each other.
+- A profile whose host differs from the provider's is rejected: the profile's `base_url`, else production, must match `ANTHROPIC_BASE_URL`, else production. So an `ANTHROPIC_BASE_URL` exported for another tool, such as an LLM gateway, never receives a production login and its refresh token. The profile's `workspace_id` is never sent: an `org:admin` token is organization-wide.
+
+Without a `cli` block, profiles under `~/.config/anthropic` are ignored: each client is built from the credential resolved above and nothing else, so a profile left active by `ant auth login` can never redirect a request to another base URL or scope it to another workspace behind your back.
 
 ~> **Warning**: Never hardcode API keys in your Terraform configuration files.
 Use environment variables or a secrets manager instead.
