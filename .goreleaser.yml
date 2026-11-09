@@ -57,7 +57,16 @@ release:
   extra_files:
     - glob: 'terraform-registry-manifest.json'
       name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
-  # If you want to manually examine the release before its live, uncomment this line:
-  # draft: true
+  # The GitHub release exists before this build runs: semantic-release creates it as a draft, with
+  # its notes, right after it pushes the tag (draftRelease in .releaserc). GoReleaser attaches the
+  # archives, the manifest, the checksums and the signature to that draft, keeps its name and notes
+  # (mode keep-existing: the default, replace, would overwrite them with the disabled changelog
+  # below), then publishes it (draft: false): the Terraform Registry reads a release when it is
+  # published, and finds the assets there, where a release published with no asset yet depended
+  # on its webhook retrying. A signing run that fails leaves the draft, which the registries never
+  # see, until the run is retried (RELEASE.md, "Review the modules a release ships").
+  mode: keep-existing
+  draft: false
+# The notes are semantic-release's (.releaserc); GoReleaser writes none and keeps them.
 changelog:
   disable: true

@@ -17,12 +17,6 @@ on:
 
 permissions: {}
 
-# Same group as testacc.yml, so a release waits for a push run still testing (and the reverse):
-# two live test runs at once would collide in the test workspace.
-concurrency:
-  group: acceptance-tests-main
-  cancel-in-progress: false
-
 jobs:
   # Goes on only when a commit since the last tag would cut a version; otherwise the two-hour
   # live test run would create objects in the test workspace every morning for a release that
@@ -90,6 +84,14 @@ jobs:
   acceptance-tests:
     needs: pending
     if: needs.pending.outputs.release == 'true'
+    # Same group as the push runs of testacc.yml, so a release waits for a push run still testing
+    # (and the reverse): two live test runs at once would collide in the test workspace. On this
+    # job, not the workflow: GitHub keeps one pending run per group, and a run that tests nothing
+    # (nothing to release, or the retry after a morning release) would otherwise cancel a push run
+    # waiting for its turn, whose merge would then get no live test.
+    concurrency:
+      group: acceptance-tests-main
+      cancel-in-progress: false
     uses: ./.github/workflows/testacc.yml
     permissions:
       contents: read
@@ -153,7 +155,9 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
 
-      # semantic-release authenticates its own git push with GITHUB_TOKEN (x-access-token URL).
+      # semantic-release authenticates its own git push with GITHUB_TOKEN (x-access-token URL). The
+      # GitHub release it creates is a draft (.releaserc): goreleaser-release.yml publishes it once
+      # the signed archives are attached, so the Registry webhook never reads an empty release.
       - name: Run semantic-release
         run: ./.github/semantic-release/node_modules/.bin/semantic-release
         env:
