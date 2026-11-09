@@ -510,8 +510,9 @@ func TestConfigureAPIFederationWorkspaceConflictIsNotAlone(t *testing.T) {
 // at plan time like the provider-level one, so a trailing newline fails the
 // plan rather than every exchange, and is never read as a workspace different
 // from the provider-level ID it otherwise matches. The literal `default`,
-// which the exchange accepts for the organization's default workspace, is
-// valid, and so is the empty string, which has always read as unset.
+// deprecated but still accepted by the exchange for the organization's
+// default workspace, stays valid, and so does the empty string, which has
+// always read as unset.
 func TestFederationWorkspaceIDValidator(t *testing.T) {
 	ctx := context.Background()
 	for _, block := range []string{"federation", "api_federation"} {

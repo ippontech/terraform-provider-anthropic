@@ -80,13 +80,13 @@ func apiFederationSchema() schema.SingleNestedAttribute {
 			"from a federation rule whose OAuth scope is `workspace:developer`. The exchange " +
 			"is the same as for `federation`, with the same attributes and environment variables, and the minted token " +
 			"backs every standard resource and data source (agents, skills, environments, vaults, memory stores, files, " +
-			"messages...), so a workload manages its workspace with no stored API key. A `workspace:inference` rule " +
-			"is meant for inference only: use it for a configuration limited to `anthropic_message` and " +
-			"`anthropic_count_tokens`, since whether such a token can manage the other resources is not verified. " +
-			"Conflicts with `api_key`; an " +
+			"messages...), so a workload manages its workspace with no stored API key: the Anthropic docs give that " +
+			"scope the access of a workspace API key. A `workspace:inference` rule covers Messages and Models only, " +
+			"so it fits a configuration limited to `anthropic_message` and `anthropic_count_tokens`; anything else " +
+			"answers 403. Conflicts with `api_key`; an " +
 			"exported ANTHROPIC_API_KEY is ignored, with a warning. The token is scoped to one workspace at exchange time: " +
 			"the provider-level `workspace_id` selects it when `api_federation.workspace_id` is unset or empty, and the two must " +
-			"agree, as written, when both are set (`default` is not matched against an ID); no `anthropic-workspace-id` header is sent.",
+			"agree, as written, when both are set; no `anthropic-workspace-id` header is sent.",
 		Attributes: federationAttributes("Workspace (`wrkspc_...`) to scope the token to at exchange time. Required only when the rule is enabled for " +
 			"more than one workspace. Falls back to the provider-level `workspace_id`, then to the ANTHROPIC_WORKSPACE_ID " +
 			"environment variable, which the SDKs' own federation reads the same way."),
@@ -112,7 +112,7 @@ func federationAttributes(workspaceDescription string) map[string]schema.Attribu
 		},
 		"workspace_id": schema.StringAttribute{
 			Optional:    true,
-			Validators:  []validator.String{stringvalidator.RegexMatches(federationWorkspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits), `default`, or empty")},
+			Validators:  []validator.String{stringvalidator.RegexMatches(federationWorkspaceIDPattern, "must be a workspace ID (`wrkspc_` followed by letters and digits) or empty")},
 			Description: workspaceDescription,
 		},
 		"identity_token": schema.StringAttribute{
@@ -142,9 +142,11 @@ func federationAttributes(workspaceDescription string) map[string]schema.Attribu
 }
 
 // federationWorkspaceIDPattern is the shape of the workspace an exchange is
-// scoped to: a workspace ID, the literal `default` the exchange accepts for
-// the organization's default workspace, or empty, which has always meant
-// unset here (a variable with an empty default). Checked at plan time, as
+// scoped to: a workspace ID, or empty, which has always meant unset here (a
+// variable with an empty default). The literal `default`, which the exchange
+// still accepts for the organization's default workspace, stays tolerated
+// because the WIF reference marks it deprecated: it is not advertised, and
+// the validator message does not name it. Checked at plan time, as
 // for the provider-level workspace_id, so a stray newline fails the plan
 // rather than every exchange, and never reads as a workspace different from
 // the provider-level one it would otherwise match.
@@ -239,16 +241,16 @@ func resolveFederation(ctx context.Context, name string, obj types.Object, works
 	// with an empty default conflicts with nothing and falls through to the
 	// provider-level workspace_id, then to the environment, like a null one.
 	// The conflict is reported with the other diagnostics, not instead of
-	// them. The two values are compared as written: the literal `default`
-	// names the organization's default workspace, which the provider cannot
-	// match against an ID at plan time, so `default` beside an ID is a
-	// conflict too, and the message says to write the ID in both.
+	// them. The two values are compared as written: the deprecated literal
+	// `default` names the organization's default workspace, which the provider
+	// cannot match against an ID at plan time, so `default` beside an ID is a
+	// conflict too, and the fix is the ID in both.
 	blockWorkspaceID := m.WorkspaceID.ValueString()
 	switch {
 	case blockWorkspaceID != "" && workspaceID != "" && blockWorkspaceID != workspaceID:
 		diags.AddAttributeError(root.AtName("workspace_id"), "Conflicting Workspace Configuration",
 			fmt.Sprintf("%s.workspace_id (%s) and workspace_id (%s) both select the workspace of the standard client. "+
-				"Set one, or the same workspace in both; `default` is compared as written, not resolved to an ID.",
+				"Set one, or the same workspace ID in both.",
 				name, blockWorkspaceID, workspaceID))
 	case blockWorkspaceID != "":
 		workspaceID = blockWorkspaceID
