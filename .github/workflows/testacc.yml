@@ -54,6 +54,13 @@ jobs:
     environment: acctest
     permissions:
       contents: read
+      # The api_federation tests exchange a GitHub OIDC token for a workspace:developer token
+      # (acctest.PreCheckAPIFederation). The rules in Ippon's organization accept the subject
+      # repo:ippontech/terraform-provider-anthropic:environment:acctest only, and the token is minted
+      # per exchange by the test's identity_token_command, never written to disk. The subject carries
+      # no ref: the acctest environment's deployment policy (branch main only) is what keeps every
+      # other branch out.
+      id-token: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -68,6 +75,7 @@ jobs:
             release-assets.githubusercontent.com:443
             releases.hashicorp.com:443
             storage.googleapis.com:443
+            *.actions.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
