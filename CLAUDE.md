@@ -125,7 +125,7 @@ Before committing a feature or a fix, run `make`, then `pre-commit run -a`.
 
 ### Credentials and clients
 
-Three optional credentials, plus three more ways to obtain two of them (one for the first, two for the third); at least one must be configured:
+Optional credentials, each with its own provider argument and environment variable; at least one must be configured:
 
 | Credential | Provider arg | Env var | Client field | Used by |
 |---|---|---|---|---|
