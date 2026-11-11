@@ -53,6 +53,7 @@ Each directory below has a `CLAUDE.md` with the load-bearing details of its reso
 - `tunnels/`: `tunnel`, `tunnel_certificate`; `tunnel(s)`, `tunnel_certificates`. OAuth bearer with the `workspace:manage_tunnels` scope (MCP tunnels, research preview, beta `mcp-tunnels-2026-06-22`).
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
 - `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
+- `webhooks/`: `webhook` (experimental: workspace Managed Agents webhook endpoints, routes not in the API reference); none. Standard key (beta `managed-agents-2026-04-01`).
 - `workspaces/`: `workspace`, `workspace_member`, `workspace_rate_limit`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key.
 
 ## Adding a resource or data source

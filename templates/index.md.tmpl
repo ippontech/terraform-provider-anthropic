@@ -306,6 +306,7 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 | `anthropic_tunnels` | data source | Unavailable | Unavailable |
 | `anthropic_user_profile` | resource, data source | Supported | Unverified |
 | `anthropic_user_profiles` | data source | Supported | Unverified |
+| `anthropic_webhook` | resource | Supported | Unverified |
 | `anthropic_workspace` | resource, data source | Supported | Unavailable |
 | `anthropic_workspace_member` | resource, data source | Unavailable | Unavailable |
 | `anthropic_workspace_members` | data source | Unavailable | Unavailable |
@@ -317,7 +318,7 @@ Every resource and data source works on the Claude API. On a cloud platform, a t
 
 On Claude Platform on AWS, the gateway serves only the workspace, external key and telemetry destination routes of the Admin API: AWS IAM manages organization and workspace membership, and API keys are generated in the AWS Console. It accepts no OAuth token, so neither Workload Identity Federation nor MCP tunnels apply. Scheduled deployments are served, though the gateway's route table does not list them; their agent needs an `aws_role` execution identity (see `anthropic_deployment`).
 
-On Claude Models on Google Cloud, the gateway serves the external key routes of the Admin API, but no workspace, member, invite, API key, rate limit, organization webhook, telemetry destination or organization route: workspaces are managed in the Claude Console. Google Cloud IAM controls access, and there are no API keys or Anthropic OAuth tokens, so neither Workload Identity Federation nor MCP tunnels apply. User profiles are absent from the platform's documentation, hence unverified.
+On Claude Models on Google Cloud, the gateway serves the external key routes of the Admin API, but no workspace, member, invite, API key, rate limit, organization webhook, telemetry destination or organization route: workspaces are managed in the Claude Console. Google Cloud IAM controls access, and there are no API keys or Anthropic OAuth tokens, so neither Workload Identity Federation nor MCP tunnels apply. User profiles and workspace webhooks (`anthropic_webhook`) are absent from the platform's documentation, hence unverified.
 
 On a platform, a `404` counts as "deleted outside Terraform" only when its body is the Claude API's own `not_found_error`. Any other 404, such as a gateway refusing a route it does not serve, fails the operation and keeps the object in state: on Claude Platform on AWS such a 404 has an empty body. A `403` from AWS IAM has the Claude API's error shape (`permission_error`) and names the action that was denied.
 
