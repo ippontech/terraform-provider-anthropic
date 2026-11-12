@@ -154,7 +154,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			return
 		}
 		ignoredFirstPartyEnvironment(ctx, platform.GoogleCloud)
-		addPlatformBetaWarning(&resp.Diagnostics, platform.GoogleCloud)
+		addPlatformExperimentalWarning(&resp.Diagnostics, platform.GoogleCloud)
 		p.workspaceless.Store(!settings.workspace)
 		p.serve(resp, providerdata.ForPlatform(platform.GoogleCloud, client))
 		return
@@ -171,7 +171,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 			return
 		}
 		ignoredFirstPartyEnvironment(ctx, platform.AWS)
-		addPlatformBetaWarning(&resp.Diagnostics, platform.AWS)
+		addPlatformExperimentalWarning(&resp.Diagnostics, platform.AWS)
 		p.serve(resp, providerdata.ForPlatform(platform.AWS, client))
 		return
 	}

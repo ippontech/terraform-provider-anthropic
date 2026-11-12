@@ -65,7 +65,7 @@ The API merges tags on update (verified against the live API on 2026-10-08): key
 
 ## Claude Platform on AWS
 
-With the provider's `aws` block, the workspace is managed through the Claude Platform on AWS gateway (in beta, see the provider documentation):
+With the provider's `aws` block, the workspace is managed through the Claude Platform on AWS gateway (experimental, see the provider documentation):
 
 - The workspace is bound to the AWS region of the provider configuration that creates it, and is reachable through that region's endpoint only.
 - `external_key_id` is the ARN of an AWS KMS key rather than an `ekey_...` ID: a single-Region key in the same AWS account and region, whose key policy grants the `aws-external-anthropic.amazonaws.com` service principal access. There is no separate validation: the gateway encrypts and decrypts with the key when it is attached, so a key policy problem fails that create or update. When the key policy is restricted to the workspace's `compartment_id`, the workspace must exist before the policy can name it, so attach the key in a second step ([CMEK on Claude Platform on AWS](https://platform.claude.com/docs/en/manage-claude/cmek-claude-platform-on-aws)).
