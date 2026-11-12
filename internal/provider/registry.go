@@ -102,7 +102,7 @@ var (
 	gcUserProfiles = platform.Unverified("The platform pages and IAM permissions do not mention user profiles. The " +
 		"SDK v1.84 sends their requests to the workspace endpoint, while SDK v2.3.0 sends them to the organization " +
 		"endpoint.")
-	gcWebhooks = platform.Unverified("The Managed Agents webhooks page lists the Claude API and Claude Platform " +
+	gcWebhooks = platform.Unavailable("The Managed Agents webhooks page lists the Claude API and Claude Platform " +
 		"on AWS only, and the IAM permissions page has no webhook permission.")
 	gcTelemetry = platform.Unavailable("Telemetry destinations are not among its gateway's routes: the OpenTelemetry " +
 		"documentation offers API tracing on the Claude API and Claude Platform on AWS only.")

@@ -12,6 +12,7 @@ package webhooks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sync"
@@ -42,57 +43,18 @@ const webhooksPath = "v1/webhooks"
 // server that never answers would otherwise stall every other webhook write.
 const webhookAttemptTimeout = 60 * time.Second
 
+// webhookWriteTimeout bounds a whole write once it holds webhookWrites: its
+// attempts, the SDK's retries and their backoff. Without it, an update,
+// regenerate or delete meeting a run of 5xx would hold the lock for up to
+// three attempt timeouts plus backoff.
+const webhookWriteTimeout = 90 * time.Second
+
 // webhookStateEnabled is the `state` of an endpoint that receives deliveries;
 // the other value is `disabled`.
 const (
 	webhookStateEnabled  = "enabled"
 	webhookStateDisabled = "disabled"
 )
-
-// webhookEventTypes lists the event types a webhook endpoint accepts, as the
-// Managed Agents webhooks page documents them (re-read on 2026-11-12). The
-// enabled_events validator and its documentation are built from it, so a new
-// event type documented by the API is added here and nowhere else.
-var webhookEventTypes = []string{
-	"session.status_run_started",
-	"session.status_idled",
-	"session.budget_reached",
-	"session.status_rescheduled",
-	"session.status_terminated",
-	"session.thread_created",
-	"session.thread_idled",
-	"session.thread_terminated",
-	"session.outcome_evaluation_ended",
-	"session.updated",
-	"session.deleted",
-	"vault.created",
-	"vault.archived",
-	"vault.deleted",
-	"vault_credential.created",
-	"vault_credential.archived",
-	"vault_credential.deleted",
-	"vault_credential.refresh_failed",
-	"agent.created",
-	"agent.updated",
-	"agent.archived",
-	"agent.deleted",
-	"deployment.created",
-	"deployment.updated",
-	"deployment.paused",
-	"deployment.unpaused",
-	"deployment.archived",
-	"deployment.deleted",
-	"deployment_run.started",
-	"deployment_run.succeeded",
-	"deployment_run.failed",
-	"environment.created",
-	"environment.updated",
-	"environment.archived",
-	"environment.deleted",
-	"memory_store.created",
-	"memory_store.archived",
-	"memory_store.deleted",
-}
 
 // webhookPath returns the item endpoint, with the ID path-escaped.
 func webhookPath(id string) string {
@@ -109,11 +71,15 @@ var webhookWrites sync.Mutex
 // doWebhookRequest sends one request with the Managed Agents beta header and
 // a per-attempt timeout, and returns the raw response body. opts come last,
 // so a caller can override the client's retries. Any request other than a
-// GET waits for the other writes of this provider to finish.
+// GET waits for the other writes of this provider to finish, then has
+// webhookWriteTimeout for all its attempts.
 func doWebhookRequest(ctx context.Context, client *anthropic.Client, method, path string, body any, opts ...option.RequestOption) ([]byte, error) {
 	if method != http.MethodGet {
 		webhookWrites.Lock()
 		defer webhookWrites.Unlock()
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, webhookWriteTimeout)
+		defer cancel()
 	}
 	var out []byte
 	opts = append([]option.RequestOption{
@@ -126,8 +92,32 @@ func doWebhookRequest(ctx context.Context, client *anthropic.Client, method, pat
 
 // isNotFound reports whether err is an API 404.
 func isNotFound(err error) bool {
+	return apiStatus(err) == http.StatusNotFound
+}
+
+// apiStatus returns the HTTP status of an API error, or 0.
+func apiStatus(err error) int {
 	var apierr *anthropic.Error
-	return errors.As(err, &apierr) && apierr.StatusCode == http.StatusNotFound
+	if errors.As(err, &apierr) {
+		return apierr.StatusCode
+	}
+	return 0
+}
+
+// unconfirmedDeletion explains why a 404 on an endpoint could not be taken
+// as a deletion: lerr is the error of the list that webhooksUnavailable
+// sends to tell a deleted endpoint from an API that no longer answers.
+func unconfirmedDeletion(lerr error) string {
+	switch apiStatus(lerr) {
+	case http.StatusNotFound:
+		return fmt.Sprintf("the list of endpoints answered 404 too (%s). The %q beta version may be retired, "+
+			"or the gateway may no longer serve the routes", lerr, webhooksBeta)
+	case http.StatusForbidden:
+		return fmt.Sprintf("listing the endpoints, which tells a deleted endpoint from an unavailable API, was refused (%s). "+
+			"Grant the principal the permission to list webhooks (`aws-external-anthropic:ListWebhooks` on Claude Platform on AWS)", lerr)
+	default:
+		return fmt.Sprintf("listing the endpoints, which tells a deleted endpoint from an unavailable API, failed (%s)", lerr)
+	}
 }
 
 // webhooksUnavailable reports, after a 404 on an endpoint, whether the whole

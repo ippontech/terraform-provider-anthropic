@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // No live acceptance test for anthropic_webhook yet: the resource was
-// verified by hand on Claude Platform on AWS only (see CLAUDE.md). Coverage
-// here is httptest-based unit tests only.
+// verified by hand on Claude Platform on AWS and on the Claude API (see
+// CLAUDE.md). Coverage here is httptest-based unit tests only.
 package webhooks
 
 import (
@@ -731,6 +731,78 @@ func TestWebhookResource_CreateWithoutSecretFails(t *testing.T) {
 	}
 }
 
+// The ID and the secret are decoded before the rest of the create response:
+// a shape change elsewhere saves the endpoint (tainted) instead of
+// orphaning it, and a response without an ID is an error.
+func TestWebhookResource_CreateUnexpectedResponse(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		body      string
+		wantSaved bool
+		wantInErr string
+	}{
+		"rest of the shape changed": {
+			body:      `{"id":"` + testWebhookID + `","signing_secret":"whsec_created","enabled_events":[{"type":"session.status_idled"}]}`,
+			wantSaved: true,
+			wantInErr: testWebhookID,
+		},
+		"empty id":    {body: `{"id":"","signing_secret":"whsec_created"}`, wantInErr: "carries no id"},
+		"not json":    {body: `<html>ok</html>`, wantInErr: "could not be parsed"},
+		"id not text": {body: `{"id":42,"signing_secret":"whsec_created"}`, wantInErr: "could not be parsed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, client := newFakeWebhookAPI(t, func(recordedRequest) (int, string) { return http.StatusOK, tc.body })
+			r := &WebhookResource{client: client}
+
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: schematest.ResourceSchema(t, r)}}
+			r.Create(context.Background(), resource.CreateRequest{Plan: webhookPlan(t, r, baseWebhookModel(t))}, &resp)
+			if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), tc.wantInErr) {
+				t.Fatalf("diagnostics = %v, want an error mentioning %q", resp.Diagnostics, tc.wantInErr)
+			}
+			if !tc.wantSaved {
+				if !resp.State.Raw.IsNull() {
+					t.Error("nothing should be saved without an endpoint ID")
+				}
+				return
+			}
+			got := readWebhookState(t, resp.State)
+			if got.ID.ValueString() != testWebhookID || got.SigningSecret.ValueString() != "whsec_created" {
+				t.Errorf("id/signing_secret = %v/%v, want the created endpoint and its secret saved", got.ID, got.SigningSecret)
+			}
+		})
+	}
+}
+
+// A 404 is a deletion only when the list answers; when the list is refused,
+// the error says which permission is missing instead of blaming the beta.
+func TestWebhookResource_ReadNotFoundListForbidden(t *testing.T) {
+	t.Parallel()
+
+	_, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
+		if r.Path == "/"+webhooksPath {
+			return http.StatusForbidden, `{"type":"error","error":{"type":"permission_error","message":"not authorized to perform: aws-external-anthropic:ListWebhooks"}}`
+		}
+		return notFound()
+	})
+	r := &WebhookResource{client: client}
+
+	state := webhookState(t, r, stateWebhookModel(t))
+	resp := resource.ReadResponse{State: state}
+	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when the list is refused")
+	}
+	detail := resp.Diagnostics.Errors()[0].Detail()
+	if !strings.Contains(detail, "permission to list webhooks") || strings.Contains(detail, "retired") {
+		t.Errorf("detail = %q, want the missing list permission, not a retired beta", detail)
+	}
+	if got := readWebhookState(t, resp.State); got.SigningSecret.ValueString() != "whsec_original" {
+		t.Errorf("signing_secret = %v, want the stored secret kept", got.SigningSecret)
+	}
+}
+
 // --- Delete ---
 
 func TestWebhookResource_Delete(t *testing.T) {
@@ -887,6 +959,8 @@ func TestSigningSecretPlanModifier(t *testing.T) {
 	})
 }
 
+// The API validates enabled_events itself and accepts types the webhooks
+// page does not list, so the provider only requires a non-empty set.
 func TestWebhookResource_EnabledEventsValidator(t *testing.T) {
 	t.Parallel()
 
@@ -905,13 +979,8 @@ func TestWebhookResource_EnabledEventsValidator(t *testing.T) {
 		return !resp.Diagnostics.HasError()
 	}
 
-	for _, e := range webhookEventTypes {
-		if !validate(e) {
-			t.Errorf("event type %q rejected", e)
-		}
-	}
-	if validate("user_profile.enforcement_action_opened") {
-		t.Error("an undocumented event type was accepted")
+	if !validate("session.status_idled", "user_profile.enforcement_action_opened") {
+		t.Error("an event type missing from the webhooks page was rejected")
 	}
 	if validate() {
 		t.Error("an empty set was accepted")

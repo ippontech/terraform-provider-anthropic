@@ -24,7 +24,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
-	"github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
@@ -383,8 +382,8 @@ func TestTunnelResource_Create_isNotRetried(t *testing.T) {
 }
 
 // TestTunnelResource_Create_retries429: a 429 states the create was not
-// processed, so it is sent again, at most retry.CreateRetries times; any other
-// failure is not, even with x-should-retry: true
+// processed, so it is sent again, at most twice (createRetries in
+// internal/retry); any other failure is not, even with x-should-retry: true
 // (TestTunnelResource_Create_isNotRetried too).
 func TestTunnelResource_Create_retries429(t *testing.T) {
 	tests := []struct {
@@ -394,7 +393,7 @@ func TestTunnelResource_Create_retries429(t *testing.T) {
 		wantErr   bool
 	}{
 		{"a 429 then a success", respondInTurn(rateLimited, respond(http.StatusOK, tunnelLiveJSON)), 2, false},
-		{"429 on every attempt", rateLimited, 1 + retry.CreateRetries, true},
+		{"429 on every attempt", rateLimited, 3, true},
 		{"a 429 the server says not to retry", func(w http.ResponseWriter) {
 			w.Header().Set("x-should-retry", "false")
 			rateLimited(w)

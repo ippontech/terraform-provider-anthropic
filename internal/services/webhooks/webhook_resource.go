@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -26,7 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
-	"github.com/ippontech/terraform-provider-anthropic/internal/retry"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
@@ -93,7 +92,9 @@ func (r *WebhookResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"memory store events. Anthropic does not document this API in its API reference yet, so this resource may " +
 			"change or be removed in a minor release. The signing secret is returned only when the endpoint is created or " +
 			"the secret regenerated, so it is stored in Terraform state (sensitive). Uses the standard `api_key` (or " +
-			"`ANTHROPIC_API_KEY`), and the endpoint belongs to that key's workspace.",
+			"`ANTHROPIC_API_KEY`), or the `aws` block on Claude Platform on AWS. The endpoint belongs to the workspace " +
+			"of the key, of the provider's `workspace_id` (required for a key not scoped to one workspace), or of the " +
+			"`aws` block.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -110,11 +111,12 @@ func (r *WebhookResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"enabled_events": schema.SetAttribute{
 				Required:    true,
 				ElementType: types.StringType,
-				MarkdownDescription: "The event types delivered to the endpoint, at least one of " +
-					webhookEventTypesMarkdown() + ". An update replaces the endpoint's whole set.",
+				MarkdownDescription: "The event types delivered to the endpoint, at least one (for example " +
+					"`session.status_idled`; see the [webhooks](https://platform.claude.com/docs/en/managed-agents/webhooks) page). " +
+					"The API validates them: an unknown type fails the apply with the list of accepted ones. An update " +
+					"replaces the endpoint's whole set.",
 				Validators: []validator.Set{
 					setvalidator.SizeAtLeast(1),
-					setvalidator.ValueStringsAre(stringvalidator.OneOf(webhookEventTypes...)),
 				},
 			},
 			"name": schema.StringAttribute{
@@ -169,16 +171,6 @@ func (r *WebhookResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	}
 }
 
-// webhookEventTypesMarkdown renders the accepted event types for
-// the schema documentation.
-func webhookEventTypesMarkdown() string {
-	quoted := make([]string, len(webhookEventTypes))
-	for i, e := range webhookEventTypes {
-		quoted[i] = "`" + e + "`"
-	}
-	return strings.Join(quoted, ", ")
-}
-
 // --- Configure ---
 
 func (r *WebhookResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -227,7 +219,7 @@ func (r *WebhookResource) Create(ctx context.Context, req resource.CreateRequest
 	// follow one that landed, and a replay would leave a second endpoint with
 	// a secret nobody holds. Only a 429, which states the request was not
 	// processed, is sent again.
-	respBytes, err := retry.CreateRetrying429(ctx, func() ([]byte, error) {
+	respBytes, err := provretry.CreateRetrying429(ctx, func() ([]byte, error) {
 		return doWebhookRequest(ctx, r.client, "POST", webhooksPath, body, option.WithMaxRetries(0))
 	})
 	if err != nil {
@@ -235,14 +227,41 @@ func (r *WebhookResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	var created webhookAPIResponse
-	if err := json.Unmarshal(respBytes, &created); err != nil {
-		resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse create webhook response: %s", err))
+	// The endpoint exists once the create answers 2xx, and only this response
+	// carries its secret: decode the ID and the secret first, so a change in
+	// the rest of the (undocumented) shape cannot orphan the endpoint.
+	var ident struct {
+		ID            string `json:"id"`
+		SigningSecret string `json:"signing_secret"`
+	}
+	if err := json.Unmarshal(respBytes, &ident); err != nil || ident.ID == "" {
+		problem := "carries no id"
+		if err != nil {
+			problem = fmt.Sprintf("could not be parsed (%s)", err)
+		}
+		resp.Diagnostics.AddError("Unexpected Create Response", fmt.Sprintf(
+			"The API accepted a webhook endpoint for %s, but its response %s, so Terraform cannot track it. "+
+				"The endpoint may exist and receive events: delete or import it before applying again "+
+				"(another create on the same URL answers 409 while it is enabled).", body.URL, problem))
 		return
 	}
 
-	// The create response is the only one, with regenerate, that carries the
-	// signing secret: keep it before anything else can fail.
+	var created webhookAPIResponse
+	if err := json.Unmarshal(respBytes, &created); err != nil {
+		data.ID = types.StringValue(ident.ID)
+		data.SigningSecret = tfvalue.StringOrNull(ident.SigningSecret)
+		for _, v := range []*types.String{&data.Name, &data.Description, &data.DisabledReason, &data.CreatedAt, &data.UpdatedAt} {
+			if v.IsUnknown() {
+				*v = types.StringNull()
+			}
+		}
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+		resp.Diagnostics.AddError("Parse Error", fmt.Sprintf(
+			"Webhook %s was created, but the rest of its response could not be parsed: %s. The endpoint is saved "+
+				"with its signing secret and marked tainted; the next apply replaces it.", ident.ID, err))
+		return
+	}
+
 	wantEnabled := data.Enabled
 	data.SigningSecret = tfvalue.StringOrNull(created.SigningSecret)
 	resp.Diagnostics.Append(applyWebhookResponse(&created, &data)...)
@@ -307,10 +326,9 @@ func (r *WebhookResource) Read(ctx context.Context, req resource.ReadRequest, re
 			return
 		}
 		if lerr := webhooksUnavailable(ctx, r.client); lerr != nil {
-			resp.Diagnostics.AddError("Webhooks unavailable", fmt.Sprintf(
-				"Webhook %s answered 404, and so did the list of endpoints (%s). The %q beta version may be retired, "+
-					"or the gateway may no longer serve the routes: the endpoint is kept in state, with its signing secret, "+
-					"rather than dropped as deleted.", data.ID.ValueString(), lerr, webhooksBeta))
+			resp.Diagnostics.AddError("Webhook deletion not confirmed", fmt.Sprintf(
+				"Webhook %s answered 404, but %s: the endpoint is kept in state, with its signing secret, "+
+					"rather than dropped as deleted.", data.ID.ValueString(), unconfirmedDeletion(lerr)))
 			return
 		}
 		resp.State.RemoveResource(ctx)
@@ -437,9 +455,9 @@ func (r *WebhookResource) Delete(ctx context.Context, req resource.DeleteRequest
 	default:
 		// A 404 means already deleted only if the API answers at all.
 		if lerr := webhooksUnavailable(ctx, r.client); lerr != nil {
-			resp.Diagnostics.AddError("Webhooks unavailable", fmt.Sprintf(
-				"Deleting webhook %s answered 404, and so did the list of endpoints (%s): the endpoint may still exist "+
-					"and receive events.", data.ID.ValueString(), lerr))
+			resp.Diagnostics.AddError("Webhook deletion not confirmed", fmt.Sprintf(
+				"Deleting webhook %s answered 404, but %s: the endpoint may still exist and receive events.",
+				data.ID.ValueString(), unconfirmedDeletion(lerr)))
 		}
 	}
 }

@@ -19,8 +19,8 @@ Manages a workspace webhook endpoint: an HTTPS URL that receives an event when a
 ## Availability
 
 - **Claude Platform on AWS**: verified. The full lifecycle (create, update, disable, regenerate the secret, import, delete) was exercised through the gateway. The principal needs `CreateWebhook`, `GetWebhook`, `ListWebhooks`, `UpdateWebhook`, `DeleteWebhook` and `RotateWebhookSecret` on the workspace ARN; `RotateWebhookSecret` is not matched by the `Create*`, `Update*` or `Delete*` wildcards.
-- **Claude API**: not verified yet. The Console registers endpoints through these routes; which API key credentials they accept outside the Console has not been tested.
-- **Claude Models on Google Cloud (Anthropic managed)**: unverified. The webhooks page does not list this platform.
+- **Claude API**: verified. The full lifecycle works with a standard API key; a key not scoped to one workspace needs the provider's `workspace_id`, which routes the endpoint to that workspace.
+- **Claude Models on Google Cloud (Anthropic managed)**: unavailable. The webhooks page lists the Claude API and Claude Platform on AWS only.
 
 An endpoint is removed from state only when its own read answers `404` while the list of endpoints still answers; if the list answers `404` too (the beta version is retired, say), the refresh fails and the endpoint stays in state with its signing secret. The routes are scoped to one workspace, so this does not cover a provider pointed at another workspace (a different `workspace_id` or key): there the list answers, and the endpoint is dropped from state as deleted, as other workspace resources are, while it still exists in its own workspace.
 
@@ -33,6 +33,12 @@ Change `signing_secret_version` to rotate the secret: the next apply regenerates
 ## Enabled state
 
 `enabled` maps the endpoint's `state`. If Anthropic disables an endpoint on its own, `disabled_reason` says why, and the next apply turns the endpoint back on as long as `enabled` is `true`. Events that happen while an endpoint is disabled are never delivered.
+
+The API ignores `state` on create, so every endpoint starts enabled: with `enabled = false`, the provider disables it in a second call right after the create, and deliveries for events in between may still be sent.
+
+An enabled URL is unique across the whole organization, not only the workspace: creating or enabling an endpoint on a URL that another enabled endpoint uses answers `409` (`an enabled webhook endpoint with this url already exists in this organization`), even when that endpoint is in another workspace, and the error names neither. Disabling the other endpoint frees the URL.
+
+`enabled_events` is checked by the API, not the provider: an unknown event type fails the apply with the list of accepted types, so event types added by Anthropic work without a provider release.
 
 `name` and `description` are kept as they are when removed from the configuration.
 
