@@ -37,7 +37,9 @@ type fakeWebhookAPI struct {
 
 // newFakeWebhookAPI starts a fake whose handle function returns the status
 // and body for each request carrying the beta header.
-func newFakeWebhookAPI(t *testing.T, handle func(r recordedRequest) (int, string)) (*fakeWebhookAPI, *anthropic.Client) {
+// opts are applied after the default WithMaxRetries(0), so a test can put the
+// SDK's retries or another base URL back.
+func newFakeWebhookAPI(t *testing.T, handle func(r recordedRequest) (int, string), opts ...option.RequestOption) (*fakeWebhookAPI, *anthropic.Client) {
 	t.Helper()
 	f := &fakeWebhookAPI{}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -65,7 +67,7 @@ func newFakeWebhookAPI(t *testing.T, handle func(r recordedRequest) (int, string
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(f.srv.Close)
-	return f, oauthtest.NewSDKClient(t, f.srv, option.WithMaxRetries(0))
+	return f, oauthtest.NewSDKClient(t, f.srv, append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)...)
 }
 
 // calls returns the requests received so far, as "METHOD path".

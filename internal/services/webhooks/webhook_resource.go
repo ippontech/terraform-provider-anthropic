@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -25,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
@@ -221,7 +223,13 @@ func (r *WebhookResource) Create(ctx context.Context, req resource.CreateRequest
 		body.Description = data.Description.ValueString()
 	}
 
-	respBytes, err := doWebhookRequest(ctx, r.client, "POST", webhooksPath, body)
+	// The create is not idempotent: a 408, 409, 5xx or dropped connection may
+	// follow one that landed, and a replay would leave a second endpoint with
+	// a secret nobody holds. Only a 429, which states the request was not
+	// processed, is sent again.
+	respBytes, err := retry.CreateRetrying429(ctx, func() ([]byte, error) {
+		return doWebhookRequest(ctx, r.client, "POST", webhooksPath, body, option.WithMaxRetries(0))
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create webhook: %s", err))
 		return
@@ -301,7 +309,7 @@ func (r *WebhookResource) Read(ctx context.Context, req resource.ReadRequest, re
 		if lerr := webhooksUnavailable(ctx, r.client); lerr != nil {
 			resp.Diagnostics.AddError("Webhooks unavailable", fmt.Sprintf(
 				"Webhook %s answered 404, and so did the list of endpoints (%s). The %q beta version may be retired, "+
-					"or the provider may point at another workspace: the endpoint is kept in state, with its signing secret, "+
+					"or the gateway may no longer serve the routes: the endpoint is kept in state, with its signing secret, "+
 					"rather than dropped as deleted.", data.ID.ValueString(), lerr, webhooksBeta))
 			return
 		}

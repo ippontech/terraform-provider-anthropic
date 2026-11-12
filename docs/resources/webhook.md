@@ -22,7 +22,7 @@ Manages a workspace webhook endpoint: an HTTPS URL that receives an event when a
 - **Claude API**: not verified yet. The Console registers endpoints through these routes; which API key credentials they accept outside the Console has not been tested.
 - **Claude Models on Google Cloud (Anthropic managed)**: unverified. The webhooks page does not list this platform.
 
-An endpoint is removed from state only when its own read answers `404` while the list of endpoints still answers; if the list answers `404` too (the beta version is retired, or the provider points at another workspace), the refresh fails and the endpoint stays in state with its signing secret.
+An endpoint is removed from state only when its own read answers `404` while the list of endpoints still answers; if the list answers `404` too (the beta version is retired, say), the refresh fails and the endpoint stays in state with its signing secret. The routes are scoped to one workspace, so this does not cover a provider pointed at another workspace (a different `workspace_id` or key): there the list answers, and the endpoint is dropped from state as deleted, as other workspace resources are, while it still exists in its own workspace.
 
 ## Signing secret
 

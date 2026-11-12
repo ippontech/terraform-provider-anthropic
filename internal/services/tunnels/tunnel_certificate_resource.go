@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
@@ -149,7 +150,7 @@ func (r *TunnelCertificateResource) Create(ctx context.Context, req resource.Cre
 	// Retried only on a 429, like the tunnel create: replaying a
 	// registration that had landed would take one of the tunnel's two
 	// certificate slots behind Terraform's back.
-	cert, err := createRetrying429(ctx, func() (*anthropic.BetaTunnelCertificate, error) {
+	cert, err := retry.CreateRetrying429(ctx, func() (*anthropic.BetaTunnelCertificate, error) {
 		return r.client.Beta.Tunnels.Certificates.New(ctx, data.TunnelID.ValueString(), anthropic.BetaTunnelCertificateNewParams{
 			CACertificatePEM: data.CACertificatePEM.ValueString(),
 		}, option.WithMaxRetries(0))

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -29,8 +30,17 @@ import (
 const webhooksBeta = "managed-agents-2026-04-01"
 
 // webhooksPath is the collection endpoint. The API scopes it to the workspace
-// of the key, or of the anthropic-workspace-id header.
-const webhooksPath = "/v1/webhooks"
+// of the key, or of the anthropic-workspace-id header. It is relative to the
+// SDK's base URL, which on a gateway or a proxy carries a path of its own
+// (/v1/projects/.../invoke on Google Cloud), as internal/admin writes its
+// paths; SDK v1.84.0 also trims a leading slash, but the routes do not rely
+// on it (TestDoWebhookRequest_keepsBaseURLPath).
+const webhooksPath = "v1/webhooks"
+
+// webhookAttemptTimeout bounds one attempt, response body included, as the
+// Admin client's attemptTimeout does: a write holds webhookWrites, so a
+// server that never answers would otherwise stall every other webhook write.
+const webhookAttemptTimeout = 60 * time.Second
 
 // webhookStateEnabled is the `state` of an endpoint that receives deliveries;
 // the other value is `disabled`.
@@ -97,15 +107,20 @@ func webhookPath(id string) string {
 var webhookWrites sync.Mutex
 
 // doWebhookRequest sends one request with the Managed Agents beta header and
-// returns the raw response body. Any request other than a GET waits for the
-// other writes of this provider to finish.
-func doWebhookRequest(ctx context.Context, client *anthropic.Client, method, path string, body any) ([]byte, error) {
+// a per-attempt timeout, and returns the raw response body. opts come last,
+// so a caller can override the client's retries. Any request other than a
+// GET waits for the other writes of this provider to finish.
+func doWebhookRequest(ctx context.Context, client *anthropic.Client, method, path string, body any, opts ...option.RequestOption) ([]byte, error) {
 	if method != http.MethodGet {
 		webhookWrites.Lock()
 		defer webhookWrites.Unlock()
 	}
 	var out []byte
-	err := client.Execute(ctx, method, path, body, &out, option.WithHeader("anthropic-beta", webhooksBeta))
+	opts = append([]option.RequestOption{
+		option.WithHeader("anthropic-beta", webhooksBeta),
+		option.WithRequestTimeout(webhookAttemptTimeout),
+	}, opts...)
+	err := client.Execute(ctx, method, path, body, &out, opts...)
 	return out, err
 }
 

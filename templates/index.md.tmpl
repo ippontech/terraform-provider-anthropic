@@ -290,7 +290,7 @@ The [Claude Platform on AWS](guides/claude_platform_on_aws) and [Claude Models o
 
 ### Availability by platform
 
-Every resource and data source works on the Claude API. On a cloud platform, a type the gateway does not serve fails with an error naming the platform, before it sends any request. It fails at plan, except a data source that Terraform reads only at apply, as it does when an argument is known only then (the ID of a resource created in the same run, for instance): that data source fails at apply, so nothing that depends on it changes, but other objects of the same apply may be created. An unverified type is allowed. Types missing from this table are supported on every platform.
+Every resource and data source works on the Claude API, except the experimental `anthropic_webhook`, whose routes are verified on Claude Platform on AWS only. On a cloud platform, a type the gateway does not serve fails with an error naming the platform, before it sends any request. It fails at plan, except a data source that Terraform reads only at apply, as it does when an argument is known only then (the ID of a resource created in the same run, for instance): that data source fails at apply, so nothing that depends on it changes, but other objects of the same apply may be created. An unverified type is allowed. Types missing from this table are supported on every platform.
 
 <!-- platform-availability:start -->
 

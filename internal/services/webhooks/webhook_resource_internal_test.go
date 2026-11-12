@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -25,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
 
@@ -143,11 +145,82 @@ func TestWebhookResource_CreateCapturesSigningSecret(t *testing.T) {
 	}
 }
 
+// A 5xx may follow a create that landed, so the create is not replayed even
+// when the client has the SDK's retries; a 429 states it was not processed,
+// so it is sent again.
+func TestWebhookResource_CreateRetriesOnly429(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		statuses  []int
+		wantPosts int
+		wantErr   bool
+	}{
+		{"5xx is not replayed", []int{http.StatusInternalServerError}, 1, true},
+		{"409 is not replayed", []int{http.StatusConflict}, 1, true},
+		{"429 then success", []int{http.StatusTooManyRequests, http.StatusOK}, 2, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var mu sync.Mutex
+			n := 0
+			api, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
+				mu.Lock()
+				defer mu.Unlock()
+				status := tc.statuses[min(n, len(tc.statuses)-1)]
+				n++
+				if status != http.StatusOK {
+					return status, `{"type":"error","error":{"type":"api_error","message":"boom"}}`
+				}
+				return http.StatusOK, webhookJSON(t, map[string]any{"signing_secret": "whsec_created"})
+			}, option.WithMaxRetries(2))
+			r := &WebhookResource{client: client}
+
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: schematest.ResourceSchema(t, r)}}
+			r.Create(context.Background(), resource.CreateRequest{Plan: webhookPlan(t, r, baseWebhookModel(t))}, &resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Errorf("errors = %v, want an error: %v", resp.Diagnostics, tc.wantErr)
+			}
+			if got := len(api.calls()); got != tc.wantPosts {
+				t.Errorf("POST /v1/webhooks sent %d times, want %d", got, tc.wantPosts)
+			}
+		})
+	}
+}
+
+// A base URL with a path of its own (a gateway or a proxy) keeps it: the
+// routes are relative to it.
+func TestDoWebhookRequest_keepsBaseURLPath(t *testing.T) {
+	t.Parallel()
+
+	api, _ := newFakeWebhookAPI(t, func(recordedRequest) (int, string) {
+		return http.StatusOK, `{"data":[]}`
+	})
+	client := oauthtest.NewSDKClient(t, api.srv, option.WithMaxRetries(0), option.WithBaseURL(api.srv.URL+"/gateway/invoke/"))
+
+	if _, err := doWebhookRequest(context.Background(), client, http.MethodGet, webhookPath(testWebhookID), nil); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if err := webhooksUnavailable(context.Background(), client); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := []string{
+		"GET /gateway/invoke/v1/webhooks/" + testWebhookID,
+		"GET /gateway/invoke/v1/webhooks",
+	}
+	if got := api.calls(); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %v, want %v", got, want)
+	}
+}
+
 func TestWebhookResource_CreateDisabledSendsSecondCall(t *testing.T) {
 	t.Parallel()
 
 	api, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
-		if r.Path == webhooksPath {
+		if r.Path == "/"+webhooksPath {
 			return http.StatusOK, webhookJSON(t, map[string]any{"signing_secret": "whsec_created"})
 		}
 		return http.StatusOK, webhookJSON(t, map[string]any{"state": "disabled"})
@@ -184,7 +257,7 @@ func TestWebhookResource_CreateDisableFailureKeepsEndpoint(t *testing.T) {
 	t.Parallel()
 
 	_, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
-		if r.Path == webhooksPath {
+		if r.Path == "/"+webhooksPath {
 			return http.StatusOK, webhookJSON(t, map[string]any{"signing_secret": "whsec_created"})
 		}
 		return http.StatusInternalServerError, `{"type":"error","error":{"type":"api_error","message":"boom"}}`
@@ -222,7 +295,7 @@ func TestWebhookResource_CreateEnablesEndpointCreatedDisabled(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			api, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
-				if r.Path == webhooksPath {
+				if r.Path == "/"+webhooksPath {
 					return http.StatusOK, webhookJSON(t, map[string]any{
 						"signing_secret": "whsec_created", "state": "disabled", "disabled_reason": "The URL resolves to a non-public address.",
 					})
@@ -365,7 +438,7 @@ func TestWebhookResource_ReadAfterImportLeavesSecretNull(t *testing.T) {
 // emptyListOr404 answers the list of endpoints with an empty page and any
 // other request with a 404: the endpoint is gone, the API is reachable.
 func emptyListOr404(r recordedRequest) (int, string) {
-	if r.Method == http.MethodGet && r.Path == webhooksPath {
+	if r.Method == http.MethodGet && r.Path == "/"+webhooksPath {
 		return http.StatusOK, `{"data":[],"has_more":false,"first_id":null,"last_id":null}`
 	}
 	return notFound()
