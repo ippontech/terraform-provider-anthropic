@@ -11,7 +11,7 @@ description: |-
 
 The provider reaches that organization through its `aws` block, documented with its rules in the "Cloud platforms" section of the [provider page](https://registry.terraform.io/providers/ippontech/anthropic/latest/docs). This guide covers what surrounds it: the AWS-side setup, how to split provider aliases, the IAM permissions Terraform needs, execution roles for scheduled deployments, and customer-managed keys.
 
-~> **Beta.** Claude Platform on AWS support is in beta, and every plan or apply prints a warning saying so: it relies on the Anthropic SDK's AWS client, itself in beta, and its verification against the real gateway is still partial. [Section 7](#7-what-is-not-verified) lists what remains open. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
+~> **Experimental** (see [Stability](../#stability)). Claude Platform on AWS support is experimental, and every plan or apply prints a warning saying so: it relies on the Anthropic SDK's AWS client, which Anthropic labels beta, so the `aws` block may change in a minor release, and its verification against the real gateway is still partial. [Section 7](#7-what-is-not-verified) lists what remains open. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 ## 1. Before the first apply
 

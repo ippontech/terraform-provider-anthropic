@@ -13,7 +13,7 @@ This is not Claude Models on Google Cloud (Google managed), the Vertex AI offeri
 
 The provider reaches the organization through its `google_cloud` block, documented with its rules in the "Cloud platforms" section of the [provider page](https://registry.terraform.io/providers/ippontech/anthropic/latest/docs). This guide covers what surrounds it.
 
-~> **Beta.** Claude Models on Google Cloud support is in beta, and every plan or apply prints a warning saying so: it relies on the Anthropic SDK's Google Cloud client, itself in beta, and is verified with offline tests only. [Section 5](#5-what-is-not-verified) lists what remains open. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
+~> **Experimental** (see [Stability](../#stability)). Claude Models on Google Cloud support is experimental, and every plan or apply prints a warning saying so: it relies on the Anthropic SDK's Google Cloud client, which Anthropic labels beta, so the `google_cloud` block may change in a minor release, and it is verified with offline tests only. [Section 5](#5-what-is-not-verified) lists what remains open. Please [open an issue](https://github.com/ippontech/terraform-provider-anthropic/issues) to report what works and what does not.
 
 ## 1. Before the first apply
 

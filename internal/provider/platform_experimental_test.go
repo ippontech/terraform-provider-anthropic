@@ -39,17 +39,17 @@ func protocolWarnings(diags []*tfprotov6.Diagnostic) []*tfprotov6.Diagnostic {
 	return out
 }
 
-// TestPlatformBetaWarning plays Terraform's ConfigureProvider for several
+// TestPlatformExperimentalWarning plays Terraform's ConfigureProvider for several
 // provider aliases, each on a provider instance of its own, as Terraform runs
 // them. Every alias that a platform block activates gets exactly one warning,
-// on that block, saying the platform's support is in beta and linking the
+// on that block, saying the platform's support is experimental and linking the
 // guide and the issue tracker. A first-party alias gets no warning at all.
 // The base URLs are closed local ports: Configure sends nothing.
-func TestPlatformBetaWarning(t *testing.T) {
+func TestPlatformExperimentalWarning(t *testing.T) {
 	const (
-		awsGuide = "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws"
-		gcGuide  = "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud"
-		gcBeta   = "Claude Models on Google Cloud (Anthropic managed) support is in beta"
+		awsGuide       = "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws"
+		gcGuide        = "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_models_on_google_cloud"
+		gcExperimental = "Claude Models on Google Cloud (Anthropic managed) support is experimental"
 	)
 
 	aliases := []struct {
@@ -72,7 +72,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "aws", summary: "Claude Platform on AWS support is in beta", guide: awsGuide, gateway: "in part against the real gateway",
+			block: "aws", summary: "Claude Platform on AWS support is experimental", guide: awsGuide, gateway: "in part against the real gateway",
 		},
 		{
 			name: "aws, console key, eu-west-3",
@@ -85,7 +85,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "aws", summary: "Claude Platform on AWS support is in beta", guide: awsGuide, gateway: "in part against the real gateway",
+			block: "aws", summary: "Claude Platform on AWS support is experimental", guide: awsGuide, gateway: "in part against the real gateway",
 		},
 		{
 			name: "google_cloud, with a workspace",
@@ -98,7 +98,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "google_cloud", summary: gcBeta, guide: gcGuide, gateway: "little or no testing against the real gateway",
+			block: "google_cloud", summary: gcExperimental, guide: gcGuide, gateway: "little or no testing against the real gateway",
 		},
 		{
 			name: "google_cloud, organization routes only",
@@ -110,7 +110,7 @@ func TestPlatformBetaWarning(t *testing.T) {
 					}),
 				}
 			},
-			block: "google_cloud", summary: gcBeta, guide: gcGuide, gateway: "little or no testing against the real gateway",
+			block: "google_cloud", summary: gcExperimental, guide: gcGuide, gateway: "little or no testing against the real gateway",
 		},
 		{
 			name: "first party, api_key",

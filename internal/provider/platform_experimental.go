@@ -12,11 +12,14 @@ import (
 // providerIssuesURL is where users report what works and what does not.
 const providerIssuesURL = "https://github.com/ippontech/terraform-provider-anthropic/issues"
 
-// platformBeta describes the beta warning of each cloud platform: the
-// provider block that activates it, the guide that lists what remains
-// unverified there, and how far the support was checked against the real
-// gateway (the end of the warning's first sentence).
-var platformBeta = map[platform.Platform]struct{ block, guide, gateway string }{
+// platformExperimental describes the experimental warning of each cloud
+// platform: the provider block that activates it, the guide that lists what
+// remains unverified there, and how far the support was checked against the
+// real gateway (the end of the warning's first sentence). "Experimental" is
+// the provider's own label, defined in templates/index.md.tmpl ("Stability"):
+// the block may change in a minor release. "Beta" is Anthropic's label for
+// an API's status and is never used for the provider's own maturity.
+var platformExperimental = map[platform.Platform]struct{ block, guide, gateway string }{
 	platform.AWS: {
 		block:   "aws",
 		guide:   "https://registry.terraform.io/providers/ippontech/anthropic/latest/docs/guides/claude_platform_on_aws",
@@ -29,22 +32,24 @@ var platformBeta = map[platform.Platform]struct{ block, guide, gateway string }{
 	},
 }
 
-// addPlatformBetaWarning adds, on the platform block, the warning that the
-// platform's support is in beta: it is covered by tests against local fakes,
+// addPlatformExperimentalWarning adds, on the platform block, the warning
+// that the platform's support is experimental: it rests on the SDK's own beta
+// clients for the platform and is covered by tests against local fakes,
 // and in part or not at all against the real gateway, depending on the
 // platform. Configure calls it once,
 // after the block configured the alias, so every alias on a cloud platform
 // prints it once per run, and a first-party alias never does.
-func addPlatformBetaWarning(diags *diag.Diagnostics, p platform.Platform) {
-	beta, ok := platformBeta[p]
+func addPlatformExperimentalWarning(diags *diag.Diagnostics, p platform.Platform) {
+	exp, ok := platformExperimental[p]
 	if !ok {
 		return
 	}
 	// Each link ends its line, so that a terminal or a copy does not take
 	// trailing punctuation for part of it.
-	diags.AddAttributeWarning(path.Root(beta.block), p.DisplayName()+" support is in beta",
-		p.DisplayName()+" support in this provider is verified with offline tests, against local fakes of the "+
-			"gateway, "+beta.gateway+"\n\n"+
-			"The guide lists what remains unverified: "+beta.guide+"\n\n"+
+	diags.AddAttributeWarning(path.Root(exp.block), p.DisplayName()+" support is experimental",
+		p.DisplayName()+" support in this provider rests on the Anthropic SDK's beta client for the platform and may "+
+			"change in a minor release. It is verified with offline tests, against local fakes of the "+
+			"gateway, "+exp.gateway+"\n\n"+
+			"The guide lists what remains unverified: "+exp.guide+"\n\n"+
 			"Please report what works and what does not: "+providerIssuesURL)
 }
