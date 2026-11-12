@@ -107,6 +107,9 @@ jobs:
     uses: ./.github/workflows/testacc.yml
     permissions:
       contents: read
+      # A called workflow gets no more than its caller grants: the testacc job needs it for the
+      # api_federation tests' GitHub OIDC token (testacc.yml).
+      id-token: write
     # Passed by name, not with `secrets: inherit`: the values come from the acctest environment of
     # the called jobs, and nothing else reaches them.
     secrets:

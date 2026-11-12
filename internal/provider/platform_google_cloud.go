@@ -64,7 +64,7 @@ func googleCloudSchema() schema.SingleNestedAttribute {
 			"(the default one or an alias) then manages the Anthropic organization tied to a Google Cloud project, through claude.googleapis.com. " +
 			"Setting the block is what selects the platform; the ANTHROPIC_GOOGLE_CLOUD_* and GOOGLE_CLOUD_PROJECT " +
 			"environment variables only fill its attributes. Conflicts with api_key, admin_api_key, auth_token, " +
-			"federation, cli and aws, and the first-party ANTHROPIC_* variables are ignored. Requests carry a Google " +
+			"federation, api_federation, cli and aws, and the first-party ANTHROPIC_* variables are ignored. Requests carry a Google " +
 			"access token (cloud-platform scope) from credentials, access_token or Application Default Credentials. " +
 			"workspace_id goes into the request URL, never into a header, and may be left unset only for a configuration " +
 			"limited to organization routes. A type the gateway does not serve fails at plan, or at apply for a data " +
@@ -135,6 +135,7 @@ func resolveGoogleCloud(ctx context.Context, data AnthropicProviderModel, tokenT
 		{"admin_api_key", data.AdminApiKey},
 		{"auth_token", data.AuthToken},
 		{"federation", data.Federation},
+		{"api_federation", data.APIFederation},
 		{"cli", data.CLI},
 	} {
 		if !other.value.IsNull() {
