@@ -97,9 +97,13 @@ func TestAccVaultResource_apiFederation(t *testing.T) {
 // A rule enabled for both test workspaces requires a workspace at exchange
 // time: without one, the exchange is refused with a 401 whose reason is
 // workspace_id_required (WIF reference, re-read 2026-11-10). The exchange is
-// lazy, so the error is the vault create's. Only the status is matched: the
-// SDK keeps just the RFC 6749 error fields of the body (config/oautherr.go),
-// so the reason may not reach the message. A 401 for another cause (subject,
+// lazy, so the error is the vault create's. Only the status is matched, in
+// the wording of the SDK's token middleware (internal/auth.OAuthTokenError,
+// "oauth token request failed (status 401)"), which the provider's
+// option.WithFederationTokenProvider path goes through; config's
+// FederationExchangeError ("federation exchange failed") never reaches it.
+// The reason may not reach the message: the SDK keeps the body's RFC 6749
+// error fields only, and the live 401 body carries none. A 401 for another cause (subject,
 // audience) is ruled out by TestAccVaultResource_apiFederationSelectsWorkspace,
 // which exchanges against the same rule with the same token and must pass.
 func TestAccVaultResource_apiFederationMultiWorkspaceRuleRequiresWorkspace(t *testing.T) {
@@ -111,7 +115,7 @@ func TestAccVaultResource_apiFederationMultiWorkspaceRuleRequiresWorkspace(t *te
 				Config: providerVaultConfig(
 					apiFederationProviderConfig(acctest.TerraformTestsMultiWorkspaceFederationRuleID, "", ""),
 					"tf-acc-test-vault-api-federation-no-workspace"),
-				ExpectError: regexp.MustCompile(`federation exchange failed \(status 401`),
+				ExpectError: regexp.MustCompile(`oauth token request failed \(status 401\)`),
 			},
 		},
 	})
