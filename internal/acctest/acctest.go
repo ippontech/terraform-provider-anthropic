@@ -36,6 +36,39 @@ const TerraformTestsWorkspaceID = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
 // must keep using TerraformTestsWorkspaceID.
 const TerraformTests2WorkspaceID = "wrkspc_01MdoKe74QuV4kFCC23VKZfY"
 
+// The Workload Identity Federation objects behind the api_federation
+// acceptance tests, managed in the infrastructure-as-code repository of
+// Ippon's Anthropic organization. Both rules trust the GitHub Actions
+// issuer for the subject repo:ippontech/terraform-provider-anthropic:environment:acctest
+// only, grant workspace:developer and target TerraformTestsServiceAccountID.
+// None of these IDs is a secret: a token is minted only for a JWT GitHub
+// signed for that subject.
+const (
+	// TerraformTestsOrganizationID is the organization holding the test
+	// workspaces.
+	TerraformTestsOrganizationID = "24961d14-6621-41c0-8072-bf5cf5826f5c"
+	// TerraformTestsFederationRuleID is enabled for terraform-tests only, so
+	// an exchange needs no workspace_id.
+	TerraformTestsFederationRuleID = "fdrl_015ZGHP9VXgVTxNhG47Zz4Vy"
+	// TerraformTestsMultiWorkspaceFederationRuleID is enabled for both test
+	// workspaces, so every exchange must name one.
+	TerraformTestsMultiWorkspaceFederationRuleID = "fdrl_0156bNxhYNAmBBwT4SQL1Jq2"
+	// TerraformTestsServiceAccountID is the terraform-provider-anthropic-tests
+	// service account, member of both test workspaces, which also holds the
+	// multi-workspace key.
+	TerraformTestsServiceAccountID = "svac_01RK8frQUXMXuHci1H4VMGXi"
+)
+
+// GitHubIdentityTokenCommand is an identity_token_command that requests a
+// fresh GitHub Actions OIDC token, with the audience the rules expect, on
+// every exchange: a GitHub token carries a jti, which the exchange accepts
+// once, and each Terraform step configures the provider, and so exchanges,
+// again.
+var GitHubIdentityTokenCommand = []string{
+	"sh", "-c",
+	`curl -sSf --max-time 20 -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r .value`,
+}
+
 // MultiWorkspaceAPIKeyEnv names the variable carrying the multi-workspace key
 // used by the workspace_id provider-argument tests: a service account key of
 // the terraform-provider-anthropic-tests account, member of terraform-tests
@@ -101,6 +134,28 @@ func PreCheckMultiWorkspace(t *testing.T) {
 	if v := os.Getenv(MultiWorkspaceAPIKeyEnv); v == "" {
 		t.Skipf("%s must be set for multi-workspace acceptance tests; skipping", MultiWorkspaceAPIKeyEnv)
 	}
+}
+
+// PreCheckAPIFederation gates the live tests of the api_federation block.
+// They exchange a GitHub Actions OIDC token, which only a job granted
+// `id-token: write` can request (GitHub then sets the two variables checked
+// here). The rules accept only the subject of this repository's acctest
+// environment, which carries no ref: main alone is enforced by that
+// environment's branch policy, outside the repository. So the tests pass only
+// in the testacc job of testacc.yml, on main. Outside GitHub
+// Actions, locally included, the tests skip. Inside it they fail instead, so
+// a job that lost `id-token: write` turns red rather than green with the
+// tests skipped.
+func PreCheckAPIFederation(t *testing.T) {
+	t.Helper()
+	SkipUnlessAcc(t)
+	if os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL") != "" && os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") != "" {
+		return
+	}
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Fatal("api_federation acceptance tests need a GitHub Actions OIDC token: grant id-token: write to the testacc job")
+	}
+	t.Skip("api_federation acceptance tests need a GitHub Actions OIDC token (id-token: write); skipping")
 }
 
 // newSDKClient builds an SDK client from explicit options only, the way the
