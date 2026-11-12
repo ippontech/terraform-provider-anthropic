@@ -130,7 +130,7 @@ Rotate the key when its private part may have leaked (a compromised laptop, a se
 
 # GitHub App Setup (Semantic Release)
 
-The semantic-release workflow uses a GitHub App to push the `chore(release):` commit and tags directly to `main`, bypassing the branch ruleset (PR requirement, merge queue, and signed commits).
+The semantic-release workflow uses a GitHub App to push the `chore(release):` commit and tags directly to `main`, bypassing the branch ruleset (PR requirement with every conversation resolved, merge queue, and signed commits). Conversation resolution is required on `main` and `major/*` so that an open review thread, a bot finding included, blocks the merge: [#495](https://github.com/ippontech/terraform-provider-anthropic/pull/495) was merged with an unresolved finding that predicted the failure, and no release was cut for three days.
 
 ## Create the App
 
@@ -239,7 +239,7 @@ The first major planned this way is 2.0.0; candidates are the issues labelled as
 ## Staging branch
 
 1. Create `major/2.0.0` from `main`. Do **not** add it to the semantic-release workflow trigger or to `.releaserc`.
-2. The `major-upgrades` ruleset (`refs/heads/major/*`) requires the same status checks as `main` but no pull request and no merge queue. It must **not** require linear history: syncs from `main` (step 4) are merge commits. Because the CI workflows only run on `pull_request` and `merge_group`, a direct push never carries status checks and is rejected, so every change to the branch, syncs included, goes through a PR. The repository therefore keeps **Allow merge commits** enabled alongside squash; this does not weaken `main`, whose ruleset restricts merges to squash on its own.
+2. The `major-upgrades` ruleset (`refs/heads/major/*`) requires the same status checks as `main` and a pull request with every conversation resolved, but no merge queue. Its pull request rule must allow the **Merge** method, and it must **not** require linear history: syncs from `main` (step 4) are merge commits. Because the CI workflows only run on `pull_request` and `merge_group`, a direct push never carries status checks and is rejected, so every change to the branch, syncs included, goes through a PR. The repository therefore keeps **Allow merge commits** enabled alongside squash; this does not weaken `main`, whose ruleset restricts merges to squash on its own.
 3. Open every breaking-change PR against `major/2.0.0`. Squash-merge it with a `feat!:` / `fix!:` type or a `BREAKING CHANGE:` footer that states what changed and how to migrate. Not with the `deps` scope, which never cuts a major: a breaking dependency migration such as the SDK v2 one takes another scope (`feat(sdk)!:`). That text is what ends up in the 2.0.0 release notes, so write it for users, not for reviewers.
 4. Keep the branch in sync with `main` at least after every release on `main`: open a PR `main` → `major/2.0.0` (from a throwaway `sync/major-2.0.0` branch if conflicts need resolving) and merge it with a **merge commit**, never squash. Resolve conflicts in favour of the breaking change, never by reverting it. The merge keeps `main`'s commits as ancestors, which is what lets the final merge below go through cleanly.
 5. Write the upgrade guide as you go, in `templates/guides/version_2_upgrade.md.tmpl` on the staging branch, one section per breaking change. Every `BREAKING CHANGE:` footer should have a matching section.
