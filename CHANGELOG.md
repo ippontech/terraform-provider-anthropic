@@ -1,3 +1,14 @@
+## [1.93.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.92.0...v1.93.0) (2026-11-12)
+
+### ✨ Features
+
+* **provider:** use an `ant auth login` profile for the org:admin token ([#494](https://github.com/ippontech/terraform-provider-anthropic/issues/494)) ([fc6281c](https://github.com/ippontech/terraform-provider-anthropic/commit/fc6281c8f668b5580da9ad43a9c87058260dc10e)), closes [#283](https://github.com/ippontech/terraform-provider-anthropic/issues/283)
+
+### 📚 Documentation
+
+* note how to build golangci-lint for the pinned Go toolchain ([#563](https://github.com/ippontech/terraform-provider-anthropic/issues/563)) ([2ee12a7](https://github.com/ippontech/terraform-provider-anthropic/commit/2ee12a7dba8ca05803d3f96732a1431bbdd16dfe)), closes [#562](https://github.com/ippontech/terraform-provider-anthropic/issues/562) [#562](https://github.com/ippontech/terraform-provider-anthropic/issues/562)
+* stop naming the Go toolchain version in CLAUDE.md and the Renovate notes ([#560](https://github.com/ippontech/terraform-provider-anthropic/issues/560)) ([9619284](https://github.com/ippontech/terraform-provider-anthropic/commit/9619284891211dee9752315fdcbf1ae16b1178b4))
+
 ## [1.92.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.91.3...v1.92.0) (2026-11-09)
 
 ### ✨ Features
