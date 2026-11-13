@@ -1,117 +1,125 @@
 ---
 name: ship
 description: >
-  Creates a branch named from the work done, commits all changes with a
-  detailed conventional-commit message, pushes to GitHub, and opens a PR
-  (or updates the existing PR description if one already exists) whose
-  title and body come directly from the commit message.
+  Commits the current changes on a branch with a conventional-commit message
+  and publishes them as a GitHub pull request, or adds them to the branch's
+  open pull request. Use when the user says "ship", "push this", "create a
+  PR" or "open a pull request", or wants finished work on main or a scratch
+  branch turned into a PR. Not for rewriting the description of an existing
+  PR (update-pr-description).
 model: sonnet
 ---
 
 # ship
 
-Turn local changes into a PR-ready branch in four steps: branch → commit → push → PR.
+Turn local changes into a pull request on `ippontech/terraform-provider-anthropic`. Invoking this skill is the user's request to publish, so pushing and opening the PR need no further confirmation, with two exceptions: ask when the push remote is ambiguous (step 1), and leave any rewrite of an existing PR description to `update-pr-description`, which asks before publishing.
 
-## Trigger
+## Step 1: Find the remotes
 
-- Explicitly when the user says "ship", "push this", "create a PR", or similar
-- When significant work is done on main or a scratch branch and needs to be wrapped into a PR
+Shell variables do not survive between commands, so note the values found here (`<base-remote>`, `<push-remote>`, `<head-owner>`) and write them into the later commands. `<branch>` is the branch that gets pushed: the current branch, or, when that is `main`, the branch Step 3 creates.
 
-## Workflow
+The base remote is the one that points to the upstream repository (`origin` in a standard clone):
 
-### Step 1 — Understand the changes
+```bash
+git branch --show-current
+git remote -v | awk '/ippontech\/terraform-provider-anthropic(\.git)? \(fetch\)/ {print $1; exit}'
+git fetch <base-remote> main
+```
 
-Run in a **single parallel message**:
+The push remote is the first of these that gives an answer:
+1. `git config --get branch.<branch>.pushRemote` (skip it on `main`: the branch Step 3 creates has none yet), then `git config --get remote.pushDefault`;
+2. the base remote, when `gh api repos/ippontech/terraform-provider-anthropic --jq .permissions.push` prints `true`;
+3. your fork: the remote whose URL ends with `<login>/terraform-provider-anthropic` or `<login>/terraform-provider-anthropic.git`, where `<login>` is `gh api user --jq .login`. Match the whole repository name: a remote of another repository whose name merely starts the same way is not the fork.
+
+```bash
+git remote -v | awk -v l="<login>" '$3 == "(push)" && $2 ~ ("[/:]" l "/terraform-provider-anthropic(\\.git)?$") {print $1}'
+```
+
+If none answers, or several remotes match, show `git remote -v` and ask the user which remote to push to, because a wrong guess either fails or publishes to an unexpected repository. Contributors without write access to the upstream repository push to their fork.
+
+`<head-owner>` is the owner in the push remote's URL: `ippontech` for the base remote, `<login>` for your fork.
+
+## Step 2: Understand the changes
+
+Run in a single parallel message:
 
 ```bash
 git status
 git diff HEAD
-git log main..HEAD --oneline
+git log <base-remote>/main..HEAD --oneline
 ```
 
-Read any changed files you haven't already seen in this session. The goal is to understand *what* changed and *why* well enough to write an accurate commit message.
+Read any changed file you have not seen in this session, so the commit message says accurately what changed and why.
 
-### Step 2 — Create a branch
+## Step 3: Create a branch
 
-If already on a non-main/non-master branch, skip this step.
-
-Derive a branch name from the work:
-- Format: `<type>/<short-description>` (e.g. `fix/environment-updated-at-plan-modifier`)
-- All lowercase, kebab-case, under 50 characters
-- Use conventional commit types: `feat`, `fix`, `refactor`, `docs`, `test`, `ci`, `chore`
+Skip this step when already on a branch other than `main`. Otherwise derive the name from the work: `<type>/<short-description>` in lowercase kebab-case, under 50 characters, with a conventional-commit type (`feat`, `fix`, `refactor`, `docs`, `test`, `ci`, `chore`), for example `fix/environment-updated-at-plan-modifier`.
 
 ```bash
-git checkout -b <branch-name>
+git switch -c <branch-name>
 ```
 
-### Step 3 — Commit
+From here on, `<branch>` is `<branch-name>`.
 
-Stage all relevant changed files (be explicit — avoid `git add -A` if untracked files might be sensitive) and create a commit with a conventional commit message:
+## Step 4: Run the checks
 
-- **Title** (line 1): `<type>(<optional scope>): <imperative summary>` — 72 characters max
-- **Blank line**
-- **Body**: explain *why* the change was made and what problem it solves; use bullets for multiple changes; 80-character line wrap
+`CLAUDE.md` requires both before a commit:
 
 ```bash
-git add <files>
-git commit -m "$(cat <<'EOF'
+make               # fmt, tidy-check, lint, unit tests, install, docs generation
+pre-commit run -a  # repository hooks
+```
+
+- Both can modify files (formatting, regenerated `docs/`): review those changes and include them in the commit.
+- When `pre-commit` changed an example or a template (`terraform_fmt`, `trailing-whitespace`, `end-of-file-fixer`), run `make generate` again: `docs/` embeds them as `make` generated it, and the CI `generate` job fails on stale docs.
+- `make` can be skipped when no Go, Terraform, template or example file changed (a change limited to `.claude/` or Markdown, for example); say so in the report.
+- If a check still fails after fixing what belongs to the change, stop and report the failing command with its error instead of committing, because a red branch costs the reviewer a round trip.
+
+## Step 5: Commit
+
+Stage the files explicitly (`git add <paths>`, not `git add -A`, so untracked local files are never published) and commit with a conventional-commit message:
+- title: `<type>(<optional scope>): <imperative summary>`, 72 characters at most;
+- blank line, then a body that explains why the change was made and what it solves, with one bullet per change, wrapped at 80 characters;
+- end with the trailer lines your session instructions specify, such as an attribution line, if any. Write no model name otherwise, because a hard-coded one goes stale.
+
+```bash
+git add <paths>
+git commit -F - <<'EOF'
 <type>(<scope>): <summary>
 
 <body>
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 EOF
-)"
 ```
 
-### Step 4 — Push and open or update the PR
+## Step 6: Push and open the PR
 
-Push the branch:
+Push the branch you are on, never `main`: `git branch --show-current` must print `<branch>`. `--head` matches the branch name in every fork, so keep only the PR whose head is in your push remote's repository.
 
 ```bash
-git push -u origin <branch-name>
+git branch --show-current
+git push -u <push-remote> <branch>
+gh pr list --repo ippontech/terraform-provider-anthropic --head <branch> --state open \
+  --json number,url,headRepositoryOwner \
+  --jq '.[] | select(.headRepositoryOwner.login == "<head-owner>") | "\(.number) \(.url)"'
 ```
 
-Then check whether an open PR already exists for this branch:
+If no open PR exists, create one. The title is the commit title; the body is the commit body, with each bullet on a single unbroken line because GitHub renders hard line breaks, followed by the PR footer your session instructions specify, if any. `<head>` is `<branch>` when pushing to the base remote, `<head-owner>:<branch>` when pushing to a fork.
 
 ```bash
-gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number,url \
-  --jq 'if length > 0 then "\(.[0].number) \(.[0].url)" else "" end'
-```
-
-**If no open PR exists** — write the body to a temp file, then create the PR. The title must be the commit title (first line, without the `Co-Authored-By` trailer). The body must be the commit body. **Write each bullet as a single unbroken line — do not hard-wrap at 80 chars, as continuation lines render as visible line breaks on GitHub.**
-
-```bash
-cat > /tmp/pr_body.txt << 'ENDBODY'
+body=$(mktemp)
+cat > "$body" <<'ENDBODY'
 <commit body>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ENDBODY
-gh pr create \
-  --title "<commit title>" \
-  --body-file /tmp/pr_body.txt
+gh pr create --repo ippontech/terraform-provider-anthropic --base main \
+  --head "<head>" --title "<commit title>" --body-file "$body"
+rm -f "$body"
 ```
 
-**If an open PR already exists** — synthesise an updated description from all commits on this branch since main, then update the PR via the GitHub API (`gh pr edit` can fail with a Projects classic deprecation error). **Write each bullet as a single unbroken line — do not hard-wrap at 80 chars.**
+`mktemp` gives each run its own file, so two sessions shipping at the same time never overwrite each other's body.
 
-```bash
-git log main..HEAD --format="%s%n%n%b"   # all commit titles + bodies
+If an open PR already exists, the push has added the commits to it. Leave its description as is, and tell the user that `/update-pr-description` drafts an update for their approval when the new commits change what the PR does.
 
-cat > /tmp/pr_body.txt << 'ENDBODY'
-<consolidated summary of all changes>
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-ENDBODY
-gh api repos/{owner}/{repo}/pulls/<number> \
-  --method PATCH \
-  --raw-field title="<title reflecting all commits>" \
-  --raw-field body="$(cat /tmp/pr_body.txt)" \
-  --jq '.html_url'
-```
-
-Report the PR URL to the user.
-
-Then write the sentinel file to suppress the stop hook (which would otherwise ask you to run `/update-pr-description` on a PR whose description is already correct):
+Report the PR URL. After creating a PR, mark its description as current so the Stop hook does not suggest updating it:
 
 ```bash
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
