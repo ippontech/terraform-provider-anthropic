@@ -111,14 +111,19 @@ make build          # Compile the provider
 make install        # Build and install locally
 make fmt            # Format Go code
 make tidy-check     # Fail if go.mod/go.sum are not tidy (go mod tidy -diff)
-make lint           # Run golangci-lint
+make lint           # Run golangci-lint (.golangci.yml: only code that differs from origin/main), then the standard linters on the whole tree
 make test           # Run unit tests (120s timeout, 10 parallel workers)
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
 make generate       # Regenerate docs and format examples
-make                # Default: fmt tidy-check lint test install generate
+make complexity     # Cognitive complexity ratchet of the CI complexity job, against origin/main (COMPLEXITY_BASE=<ref>)
+make                # Default: fmt tidy-check lint complexity test install generate
 go test -run TestName -v ./internal/services/agents/  # One service
 ```
+
+`.golangci.yml` (v2) enables the standard linters plus errorlint, gosec, depguard, gocognit (20, production code only: `_test.go` files and the test-helper packages are excluded) and 15 others, with gofmt and goimports (this module's imports in their own last group). The existing code has about 250 findings under it, so `issues.new-from-merge-base: origin/main` limits reports to code that differs from `origin/main`: keep `origin/main` fetched, and if the ref is missing golangci-lint silently reports everything (the CI lint job checks out the full history for that reason). Do not fix findings in lines a change does not otherwise touch; the catch-up is one mechanical PR, after which the setting goes. That setting filters every linter, so `make lint` and the CI lint job also run `golangci-lint run --no-config`: the standard linters on the whole tree, which has no finding there and must stay so. depguard keeps `acctest`, `admintest`, `oauthtest`, `providertest`, `schematest`, `sdktest`, `wifprobetest` and `net/http/httptest` out of non-test files, and `internal/provider` out of the services. CI pins golangci-lint in `provider.yml` (`version:` with a Renovate annotation); keep it in step with `mise.toml`. The pre-commit hooks run `golangci-lint fmt` on the Go files that differ from `origin/main` (the staged ones on commit; never an untouched file, even with `pre-commit run -a`), `golangci-lint run` and `go mod tidy -diff` through mise.
+
+The complexity ratchet (`make complexity`, the required `complexity` job of `provider.yml`, `tools/complexity`) scores every function of the non-test Go files under `internal/` (test-helper packages aside) with gocognit, as golangci-lint does, in the working tree and at the merge base with `origin/main`. A function above 20 at the merge base may change only if its score does not rise; any other function, new or not, scores 20 or less. Nothing is committed: the functions allowed above 20 are those above it on `main` (20 today), so once the refactoring lot has brought them under 20, the cap is absolute. When a change must touch one of them, put the new logic in a helper rather than in the function. `//gocognit:ignore`, `//nolint` and a `// Code generated ... DO NOT EDIT.` header exempt nothing from the ratchet (the repository generates no Go file; a path that must stay out goes in `defaultExclude`, `tools/complexity/main.go`). golangci-lint's own gocognit (20) only sees a function whose `func` line a change edits.
 
 Before committing a feature or a fix, run `make`, then `pre-commit run -a`.
 
