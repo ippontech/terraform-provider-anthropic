@@ -190,6 +190,12 @@ resource "aws_iam_policy" "terraform_anthropic" {
           "aws-external-anthropic:UpdateMemoryStore",
           "aws-external-anthropic:ArchiveMemoryStore",
           "aws-external-anthropic:DeleteMemoryStore",
+          "aws-external-anthropic:CreateWebhook",
+          "aws-external-anthropic:GetWebhook",
+          "aws-external-anthropic:ListWebhooks",
+          "aws-external-anthropic:UpdateWebhook",
+          "aws-external-anthropic:DeleteWebhook",
+          "aws-external-anthropic:RotateWebhookSecret",
         ]
         Resource = "arn:aws:aws-external-anthropic:us-west-2:${data.aws_caller_identity.current.account_id}:workspace/${var.support_workspace_id}"
       },
@@ -200,7 +206,7 @@ resource "aws_iam_policy" "terraform_anthropic" {
 
 Workspace tags are AWS resource tags: they work with IAM conditions (`aws:ResourceTag/<key>`) and cost allocation ([workspaces](https://docs.aws.amazon.com/claude-platform/latest/userguide/workspaces.html)). Changing them is authorized by `TagResource` and `UntagResource`, not `UpdateWorkspace`, which authorizes a `name` or `data_residency` change; tags set at creation need only `CreateWorkspace`. The provider sends a tags change in a request of its own, since the gateway rejects tags combined with any other field, and that request carries every configured key, unchanged ones included: a key left out would keep a value changed outside Terraform between plan and apply, and the apply would fail as an inconsistent result. So a change that removes a tag while other tags remain needs both `TagResource` and `UntagResource`, a change that only adds or changes keys needs `TagResource`, and `tags = {}` needs only `UntagResource`. Every workspace read also records `ListTagsForResource` in CloudTrail, so the policy grants it, although a policy without it was not tried.
 
-With `aws.api_key` instead of SigV4, the principal also needs `aws-external-anthropic:CallWithBearerToken` on `"Resource": "*"`. With a short-term key from AWS's token generator, CloudTrail logs each call under the IAM identity that minted the key, with the same event names as signed calls, so the policy above applies unchanged. Mind the IAM wildcard pitfalls the IAM page describes: `Delete*` does not match `Archive*` actions, and `*File` also matches the user profile actions.
+With `aws.api_key` instead of SigV4, the principal also needs `aws-external-anthropic:CallWithBearerToken` on `"Resource": "*"`. With a short-term key from AWS's token generator, CloudTrail logs each call under the IAM identity that minted the key, with the same event names as signed calls, so the policy above applies unchanged. Mind the IAM wildcard pitfalls the IAM page describes: `Delete*` does not match `Archive*` actions, `RotateWebhookSecret` is matched by none of `Create*`, `Update*` and `Delete*`, and `*File` also matches the user profile actions.
 
 ## 4. Execution role for scheduled deployments
 
@@ -353,7 +359,7 @@ The principal that attaches the key needs `kms:DescribeKey`, `kms:Encrypt` and `
 
 ## 6. What the provider manages on this platform
 
-- **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, external key registrations (`anthropic_external_key`, whose `id` is the KMS key ARN, and its data sources), user profiles (create, read, update; the provider never deletes them), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)).
+- **Supported**: workspaces (create, rename, tag, archive; `data_residency.workspace_geo` takes `us`, the only workspace geo, or no value, which gives `us`), agents, environments, vaults and their credentials, memory stores and memories, files, skills and skill versions, messages and token counting, models, telemetry destinations, external key registrations (`anthropic_external_key`, whose `id` is the KMS key ARN, and its data sources), user profiles (create, read, update; the provider never deletes them), scheduled deployments and their runs ([section 4](#4-execution-role-for-scheduled-deployments)), workspace webhook endpoints (`anthropic_webhook`, experimental).
 - **Unavailable**: API keys (generated in the AWS Console), organization members, invites and workspace members (AWS IAM manages access), rate limits, organization webhooks, the organization data source, Workload Identity Federation and MCP tunnels (the gateway accepts no OAuth token).
 
 Managed Agents sessions differ on this platform, which matters for agents and environments managed here: a session runs at most 6 hours without a user event before it needs one, and a session on a self-hosted environment cannot attach memory stores. The `computer_toolset_20260801` and `browser_toolset_20260801` toolsets and fast mode are not available.
@@ -369,6 +375,7 @@ Verified against the real gateway:
 - API key authentication (`aws.api_key` and `ANTHROPIC_AWS_API_KEY`) with short-term keys from AWS's token generator: the gateway accepts the key as `x-api-key`, which the provider sends, and as `Authorization: Bearer`, which the platform page documents; CloudTrail logs each call under the IAM identity that minted the key, with the same event names as with SigV4, so the same IAM permissions apply;
 - `workspace_geo` accepts `us` or no value; tags merge as on the Claude API, but only in a request of their own, which CloudTrail records as `TagResource` and `UntagResource` as [section 3](#3-iam-permissions-of-the-terraform-principal) describes; a `name` or `data_residency` update is recorded as `UpdateWorkspace`, and one that changes no tag sends no tags request;
 - telemetry destinations (`anthropic_telemetry_destination`): a disabled destination scoped to one workspace, with a write-only header, is created, renamed, has its `headers_wo_version` raised and is destroyed, with an empty plan after each step; `header_names`, `disabled_reason` and `traces` come back as configured. The gateway rejects an `endpoint_url` whose host is not under a public top-level domain (`hostname must be under a public top-level domain`).
+- workspace webhook endpoints (`anthropic_webhook`): an endpoint is created, renamed, has its events changed, is disabled and enabled again, has its signing secret regenerated through `signing_secret_version`, is imported (the next apply regenerates the secret, since `signing_secret_version` was set) and is destroyed, with an empty plan after each step, including a regeneration combined with a rename in one apply; a deleted endpoint answers 404 while the list still answers, so import of a deleted ID fails as expected; CloudTrail records the calls as `CreateWebhook`, `GetWebhook`, `UpdateWebhook` and `RotateWebhookSecret`.
 
 Not verified yet:
 

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -383,8 +382,8 @@ func TestTunnelResource_Create_isNotRetried(t *testing.T) {
 }
 
 // TestTunnelResource_Create_retries429: a 429 states the create was not
-// processed, so it is sent again, at most createRetries times; any other
-// failure is not, even with x-should-retry: true
+// processed, so it is sent again, at most twice (createRetries in
+// internal/retry); any other failure is not, even with x-should-retry: true
 // (TestTunnelResource_Create_isNotRetried too).
 func TestTunnelResource_Create_retries429(t *testing.T) {
 	tests := []struct {
@@ -394,7 +393,7 @@ func TestTunnelResource_Create_retries429(t *testing.T) {
 		wantErr   bool
 	}{
 		{"a 429 then a success", respondInTurn(rateLimited, respond(http.StatusOK, tunnelLiveJSON)), 2, false},
-		{"429 on every attempt", rateLimited, 1 + createRetries, true},
+		{"429 on every attempt", rateLimited, 3, true},
 		{"a 429 the server says not to retry", func(w http.ResponseWriter) {
 			w.Header().Set("x-should-retry", "false")
 			rateLimited(w)
@@ -420,37 +419,6 @@ func TestTunnelResource_Create_retries429(t *testing.T) {
 			}
 			if n := log.count(http.MethodPost, "/v1/tunnels"); n != tc.wantPosts {
 				t.Errorf("POST /v1/tunnels sent %d times, want %d", n, tc.wantPosts)
-			}
-		})
-	}
-}
-
-func TestCreateRetryWait(t *testing.T) {
-	header := func(kv ...string) *http.Response {
-		h := http.Header{}
-		for i := 0; i < len(kv); i += 2 {
-			h.Set(kv[i], kv[i+1])
-		}
-		return &http.Response{Header: h}
-	}
-	tests := []struct {
-		name  string
-		resp  *http.Response
-		retry int
-		want  time.Duration
-	}{
-		{"retry-after-ms wins", header("retry-after-ms", "250", "retry-after", "9"), 0, 250 * time.Millisecond},
-		{"retry-after in seconds", header("retry-after", "2"), 0, 2 * time.Second},
-		{"bounded", header("retry-after", "3600"), 0, maxCreateRetryAfter},
-		{"negative is no wait", header("retry-after-ms", "-5"), 0, 0},
-		{"no header: base delay", header(), 0, createRetryDelay},
-		{"no header: doubles", header(), 1, 2 * createRetryDelay},
-		{"no response", nil, 1, 2 * createRetryDelay},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := createRetryWait(tc.resp, tc.retry); got != tc.want {
-				t.Errorf("createRetryWait = %v, want %v", got, tc.want)
 			}
 		})
 	}
