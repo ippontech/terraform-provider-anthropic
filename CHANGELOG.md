@@ -1,3 +1,13 @@
+## [1.94.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.93.0...v1.94.0) (2026-11-13)
+
+### ✨ Features
+
+* **provider:** back the standard client through WIF (api_federation) ([#507](https://github.com/ippontech/terraform-provider-anthropic/issues/507)) ([8884e16](https://github.com/ippontech/terraform-provider-anthropic/commit/8884e163c7fbeb74455045a539933580749b55ef)), closes [#304](https://github.com/ippontech/terraform-provider-anthropic/issues/304) [#494](https://github.com/ippontech/terraform-provider-anthropic/issues/494)
+
+### 📚 Documentation
+
+* define Experimental (provider) versus beta (Anthropic API) and relabel the platform blocks ([#566](https://github.com/ippontech/terraform-provider-anthropic/issues/566)) ([0efb15f](https://github.com/ippontech/terraform-provider-anthropic/commit/0efb15f0c1efa3e26717a6f0e9695dd4e124d8a1)), closes [#494](https://github.com/ippontech/terraform-provider-anthropic/issues/494)
+
 ## [1.93.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.92.0...v1.93.0) (2026-11-12)
 
 ### ✨ Features
