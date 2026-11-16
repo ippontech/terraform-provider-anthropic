@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	provretry "github.com/ippontech/terraform-provider-anthropic/internal/retry"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
 
@@ -177,10 +178,10 @@ func (r *TunnelResource) Create(ctx context.Context, req resource.CreateRequest,
 	// which may follow a create that landed, and each duplicate is an
 	// unmanaged tunnel holding one of the organization's 10 active-tunnel
 	// slots. So the SDK's retries are off, and only a 429, which states the
-	// request was not processed, is sent again (createRetrying429). Any
+	// request was not processed, is sent again (provretry.CreateRetrying429). Any
 	// other failed apply is re-run by the operator, who can check the
 	// Console's MCP tunnels list first.
-	tunnel, err := createRetrying429(ctx, func() (*anthropic.BetaTunnel, error) {
+	tunnel, err := provretry.CreateRetrying429(ctx, func() (*anthropic.BetaTunnel, error) {
 		return r.client.Beta.Tunnels.New(ctx, params, option.WithMaxRetries(0))
 	})
 	if err != nil {

@@ -29,6 +29,7 @@ import (
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/tunnels"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/userprofiles"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/vaults"
+	"github.com/ippontech/terraform-provider-anthropic/internal/services/webhooks"
 	"github.com/ippontech/terraform-provider-anthropic/internal/services/workspaces"
 )
 
@@ -101,6 +102,8 @@ var (
 	gcUserProfiles = platform.Unverified("The platform pages and IAM permissions do not mention user profiles. The " +
 		"SDK v1.84 sends their requests to the workspace endpoint, while SDK v2.3.0 sends them to the organization " +
 		"endpoint.")
+	gcWebhooks = platform.Unavailable("The Managed Agents webhooks page lists the Claude API and Claude Platform " +
+		"on AWS only, and the IAM permissions page has no webhook permission.")
 	gcTelemetry = platform.Unavailable("Telemetry destinations are not among its gateway's routes: the OpenTelemetry " +
 		"documentation offers API tracing on the Claude API and Claude Platform on AWS only.")
 )
@@ -141,6 +144,7 @@ func resourceRegistrations() []registration[resource.Resource] {
 		{New: userprofiles.NewUserProfileResource, AWS: supported, GoogleCloud: gcUserProfiles},
 		{New: vaults.NewVaultResource, AWS: supported, GoogleCloud: supported},
 		{New: vaults.NewVaultCredentialResource, AWS: supported, GoogleCloud: supported},
+		{New: webhooks.NewWebhookResource, AWS: supported, GoogleCloud: gcWebhooks},
 		{New: workspaces.NewWorkspaceResource, AWS: supported, GoogleCloud: gcWorkspaces},
 		{New: workspaces.NewWorkspaceMemberResource, AWS: awsWorkspaceMembers, GoogleCloud: gcMembers},
 		{New: workspaces.NewWorkspaceRateLimitResource, AWS: awsRateLimits, GoogleCloud: gcAdminRoutes},
