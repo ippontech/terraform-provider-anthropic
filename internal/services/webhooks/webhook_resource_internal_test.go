@@ -576,6 +576,72 @@ func TestWebhookResource_UpdateAndRegenerateReadsBack(t *testing.T) {
 	}
 }
 
+// A read right after a write may still return the previous object. With an
+// update and a regeneration in one apply, state must keep the update's fields
+// and take only disabled_reason, and updated_at unless it went backwards.
+func TestWebhookResource_UpdateAndRegenerateStaleReadBack(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		readUpdatedAt string
+		wantUpdatedAt string
+	}{
+		"read after the regeneration": {"2026-10-22T10:00:01Z", "2026-10-22T10:00:01Z"},
+		"read older than the update":  {"2026-10-20T19:00:00Z", "2026-10-22T10:00:00Z"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, client := newFakeWebhookAPI(t, func(r recordedRequest) (int, string) {
+				switch {
+				case strings.HasSuffix(r.Path, "/regenerate_signing_secret"):
+					return http.StatusOK, `{"signing_secret":"whsec_rotated"}`
+				case r.Method == http.MethodPost:
+					return http.StatusOK, webhookJSON(t, map[string]any{
+						"name": "Renamed", "state": "disabled", "updated_at": "2026-10-22T10:00:00Z",
+					})
+				default:
+					// The pre-update object, but with a disabled reason set since.
+					return http.StatusOK, webhookJSON(t, map[string]any{
+						"disabled_reason": "too_many_failures", "updated_at": tc.readUpdatedAt,
+					})
+				}
+			})
+			r := &WebhookResource{client: client}
+
+			state := stateWebhookModel(t)
+			plan := state
+			plan.Name = types.StringValue("Renamed")
+			plan.Enabled = types.BoolValue(false)
+			plan.SigningSecretVersion = types.Int64Value(2)
+			plan.SigningSecret = types.StringUnknown()
+			plan.UpdatedAt = types.StringUnknown()
+			plan.DisabledReason = types.StringUnknown()
+
+			resp := resource.UpdateResponse{State: webhookState(t, r, state)}
+			r.Update(context.Background(), resource.UpdateRequest{Plan: webhookPlan(t, r, plan), State: webhookState(t, r, state)}, &resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Update: %v", resp.Diagnostics)
+			}
+
+			got := readWebhookState(t, resp.State)
+			if got.Name.ValueString() != "Renamed" || got.Enabled.ValueBool() {
+				t.Errorf("name/enabled = %v/%v, want the planned Renamed/false", got.Name, got.Enabled)
+			}
+			if got.DisabledReason.ValueString() != "too_many_failures" {
+				t.Errorf("disabled_reason = %v, want it from the read-back", got.DisabledReason)
+			}
+			if got.UpdatedAt.ValueString() != tc.wantUpdatedAt {
+				t.Errorf("updated_at = %v, want %v", got.UpdatedAt, tc.wantUpdatedAt)
+			}
+			if got.SigningSecret.ValueString() != "whsec_rotated" {
+				t.Errorf("signing_secret = %v, want the regenerated one", got.SigningSecret)
+			}
+		})
+	}
+}
+
 func TestWebhookResource_UpdateSendsOnlyChangedFields(t *testing.T) {
 	t.Parallel()
 
