@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -427,7 +428,11 @@ func (r *WebhookResource) Update(ctx context.Context, req resource.UpdateRequest
 			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 			return
 		}
-		ep = got
+		if ep == nil {
+			ep = got
+		} else {
+			mergeWebhookReadBack(ep, got)
+		}
 	}
 
 	resp.Diagnostics.Append(applyWebhookResponse(ep, &plan)...)
@@ -534,6 +539,22 @@ func applyWebhookResponse(ep *webhookAPIResponse, data *WebhookResourceModel) di
 	data.CreatedAt = m.CreatedAt
 	data.UpdatedAt = m.UpdatedAt
 	return diags
+}
+
+// mergeWebhookReadBack takes from the read after a regeneration only what the
+// regeneration can change. The other fields stay those of the update response:
+// a read right after a write may still return the previous object, and
+// copying it over the plan would fail the apply as an inconsistent result.
+// disabled_reason and updated_at are taken only from a read not older than the
+// update: a stale one could, for example, bring back the reason of an
+// endpoint the update just re-enabled.
+func mergeWebhookReadBack(updated, got *webhookAPIResponse) {
+	readAt, rerr := time.Parse(time.RFC3339Nano, got.UpdatedAt)
+	updatedAt, uerr := time.Parse(time.RFC3339Nano, updated.UpdatedAt)
+	if rerr == nil && (uerr != nil || !readAt.Before(updatedAt)) {
+		updated.DisabledReason = got.DisabledReason
+		updated.UpdatedAt = got.UpdatedAt
+	}
 }
 
 // buildWebhookUpdate returns the update body: only the fields
