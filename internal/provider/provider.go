@@ -86,7 +86,7 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Optional:  true,
 				Sensitive: true,
 				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
-					"such as the Workload Identity Federation admin endpoints, or a workspace:manage_tunnels one for MCP " +
+					"such as the Workload Identity Federation admin endpoints, and for the Admin API when admin_api_key is unset, or a workspace:manage_tunnels one for MCP " +
 					"tunnels (configure each in its own, aliased provider block). " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
@@ -241,10 +241,10 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 
 	// The SDK clients would refuse an unparsable ANTHROPIC_BASE_URL with an
 	// error that quotes it, user information included. Only they read it: the
-	// admin client has a fixed base URL, so an admin-only configuration skips
-	// the check. It runs before resolveCLI, which compares the variable with
-	// the profile's base_url and quotes it when they differ: stripping the
-	// user information needs a parsable URL (#553).
+	// key-backed admin client has a fixed base URL, so an admin-only
+	// configuration skips the check. It runs before resolveCLI, which compares
+	// the variable with the profile's base_url and quotes it when they differ:
+	// stripping the user information needs a parsable URL (#553).
 	if apiKey != "" || authToken != "" || federation != nil || apiFederation != nil || !data.CLI.IsNull() {
 		resp.Diagnostics.Append(checkBaseURL(path.Empty(), "", "", "ANTHROPIC_BASE_URL")...)
 		if resp.Diagnostics.HasError() {
@@ -280,7 +280,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		resp.Diagnostics.AddError(
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) or an api_federation block for standard resources, "+
-				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) for organization management resources, "+
+				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) or an org:admin OAuth bearer token for organization management resources, "+
 				"or auth_token (ANTHROPIC_AUTH_TOKEN), a federation block or a cli block for endpoints that require an OAuth bearer token: "+
 				"org:admin scope for the Workload Identity Federation endpoints, workspace:manage_tunnels scope for MCP tunnels. "+
 				"For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or "+
@@ -327,6 +327,12 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		// Quiet: the provider already rejects the static credentials the
 		// SDK's shadowing warning is about.
 		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false, option.WithConfigQuiet(cliConfig))}
+	}
+	// Without an admin_api_key, the OAuth client's bearer backs the Admin API
+	// resources: the Admin API accepts an org:admin token (#524). An unknown
+	// admin_api_key is not unset: the apply would send the key.
+	if pd.AdminClient == nil && pd.OAuthClient != nil && !data.AdminApiKey.IsUnknown() {
+		pd.AdminClient = admin.NewSDKClient(pd.OAuthClient.Client)
 	}
 
 	p.serve(resp, pd)

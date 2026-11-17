@@ -35,8 +35,9 @@ type ProviderData struct {
 	Platform platform.Platform
 	// Client is the Anthropic SDK client for standard API endpoints.
 	Client *anthropic.Client
-	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
-	// Nil when admin_api_key is not configured.
+	// AdminClient handles /v1/organizations/* endpoints using the Admin API key
+	// or, when admin_api_key is not configured, the bearer token of OAuthClient.
+	// Nil when neither is configured.
 	AdminClient *admin.Client
 	// OAuthClient handles endpoints that require an OAuth bearer token
 	// (org:admin, or workspace:manage_tunnels for MCP tunnels) and reject API

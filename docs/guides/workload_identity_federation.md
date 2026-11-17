@@ -30,8 +30,8 @@ export ANTHROPIC_AUTH_TOKEN="$(ant auth print-credentials --profile admin --acce
 
 ```hcl
 provider "anthropic" {
-  # Reads ANTHROPIC_AUTH_TOKEN when unset. Keep the other credentials for
-  # the resources that need them; they are independent.
+  # Reads ANTHROPIC_AUTH_TOKEN when unset. Keep an api_key for the
+  # resources that need one; admin_api_key is optional with this token.
   # auth_token = "sk-ant-oat01-..."
 }
 ```
@@ -271,8 +271,8 @@ terraform {
 }
 
 provider "anthropic" {
-  # One block carries both credentials: ANTHROPIC_AUTH_TOKEN (section 1) for
-  # the WIF resources, ANTHROPIC_ADMIN_API_KEY for data.anthropic_organization.
+  # ANTHROPIC_AUTH_TOKEN (section 1) serves the WIF resources and, with no
+  # admin_api_key, data.anthropic_organization too.
 }
 
 variable "production_workspace_id" {
@@ -388,7 +388,7 @@ output "organization_id" {
 data "anthropic_organization" "current" {}
 ```
 
-`data.anthropic_organization` is an Admin API call, so the provider block above also needs the Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); the three credentials are independent and one `provider` block can carry all of them. If you do not want a second credential in this configuration, drop the data source and pass the organization ID (Console, **Settings → Organization**) as a variable. The token exchange ignores workspace membership for `org:admin` rules only; for the workspace-scoped rule above, both the membership and the rule enablement must exist.
+`data.anthropic_organization` is an Admin API call. Without an `admin_api_key`, the provider sends it the same `org:admin` bearer token, so this configuration needs no second credential; when `admin_api_key` (`ANTHROPIC_ADMIN_API_KEY`) is set, the Admin API calls use it instead. The token exchange ignores workspace membership for `org:admin` rules only; for the workspace-scoped rule above, both the membership and the rule enablement must exist.
 
 ## 4. How the workload consumes the rule
 

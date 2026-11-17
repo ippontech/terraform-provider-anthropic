@@ -158,8 +158,86 @@ func TestConfigureAuthTokenAloneIsSufficient(t *testing.T) {
 	if pd.Client != nil {
 		t.Error("Client should be nil when api_key is not configured")
 	}
+	if pd.AdminClient == nil {
+		t.Error("AdminClient is nil, want one backed by the bearer token when admin_api_key is not configured")
+	}
+}
+
+// TestConfigureUnknownAdminKeyIsNotUnset: the bearer must not stand in at
+// plan time for a key that the apply will send.
+func TestConfigureUnknownAdminKeyIsNotUnset(t *testing.T) {
+	clearCredentialEnv(t)
+
+	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
+		"admin_api_key": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+		"auth_token":    tftypes.NewValue(tftypes.String, "sk-ant-oat01-config"),
+	}))
 	if pd.AdminClient != nil {
-		t.Error("AdminClient should be nil when admin_api_key is not configured")
+		t.Error("AdminClient should be nil when admin_api_key is unknown")
+	}
+}
+
+// TestConfigureAdminClientCredential covers which credential the Admin API
+// resources send: the bearer without an admin_api_key, the key with one.
+func TestConfigureAdminClientCredential(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     map[string]tftypes.Value
+		wantKey    string
+		wantBearer string
+	}{
+		{
+			name:       "auth_token alone backs the admin client",
+			config:     map[string]tftypes.Value{"auth_token": tftypes.NewValue(tftypes.String, "sk-ant-oat01-config")},
+			wantBearer: "Bearer sk-ant-oat01-config",
+		},
+		{
+			name: "admin_api_key keeps precedence over auth_token",
+			config: map[string]tftypes.Value{
+				"admin_api_key": tftypes.NewValue(tftypes.String, "sk-ant-admin01-config"),
+				"auth_token":    tftypes.NewValue(tftypes.String, "sk-ant-oat01-config"),
+			},
+			wantKey: "sk-ant-admin01-config",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got http.Header
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Clone()
+				gotPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			clearCredentialEnv(t)
+			t.Setenv("ANTHROPIC_BASE_URL", srv.URL)
+
+			pd := providerDataFrom(t, configureProvider(t, tt.config))
+			if pd.AdminClient == nil {
+				t.Fatal("AdminClient is nil")
+			}
+			// The key-backed client has a fixed base URL: point it at the
+			// test server, as the bearer-backed one already is.
+			if tt.wantKey != "" {
+				pd.AdminClient.BaseURL = srv.URL
+			}
+
+			if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if gotPath != "/v1/organizations/workspaces" {
+				t.Errorf("path = %q, want /v1/organizations/workspaces", gotPath)
+			}
+			if v := got.Get("X-Api-Key"); v != tt.wantKey {
+				t.Errorf("x-api-key = %q, want %q", v, tt.wantKey)
+			}
+			if v := got.Get("Authorization"); v != tt.wantBearer {
+				t.Errorf("authorization = %q, want %q", v, tt.wantBearer)
+			}
+		})
 	}
 }
 

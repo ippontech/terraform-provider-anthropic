@@ -34,13 +34,13 @@ func requireAPIClient(client *anthropic.Client, diags *diag.Diagnostics, kind st
 	return false
 }
 
-// RequireAdminResourceClient adds a missing-Admin-API-key error diagnostic and returns false when client is nil.
+// RequireAdminResourceClient adds a missing-Admin-API-credential error diagnostic and returns false when client is nil.
 // The caller must return early when this returns false.
 func RequireAdminResourceClient(client *admin.Client, diags *diag.Diagnostics) bool {
 	return requireAdminClient(client, diags, "resource")
 }
 
-// RequireAdminDataSourceClient adds a missing-Admin-API-key error diagnostic and returns false when client is nil.
+// RequireAdminDataSourceClient adds a missing-Admin-API-credential error diagnostic and returns false when client is nil.
 // The caller must return early when this returns false.
 func RequireAdminDataSourceClient(client *admin.Client, diags *diag.Diagnostics) bool {
 	return requireAdminClient(client, diags, "data source")
@@ -52,8 +52,9 @@ func requireAdminClient(client *admin.Client, diags *diag.Diagnostics, kind stri
 	}
 	diags.AddError(
 		"Missing Admin API Key",
-		"This "+kind+" requires an Admin API key. "+
-			"Configure it via the admin_api_key provider argument or the ANTHROPIC_ADMIN_API_KEY environment variable.",
+		"This "+kind+" calls the Admin API. "+
+			"Configure an Admin API key via the admin_api_key provider argument or the ANTHROPIC_ADMIN_API_KEY environment variable, "+
+			"or an org:admin OAuth bearer token via auth_token (ANTHROPIC_AUTH_TOKEN), a federation block or a cli block.",
 	)
 	return false
 }

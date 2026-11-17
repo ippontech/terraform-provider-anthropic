@@ -123,7 +123,8 @@ func NewClient(apiKey string) *Client {
 // own base URL (per region, or per project and route) and signs each request
 // (AWS SigV4) or carries a Google access token. Going through sdk, the request
 // gets all of that, and the middlewares the provider installed on sdk, such as
-// platform.NotFoundGuard.
+// platform.NotFoundGuard. The provider also passes it the first-party OAuth
+// client, for the org:admin bearer, when admin_api_key is unset (#524).
 //
 // The retry policy stays this package's: the SDK's own retries are turned off
 // for each request, so a POST not marked WithIdempotent is still replayed

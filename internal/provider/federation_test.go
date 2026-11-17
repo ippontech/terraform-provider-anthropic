@@ -156,14 +156,19 @@ func TestConfigureFederationExchangesAndRefreshes(t *testing.T) {
 	if pd.OAuthClient == nil || pd.OAuthClient.Client == nil {
 		t.Fatal("federation did not produce an OAuth client")
 	}
-	if pd.Client != nil || pd.AdminClient != nil {
-		t.Error("federation alone must not produce the API-key clients")
+	if pd.Client != nil {
+		t.Error("federation alone must not produce the standard client")
+	}
+	if pd.AdminClient == nil {
+		t.Fatal("federation alone did not back the admin client")
 	}
 
-	for range 2 {
-		if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
+	// One request per client: the token is near expiry, so each exchanges.
+	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
+		t.Fatalf("admin request failed: %v", err)
 	}
 
 	exchanges, authorized := fs.snapshot()
@@ -203,11 +208,17 @@ func TestConfigureFederationCachesTheToken(t *testing.T) {
 			"identity_token_command": stringList(countingTokenScript(t)),
 		}),
 	}))
+	if pd.AdminClient == nil {
+		t.Fatal("federation alone did not back the admin client")
+	}
 
 	for range 3 {
 		if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
+	}
+	if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
+		t.Fatalf("admin request failed: %v", err)
 	}
 	if exchanges, _ := fs.snapshot(); len(exchanges) != 1 {
 		t.Errorf("exchanges = %d, want 1", len(exchanges))
