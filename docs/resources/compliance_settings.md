@@ -12,7 +12,7 @@ Turns the organization's [Compliance API](https://platform.claude.com/docs/en/ma
 The settings are an organization-wide singleton for the organization of the configured admin key. Declare the resource once per organization. The resource records that organization's ID, and a refresh or an apply fails if the configured admin key later belongs to another organization, rather than switching that organization's Compliance API.
 
 > **API**: `GET/POST /v1/organizations/compliance_settings` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); or, when `admin_api_key` is unset, an `org:admin` OAuth bearer token (`auth_token`, `federation` or `cli`).
 > **Beta header**: None.
 > **Cost**: Free.
 

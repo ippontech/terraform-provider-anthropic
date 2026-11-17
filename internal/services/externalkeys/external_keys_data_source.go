@@ -44,7 +44,7 @@ func (d *ExternalKeysDataSource) Metadata(_ context.Context, req datasource.Meta
 func (d *ExternalKeysDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists the customer-managed encryption keys (CMEK) registered with the organization via the Admin API, newest first. " +
-			"All pages are fetched automatically. Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			"All pages are fetched automatically. Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
 		Attributes: map[string]schema.Attribute{
 			"external_keys": schema.ListNestedAttribute{
 				Computed:            true,

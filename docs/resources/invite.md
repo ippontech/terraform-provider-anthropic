@@ -10,7 +10,7 @@ description: |-
 Creates and manages an invitation for a user to join the organization via the Admin API.
 
 > **API**: `POST/GET/DELETE /v1/organizations/invites[/{id}]` (Admin API, [reference](https://platform.claude.com/docs/en/api/organization/invites/create)).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` and `write:members` scopes (plus `write:rbac_groups` to invite with the `managed` role). With a non-empty `rbac_group_ids`, that Claude Enterprise key must be created for all linked organizations and carry `write:rbac_groups` in addition to `write:members`.
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` and `write:members` scopes (plus `write:rbac_groups` to invite with the `managed` role); or, for a Claude Console organization with `admin_api_key` unset, an `org:admin` OAuth bearer token (`auth_token`, `federation` or `cli`). With a non-empty `rbac_group_ids`, that Claude Enterprise key must be created for all linked organizations and carry `write:rbac_groups` in addition to `write:members`.
 > **Beta header**: None.
 > **Cost**: Free.
 

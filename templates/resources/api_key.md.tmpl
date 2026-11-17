@@ -11,10 +11,10 @@ Manages an existing Anthropic API key via the Admin API.
 
 API keys must be created through the Anthropic Console — use `terraform import` to bring an existing key under Terraform management. This resource supports renaming and deactivating existing keys.
 
-Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider.
+Requires `admin_api_key` (or the `ANTHROPIC_ADMIN_API_KEY` environment variable) to be configured on the provider, or an `org:admin` bearer token when it is unset.
 
 > **API**: `GET/POST /v1/organizations/api_keys/{id}` (Admin API). No create or delete endpoint.
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace; or, when `admin_api_key` is unset, an `org:admin` OAuth bearer token (`auth_token`, `federation` or `cli`). Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

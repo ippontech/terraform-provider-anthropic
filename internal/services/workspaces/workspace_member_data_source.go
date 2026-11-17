@@ -40,7 +40,7 @@ func (d *WorkspaceMemberDataSource) Metadata(_ context.Context, req datasource.M
 func (d *WorkspaceMemberDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Fetches a single Anthropic workspace member by workspace ID and user ID. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
 		Attributes: map[string]schema.Attribute{
 			"workspace_id": schema.StringAttribute{
 				Required:            true,

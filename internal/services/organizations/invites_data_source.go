@@ -63,7 +63,7 @@ func (d *InvitesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists all organization invites via the Admin API. All pages are fetched automatically. " +
 			"Results can optionally be filtered by `email` and/or `statuses`. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
 		Attributes: map[string]schema.Attribute{
 			"email": schema.StringAttribute{
 				Optional:            true,

@@ -83,7 +83,7 @@ func (r *ComplianceSettingsResource) Schema(_ context.Context, _ resource.Schema
 		MarkdownDescription: "Turns the organization's Compliance API on or off via the Admin API. " +
 			"The settings are an organization-wide singleton: creating the resource adopts them, and destroying it " +
 			"only removes it from the Terraform state and leaves the Compliance API as it is. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
