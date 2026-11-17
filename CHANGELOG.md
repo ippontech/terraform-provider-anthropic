@@ -1,3 +1,13 @@
+## [1.95.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.94.0...v1.95.0) (2026-11-17)
+
+### ✨ Features
+
+* **webhooks:** add experimental anthropic_webhook resource ([#571](https://github.com/ippontech/terraform-provider-anthropic/issues/571)) ([b931ff9](https://github.com/ippontech/terraform-provider-anthropic/commit/b931ff9e66a1c8dd67e4685a14ba17b3f09d9e3d))
+
+### 🐛 Bug Fixes
+
+* **deps:** update go toolchain directive to v1.27.4 [security] ([#575](https://github.com/ippontech/terraform-provider-anthropic/issues/575)) ([54981f2](https://github.com/ippontech/terraform-provider-anthropic/commit/54981f25253868c2af42a80d03bc21fd97058190))
+
 ## [1.94.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.93.0...v1.94.0) (2026-11-13)
 
 ### ✨ Features
