@@ -583,11 +583,13 @@ func TestWebhookResource_UpdateAndRegenerateStaleReadBack(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]struct {
-		readUpdatedAt string
-		wantUpdatedAt string
+		readUpdatedAt      string
+		wantUpdatedAt      string
+		wantDisabledReason string
 	}{
-		"read after the regeneration": {"2026-10-22T10:00:01Z", "2026-10-22T10:00:01Z"},
-		"read older than the update":  {"2026-10-20T19:00:00Z", "2026-10-22T10:00:00Z"},
+		"read after the regeneration": {"2026-10-22T10:00:01Z", "2026-10-22T10:00:01Z", "too_many_failures"},
+		// A stale read must not bring back the reason the update cleared.
+		"read older than the update": {"2026-10-20T19:00:00Z", "2026-10-22T10:00:00Z", ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -629,8 +631,8 @@ func TestWebhookResource_UpdateAndRegenerateStaleReadBack(t *testing.T) {
 			if got.Name.ValueString() != "Renamed" || got.Enabled.ValueBool() {
 				t.Errorf("name/enabled = %v/%v, want the planned Renamed/false", got.Name, got.Enabled)
 			}
-			if got.DisabledReason.ValueString() != "too_many_failures" {
-				t.Errorf("disabled_reason = %v, want it from the read-back", got.DisabledReason)
+			if got.DisabledReason.ValueString() != tc.wantDisabledReason {
+				t.Errorf("disabled_reason = %v, want %q", got.DisabledReason, tc.wantDisabledReason)
 			}
 			if got.UpdatedAt.ValueString() != tc.wantUpdatedAt {
 				t.Errorf("updated_at = %v, want %v", got.UpdatedAt, tc.wantUpdatedAt)

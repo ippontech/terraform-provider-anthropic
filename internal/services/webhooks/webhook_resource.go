@@ -545,12 +545,14 @@ func applyWebhookResponse(ep *webhookAPIResponse, data *WebhookResourceModel) di
 // regeneration can change. The other fields stay those of the update response:
 // a read right after a write may still return the previous object, and
 // copying it over the plan would fail the apply as an inconsistent result.
-// updated_at is kept from the update when the read is older than it.
+// disabled_reason and updated_at are taken only from a read not older than the
+// update: a stale one could, for example, bring back the reason of an
+// endpoint the update just re-enabled.
 func mergeWebhookReadBack(updated, got *webhookAPIResponse) {
-	updated.DisabledReason = got.DisabledReason
 	readAt, rerr := time.Parse(time.RFC3339Nano, got.UpdatedAt)
 	updatedAt, uerr := time.Parse(time.RFC3339Nano, updated.UpdatedAt)
 	if rerr == nil && (uerr != nil || !readAt.Before(updatedAt)) {
+		updated.DisabledReason = got.DisabledReason
 		updated.UpdatedAt = got.UpdatedAt
 	}
 }
