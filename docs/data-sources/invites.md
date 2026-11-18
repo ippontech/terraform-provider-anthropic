@@ -12,7 +12,7 @@ Lists all organization invites via the Admin API. All pages are fetched automati
 Results can optionally be filtered by `email` and/or `statuses`.
 
 > **API**: `GET /v1/organizations/invites` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, a personal or service account key not scoped to a workspace, or a Claude Enterprise Admin API key with the `read:members` (or `read:org_audit`) scope.
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -77,6 +77,7 @@ Read-Only:
 - `expires_at` (String) RFC 3339 timestamp of when the invite expires.
 - `id` (String) The ID of the invite.
 - `invited_at` (String) RFC 3339 timestamp of when the invite was created.
+- `rbac_group_ids` (Set of String) IDs of the RBAC groups (`rbac_group_...`) the person joins when they accept the invite. Empty when the invite carries none, null if the response leaves the field out; RBAC groups exist only in Claude Enterprise organizations.
 - `role` (String) Organization role the user will hold once the invite is accepted.
 - `status` (String) Status of the invite. One of `pending`, `accepted`, `expired`, `deleted`.
 - `type` (String) Object type. Always `invite`.

@@ -1,0 +1,652 @@
+// Copyright (c) Ippon
+// SPDX-License-Identifier: MPL-2.0
+
+package workspaces
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"slices"
+	"strings"
+
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+)
+
+// Ensure provider defined types fully satisfy framework interfaces.
+var _ resource.Resource = &WorkspaceRateLimitResource{}
+var _ resource.ResourceWithImportState = &WorkspaceRateLimitResource{}
+
+func NewWorkspaceRateLimitResource() resource.Resource {
+	return &WorkspaceRateLimitResource{}
+}
+
+// WorkspaceRateLimitResource manages a workspace's rate-limit overrides for
+// one rate-limit group, through
+// POST /v1/organizations/workspaces/{workspace_id}/rate_limits/{rate_limit_id}.
+// That endpoint only touches the limiter types it names (an integer sets the
+// override, null clears it), so the resource owns exactly the types in its
+// limits map: other types of the same group, set elsewhere, are left alone.
+type WorkspaceRateLimitResource struct {
+	adminClient *admin.Client
+}
+
+// --- Terraform data models ---
+
+type WorkspaceRateLimitResourceModel struct {
+	ID          types.String `tfsdk:"id"`
+	WorkspaceID types.String `tfsdk:"workspace_id"`
+	RateLimitID types.String `tfsdk:"rate_limit_id"`
+	Limits      types.Map    `tfsdk:"limits"`
+	Group       types.Object `tfsdk:"group"`
+}
+
+// workspaceRateLimitTypes are the limiter types the set-overrides endpoint
+// accepts (WorkspaceRateLimitType in the reference).
+var workspaceRateLimitTypes = []string{
+	"fast_itpmca",
+	"fast_otpm",
+	"input_tokens_per_minute",
+	"input_tokens_per_minute_cache_aware",
+	"output_tokens_per_minute",
+	"requests_per_minute",
+	"tokens_per_day",
+	"tokens_per_minute",
+	"tool_uses_per_second",
+}
+
+// maxWorkspaceRateLimitValue is the endpoint's documented maximum (2^53 - 1).
+const maxWorkspaceRateLimitValue = 9007199254740991
+
+// setTypesPrivateKey names the private-state entry in which Create and Update
+// record the overrides they set, as a JSON object of type to value. Read
+// drops a managed type from state when the list does not show it, as a list
+// lagging behind a write would, so Update and Delete clear the recorded types
+// as well as the state's keys: a refresh that has not caught up cannot leave
+// an override set with no resource tracking it. The values let them leave
+// alone a recorded type that was set again elsewhere since (see
+// ownedLimitTypes).
+const setTypesPrivateKey = "set_limit_types"
+
+// importTypesPrivateKey names the private-state entry in which ImportState
+// records the types a three-segment import ID names, as a JSON array. Read
+// imports only those types, fails if one of them has no override in the
+// group, then removes the entry.
+const importTypesPrivateKey = "import_limit_types"
+
+// privateStateReader and privateStateWriter are the methods of the
+// framework's private state used here; its type is internal to the
+// framework.
+type privateStateReader interface {
+	GetKey(ctx context.Context, key string) ([]byte, diag.Diagnostics)
+}
+
+type privateStateWriter interface {
+	SetKey(ctx context.Context, key string, value []byte) diag.Diagnostics
+}
+
+// --- Admin API request types ---
+
+// workspaceRateLimitSetValue is one entry of the request body. A nil Value is
+// marshalled as JSON null, which clears that type's override.
+type workspaceRateLimitSetValue struct {
+	Type  string `json:"type"`
+	Value *int64 `json:"value"`
+}
+
+type workspaceRateLimitSetRequest struct {
+	Limits []workspaceRateLimitSetValue `json:"limits"`
+}
+
+// --- Schema ---
+
+func (r *WorkspaceRateLimitResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_workspace_rate_limit"
+}
+
+func (r *WorkspaceRateLimitResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "Sets a workspace's rate-limit overrides for one rate-limit group via the Admin API. " +
+			"The resource manages only the limiter types listed in `limits`; destroying it clears those overrides, " +
+			"so the workspace falls back to the organization's limits. " +
+			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Composite identifier in the form `<workspace_id>:<rate_limit_id>`.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"workspace_id": schema.StringAttribute{
+				Required:            true,
+				MarkdownDescription: "The ID of the workspace to set overrides for.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"rate_limit_id": schema.StringAttribute{
+				Required: true,
+				MarkdownDescription: "The `id` of the organization's rate-limit entry for the group to override: " +
+					"a `rate_limit_id` from `anthropic_workspace_rate_limits` with `include_inherited = true`.",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"limits": schema.MapAttribute{
+				Required:    true,
+				ElementType: types.Int64Type,
+				MarkdownDescription: "Override values keyed by limiter type: `" + strings.Join(workspaceRateLimitTypes, "`, `") + "`. " +
+					"A value above the organization's own limit is stored, but the lower of the two is enforced. " +
+					"Removing a key clears that override. A value cannot be `null`: leave the key out instead. " +
+					"Changes take effect within about an hour.",
+				Validators: []validator.Map{
+					mapvalidator.SizeAtLeast(1),
+					mapvalidator.KeysAre(stringvalidator.OneOf(workspaceRateLimitTypes...)),
+					// Between skips null values, and a null cannot be read
+					// into the map[string]int64 every request is built from.
+					mapvalidator.NoNullValues(),
+					mapvalidator.ValueInt64sAre(int64validator.Between(0, maxWorkspaceRateLimitValue)),
+				},
+			},
+			"group": schema.SingleNestedAttribute{
+				Computed:            true,
+				MarkdownDescription: rateLimitGroupDescription,
+				PlanModifiers:       []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+				Attributes: map[string]schema.Attribute{
+					"id": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "Identifier of the rate-limit group (`rlg_...`), the same in every organization.",
+					},
+					"type": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "Group type: one of " + rateLimitGroupTypes + ".",
+					},
+					"display_name": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "Human-readable name of a model group, for display only. Null for other group types.",
+					},
+				},
+			},
+		},
+	}
+}
+
+// --- Configure ---
+
+func (r *WorkspaceRateLimitResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+
+	pd, ok := req.ProviderData.(*providerdata.ProviderData)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected *providerdata.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+		return
+	}
+
+	if !providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics) {
+		return
+	}
+
+	r.adminClient = pd.AdminClient
+}
+
+// --- Create ---
+
+func (r *WorkspaceRateLimitResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan WorkspaceRateLimitResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	planned, diags := rateLimitValues(ctx, plan.Limits)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	entry, err := r.setOverrides(ctx, plan.WorkspaceID.ValueString(), plan.RateLimitID.ValueString(), buildWorkspaceRateLimitPatch(planned, nil))
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to set workspace rate-limit overrides: %s", err))
+		return
+	}
+	resp.Diagnostics.Append(recordSetTypes(ctx, resp.Private, planned)...)
+
+	plan.ID = types.StringValue(workspaceRateLimitID(plan.WorkspaceID.ValueString(), plan.RateLimitID.ValueString()))
+	plan.Group, diags = rateLimitGroupValue(entry.Group)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// limits stays as planned: the endpoint stores exactly the values sent.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// --- Read ---
+
+func (r *WorkspaceRateLimitResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state WorkspaceRateLimitResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Without include_inherited the list carries only stored overrides, so a
+	// managed type cleared out of band is absent and shows up as drift.
+	items, err := listWorkspaceRateLimits(ctx, r.adminClient, state.WorkspaceID.ValueString(), "", false)
+	if err != nil {
+		if admin.IsNotFound(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list workspace rate limits: %s", err))
+		return
+	}
+
+	var entry *workspaceRateLimitAPIItem
+	for i := range items {
+		if items[i].RateLimitID == state.RateLimitID.ValueString() {
+			entry = &items[i]
+			break
+		}
+	}
+
+	importing := state.Limits.IsNull()
+	var importOnly []string
+	if importing {
+		var diags diag.Diagnostics
+		importOnly, diags = readImportTypes(ctx, req.Private)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	if entry == nil && importing {
+		// Nothing to import: the group has no override in this workspace (or
+		// the rate_limit_id is wrong). Removing the resource makes
+		// `terraform import` report a missing object instead of importing an
+		// empty one.
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
+	var managed map[string]int64
+	if !importing {
+		var diags diag.Diagnostics
+		managed, diags = rateLimitValues(ctx, state.Limits)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	values := overridesToState(entry, managed, importing)
+	if importOnly != nil {
+		missing := keepImportTypes(values, importOnly)
+		if len(missing) > 0 {
+			resp.Diagnostics.AddError("Cannot Import Workspace Rate Limit", fmt.Sprintf(
+				"The rate limit %s has no override of type %s in workspace %s. Name only types it overrides in the import ID, or create the resource instead.",
+				state.RateLimitID.ValueString(), strings.Join(missing, ", "), state.WorkspaceID.ValueString()))
+			return
+		}
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, importTypesPrivateKey, nil)...)
+	}
+
+	limits, diags := types.MapValueFrom(ctx, types.Int64Type, values)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	state.Limits = limits
+
+	if entry != nil {
+		state.Group, diags = rateLimitGroupValue(entry.Group)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	state.ID = types.StringValue(workspaceRateLimitID(state.WorkspaceID.ValueString(), state.RateLimitID.ValueString()))
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// --- Update ---
+
+func (r *WorkspaceRateLimitResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state WorkspaceRateLimitResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	planned, diags := rateLimitValues(ctx, plan.Limits)
+	resp.Diagnostics.Append(diags...)
+	prior, diags := rateLimitValues(ctx, state.Limits)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	owned, diags := r.ownedLimitTypes(ctx, state, req.Private, prior, planned)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	entry, err := r.setOverrides(ctx, state.WorkspaceID.ValueString(), state.RateLimitID.ValueString(), buildWorkspaceRateLimitPatch(planned, owned))
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update workspace rate-limit overrides: %s", err))
+		return
+	}
+	resp.Diagnostics.Append(recordSetTypes(ctx, resp.Private, planned)...)
+
+	plan.ID = state.ID
+	// group is planned from state (UseStateForUnknown), and a known planned
+	// value must come back unchanged, so the response's group (which can
+	// differ, e.g. a renamed display_name) only fills an unknown one. The next
+	// Read refreshes it from the list.
+	if plan.Group.IsUnknown() {
+		plan.Group, diags = rateLimitGroupValue(entry.Group)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// --- Delete ---
+
+func (r *WorkspaceRateLimitResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state WorkspaceRateLimitResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	prior, diags := rateLimitValues(ctx, state.Limits)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	owned, diags := r.ownedLimitTypes(ctx, state, req.Private, prior, nil)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Every owned type is cleared, including one a lagging refresh dropped
+	// from state; types the resource does not manage keep their overrides.
+	// Nothing owned (an import whose overrides were all cleared out of band)
+	// needs no call, and the endpoint rejects an empty limits list anyway.
+	patch := buildWorkspaceRateLimitPatch(nil, owned)
+	if len(patch) == 0 {
+		return
+	}
+
+	_, err := r.setOverrides(ctx, state.WorkspaceID.ValueString(), state.RateLimitID.ValueString(), patch)
+	if err != nil && !admin.IsNotFound(err) {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to clear workspace rate-limit overrides: %s", err))
+	}
+}
+
+// --- ImportState ---
+
+func (r *WorkspaceRateLimitResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	parts := strings.SplitN(req.ID, ":", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"Expected format: <workspace_id>:<rate_limit_id>, or <workspace_id>:<rate_limit_id>:<type>[,<type>...] to import only the named limiter types",
+		)
+		return
+	}
+	workspaceID, rateLimitID := parts[0], parts[1]
+	if len(parts) == 3 {
+		names, err := parseImportTypes(parts[2])
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid import ID", err.Error())
+			return
+		}
+		raw, err := json.Marshal(names)
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid import ID", fmt.Sprintf("Unable to record the limiter types to import: %s", err))
+			return
+		}
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, importTypesPrivateKey, raw)...)
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("workspace_id"), workspaceID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("rate_limit_id"), rateLimitID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), workspaceRateLimitID(workspaceID, rateLimitID))...)
+}
+
+// parseImportTypes reads the third segment of an import ID: a comma-separated
+// list of limiter types that limits accepts, each named once.
+func parseImportTypes(segment string) ([]string, error) {
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range strings.Split(segment, ",") {
+		switch {
+		case !slices.Contains(workspaceRateLimitTypes, name):
+			return nil, fmt.Errorf("the import ID names %q, which is not a limiter type limits accepts (%s)", name, strings.Join(workspaceRateLimitTypes, ", "))
+		case seen[name]:
+			return nil, fmt.Errorf("the import ID names %q twice", name)
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// readImportTypes returns the types a three-segment import ID named, or nil
+// when the import ID had two segments (or Read is not part of an import).
+func readImportTypes(ctx context.Context, private privateStateReader) ([]string, diag.Diagnostics) {
+	raw, diags := private.GetKey(ctx, importTypesPrivateKey)
+	if diags.HasError() || len(raw) == 0 {
+		return nil, diags
+	}
+	var names []string
+	if err := json.Unmarshal(raw, &names); err != nil {
+		diags.AddError("Invalid Private State", fmt.Sprintf("Unable to read the limiter types to import: %s", err))
+	}
+	return names, diags
+}
+
+// keepImportTypes drops from values every type the import ID did not name,
+// and returns, sorted, the named types the group has no override of.
+func keepImportTypes(values map[string]int64, named []string) []string {
+	wanted := map[string]bool{}
+	var missing []string
+	for _, name := range named {
+		wanted[name] = true
+		if _, ok := values[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	for name := range values {
+		if !wanted[name] {
+			delete(values, name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+func workspaceRateLimitID(workspaceID, rateLimitID string) string {
+	return workspaceID + ":" + rateLimitID
+}
+
+// setOverrides POSTs one set-overrides request and returns the group's entry.
+func (r *WorkspaceRateLimitResource) setOverrides(ctx context.Context, workspaceID, rateLimitID string, limits []workspaceRateLimitSetValue) (*workspaceRateLimitAPIItem, error) {
+	apiPath := workspaceRateLimitsPath(workspaceID) + "/" + url.PathEscape(rateLimitID)
+	body, err := r.adminClient.DoRequest(ctx, "POST", apiPath, workspaceRateLimitSetRequest{Limits: limits})
+	if err != nil {
+		return nil, err
+	}
+	var entry workspaceRateLimitAPIItem
+	if err := json.Unmarshal(body, &entry); err != nil {
+		return nil, fmt.Errorf("parse set workspace rate limits response: %w", err)
+	}
+	return &entry, nil
+}
+
+// rateLimitValues reads a limits map; null or unknown reads as empty.
+func rateLimitValues(ctx context.Context, m types.Map) (map[string]int64, diag.Diagnostics) {
+	values := map[string]int64{}
+	if m.IsNull() || m.IsUnknown() {
+		return values, nil
+	}
+	diags := m.ElementsAs(ctx, &values, false)
+	return values, diags
+}
+
+// ownedLimitTypes returns the types the resource may have set, for Update
+// (planned: the plan's limits) and Delete (planned: nil) to clear those the
+// plan lacks: the keys of the state's limits, plus the types Create and
+// Update recorded in private state (none for an imported resource).
+//
+// A recorded type in neither the state nor the plan was dropped by a read,
+// either because the list lagged behind the write or because the override
+// was cleared out of band. In the second case the type may since have left
+// the configuration, with no update to refresh the record, and been set
+// again in the Console or by another resource. Such types are checked
+// against one list of the group's overrides: a type the group holds with
+// another value than the recorded one is not owned any more.
+func (r *WorkspaceRateLimitResource) ownedLimitTypes(ctx context.Context, state WorkspaceRateLimitResourceModel, private privateStateReader, prior, planned map[string]int64) (map[string]bool, diag.Diagnostics) {
+	owned := map[string]bool{}
+	for t := range prior {
+		owned[t] = true
+	}
+	recorded, diags := recordedLimits(ctx, private)
+	if diags.HasError() {
+		return owned, diags
+	}
+	droppedByRead := map[string]int64{}
+	for t, v := range recorded {
+		_, inState := prior[t]
+		_, kept := planned[t]
+		if !inState && !kept {
+			droppedByRead[t] = v
+		}
+	}
+	if len(droppedByRead) == 0 {
+		return owned, diags
+	}
+
+	current, err := r.groupOverrides(ctx, state.WorkspaceID.ValueString(), state.RateLimitID.ValueString())
+	if err != nil && !admin.IsNotFound(err) {
+		diags.AddError("Client Error", fmt.Sprintf("Unable to list workspace rate limits: %s", err))
+		return owned, diags
+	}
+	// A gone workspace (404) holds nothing: the request that follows gets
+	// the 404, which Delete tolerates.
+	for t, v := range droppedByRead {
+		if cur, set := current[t]; !set || cur == v {
+			owned[t] = true
+		}
+	}
+	return owned, diags
+}
+
+// groupOverrides returns the workspace overrides the list holds for the
+// group, by type.
+func (r *WorkspaceRateLimitResource) groupOverrides(ctx context.Context, workspaceID, rateLimitID string) (map[string]int64, error) {
+	items, err := listWorkspaceRateLimits(ctx, r.adminClient, workspaceID, "", false)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].RateLimitID == rateLimitID {
+			return overridesToState(&items[i], nil, true), nil
+		}
+	}
+	return map[string]int64{}, nil
+}
+
+// recordedLimits reads the overrides Create and Update recorded in private
+// state; none when nothing is recorded.
+func recordedLimits(ctx context.Context, private privateStateReader) (map[string]int64, diag.Diagnostics) {
+	raw, diags := private.GetKey(ctx, setTypesPrivateKey)
+	if diags.HasError() || len(raw) == 0 {
+		return nil, diags
+	}
+	var recorded map[string]int64
+	if err := json.Unmarshal(raw, &recorded); err != nil {
+		diags.AddError("Invalid Private State", fmt.Sprintf("Unable to read the limiter types recorded in private state: %s", err))
+		return nil, diags
+	}
+	return recorded, diags
+}
+
+// recordSetTypes records the overrides a successful request left set:
+// exactly the planned ones, since it sent null for every other owned type.
+func recordSetTypes(ctx context.Context, private privateStateWriter, planned map[string]int64) diag.Diagnostics {
+	raw, err := json.Marshal(planned)
+	if err != nil {
+		var diags diag.Diagnostics
+		diags.AddError("Invalid Private State", fmt.Sprintf("Unable to record the limiter types set: %s", err))
+		return diags
+	}
+	return private.SetKey(ctx, setTypesPrivateKey, raw)
+}
+
+// buildWorkspaceRateLimitPatch returns the limits to send: every planned type
+// with its value, plus null for each owned type that the plan no longer has
+// (which clears that override). Sorted by type for a stable body.
+func buildWorkspaceRateLimitPatch(planned map[string]int64, owned map[string]bool) []workspaceRateLimitSetValue {
+	patch := make([]workspaceRateLimitSetValue, 0, len(planned)+len(owned))
+	for t, v := range planned {
+		patch = append(patch, workspaceRateLimitSetValue{Type: t, Value: &v})
+	}
+	for t := range owned {
+		if _, kept := planned[t]; !kept {
+			patch = append(patch, workspaceRateLimitSetValue{Type: t, Value: nil})
+		}
+	}
+	slices.SortFunc(patch, func(a, b workspaceRateLimitSetValue) int { return strings.Compare(a.Type, b.Type) })
+	return patch
+}
+
+// overridesToState returns the limits to store after a read: the stored
+// workspace overrides of the group, restricted to the managed types, or on
+// import to the types the limits validator accepts (workspaceRateLimitTypes):
+// an override of another type, which the list can carry, could not be
+// declared in the configuration, and every later apply would clear it. A nil
+// entry (no override left in the group) yields an empty map.
+func overridesToState(entry *workspaceRateLimitAPIItem, managed map[string]int64, importing bool) map[string]int64 {
+	out := map[string]int64{}
+	if entry == nil {
+		return out
+	}
+	for _, l := range entry.Limits {
+		// Defensive: without include_inherited only overrides are listed.
+		if l.Source != nil && l.Source.Type != "workspace" {
+			continue
+		}
+		if _, ok := managed[l.Type]; ok || (importing && slices.Contains(workspaceRateLimitTypes, l.Type)) {
+			out[l.Type] = l.Value
+		}
+	}
+	return out
+}

@@ -113,8 +113,9 @@ func (d *FederationIssuersDataSource) Schema(_ context.Context, _ datasource.Sch
 							MarkdownDescription: "If set, Anthropic's JWKS poller has paused polling for this issuer after repeated fetch failures (RFC 3339). Null while polling is active.",
 						},
 						"poll_status": schema.SingleNestedAttribute{
-							Computed:            true,
-							MarkdownDescription: "Status of automatic JWKS polling for this issuer.",
+							Computed: true,
+							MarkdownDescription: "Status of automatic JWKS polling for this issuer. For inline-key issuers (nothing to fetch), and while the " +
+								"status is unavailable or polling has not started yet, `consecutive_failures` is `0` and both timestamps are null.",
 							Attributes: map[string]schema.Attribute{
 								"consecutive_failures": schema.Int64Attribute{
 									Computed:            true,

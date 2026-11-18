@@ -144,8 +144,9 @@ output "tokens_with_output_format" {
 
 - `cache_control` (Attributes) Top-level automatic prompt-caching breakpoint that the real request would carry. (see [below for nested schema](#nestedatt--cache_control))
 - `output_config` (Attributes) Output configuration (effort level and structured-output format) that the real request would carry. (see [below for nested schema](#nestedatt--output_config))
+- `speed` (String) Speed the real request would use. Inference speed: `standard` or `fast`. `fast` (fast mode) gives higher output tokens per second at premium pricing on supported models only; other models answer HTTP 400. Claude Opus 5.5 needs no beta header; models where fast mode is in research preview (Claude Opus 5, Claude Opus 4.8) require the `fast-mode-2026-02-01` beta header for any `speed` value, which this provider does not send, so they answer HTTP 400. Requests at different speeds do not share cached prompt prefixes. If omitted, the parameter is not sent.
 - `system` (String) System prompt providing context and instructions to the model.
-- `thinking` (Attributes) Extended thinking configuration, so the count includes the thinking overhead the real request would carry. Same shape as `anthropic_message`; no beta header is needed (verified against the live API on 2026-10-08). Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = "disabled"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5` (the API asks for `between_tools` instead, which this provider does not support). Other models were not verified. (see [below for nested schema](#nestedatt--thinking))
+- `thinking` (Attributes) Extended thinking configuration, so the count includes the thinking overhead the real request would carry. Same shape as `anthropic_message`; no beta header is needed (verified against the live API on 2026-10-08). Probed on `POST /v1/messages/count_tokens` on 2026-10-08: `type = "disabled"` is accepted for `claude-fable-5-1` and `claude-opus-5-5`, and rejected with a 400 for `claude-sonnet-5-5`, which asks for `between_tools` instead. Other models were not verified. (see [below for nested schema](#nestedatt--thinking))
 
 ### Read-Only
 
@@ -182,9 +183,9 @@ Optional:
 
 Required:
 
-- `type` (String) Thinking mode: `enabled` (requires `budget_tokens`), `disabled` or `adaptive`.
+- `type` (String) Thinking mode: `enabled` (requires `budget_tokens`), `disabled`, `adaptive` or `between_tools` (thinking off, but progress updates between tool calls come back as thinking blocks).
 
 Optional:
 
 - `budget_tokens` (Number) Maximum number of tokens the model may use for internal reasoning. Must be at least `1024` and less than the request's `max_tokens`. Required when `type` is `enabled`, not allowed otherwise.
-- `display` (String) How thinking content appears in the response: `summarized` or `omitted`. Not allowed when `type` is `disabled`.
+- `display` (String) How thinking content appears in the response: `summarized` or `omitted`. Only allowed when `type` is `enabled` or `adaptive`.

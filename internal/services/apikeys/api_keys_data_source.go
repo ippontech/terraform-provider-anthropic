@@ -9,14 +9,17 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdkpage"
 )
 
 var _ datasource.DataSource = &APIKeysDataSource{}
@@ -32,9 +35,10 @@ type APIKeysDataSource struct {
 // --- Terraform data models ---
 
 type APIKeysDataSourceModel struct {
-	Status      types.String `tfsdk:"status"`
-	WorkspaceID types.String `tfsdk:"workspace_id"`
-	APIKeys     types.List   `tfsdk:"api_keys"`
+	Status          types.String `tfsdk:"status"`
+	WorkspaceID     types.String `tfsdk:"workspace_id"`
+	CreatedByUserID types.String `tfsdk:"created_by_user_id"`
+	APIKeys         types.List   `tfsdk:"api_keys"`
 }
 
 // --- API response types ---
@@ -48,11 +52,16 @@ type apiKeyListAPIResponse struct {
 
 // --- attr.Type maps ---
 
+// apiKeyListItemAttrTypes mirrors APIKeyResourceModel field for field, so a
+// mapped model converts to a list item through types.ObjectValueFrom.
 var apiKeyListItemAttrTypes = map[string]attr.Type{
 	"id":               types.StringType,
 	"name":             types.StringType,
 	"status":           types.StringType,
 	"workspace_id":     types.StringType,
+	"scope":            types.ObjectType{AttrTypes: apiKeyScopeAttrTypes},
+	"principal":        types.ObjectType{AttrTypes: apiKeyPrincipalAttrTypes},
+	"expires_at":       types.StringType,
 	"created_at":       types.StringType,
 	"created_by":       types.ObjectType{AttrTypes: apiKeyCreatedByAttrTypes},
 	"partial_key_hint": types.StringType,
@@ -70,16 +79,21 @@ func (d *APIKeysDataSource) Metadata(_ context.Context, req datasource.MetadataR
 func (d *APIKeysDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists Anthropic API keys via the Admin API. All pages are fetched automatically. " +
-			"Results can optionally be filtered by status and workspace. " +
+			"Results can optionally be filtered by status, workspace and creator. " +
 			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
 		Attributes: map[string]schema.Attribute{
 			"status": schema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Filter by key status. Valid values: `active`, `inactive`.",
+				MarkdownDescription: "Filter by key status. Valid values: `active`, `inactive`, `archived`, `expired`.",
+				Validators:          []validator.String{stringvalidator.OneOf(apiKeyStatuses...)},
 			},
 			"workspace_id": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Filter by workspace ID. Returns only keys scoped to the specified workspace.",
+			},
+			"created_by_user_id": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Filter by the ID of the user who created the key.",
 			},
 			"api_keys": schema.ListNestedAttribute{
 				Computed:            true,
@@ -96,33 +110,27 @@ func (d *APIKeysDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 						},
 						"status": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Status of the API key (`active` or `inactive`).",
+							MarkdownDescription: "Status of the API key: `active`, `inactive`, `archived` or `expired`.",
 						},
 						"workspace_id": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "The ID of the workspace this key is scoped to, or null for organization-level keys.",
+							MarkdownDescription: apiKeyWorkspaceIDDescription,
+							DeprecationMessage:  apiKeyWorkspaceIDDeprecation,
+						},
+						"scope":     apiKeyScopeDataSourceAttribute(),
+						"principal": apiKeyPrincipalDataSourceAttribute(),
+						"expires_at": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: apiKeyExpiresAtDescription,
 						},
 						"created_at": schema.StringAttribute{
 							Computed:            true,
 							MarkdownDescription: "RFC 3339 timestamp of when the API key was created.",
 						},
-						"created_by": schema.SingleNestedAttribute{
-							Computed:            true,
-							MarkdownDescription: "Details about the actor who created this API key.",
-							Attributes: map[string]schema.Attribute{
-								"id": schema.StringAttribute{
-									Computed:            true,
-									MarkdownDescription: "Identifier of the creator.",
-								},
-								"type": schema.StringAttribute{
-									Computed:            true,
-									MarkdownDescription: "Type of the creator (e.g. `user`).",
-								},
-							},
-						},
+						"created_by": apiKeyCreatedByDataSourceAttribute(),
 						"partial_key_hint": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "The last four visible characters of the API key, for identification.",
+							MarkdownDescription: apiKeyPartialKeyHintDescription,
 						},
 						"type": schema.StringAttribute{
 							Computed:            true,
@@ -168,47 +176,15 @@ func (d *APIKeysDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
-	var allKeys []apiKeyAPIResponse
-	afterID := ""
-
-	for {
-		params := url.Values{}
-		params.Set("limit", "1000")
-		if afterID != "" {
-			params.Set("after_id", afterID)
-		}
-		if !data.Status.IsNull() && !data.Status.IsUnknown() {
-			params.Set("status", data.Status.ValueString())
-		}
-		if !data.WorkspaceID.IsNull() && !data.WorkspaceID.IsUnknown() {
-			params.Set("workspace_id", data.WorkspaceID.ValueString())
-		}
-
-		apiPath := "/v1/organizations/api_keys?" + params.Encode()
-
-		respBytes, err := d.adminClient.DoRequest(ctx, "GET", apiPath, nil)
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list API keys: %s", err))
-			return
-		}
-
-		var page apiKeyListAPIResponse
-		if err := json.Unmarshal(respBytes, &page); err != nil {
-			resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse API keys list response: %s", err))
-			return
-		}
-
-		allKeys = append(allKeys, page.Data...)
-
-		if !page.HasMore {
-			break
-		}
-		afterID = page.LastID
+	allKeys, err := listAPIKeys(ctx, d.adminClient, &data)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list API keys: %s", err))
+		return
 	}
 
 	keyObjs := make([]attr.Value, 0, len(allKeys))
 	for i := range allKeys {
-		obj, diags := mapAPIKeyToListObject(&allKeys[i])
+		obj, diags := mapAPIKeyToListObject(ctx, &allKeys[i])
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
@@ -230,33 +206,68 @@ func (d *APIKeysDataSource) Read(ctx context.Context, req datasource.ReadRequest
 // Helper functions
 // ============================================================================
 
-func mapAPIKeyToListObject(key *apiKeyAPIResponse) (attr.Value, diag.Diagnostics) {
-	var diags diag.Diagnostics
-
-	wsID := types.StringNull()
-	if key.WorkspaceID != nil {
-		wsID = types.StringValue(*key.WorkspaceID)
+// listAPIKeys pages through GET /v1/organizations/api_keys with the
+// configured filters until has_more is false. A last_id already sent (an
+// empty one included, which would restart the list), or more than
+// sdkpage.MaxPages pages, is an error, so a misbehaving API can neither hang
+// a plan nor cut the list short.
+func listAPIKeys(ctx context.Context, client *admin.Client, data *APIKeysDataSourceModel) ([]apiKeyAPIResponse, error) {
+	var keys []apiKeyAPIResponse
+	afterID := ""
+	sent := map[string]bool{}
+	for pages := 1; ; pages++ {
+		if pages > sdkpage.MaxPages {
+			return nil, fmt.Errorf("more than %d pages, stopping", sdkpage.MaxPages)
+		}
+		respBytes, err := client.DoRequest(ctx, "GET", "/v1/organizations/api_keys?"+buildAPIKeysQuery(data, afterID).Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		var page apiKeyListAPIResponse
+		if err := json.Unmarshal(respBytes, &page); err != nil {
+			return nil, fmt.Errorf("parse API keys list response: %w", err)
+		}
+		keys = append(keys, page.Data...)
+		if !page.HasMore {
+			return keys, nil
+		}
+		sent[afterID] = true
+		if sent[page.LastID] {
+			return nil, fmt.Errorf("has_more with last_id %q, a cursor already sent: stopping instead of looping", page.LastID)
+		}
+		afterID = page.LastID
 	}
+}
 
-	createdByObj, d := types.ObjectValue(apiKeyCreatedByAttrTypes, map[string]attr.Value{
-		"id":   types.StringValue(key.CreatedBy.ID),
-		"type": types.StringValue(key.CreatedBy.Type),
-	})
-	diags.Append(d...)
+// buildAPIKeysQuery builds the query parameters for one page of the list
+// request: the fixed page limit, the pagination cursor (omitted when empty)
+// and every filter the configuration sets.
+func buildAPIKeysQuery(data *APIKeysDataSourceModel, afterID string) url.Values {
+	params := url.Values{}
+	params.Set("limit", "1000")
+	if afterID != "" {
+		params.Set("after_id", afterID)
+	}
+	setIfKnown := func(key string, v types.String) {
+		if !v.IsNull() && !v.IsUnknown() {
+			params.Set(key, v.ValueString())
+		}
+	}
+	setIfKnown("status", data.Status)
+	setIfKnown("workspace_id", data.WorkspaceID)
+	setIfKnown("created_by_user_id", data.CreatedByUserID)
+	return params
+}
+
+// mapAPIKeyToListObject maps one list entry through mapAPIKeyToState, so the
+// list items and the single-key resource/data source can never diverge.
+func mapAPIKeyToListObject(ctx context.Context, key *apiKeyAPIResponse) (attr.Value, diag.Diagnostics) {
+	var model APIKeyResourceModel
+	diags := mapAPIKeyToState(ctx, key, &model)
 	if diags.HasError() {
 		return nil, diags
 	}
-
-	obj, d := types.ObjectValue(apiKeyListItemAttrTypes, map[string]attr.Value{
-		"id":               types.StringValue(key.ID),
-		"name":             types.StringValue(key.Name),
-		"status":           types.StringValue(key.Status),
-		"workspace_id":     wsID,
-		"created_at":       types.StringValue(key.CreatedAt),
-		"created_by":       createdByObj,
-		"partial_key_hint": types.StringValue(key.PartialKeyHint),
-		"type":             types.StringValue(key.Type),
-	})
+	obj, d := types.ObjectValueFrom(ctx, apiKeyListItemAttrTypes, model)
 	diags.Append(d...)
 	return obj, diags
 }

@@ -145,10 +145,15 @@ func (r *SkillVersionResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	skillVersion, err := provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, func(files []io.Reader) (*anthropic.BetaSkillVersionNewResponse, error) {
-		return r.client.Beta.Skills.Versions.New(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionNewParams{
+	skillVersion, err := provretry.MultipartUpload(ctx, filePaths, bundleRoot, dirName, func(files []io.Reader) (betaSkillVersion, error) {
+		res, err := r.client.Beta.Skills.Versions.New(ctx, data.SkillID.ValueString(), anthropic.BetaSkillVersionNewParams{
 			Files: files,
+			Betas: skillsBetas(),
 		})
+		if err != nil {
+			return betaSkillVersion{}, err
+		}
+		return decodeBetaSkillVersion(res.RawJSON()), nil
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create skill version: %s", err))
@@ -168,8 +173,9 @@ func (r *SkillVersionResource) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	// Version (not ID) is the SDK lookup key; this is what ImportState populates.
-	skillVersion, err := r.client.Beta.Skills.Versions.Get(ctx, data.Version.ValueString(), anthropic.BetaSkillVersionGetParams{
+	res, err := r.client.Beta.Skills.Versions.Get(ctx, data.Version.ValueString(), anthropic.BetaSkillVersionGetParams{
 		SkillID: data.SkillID.ValueString(),
+		Betas:   skillsBetas(),
 	})
 	if err != nil {
 		var apierr *anthropic.Error
@@ -180,6 +186,7 @@ func (r *SkillVersionResource) Read(ctx context.Context, req resource.ReadReques
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read skill version: %s", err))
 		return
 	}
+	skillVersion := decodeBetaSkillVersion(res.RawJSON())
 
 	mapSkillVersionGetResponseToState(skillVersion, &data)
 
@@ -199,6 +206,7 @@ func (r *SkillVersionResource) Delete(ctx context.Context, req resource.DeleteRe
 
 	_, err := r.client.Beta.Skills.Versions.Delete(ctx, data.Version.ValueString(), anthropic.BetaSkillVersionDeleteParams{
 		SkillID: data.SkillID.ValueString(),
+		Betas:   skillsBetas(),
 	})
 	if err != nil {
 		var apierr *anthropic.Error
@@ -225,7 +233,7 @@ func (r *SkillVersionResource) ImportState(ctx context.Context, req resource.Imp
 // Helper functions
 // ============================================================================
 
-func mapSkillVersionNewResponseToState(sv *anthropic.BetaSkillVersionNewResponse, data *SkillVersionResourceModel) {
+func mapSkillVersionNewResponseToState(sv betaSkillVersion, data *SkillVersionResourceModel) {
 	data.ID = types.StringValue(sv.ID)
 	data.SkillID = types.StringValue(sv.SkillID)
 	data.Version = types.StringValue(sv.Version)
@@ -236,7 +244,7 @@ func mapSkillVersionNewResponseToState(sv *anthropic.BetaSkillVersionNewResponse
 	// Do NOT update Files — the API does not return file paths (they are ForceNew).
 }
 
-func mapSkillVersionGetResponseToState(sv *anthropic.BetaSkillVersionGetResponse, data *SkillVersionResourceModel) {
+func mapSkillVersionGetResponseToState(sv betaSkillVersion, data *SkillVersionResourceModel) {
 	data.ID = types.StringValue(sv.ID)
 	data.SkillID = types.StringValue(sv.SkillID)
 	data.Version = types.StringValue(sv.Version)

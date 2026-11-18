@@ -24,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
 )
@@ -39,6 +40,9 @@ func NewWorkspaceResource() resource.Resource {
 // WorkspaceResource defines the resource implementation.
 type WorkspaceResource struct {
 	adminClient *admin.Client
+	// platform decides how an update is split into requests (see
+	// buildWorkspaceUpdateBodies). The zero value means first party.
+	platform platform.Platform
 }
 
 // --- Terraform data models ---
@@ -131,6 +135,13 @@ type workspaceUpdateRequest struct {
 	ExternalKeyID string `json:"external_key_id,omitempty"`
 }
 
+// workspaceTagsUpdateRequest is a tags-only update, the only form in which the
+// Claude Platform on AWS gateway accepts a tags change (see
+// buildWorkspaceUpdateBodies).
+type workspaceTagsUpdateRequest struct {
+	Tags map[string]any `json:"tags"`
+}
+
 type workspaceUpdateDataResidency struct {
 	AllowedInferenceGeos json.RawMessage `json:"allowed_inference_geos,omitempty"`
 	DefaultInferenceGeo  string          `json:"default_inference_geo,omitempty"`
@@ -172,9 +183,11 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 						MarkdownDescription: "Default inference geo applied when requests omit the parameter.",
 					},
 					"workspace_geo": schema.StringAttribute{
-						Optional:            true,
-						Computed:            true,
-						MarkdownDescription: "Geographic region for workspace data storage. Immutable after creation — changing this forces a new resource.",
+						Optional: true,
+						Computed: true,
+						MarkdownDescription: "Geographic region for workspace data storage; `us` is currently the only available value, " +
+							"on Claude Platform on AWS as well, where leaving it unset also gives `us`. " +
+							"Immutable after creation — changing this forces a new resource.",
 						PlanModifiers: []planmodifier.String{
 							stringplanmodifier.RequiresReplace(),
 							stringplanmodifier.UseStateForUnknown(),
@@ -195,7 +208,8 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"external_key_id": schema.StringAttribute{
 				Optional: true,
 				Computed: true,
-				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration used to encrypt this workspace's data. " +
+				MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration used to encrypt this workspace's data; " +
+					"on Claude Platform on AWS, the ARN of the AWS KMS key, a single-Region key in the workspace's AWS account and region. " +
 					"Requires CMEK to be enabled for the organization. **Write-once**: a key can be attached to a workspace that has none, " +
 					"but the API cannot detach or replace it afterwards, so changing an attached key forces a new workspace. " +
 					"When omitted, a key attached outside Terraform is kept in state without forcing a replacement.",
@@ -210,7 +224,7 @@ func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			// --- Computed ---
 			"compartment_id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Identifier of the workspace's encryption compartment. Reference it in the KMS key policy when configuring CMEK on AWS.",
+				MarkdownDescription: "Identifier of the workspace's encryption compartment. Reference it in the KMS key policy when configuring CMEK on Claude Platform on AWS.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"user_profile_id": schema.StringAttribute{
@@ -276,6 +290,7 @@ func (r *WorkspaceResource) Configure(_ context.Context, req resource.ConfigureR
 	}
 
 	r.adminClient = pd.AdminClient
+	r.platform = pd.Platform
 }
 
 // --- Create ---
@@ -403,24 +418,99 @@ func (r *WorkspaceResource) Update(ctx context.Context, req resource.UpdateReque
 		body.DataResidency = dr
 	}
 
-	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/workspaces/"+state.ID.ValueString(), body)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update workspace: %s", err))
-		return
+	othersChanged := !data.Name.Equal(state.Name) || body.ExternalKeyID != "" ||
+		(body.DataResidency != nil && dataResidencyChanged(ctx, data.DataResidency, state.DataResidency))
+	bodies := buildWorkspaceUpdateBodies(r.platform, body, othersChanged)
+
+	var ws *workspaceAPIResponse
+	for i, b := range bodies {
+		next, summary, detail := r.postWorkspaceUpdate(ctx, state.ID.ValueString(), b)
+		if next == nil {
+			if i == 0 {
+				// Nothing was applied: keep the prior state. terraform-plugin-framework
+				// v1.19.0 already starts the response from it; setting it here keeps
+				// both failure paths alike and independent of that detail.
+				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+			} else {
+				// The earlier requests were applied: record them, so that state
+				// matches the workspace and the next plan retries only the rest.
+				detail += " The other changes of this update were applied and are recorded in state."
+				resp.Diagnostics.Append(mapWorkspaceToState(ctx, ws, &data)...)
+				resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+			}
+			resp.Diagnostics.AddError(summary, detail)
+			return
+		}
+		ws = next
 	}
 
-	var ws workspaceAPIResponse
-	if err := json.Unmarshal(respBytes, &ws); err != nil {
-		resp.Diagnostics.AddError("Parse Error", fmt.Sprintf("Unable to parse update workspace response: %s", err))
-		return
-	}
-
-	resp.Diagnostics.Append(mapWorkspaceToState(ctx, &ws, &data)...)
+	resp.Diagnostics.Append(mapWorkspaceToState(ctx, ws, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// postWorkspaceUpdate sends one update request. It returns the updated
+// workspace, or nil with the summary and detail of the error diagnostic.
+func (r *WorkspaceResource) postWorkspaceUpdate(ctx context.Context, id string, body any) (*workspaceAPIResponse, string, string) {
+	respBytes, err := r.adminClient.DoRequest(ctx, "POST", "/v1/organizations/workspaces/"+id, body)
+	if err != nil {
+		return nil, "Client Error", fmt.Sprintf("Unable to update workspace: %s.", err)
+	}
+	var ws workspaceAPIResponse
+	if err := json.Unmarshal(respBytes, &ws); err != nil {
+		return nil, "Parse Error", fmt.Sprintf("Unable to parse update workspace response: %s.", err)
+	}
+	return &ws, "", ""
+}
+
+// dataResidencyChanged reports whether the plan changes a data_residency
+// field an update can send. A child the plan leaves unknown (Optional+Computed,
+// the object only partly configured) is not a change: the update omits it.
+// workspace_geo is RequiresReplace and never reaches an update.
+func dataResidencyChanged(ctx context.Context, plan, state types.Object) bool {
+	if plan.IsNull() || plan.IsUnknown() {
+		return false
+	}
+	var p, s workspaceDataResidencyModel
+	if plan.As(ctx, &p, basetypes.ObjectAsOptions{}).HasError() {
+		return true
+	}
+	if !state.IsNull() && !state.IsUnknown() && state.As(ctx, &s, basetypes.ObjectAsOptions{}).HasError() {
+		return true
+	}
+	changed := func(planned, prior attr.Value) bool {
+		return !planned.IsNull() && !planned.IsUnknown() && (prior == nil || !planned.Equal(prior))
+	}
+	var priorGeos, priorDefault attr.Value
+	if !state.IsNull() && !state.IsUnknown() {
+		priorGeos, priorDefault = s.AllowedInferenceGeos, s.DefaultInferenceGeo
+	}
+	return changed(p.AllowedInferenceGeos, priorGeos) || changed(p.DefaultInferenceGeo, priorDefault)
+}
+
+// buildWorkspaceUpdateBodies returns the request bodies of one update, in the
+// order they are sent. body is the update as the Claude API takes it, in a
+// single request; othersChanged reports whether a field other than tags
+// changed.
+//
+// The Claude Platform on AWS gateway rejects tags combined with any other
+// field ("'tags' must not be combined with other fields") and accepts a
+// tags-only request. There, a tags change goes in a request of its own, after
+// one with the other fields, which is sent only when one of them changed. An
+// update without a tags change is sent as on the Claude API.
+func buildWorkspaceUpdateBodies(p platform.Platform, body workspaceUpdateRequest, othersChanged bool) []any {
+	if p != platform.AWS || body.Tags == nil {
+		return []any{body}
+	}
+	tags := workspaceTagsUpdateRequest{Tags: body.Tags}
+	if !othersChanged {
+		return []any{tags}
+	}
+	body.Tags = nil
+	return []any{body, tags}
 }
 
 // --- Delete (archive) ---

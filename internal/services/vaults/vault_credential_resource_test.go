@@ -147,6 +147,78 @@ func TestAccVaultCredentialResource_environmentVariable(t *testing.T) {
 	})
 }
 
+func testAccVaultCredentialInjectionLocationConfig(block string) string {
+	return `
+resource "anthropic_vault" "test" {
+  display_name = "tf-acc-test-vault-cred-injection"
+}
+
+resource "anthropic_vault_credential" "env_var" {
+  vault_id     = anthropic_vault.test.id
+  type         = "environment_variable"
+  display_name = "tf-acc injection location"
+
+  secret_name      = "TF_ACC_API_KEY"
+  secret_value     = "tf-acc-fake-secret-value"
+  token_wo_version = 1
+
+  networking = {
+    mode = "unrestricted"
+  }
+` + block + `
+}
+`
+}
+
+// injection_location: omitted on create the API enables both locations; a set
+// block defaults its missing field to false; removing the block keeps the last
+// value (each step is followed by the framework's empty-plan check).
+func TestAccVaultCredentialResource_injectionLocation(t *testing.T) {
+	const name = "anthropic_vault_credential.env_var"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVaultCredentialDestroyed,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccVaultCredentialInjectionLocationConfig(""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "injection_location.header", "true"),
+					resource.TestCheckResourceAttr(name, "injection_location.body", "true"),
+				),
+			},
+			{
+				Config: testAccVaultCredentialInjectionLocationConfig(`  injection_location = { header = true }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "injection_location.header", "true"),
+					resource.TestCheckResourceAttr(name, "injection_location.body", "false"),
+				),
+			},
+			{
+				Config: testAccVaultCredentialInjectionLocationConfig(`  injection_location = { body = true }`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "injection_location.header", "false"),
+					resource.TestCheckResourceAttr(name, "injection_location.body", "true"),
+				),
+			},
+			{
+				Config: testAccVaultCredentialInjectionLocationConfig(""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "injection_location.header", "false"),
+					resource.TestCheckResourceAttr(name, "injection_location.body", "true"),
+				),
+			},
+			{
+				ResourceName:            name,
+				ImportState:             true,
+				ImportStateIdFunc:       testAccVaultCredentialImportIDFunc(name),
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"secret_value", "token_wo_version", "archive_on_destroy"},
+			},
+		},
+	})
+}
+
 const testAccVaultCredentialMCPOAuthConfig = `
 resource "anthropic_vault" "test" {
   display_name = "tf-acc-test-vault-cred-oauth"
