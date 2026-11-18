@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Package spendlimits holds the spend limit resource. It goes through the
-// Admin API client (`pd.AdminClient`) because the pinned SDK v1.67.0 predates
+// Admin API client (`pd.AdminKeyClient`) because the pinned SDK v1.67.0 predates
 // `client.Beta.Organization.SpendLimits` (added in v1.77.0).
 package spendlimits
 

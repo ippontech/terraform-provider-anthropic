@@ -64,6 +64,8 @@ resource "anthropic_tunnel" "corp" {
 
 When the default provider block is federated too, for the `org:admin` resources, give each block its own identity token source. Both blocks exchange a token in the same run, and the exchange accepts an identity token carrying a `jti` claim (GitHub Actions and Kubernetes projected tokens do) only once per issuer, so two blocks reading the same token file fail with `jti_reused`. Use a second projected token at another path, as above, or an `identity_token_command` that fetches a fresh token on every exchange.
 
+Keep the organization resources (workspaces, members, API keys...) off this alias. Without an `admin_api_key`, a provider block's bearer token also backs the Claude Console ones, so one that takes the tunnels alias by mistake does not fail at configuration time with `Missing Admin API Key`: it sends the `workspace:manage_tunnels` token, and the API refuses the request, at apply, or at plan for a data source.
+
 > **API**: `POST /v1/tunnels`, `GET /v1/tunnels/{tunnel_id}`, `POST /v1/tunnels/{tunnel_id}/{archive,reveal_token,rotate_token}` (Tunnels API). The deprecated Admin API endpoints under `/v1/organizations/tunnels` are not used.
 > **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`). API keys are not accepted.
 > **Beta header**: `anthropic-beta: mcp-tunnels-2026-06-22`.

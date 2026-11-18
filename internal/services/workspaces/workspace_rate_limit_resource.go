@@ -124,7 +124,7 @@ func (r *WorkspaceRateLimitResource) Schema(_ context.Context, _ resource.Schema
 		MarkdownDescription: "Sets a workspace's rate-limit overrides for one rate-limit group via the Admin API. " +
 			"The resource manages only the limiter types listed in `limits`; destroying it clears those overrides, " +
 			"so the workspace falls back to the organization's limits. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

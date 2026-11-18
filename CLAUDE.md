@@ -29,32 +29,32 @@ The v1.67.0 → v1.84.0 bump changed nothing on the wire beyond the SDK's own ve
 
 ## Services
 
-Each directory below has a `CLAUDE.md` with the load-bearing details of its resources and data sources: API quirks, live probes, test gating. Claude Code loads it when a file in that directory is read or edited; read it before changing the service. Each line gives the resources, then after the semicolon the data sources (names without the `anthropic_` prefix), then the credential (see [Credentials and clients](#credentials-and-clients)).
+Each directory below has a `CLAUDE.md` with the load-bearing details of its resources and data sources: API quirks, live probes, test gating. Claude Code loads it when a file in that directory is read or edited; read it before changing the service. Each line gives the resources, then after the semicolon the data sources (names without the `anthropic_` prefix), then the credential (see [Credentials and clients](#credentials-and-clients)). "Admin key or bearer" is the Admin API key or, when `admin_api_key` is unset, the `org:admin` OAuth bearer (`pd.AdminClient`); the other Admin key services take the key alone (`pd.AdminKeyClient`).
 
 - `agents/`: `agent`; `agent`, `agents`. Standard key.
-- `apikeys/`: `api_key` (import-only); `api_key`, `api_keys`. Admin key.
-- `compliance/`: `compliance_settings`; none. Admin key.
+- `apikeys/`: `api_key` (import-only); `api_key`, `api_keys`. Admin key or bearer.
+- `compliance/`: `compliance_settings`; none. Admin key or bearer.
 - `deployments/`: `deployment`; `deployment_runs`. Standard key.
 - `environments/`: `environment`; `environment`, `environments`. Standard key.
-- `externalkeys/`: `external_key`; `external_key`, `external_keys` (CMEK key records). Admin key.
+- `externalkeys/`: `external_key`; `external_key`, `external_keys` (CMEK key records). Admin key or bearer.
 - `federation/`: `federation_issuer`, `federation_rule`, `federation_rule_workspace`; `federation_issuer(s)`, `federation_rule(s)`, `federation_rule_workspaces`. OAuth bearer. Also holds the WIF staleness probe results.
 - `files/`: `file`; `file`, `files` (Files API GA). Standard key.
 - `memorystores/`: `memory_store`, `memory`; `memory_store(s)`, `memory`, `memories`. Standard key.
 - `messages/`: `message`; `count_tokens`. Standard key.
 - `models/`: none; `model`, `models`. Standard key.
-- `organizations/`: `invite`, `organization_member` (import-only); `organization`, `organization_member(s)`, `invite(s)`. Admin key.
-- `organizationwebhooks/`: `organization_webhook`; none. Admin key (beta `webhooks-2026-10-07`, enabled per organization on request).
+- `organizations/`: `invite`, `organization_member` (import-only); `organization`, `organization_member(s)`, `invite(s)`. Admin key or bearer.
+- `organizationwebhooks/`: `organization_webhook`; none. Admin key or bearer (beta `webhooks-2026-10-07`, enabled per organization on request).
 - `plugins/`: `plugin`, `plugin_version`, `plugin_installation_setting`, `plugin_marketplace_settings`; `plugin(s)`, `plugin_versions`, `plugin_marketplace(s)`. Claude Enterprise scoped Admin key (beta `ce-plugins-2026-09-01`).
 - `rbac/`: `rbac_group`, `rbac_group_member`; `rbac_group(s)`. Claude Enterprise scoped Admin key.
 - `serviceaccounts/`: `service_account`, `service_account_workspace`; `service_account(s)`, `service_account_workspaces`. OAuth bearer.
 - `skills/`: `skill`, `skill_version`; `skill(s)`, `skill_version(s)`. Standard key.
 - `spendlimits/`: `spend_limit`; none. Admin key (Claude Enterprise scoped key for `user` limits; Console key for `organization`/`workspace` limits, early access).
-- `telemetrydestinations/`: `telemetry_destination`; none. Admin key (beta `telemetry-destinations-2026-08-11`).
+- `telemetrydestinations/`: `telemetry_destination`; none. Admin key or bearer (beta `telemetry-destinations-2026-08-11`).
 - `tunnels/`: `tunnel`, `tunnel_certificate`; `tunnel(s)`, `tunnel_certificates`. OAuth bearer with the `workspace:manage_tunnels` scope (MCP tunnels, research preview, beta `mcp-tunnels-2026-06-22`).
 - `userprofiles/`: `user_profile`; `user_profile(s)`. Standard key (beta not enabled for the test organization).
 - `vaults/`: `vault`, `vault_credential`; `vault`, `vaults`. Standard key. Also holds the vaults read-after-write measurements.
 - `webhooks/`: `webhook` (experimental: workspace Managed Agents webhook endpoints, routes not in the API reference); none. Standard key (beta `managed-agents-2026-04-01`).
-- `workspaces/`: `workspace`, `workspace_member`, `workspace_rate_limit`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key.
+- `workspaces/`: `workspace`, `workspace_member`, `workspace_rate_limit`; `workspace(s)`, `workspace_member(s)`, `workspace_rate_limits`. Admin key or bearer.
 
 ## Adding a resource or data source
 
@@ -132,7 +132,7 @@ Optional credentials, each with its own provider argument and environment variab
 | Credential | Provider arg | Env var | Client field | Used by |
 |---|---|---|---|---|
 | Standard | `api_key` | `ANTHROPIC_API_KEY` | `pd.Client` | All standard resources and data sources |
-| Admin | `admin_api_key` | `ANTHROPIC_ADMIN_API_KEY` | `pd.AdminClient` | Organization endpoints (`/v1/organizations/*`), through `internal/admin`. Unset (an unknown value does not count here), `pd.AdminClient` goes through `pd.OAuthClient` when there is one |
+| Admin | `admin_api_key` | `ANTHROPIC_ADMIN_API_KEY` | `pd.AdminClient`; `pd.AdminKeyClient` for plugins, RBAC and spend limits | Organization endpoints (`/v1/organizations/*`), through `internal/admin`. Unset (an unknown value does not count here), `pd.AdminClient` goes through `pd.OAuthClient` when there is one, and `pd.AdminKeyClient` stays nil |
 | OAuth bearer (`org:admin`, or `workspace:manage_tunnels` for MCP tunnels) | `auth_token` | `ANTHROPIC_AUTH_TOKEN` | `pd.OAuthClient` | Endpoints that reject API keys (Workload Identity Federation, [#137](https://github.com/ippontech/terraform-provider-anthropic/issues/137); MCP tunnels, with a token of the other scope in a separate, aliased provider block) |
 | OAuth bearer minted by WIF | `federation` block | `ANTHROPIC_FEDERATION_RULE_ID` etc. fill it, never enable it | `pd.OAuthClient` | Same as `auth_token`, which it conflicts with; it wins over `ANTHROPIC_AUTH_TOKEN` |
 | Standard, minted by WIF (`workspace:developer` rule, which the WIF reference gives the access of a workspace API key; `workspace:inference` covers Messages and Models only, so `anthropic_message` / `count_tokens`) | `api_federation` block | Same variables as `federation`, same rule: fill, never enable | `pd.Client` | Same as `api_key`, which it conflicts with; it wins over `ANTHROPIC_API_KEY` ([#307](https://github.com/ippontech/terraform-provider-anthropic/issues/307)) |
@@ -147,6 +147,7 @@ Optional credentials, each with its own provider argument and environment variab
 - The `cli` block (`internal/provider/cli.go`) is **experimental**: its schema description and `templates/index.md.tmpl` say it may change or be removed in a minor release, so it is outside the compatibility promise the other provider arguments carry (see [Anthropic Go SDK pin](#anthropic-go-sdk-pin)). It reads one `ant auth login` profile on purpose, the exception to the rule above, and passes it to `option.WithConfigQuiet` so the SDK refreshes the login and writes the rotated tokens back. It is a fallback, not a conflict: evaluated only when neither `auth_token` (read from the configuration, so one unknown at plan still counts) nor `federation` is configured, nor `ANTHROPIC_AUTH_TOKEN` exported; each skip is logged at info so CI stays quiet. An attribute unknown at plan is an error, through `rejectUnknownAttributes`, shared with `federation`. The profile is `profile`, else `ANTHROPIC_PROFILE`, else the one usable `org:admin` `user_oauth` profile for `organization_id`; the block has no `workspace_id`, since an `org:admin` token is organization-wide whatever workspace the login recorded, so such an attribute could only select a profile by that recorded value and would wrongly filter out a login made without the Console's workspace picker. `readCLIProfile` decodes the files itself, because `config.LoadProfile` copies `ANTHROPIC_ORGANIZATION_ID` into a profile that lacks one and every profile would match; it therefore copies the SDK's unexported profile-name pattern, `MandatoryRefreshThreshold` (30s) and `checkCredentialsFileSafety` (no symlink, mode `& 0o077 == 0` except on Windows), which the SDK applies on every request. A profile that cannot be read is set aside with the unusable ones and named in the error when nothing else matches. A named profile is checked against `cli.organization_id` only. A profile without `org:admin` is an error when it came from `ANTHROPIC_PROFILE` and a warning when `profile` names it. A differing `base_url` is an error (`defaultBaseURL` is pinned to where `newSDKClient` sends requests; `ANTHROPIC_BASE_URL` is compared and quoted without its user information, like every other base URL since #553, which is why `checkBaseURL` runs before `resolveCLI`: an unparsable URL cannot be stripped), the profile's `workspace_id` is never sent, and a logged-out or unrefreshable login (expiring within 30s without a refresh token, or a `client_id` without one) fails at configure time with the `ant auth login` command to run. The `TestConfigureCLI*` tests cover each rule.
 - `workspace_id`, a fifth argument, is not a credential: it becomes the `anthropic-workspace-id` default header on `pd.Client` only, because a key bound to no single workspace is rejected (400) without it (doc "Select a workspace", re-read 2026-10-13). The admin client is organization-wide and a federated bearer picks its workspace at exchange time, so neither gets the header (`TestConfigureWorkspaceIDHeader`); with `api_federation` it is passed to the exchange instead, see above. It has no environment fallback: `ANTHROPIC_WORKSPACE_ID` is the SDKs' federation variable, exported by other tools in the same job and by our WIF guide for `federation.workspace_id`, and a single-workspace key answers 404 `Workspace not found` to any `anthropic-workspace-id` header, its own workspace included (measured live on 2026-10-29 on `GET /v1/models` with the `terraform-tests` key; a malformed value is a 400). It is validated at plan time against `^wrkspc_[0-9A-Za-z]+$` (`TestWorkspaceIDValidator`), so a trailing newline fails the plan, and an unknown value at plan is an error (`TestConfigureRejectsUnknownWorkspaceID`), since it is routinely a reference to a resource of the same module.
 - `admin_api_key` is sent as `x-api-key`, so besides a Console Admin API key (`sk-ant-admin01-`) it carries a Claude Enterprise scoped key (`sk-ant-api01-`, member and invite endpoints only) or a personal / service account key not scoped to a workspace. The `> **Auth**:` line of each Admin API template names which of these the endpoint accepts and, for members and invites, the Enterprise scopes (`read:members` or `read:org_audit` to read, `write:members` to write, `write:rbac_groups` for the `managed` role); it also names the `org:admin` bearer token that serves the Claude Console endpoints when `admin_api_key` is unset; `templates/index.md.tmpl` holds the full table. Keep both in step when adding an organization resource.
+- `pd.AdminClient` falls back to the `org:admin` bearer; `pd.AdminKeyClient` never does ([#524](https://github.com/ippontech/terraform-provider-anthropic/issues/524)). A Claude Enterprise only type (`plugins/`, `rbac/`) takes `pd.AdminKeyClient` with `RequireAdminKey*Client`, and so does `spendlimits/`, whose `user` limits are Claude Enterprise only; invites and members, which both kinds of organization use, stay on `pd.AdminClient`. With only a bearer, a key-only type still fails in `Configure` rather than on the API's refusal at apply; `TestBearerDoesNotBackKeyOnlyTypes` holds the list. The key wins over the bearer wherever it is set. When it comes from `ANTHROPIC_ADMIN_API_KEY` and the bearer from the block (`auth_token`, `federation`, or a `cli` block in use), `Configure` adds the `ANTHROPIC_ADMIN_API_KEY Takes Precedence` warning, which, like the `ANTHROPIC_AUTH_TOKEN Ignored` one, says to keep the variable if another provider block relies on it (`TestConfigureAdminKeyVariableOutranksABlockBearer`). The schema descriptions of the `pd.AdminClient` types share their credential sentence, `providerdata.AdminCredentialNote`.
 
 ### Configure method pattern
 
@@ -160,6 +161,7 @@ if !providerrors.RequireResourceAPIClient(pd.Client, &resp.Diagnostics) {
 r.client = pd.Client
 // data source: RequireDataSourceAPIClient(pd.Client, ...)
 // admin:       RequireAdminResourceClient / RequireAdminDataSourceClient(pd.AdminClient, ...)
+// key only:    RequireAdminKeyResourceClient / RequireAdminKeyDataSourceClient(pd.AdminKeyClient, ...)
 // OAuth:       RequireOAuthResourceClient / RequireOAuthDataSourceClient(pd.OAuthClient, ...)
 ```
 

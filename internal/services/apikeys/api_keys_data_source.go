@@ -80,7 +80,7 @@ func (d *APIKeysDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists Anthropic API keys via the Admin API. All pages are fetched automatically. " +
 			"Results can optionally be filtered by status, workspace and creator. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"status": schema.StringAttribute{
 				Optional:            true,

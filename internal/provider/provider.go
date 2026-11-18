@@ -80,7 +80,10 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 					"workspace rate limits, API keys, the organization, organization members and invites): " +
 					"a Claude Console Admin API key (`sk-ant-admin01-...`), a Claude Enterprise Admin API key with scopes (`sk-ant-api01-...`, members, invites, RBAC groups, spend limits, plugins and plugin marketplaces only), " +
 					"or a personal or service account key not scoped to a workspace. Sent in the `x-api-key` header. " +
-					"Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable.",
+					"Can also be set via the ANTHROPIC_ADMIN_API_KEY environment variable. " +
+					"Unset, an org:admin bearer token (`auth_token`, `federation` or `cli`) serves these endpoints in its place for a Claude Console organization; " +
+					"plugins, RBAC groups and spend limits always need the key. Set, by the argument or the variable, the key wins over the bearer token: " +
+					"the provider warns when the variable outranks a bearer token configured in the provider block.",
 			},
 			"auth_token": schema.StringAttribute{
 				Optional:  true,
@@ -276,6 +279,19 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		}
 	}
 
+	// ANTHROPIC_ADMIN_API_KEY outranks a bearer the block configures, so that
+	// a block pairing the two keeps sending the key. The variable may only be
+	// exported for another tool or provider block, hence the warning; as in
+	// rejectCredentialBeside, it cannot say to drop the variable outright.
+	bearerInBlock := federation != nil || cliConfig != nil || data.AuthToken.IsUnknown() || data.AuthToken.ValueString() != ""
+	if data.AdminApiKey.IsNull() && adminApiKey != "" && bearerInBlock {
+		resp.Diagnostics.AddWarning("ANTHROPIC_ADMIN_API_KEY Takes Precedence",
+			"ANTHROPIC_ADMIN_API_KEY is set, so the Admin API resources and data sources of this provider block send that key "+
+				"rather than the OAuth bearer token the block configures. Keep the variable if another provider block relies on it. "+
+				"To keep the key in this block without this warning, set its admin_api_key argument. To send the bearer token instead, "+
+				"remove the variable from the run's environment and pass the key as admin_api_key to any provider block that still needs it.")
+	}
+
 	if apiKey == "" && adminApiKey == "" && authToken == "" && federation == nil && apiFederation == nil && cliConfig == nil {
 		resp.Diagnostics.AddError(
 			"Missing Credentials",
@@ -304,6 +320,7 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
+		pd.AdminKeyClient = pd.AdminClient
 	}
 	if authToken != "" {
 		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false, option.WithAuthToken(authToken))}
@@ -330,7 +347,9 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 	}
 	// Without an admin_api_key, the OAuth client's bearer backs the Admin API
 	// resources: the Admin API accepts an org:admin token (#524). An unknown
-	// admin_api_key is not unset: the apply would send the key.
+	// admin_api_key is not unset, so the bearer does not stand in for it at
+	// plan time: the apply would send the key. Only an exported
+	// ANTHROPIC_ADMIN_API_KEY serves that plan (resolveCredential).
 	if pd.AdminClient == nil && pd.OAuthClient != nil && !data.AdminApiKey.IsUnknown() {
 		pd.AdminClient = admin.NewSDKClient(pd.OAuthClient.Client)
 	}

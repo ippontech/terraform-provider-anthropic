@@ -69,7 +69,7 @@ func (d *WorkspaceMembersDataSource) Schema(_ context.Context, _ datasource.Sche
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists all members of an Anthropic Workspace via the Admin API. " +
 			"All pages are fetched automatically. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"workspace_id": schema.StringAttribute{
 				Required:            true,

@@ -9,12 +9,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -224,6 +228,9 @@ func TestConfigureAdminClientCredential(t *testing.T) {
 			if tt.wantKey != "" {
 				pd.AdminClient.BaseURL = srv.URL
 			}
+			if keyBacked := tt.wantKey != ""; (pd.AdminKeyClient != nil) != keyBacked || (keyBacked && pd.AdminKeyClient != pd.AdminClient) {
+				t.Errorf("AdminKeyClient = %p, want the admin client only when the key backs it", pd.AdminKeyClient)
+			}
 
 			if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
 				t.Fatalf("request failed: %v", err)
@@ -238,6 +245,135 @@ func TestConfigureAdminClientCredential(t *testing.T) {
 				t.Errorf("authorization = %q, want %q", v, tt.wantBearer)
 			}
 		})
+	}
+}
+
+// TestConfigureAdminKeyVariableOutranksABlockBearer: an exported
+// ANTHROPIC_ADMIN_API_KEY backs the Admin API resources even next to a bearer
+// token the provider block configures, and Configure says so. The argument is
+// a stated choice and a bearer token from the environment ranks no higher than
+// the variable: neither warns.
+func TestConfigureAdminKeyVariableOutranksABlockBearer(t *testing.T) {
+	const key = "sk-ant-admin01-env"
+	str := func(v any) tftypes.Value { return tftypes.NewValue(tftypes.String, v) }
+	just := func(config map[string]tftypes.Value) func(*testing.T) map[string]tftypes.Value {
+		return func(*testing.T) map[string]tftypes.Value { return config }
+	}
+
+	tests := []struct {
+		name     string
+		tokenEnv string
+		config   func(*testing.T) map[string]tftypes.Value
+		wantWarn bool
+	}{
+		{name: "auth_token argument", config: just(map[string]tftypes.Value{"auth_token": str("sk-ant-oat01-config")}), wantWarn: true},
+		{name: "auth_token unknown at plan", config: just(map[string]tftypes.Value{"auth_token": str(tftypes.UnknownValue)}), wantWarn: true},
+		{name: "federation block", wantWarn: true, config: func(t *testing.T) map[string]tftypes.Value {
+			return map[string]tftypes.Value{"federation": federationValue(t, map[string]tftypes.Value{
+				"organization_id": str(testOrg), "federation_rule_id": str("fdrl_rule"), "identity_token": str("jwt"),
+			})}
+		}},
+		{name: "cli block", wantWarn: true, config: func(t *testing.T) map[string]tftypes.Value {
+			cs := newCLIServer(t)
+			t.Setenv("ANTHROPIC_BASE_URL", cs.URL)
+			writeCLIProfile(t, cliConfigDir(t), "admin", cs.login(testOrg, "sk-ant-oat01-admin"))
+			return map[string]tftypes.Value{"cli": cliValue(t, map[string]string{"profile": "admin"})}
+		}},
+		{name: "empty auth_token argument", config: just(map[string]tftypes.Value{"auth_token": str("")})},
+		{name: "admin_api_key argument", config: just(map[string]tftypes.Value{"admin_api_key": str(key), "auth_token": str("sk-ant-oat01-config")})},
+		{name: "bearer token from the environment", tokenEnv: "sk-ant-oat01-env", config: just(nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearCredentialEnv(t)
+			t.Setenv("ANTHROPIC_ADMIN_API_KEY", key)
+			if tt.tokenEnv != "" {
+				t.Setenv("ANTHROPIC_AUTH_TOKEN", tt.tokenEnv)
+			}
+
+			resp := configureProvider(t, tt.config(t))
+			if pd := providerDataFrom(t, resp); pd.AdminClient == nil || pd.AdminClient != pd.AdminKeyClient || pd.AdminClient.ApiKey != key {
+				t.Fatal("the admin key does not back the admin client")
+			}
+			w := resp.Diagnostics.Warnings()
+			if got := len(w) == 1 && w[0].Summary() == "ANTHROPIC_ADMIN_API_KEY Takes Precedence"; got != tt.wantWarn || len(w) > 1 {
+				t.Fatalf("warnings = %v, want the precedence warning = %v", w, tt.wantWarn)
+			}
+			// Another provider block may read the variable: the detail must
+			// say to keep it then, as the ANTHROPIC_AUTH_TOKEN warning does.
+			if tt.wantWarn && !strings.Contains(w[0].Detail(), "Keep the variable if another provider block relies on it") {
+				t.Errorf("detail %q does not say to keep the variable for another block", w[0].Detail())
+			}
+		})
+	}
+}
+
+// TestBearerDoesNotBackKeyOnlyTypes: with a bearer token and no admin_api_key,
+// the types that take AdminKeyClient stop at Configure with the missing-key
+// error, which offers no bearer token, and every other Admin API type
+// configures on the bearer. With the key, none is refused. A new Claude
+// Enterprise only type belongs in the list.
+func TestBearerDoesNotBackKeyOnlyTypes(t *testing.T) {
+	keyOnly := []string{
+		"anthropic_plugin",
+		"anthropic_plugin_installation_setting",
+		"anthropic_plugin_marketplace_settings",
+		"anthropic_plugin_version",
+		"anthropic_rbac_group",
+		"anthropic_rbac_group_member",
+		"anthropic_spend_limit",
+		"data.anthropic_plugin",
+		"data.anthropic_plugin_marketplace",
+		"data.anthropic_plugin_marketplaces",
+		"data.anthropic_plugin_versions",
+		"data.anthropic_plugins",
+		"data.anthropic_rbac_group",
+		"data.anthropic_rbac_groups",
+	}
+
+	// refused configures every registered type and returns those stopped for
+	// a missing Admin API key.
+	refused := func(config map[string]tftypes.Value) []string {
+		clearCredentialEnv(t)
+		ctx := context.Background()
+		p := &AnthropicProvider{version: "test"}
+		pd := providerDataFrom(t, configureProviderInstance(t, p, config))
+
+		var names []string
+		note := func(name string, diags diag.Diagnostics) {
+			for _, d := range diags.Errors() {
+				if d.Summary() != "Missing Admin API Key" {
+					continue
+				}
+				names = append(names, name)
+				if strings.Contains(d.Detail(), "auth_token") {
+					t.Errorf("%s: detail %q offers a bearer token", name, d.Detail())
+				}
+			}
+		}
+		for _, f := range p.Resources(ctx) {
+			r := f()
+			var resp resource.ConfigureResponse
+			r.(resource.ResourceWithConfigure).Configure(ctx, resource.ConfigureRequest{ProviderData: pd}, &resp)
+			note(resourceTypeName(r), resp.Diagnostics)
+		}
+		for _, f := range p.DataSources(ctx) {
+			d := f()
+			var resp datasource.ConfigureResponse
+			d.(datasource.DataSourceWithConfigure).Configure(ctx, datasource.ConfigureRequest{ProviderData: pd}, &resp)
+			note("data."+dataSourceTypeName(d), resp.Diagnostics)
+		}
+		slices.Sort(names)
+		return names
+	}
+
+	config := map[string]tftypes.Value{"auth_token": tftypes.NewValue(tftypes.String, "sk-ant-oat01-config")}
+	if got := refused(config); !slices.Equal(got, keyOnly) {
+		t.Errorf("with a bearer token alone, types refused for a missing Admin API key:\n got %v\nwant %v", got, keyOnly)
+	}
+	config["admin_api_key"] = tftypes.NewValue(tftypes.String, "sk-ant-api01-config")
+	if got := refused(config); len(got) != 0 {
+		t.Errorf("with an Admin API key, types refused for a missing one: %v", got)
 	}
 }
 

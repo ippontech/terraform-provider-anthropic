@@ -102,7 +102,7 @@ func (r *InviteResource) Metadata(_ context.Context, req resource.MetadataReques
 func (r *InviteResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Creates and manages an invitation for a user to join the organization via the Admin API. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset. " +
+			providerdata.AdminCredentialNote + " " +
 			"There is no update operation: changing `email`, `role` or `rbac_group_ids` replaces the invite (a change to `rbac_group_ids` is only recorded once the invite is accepted or expired). " +
 			"The resource remains managed after the invite is accepted or expires; deleting this resource cancels the invite when possible.",
 		Attributes: map[string]schema.Attribute{

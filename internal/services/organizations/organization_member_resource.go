@@ -65,7 +65,7 @@ func (r *OrganizationMemberResource) Schema(_ context.Context, _ resource.Schema
 			"Membership must first be created by inviting a user (via `anthropic_invite` or the Anthropic Console) and having them accept. " +
 			"This resource supports changing a member's organization role and removing them from the organization. " +
 			"Destroy is blocked unless `remove_on_destroy = true` has been applied. **Warning:** When enabled, removing this resource from configuration and applying, or running `terraform destroy`, irreversibly removes the user's organization membership. There is no archive or deactivate alternative. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"remove_on_destroy": schema.BoolAttribute{
 				Optional:            true,

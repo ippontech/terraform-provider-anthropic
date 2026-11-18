@@ -56,7 +56,9 @@ func cliSchema() schema.SingleNestedAttribute {
 		Description: "Experimental: may change or be removed in a minor release if the `ant` CLI's profile layout changes. Obtain the org:admin OAuth bearer token from a profile written by `ant auth login`, refreshing it " +
 			"with the profile's refresh token. Used only when neither `auth_token` nor `federation` supplies the token, " +
 			"so the same configuration runs locally as the operator and in CI as a workload. Without `profile`, the " +
-			"provider looks for the one org:admin profile that matches `organization_id`.",
+			"provider looks for the one org:admin profile that matches `organization_id`. " +
+			"Without an admin key (`admin_api_key` or ANTHROPIC_ADMIN_API_KEY), the token also serves the organization management endpoints; " +
+			"with one, the key wins, with a warning when it comes from the variable.",
 		Attributes: map[string]schema.Attribute{
 			"profile": schema.StringAttribute{
 				Optional:    true,

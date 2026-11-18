@@ -48,7 +48,7 @@ output "compliance_api_state" {
 
 ### Read-Only
 
-- `id` (String) ID of the organization the settings belong to: the organization of the configured admin key.
+- `id` (String) ID of the organization the settings belong to: the organization of the configured admin key or, without one, of the `org:admin` bearer token.
 
 ## Import
 

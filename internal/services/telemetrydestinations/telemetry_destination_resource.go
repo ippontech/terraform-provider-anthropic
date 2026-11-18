@@ -81,7 +81,7 @@ func (r *TelemetryDestinationResource) Schema(_ context.Context, _ resource.Sche
 		MarkdownDescription: "Manages an OpenTelemetry destination via the Admin API (beta, `telemetry-destinations-2026-08-11`): " +
 			"an OTLP/HTTP endpoint the API exports Messages API and Managed Agents traces to, for the workspaces it covers. " +
 			"Header values are write-only (`headers_wo`): the API never returns them, and they never reach Terraform state. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, or an `org:admin` bearer token when it is unset.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

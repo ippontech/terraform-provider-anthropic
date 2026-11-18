@@ -53,7 +53,7 @@ func (r *ExternalKeyResource) Schema(_ context.Context, _ resource.SchemaRequest
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Registers a customer-managed encryption key (CMEK) with the organization via the Admin API: " +
 			"a record that points to a key in AWS KMS, Google Cloud KMS or Azure Key Vault. Attach it to a workspace " +
-			"with `anthropic_workspace.external_key_id`. Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`, or an `org:admin` bearer token when it is unset) and CMEK " +
+			"with `anthropic_workspace.external_key_id`. " + providerdata.AdminCredentialNote + " CMEK must be " +
 			"turned on for the organization. Once any workspace, even an archived one, uses the key, its `geo` and " +
 			"`provider_config` can no longer change and the API refuses to delete it.",
 		Attributes: map[string]schema.Attribute{

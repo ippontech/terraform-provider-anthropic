@@ -58,7 +58,8 @@ const (
 // performs a single attempt, and NewClient enables DefaultMaxRetries.
 //
 // A client built by NewSDKClient sends its requests through an SDK client
-// instead of HTTPClient, with the same retry policy; see NewSDKClient.
+// instead of HTTPClient (a cloud gateway's, or the first-party OAuth client
+// when admin_api_key is unset), with the same retry policy; see NewSDKClient.
 type Client struct {
 	ApiKey     string
 	BaseURL    string
@@ -75,7 +76,8 @@ type Client struct {
 	MaxRetryDelay time.Duration
 
 	// sdk, when set, carries every request instead of HTTPClient, with its own
-	// base URL and authentication; ApiKey and BaseURL are then unused.
+	// base URL and authentication (a gateway's, or an OAuth bearer token);
+	// ApiKey and BaseURL are then unused.
 	sdk *anthropic.Client
 	// sdkAttemptTimeout bounds each attempt through sdk, as HTTPClient's
 	// Timeout does for the direct client. Zero means no bound.

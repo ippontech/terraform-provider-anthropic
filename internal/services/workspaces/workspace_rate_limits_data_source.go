@@ -97,7 +97,7 @@ func (d *WorkspaceRateLimitsDataSource) Schema(_ context.Context, _ datasource.S
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists a workspace's rate limits. By default only the groups and limiter types with a workspace-level override are returned; " +
 			"with `include_inherited = true`, every group with organization-level limits is listed, with the values the workspace inherits as well as its overrides. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) on the provider, or an `org:admin` bearer token when it is unset.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"workspace_id": schema.StringAttribute{
 				Required:            true,

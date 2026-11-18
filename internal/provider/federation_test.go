@@ -163,12 +163,10 @@ func TestConfigureFederationExchangesAndRefreshes(t *testing.T) {
 		t.Fatal("federation alone did not back the admin client")
 	}
 
-	// One request per client: the token is near expiry, so each exchanges.
-	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
-		t.Fatalf("admin request failed: %v", err)
+	for range 2 {
+		if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
 	}
 
 	exchanges, authorized := fs.snapshot()
@@ -189,6 +187,19 @@ func TestConfigureFederationExchangesAndRefreshes(t *testing.T) {
 	want := []string{"Bearer sk-ant-oat01-minted-1", "Bearer sk-ant-oat01-minted-2"}
 	if strings.Join(authorized, ",") != strings.Join(want, ",") {
 		t.Errorf("authorization headers = %v, want %v", authorized, want)
+	}
+
+	// The admin client's request refreshes the same way: a third exchange,
+	// with the next identity token, whose access token it carries.
+	if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
+		t.Fatalf("admin request failed: %v", err)
+	}
+	exchanges, authorized = fs.snapshot()
+	if len(exchanges) != 3 || exchanges[2]["assertion"] != "jwt-3" {
+		t.Fatalf("exchanges after the admin request = %v, want a third one with a fresh identity token", exchanges)
+	}
+	if got := authorized[len(authorized)-1]; got != "Bearer sk-ant-oat01-minted-3" {
+		t.Errorf("admin request authorization = %q, want the token of the third exchange", got)
 	}
 }
 
