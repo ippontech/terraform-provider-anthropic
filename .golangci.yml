@@ -2,10 +2,10 @@
 # is pinned in .github/workflows/provider.yml, the local one in mise.toml).
 #
 # Only code that differs from origin/main is reported (issues.new-from-merge-base):
-# the existing code has about 250 findings under this configuration, and a pull
-# request must not fail on lines it never touched. Remove that setting once the
-# existing code has been brought up to date in one mechanical pull request, and
-# the 20 gocognit findings by the refactoring lot (see gocognit below).
+# the existing code has several hundred findings under this configuration, and
+# a pull request must not fail on lines it never touched. Remove that setting
+# once the existing code has been brought up to date in one mechanical pull
+# request, and the gocognit findings by the refactoring lot (see gocognit below).
 #
 # The setting filters every linter, so `make lint` and the CI lint job also run
 # `golangci-lint run --no-config`: the standard linters on the whole tree, as
@@ -44,7 +44,7 @@ linters:
       # - now, for new code: in new-code mode a finding counts when the change
       #   adds or edits its line, the `func` line, so this reports new functions
       #   above 20 (and an existing one whose signature a change edits);
-      # - the 20 existing functions above 20 are guarded by the complexity
+      # - the existing functions above 20 are guarded by the complexity
       #   ratchet (`make complexity`, CI job `complexity`), computed against the
       #   merge base with nothing committed: a function above 20 there may be
       #   touched only if its score does not rise, and every other function must
