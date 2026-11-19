@@ -111,13 +111,22 @@ their lockfile, and the actions used by the three workflows) into their own `rel
 `automerge: false`. A maintainer reviews the release notes and the diff of each one before merging. The
 rule matches by file, not by package, so the same action used in other workflows (`actions/checkout`,
 say) keeps its automerged `GitHub Actions` group there; only its occurrences in these three workflows
-wait for review. `testacc.yml` uses the same actions as the release workflows, `hashicorp/setup-terraform`
-aside, so a bump of one of them comes in the same reviewed PR for all three files.
+wait for review. `testacc.yml` uses the same actions as the release workflows, so a bump of one of them
+comes in the same reviewed PR for all three files.
 
-`testacc.yml` also pins the Terraform CLI that `hashicorp/setup-terraform` installs (`terraform_version`).
-The action's default is `latest`, which would run whatever release is newest next to the keys, with no
-decision at all. The `github-actions` manager tracks that input as the `terraform` dependency, and the
-same rule puts its updates in the reviewed group.
+`testacc.yml` also installs the Terraform CLI, in both jobs, from the HashiCorp release zip, checked with
+`sha256sum` against `TERRAFORM_SHA256` before anything runs (the `Install Terraform` step, the pattern of
+tflint in `security.yml`): `hashicorp/setup-terraform` takes no digest, and a version pin alone would run
+whatever bytes the release host serves for that version next to the keys. The hash is committed, not read
+from the release's `SHA256SUMS`, which comes from the same host. The `custom.regex` manager tracks
+`TERRAFORM_VERSION` as the `hashicorp/terraform` dependency and the same rule puts its updates in the
+reviewed group, but it cannot bump the hash. `testacc.yml` does not run on pull requests, so the
+`terraform-digest` job of `security.yml` checks the pins there: it fails unless both jobs carry the same
+version and hash and the downloaded archive matches, so a bump without its hash turns that check red
+instead of failing the install step on the next push to `main` (and blocking the next release, which
+calls this workflow). The maintainer sets `TERRAFORM_SHA256` in both jobs, in the PR, from the
+`linux_amd64` line of the release's `terraform_<version>_SHA256SUMS` after checking that file's
+signature against HashiCorp's release key.
 
 `semantic-release.yml` pins the Node.js runtime of its two jobs the same way: `NODE_VERSION` in the
 workflow `env`, with a `# renovate: datasource=node-version depName=node` annotation, and `NODE_SHA256`
