@@ -74,7 +74,7 @@ The GoReleaser version was once visible to no built-in manager, so it was drifti
 | GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line, and the `github-actions` manager, which now reads this input too (type `uses-with`) |
 
 The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
-well-known inputs such as `setup-node`'s `node-version` and the `version:` of `goreleaser-action`, but it
+well-known inputs such as the `version:` of `goreleaser-action`, but it
 does not read arbitrary action inputs, hence the annotation. A rule that targets such a pin matches both
 managers: the GoReleaser hold matched only `custom.regex`, so the `github-actions` manager put the check
 pin's v2.20.0 in the automerged `GitHub Actions` group, away from the release pin. To put another tool version under Renovate's control, add the same comment above it:
@@ -118,6 +118,16 @@ aside, so a bump of one of them comes in the same reviewed PR for all three file
 The action's default is `latest`, which would run whatever release is newest next to the keys, with no
 decision at all. The `github-actions` manager tracks that input as the `terraform` dependency, and the
 same rule puts its updates in the reviewed group.
+
+`semantic-release.yml` pins the Node.js runtime of its two jobs the same way: `NODE_VERSION` in the
+workflow `env`, with a `# renovate: datasource=node-version depName=node` annotation, and `NODE_SHA256`
+beside it, the digest of the `linux-x64` archive that the "Install Node.js" step checks before anything
+runs. It is not `actions/setup-node`, whose `node-version` is a range that resolves to the newest release
+at run time, with no Renovate PR and no check of the download. The custom manager reads the version and
+the file rule above puts its updates in the reviewed group; the digest is updated by hand in that PR
+(value from the release's `SHASUMS256.txt`), as for tflint in `security.yml`, except that no pull request
+check runs this install (the workflow runs on a schedule and on dispatch only): a bump merged without its
+digest fails the next run before the App token is minted, so run the workflow by hand after merging it.
 
 A new workflow whose jobs read any secret other than `GITHUB_TOKEN`, or run in a protected environment,
 joins the rule's `matchFileNames` list. Its jobs restore no Actions cache either (`RELEASE.md`, "Caches"): the
