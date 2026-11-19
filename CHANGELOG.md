@@ -1,3 +1,9 @@
+## [1.95.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.95.0...v1.95.1) (2026-11-18)
+
+### 🐛 Bug Fixes
+
+* **webhooks:** keep the update response when Update reads back after a secret regeneration ([#588](https://github.com/ippontech/terraform-provider-anthropic/issues/588)) ([e71105a](https://github.com/ippontech/terraform-provider-anthropic/commit/e71105a84b09cdd6d77205a48998b4ed38f39bea))
+
 ## [1.95.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.94.0...v1.95.0) (2026-11-17)
 
 ### ✨ Features
