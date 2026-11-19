@@ -137,7 +137,8 @@ jobs:
       # GORELEASER_VERSION and GORELEASER_SHA256 together, here and in goreleaser-check.yml
       # (value from the target release's checksums.txt, goreleaser_Linux_x86_64.tar.gz line).
       # Renovate only bumps the version, so its PR goes red in goreleaser-check.yml until the
-      # hash is updated by hand. The archive goes to RUNNER_TEMP: GoReleaser refuses a dirty tree.
+      # hash is updated by hand, and goes red again if the two files' pins differ. The archive
+      # goes to RUNNER_TEMP: GoReleaser refuses a dirty tree.
       - name: Install GoReleaser
         env:
           # renovate: datasource=github-releases depName=goreleaser/goreleaser
@@ -147,7 +148,7 @@ jobs:
           set -euo pipefail
           install_dir="${RUNNER_TEMP}/goreleaser"
           mkdir -p "${install_dir}"
-          curl -fsSL -o "${install_dir}/goreleaser.tar.gz" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${install_dir}/goreleaser.tar.gz" \
             "https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz"
           echo "${GORELEASER_SHA256}  ${install_dir}/goreleaser.tar.gz" | sha256sum -c -
           tar -xzf "${install_dir}/goreleaser.tar.gz" -C "${install_dir}" goreleaser

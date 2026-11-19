@@ -82,8 +82,9 @@ Renovate's control, add the same comment above it:
           TOOL_VERSION: v1.2.3
 ```
 
-It is grouped into the `CI tool versions` PR, except for the version pinned in the release workflow,
-which goes to the `release tooling` PR below.
+It is grouped into the `CI tool versions` PR, except for the GoReleaser version, which has a `GoReleaser`
+PR of its own (reviewed, never automerged): its red hash check, until the hash is updated by hand, must not
+hold back the other release tooling updates.
 
 The GoReleaser archive is also pinned by content (`GORELEASER_SHA256`, next to the version in both files),
 as `TFLINT_SHA256` is in `security.yml`. The release job runs the binary after the GPG key is imported, with
@@ -91,7 +92,8 @@ a write token, and a version string does not bind the bytes behind it: whoever c
 release asset would otherwise run code with the key. The hash is checked before `Import GPG key`, and is
 copied from the target release's `checksums.txt` (`goreleaser_Linux_x86_64.tar.gz` line), never fetched at
 run time. Renovate bumps the version only, so its PR goes red in `goreleaser-check.yml` until a maintainer
-updates the hash in both files; read the release notes first, since that decision is what the hash records.
+updates the hash in both files (`goreleaser-check.yml` also fails when the two files' pins differ);
+read the release notes first, since that decision is what the hash records.
 
 The semantic-release toolchain is a regular npm project under `.github/semantic-release/`
 (`package.json` with exact versions, `package-lock.json` with integrity hashes, `.npmrc` with
@@ -111,9 +113,10 @@ The actions of `testacc.yml` are in the same position. Its two jobs run in the `
 with the acceptance-test API keys in their environment, and every push to `main` starts them, the merge
 of a Renovate PR included: an automerged action update would run with those keys as soon as it lands.
 
-A `matchFileNames` rule therefore moves these updates (GoReleaser, the semantic-release packages and
-their lockfile, and the actions used by the three workflows) into their own `release tooling` group with
-`automerge: false`. A maintainer reviews the release notes and the diff of each one before merging. The
+A `matchFileNames` rule therefore moves these updates (the semantic-release packages and their lockfile,
+and the actions used by the three workflows) into their own `release tooling` group with `automerge: false`.
+GoReleaser, declared in `goreleaser-release.yml` too, has a group of its own (see "Custom managers"): a later
+rule matches it by name. A maintainer reviews the release notes and the diff of each one before merging. The
 rule matches by file, not by package, so the same action used in other workflows (`actions/checkout`,
 say) keeps its automerged `GitHub Actions` group there; only its occurrences in these three workflows
 wait for review. `testacc.yml` uses the same actions as the release workflows, so a bump of one of them

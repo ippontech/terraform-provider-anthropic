@@ -32,7 +32,8 @@ jobs:
 
       # Same pinned install as goreleaser-release.yml, which runs the binary next to the signing
       # key (see the comment there): keep GORELEASER_VERSION and GORELEASER_SHA256 identical in
-      # both files. A version bump that leaves the hash stale fails here, on the PR, not at tag time.
+      # both files. A version bump that leaves the hash stale fails here, on the PR, not at tag time;
+      # the next step fails the PR when the release workflow's pins differ from these.
       - name: Install GoReleaser
         env:
           # renovate: datasource=github-releases depName=goreleaser/goreleaser
@@ -42,12 +43,26 @@ jobs:
           set -euo pipefail
           install_dir="${RUNNER_TEMP}/goreleaser"
           mkdir -p "${install_dir}"
-          curl -fsSL -o "${install_dir}/goreleaser.tar.gz" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${install_dir}/goreleaser.tar.gz" \
             "https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz"
           echo "${GORELEASER_SHA256}  ${install_dir}/goreleaser.tar.gz" | sha256sum -c -
           tar -xzf "${install_dir}/goreleaser.tar.gz" -C "${install_dir}" goreleaser
           echo "${install_dir}" >> "${GITHUB_PATH}"
           "${install_dir}/goreleaser" --version
+
+      # The release workflow's copy is only run at tag time, after the tag and the draft release
+      # exist: compare it here so that fixing one file alone cannot turn the PR green.
+      - name: Check the release workflow pins the same GoReleaser
+        run: |
+          set -euo pipefail
+          for key in GORELEASER_VERSION GORELEASER_SHA256; do
+            here=$(sed -n "s/^ *${key}: *//p" .github/workflows/goreleaser-check.yml)
+            there=$(sed -n "s/^ *${key}: *//p" .github/workflows/goreleaser-release.yml)
+            if [ -z "${here}" ] || [ "${here}" != "${there}" ]; then
+              echo "::error::${key} differs between goreleaser-check.yml (${here}) and goreleaser-release.yml (${there}); update both."
+              exit 1
+            fi
+          done
 
       - name: Check GoReleaser config
         run: goreleaser check
