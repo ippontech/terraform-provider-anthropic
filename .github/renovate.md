@@ -71,22 +71,27 @@ The GoReleaser version was once visible to no built-in manager, so it was drifti
 
 | What | Where | How it is tracked |
 |---|---|---|
-| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line, and the `github-actions` manager, which now reads this input too (type `uses-with`) |
+| GoReleaser CLI | `GORELEASER_VERSION` env of the `Install GoReleaser` step in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line |
 
-The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
-well-known inputs such as the `version:` of `goreleaser-action`, but it
-does not read arbitrary action inputs, hence the annotation. A rule that targets such a pin matches both
-managers: the GoReleaser hold matched only `custom.regex`, so the `github-actions` manager put the check
-pin's v2.20.0 in the automerged `GitHub Actions` group, away from the release pin. To put another tool version under Renovate's control, add the same comment above it:
+No built-in manager reads a workflow `env` value, hence the annotation. To put another tool version under
+Renovate's control, add the same comment above it:
 
 ```yaml
-        with:
+        env:
           # renovate: datasource=github-releases depName=owner/repo
-          version: v1.2.3
+          TOOL_VERSION: v1.2.3
 ```
 
 It is grouped into the `CI tool versions` PR, except for the version pinned in the release workflow,
 which goes to the `release tooling` PR below.
+
+The GoReleaser archive is also pinned by content (`GORELEASER_SHA256`, next to the version in both files),
+as `TFLINT_SHA256` is in `security.yml`. The release job runs the binary after the GPG key is imported, with
+a write token, and a version string does not bind the bytes behind it: whoever can replace an upstream
+release asset would otherwise run code with the key. The hash is checked before `Import GPG key`, and is
+copied from the target release's `checksums.txt` (`goreleaser_Linux_x86_64.tar.gz` line), never fetched at
+run time. Renovate bumps the version only, so its PR goes red in `goreleaser-check.yml` until a maintainer
+updates the hash in both files; read the release notes first, since that decision is what the hash records.
 
 The semantic-release toolchain is a regular npm project under `.github/semantic-release/`
 (`package.json` with exact versions, `package-lock.json` with integrity hashes, `.npmrc` with
