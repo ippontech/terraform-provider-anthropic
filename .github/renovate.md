@@ -120,9 +120,11 @@ tflint in `security.yml`): `hashicorp/setup-terraform` takes no digest, and a ve
 whatever bytes the release host serves for that version next to the keys. The hash is committed, not read
 from the release's `SHA256SUMS`, which comes from the same host. The `custom.regex` manager tracks
 `TERRAFORM_VERSION` as the `hashicorp/terraform` dependency and the same rule puts its updates in the
-reviewed group, but it cannot bump the hash. `testacc.yml` does not run on pull requests, so the PR
-stays green and, merged as is, fails the install step on the next push to `main` (and so blocks the next
-release, which calls this workflow): the maintainer sets `TERRAFORM_SHA256` in both jobs, in the PR, from the
+reviewed group, but it cannot bump the hash. `testacc.yml` does not run on pull requests, so the
+`terraform-digest` job of `security.yml` checks the pins there: it fails unless both jobs carry the same
+version and hash and the downloaded archive matches, so a bump without its hash turns that check red
+instead of failing the install step on the next push to `main` (and blocking the next release, which
+calls this workflow). The maintainer sets `TERRAFORM_SHA256` in both jobs, in the PR, from the
 `linux_amd64` line of the release's `terraform_<version>_SHA256SUMS` after checking that file's
 signature against HashiCorp's release key.
 

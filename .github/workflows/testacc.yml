@@ -98,10 +98,10 @@ jobs:
       # the same host (see security.yml, tflint). Bump TERRAFORM_VERSION and TERRAFORM_SHA256
       # together (value from the target release's terraform_<version>_SHA256SUMS, linux_amd64 line,
       # after checking that file's signature against HashiCorp's release key). Renovate only bumps
-      # the version, and this workflow does not run on pull requests, so nothing turns its PR red:
-      # set the hash in the Renovate PR before merging it, or the next run on main fails here and
-      # blocks the release. The `release tooling` group keeps the PR from automerging
-      # (.github/renovate.md, "Release tooling"). The same step is in both jobs: change both.
+      # the version, and this workflow does not run on pull requests: the `terraform-digest` job of
+      # security.yml checks the pair there instead, so the Renovate PR is red until the hash is set.
+      # The `release tooling` group keeps the PR from automerging (.github/renovate.md, "Release
+      # tooling"). The same step is in both jobs: change both (`terraform-digest` compares them).
       - name: Install Terraform
         env:
           # renovate: datasource=github-releases depName=hashicorp/terraform
@@ -178,10 +178,10 @@ jobs:
       # the same host (see security.yml, tflint). Bump TERRAFORM_VERSION and TERRAFORM_SHA256
       # together (value from the target release's terraform_<version>_SHA256SUMS, linux_amd64 line,
       # after checking that file's signature against HashiCorp's release key). Renovate only bumps
-      # the version, and this workflow does not run on pull requests, so nothing turns its PR red:
-      # set the hash in the Renovate PR before merging it, or the next run on main fails here and
-      # blocks the release. The `release tooling` group keeps the PR from automerging
-      # (.github/renovate.md, "Release tooling"). The same step is in both jobs: change both.
+      # the version, and this workflow does not run on pull requests: the `terraform-digest` job of
+      # security.yml checks the pair there instead, so the Renovate PR is red until the hash is set.
+      # The `release tooling` group keeps the PR from automerging (.github/renovate.md, "Release
+      # tooling"). The same step is in both jobs: change both (`terraform-digest` compares them).
       - name: Install Terraform
         env:
           # renovate: datasource=github-releases depName=hashicorp/terraform
