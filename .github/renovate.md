@@ -74,7 +74,7 @@ The GoReleaser version was once visible to no built-in manager, so it was drifti
 | GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line, and the `github-actions` manager, which now reads this input too (type `uses-with`) |
 
 The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
-well-known inputs such as `setup-node`'s `node-version` and the `version:` of `goreleaser-action`, but it
+well-known inputs such as the `version:` of `goreleaser-action`, but it
 does not read arbitrary action inputs, hence the annotation. A rule that targets such a pin matches both
 managers: the GoReleaser hold matched only `custom.regex`, so the `github-actions` manager put the check
 pin's v2.20.0 in the automerged `GitHub Actions` group, away from the release pin. To put another tool version under Renovate's control, add the same comment above it:
@@ -127,6 +127,16 @@ instead of failing the install step on the next push to `main` (and blocking the
 calls this workflow). The maintainer sets `TERRAFORM_SHA256` in both jobs, in the PR, from the
 `linux_amd64` line of the release's `terraform_<version>_SHA256SUMS` after checking that file's
 signature against HashiCorp's release key.
+
+`semantic-release.yml` pins the Node.js runtime of its two jobs the same way: `NODE_VERSION` in the
+workflow `env`, with a `# renovate: datasource=node-version depName=node` annotation, and `NODE_SHA256`
+beside it, the digest of the `linux-x64` archive that the "Install Node.js" step checks before anything
+runs. It is not `actions/setup-node`, whose `node-version` is a range that resolves to the newest release
+at run time, with no Renovate PR and no check of the download. The custom manager reads the version and
+the file rule above puts its updates in the reviewed group; the digest is updated by hand in that PR
+(value from the release's `SHASUMS256.txt`), as for tflint in `security.yml`. The `node-digest` job of
+`security.yml` downloads the archive on every pull request and checks the pair, so a bump without its
+digest turns that check red.
 
 A new workflow whose jobs read any secret other than `GITHUB_TOKEN`, or run in a protected environment,
 joins the rule's `matchFileNames` list. Its jobs restore no Actions cache either (`RELEASE.md`, "Caches"): the
