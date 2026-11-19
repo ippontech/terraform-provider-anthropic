@@ -125,9 +125,9 @@ beside it, the digest of the `linux-x64` archive that the "Install Node.js" step
 runs. It is not `actions/setup-node`, whose `node-version` is a range that resolves to the newest release
 at run time, with no Renovate PR and no check of the download. The custom manager reads the version and
 the file rule above puts its updates in the reviewed group; the digest is updated by hand in that PR
-(value from the release's `SHASUMS256.txt`), as for tflint in `security.yml`, except that no pull request
-check runs this install (the workflow runs on a schedule and on dispatch only): a bump merged without its
-digest fails the next run before the App token is minted, so run the workflow by hand after merging it.
+(value from the release's `SHASUMS256.txt`), as for tflint in `security.yml`. The `node-digest` job of
+`security.yml` downloads the archive on every pull request and checks the pair, so a bump without its
+digest turns that check red.
 
 A new workflow whose jobs read any secret other than `GITHUB_TOKEN`, or run in a protected environment,
 joins the rule's `matchFileNames` list. Its jobs restore no Actions cache either (`RELEASE.md`, "Caches"): the

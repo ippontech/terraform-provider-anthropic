@@ -27,7 +27,8 @@ permissions: {}
 # carry its own checksum. Bump NODE_VERSION and NODE_SHA256 together (value from the target
 # release's SHASUMS256.txt, `node-v<version>-linux-x64.tar.gz` line). Renovate only bumps the
 # version, in the reviewed `release tooling` group: the maintainer who merges that PR updates the
-# hash in it, or the next run fails at "Install Node.js", before the App token is minted.
+# hash in it: the `node-digest` job of security.yml fails the pull request otherwise (a pair merged
+# anyway fails the next run at "Install Node.js", before the App token is minted).
 env:
   # renovate: datasource=node-version depName=node
   NODE_VERSION: 26.13.1
