@@ -31,7 +31,8 @@ export ANTHROPIC_AUTH_TOKEN="$(ant auth print-credentials --profile admin --acce
 ```hcl
 provider "anthropic" {
   # Reads ANTHROPIC_AUTH_TOKEN when unset. Keep an api_key for the
-  # resources that need one; admin_api_key is optional with this token.
+  # resources that need one; admin_api_key is optional with this token
+  # (plugins, RBAC groups and spend limits excepted).
   # auth_token = "sk-ant-oat01-..."
 }
 ```

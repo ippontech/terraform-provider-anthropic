@@ -89,7 +89,8 @@ func (p *AnthropicProvider) Schema(ctx context.Context, req provider.SchemaReque
 				Optional:  true,
 				Sensitive: true,
 				Description: "An org:admin OAuth bearer token (`sk-ant-oat01-...`) for endpoints that reject API keys, " +
-					"such as the Workload Identity Federation admin endpoints, and for the Admin API when admin_api_key is unset, or a workspace:manage_tunnels one for MCP " +
+					"such as the Workload Identity Federation admin endpoints, and for the Claude Console organization endpoints when admin_api_key is unset " +
+					"(plugins, RBAC groups and spend limits excepted), or a workspace:manage_tunnels one for MCP " +
 					"tunnels (configure each in its own, aliased provider block). " +
 					"Can also be set via the ANTHROPIC_AUTH_TOKEN environment variable.",
 			},
@@ -296,7 +297,8 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		resp.Diagnostics.AddError(
 			"Missing Credentials",
 			"At least one credential must be configured: api_key (ANTHROPIC_API_KEY) or an api_federation block for standard resources, "+
-				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) or an org:admin OAuth bearer token for organization management resources, "+
+				"admin_api_key (ANTHROPIC_ADMIN_API_KEY) or, for a Claude Console organization, an org:admin OAuth bearer token "+
+				"for organization management resources (plugins, RBAC groups and spend limits always need the key), "+
 				"or auth_token (ANTHROPIC_AUTH_TOKEN), a federation block or a cli block for endpoints that require an OAuth bearer token: "+
 				"org:admin scope for the Workload Identity Federation endpoints, workspace:manage_tunnels scope for MCP tunnels. "+
 				"For an organization on Claude Platform on AWS or Claude Models on Google Cloud, set the aws or "+

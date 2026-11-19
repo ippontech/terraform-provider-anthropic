@@ -42,6 +42,9 @@ type ProviderData struct {
 	// AdminKeyClient is AdminClient when the Admin API key backs it, nil
 	// otherwise. The Claude Enterprise only types take it (plugins, RBAC
 	// groups), and spend limits, whose user limits are Claude Enterprise only.
+	// A gateway alias leaves it nil on purpose (ForPlatform): registry.go
+	// keeps those types off the gateways, so one declared supported there
+	// must be given this client in ForPlatform too.
 	AdminKeyClient *admin.Client
 	// OAuthClient handles endpoints that require an OAuth bearer token
 	// (org:admin, or workspace:manage_tunnels for MCP tunnels) and reject API

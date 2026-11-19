@@ -17,7 +17,7 @@ Fetches the organization associated with the authenticated Admin API credential.
 ## Example Usage
 
 ```hcl
-# Read the organization tied to the configured admin API key
+# Read the organization tied to the configured Admin API credential
 data "anthropic_organization" "current" {}
 
 output "organization_id" {

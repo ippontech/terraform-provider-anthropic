@@ -55,7 +55,8 @@ func requireAdminClient(client *admin.Client, diags *diag.Diagnostics, kind stri
 		"This "+kind+" calls the Admin API. "+
 			"Configure an Admin API key via the admin_api_key provider argument or the ANTHROPIC_ADMIN_API_KEY environment variable, "+
 			"or, for a Claude Console organization, an org:admin OAuth bearer token via auth_token (ANTHROPIC_AUTH_TOKEN), a federation block or a cli block. "+
-			"An admin_api_key whose value is not known until apply gives no credential at plan time, and the bearer token does not stand in for it.",
+			"An admin_api_key or auth_token whose value is not known until apply gives no credential at plan time; "+
+			"the bearer token does not stand in for an unknown admin_api_key.",
 	)
 	return false
 }

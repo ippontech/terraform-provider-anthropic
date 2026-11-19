@@ -57,8 +57,8 @@ func cliSchema() schema.SingleNestedAttribute {
 			"with the profile's refresh token. Used only when neither `auth_token` nor `federation` supplies the token, " +
 			"so the same configuration runs locally as the operator and in CI as a workload. Without `profile`, the " +
 			"provider looks for the one org:admin profile that matches `organization_id`. " +
-			"Without an admin key (`admin_api_key` or ANTHROPIC_ADMIN_API_KEY), the token also serves the organization management endpoints; " +
-			"with one, the key wins, with a warning when it comes from the variable.",
+			"Without an admin key (`admin_api_key` or ANTHROPIC_ADMIN_API_KEY), the token also serves the Claude Console organization endpoints, " +
+			"plugins, RBAC groups and spend limits excepted; with one, the key wins, with a warning when it comes from the variable.",
 		Attributes: map[string]schema.Attribute{
 			"profile": schema.StringAttribute{
 				Optional:    true,
