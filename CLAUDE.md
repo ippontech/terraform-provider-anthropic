@@ -118,7 +118,7 @@ make test           # Run unit tests (120s timeout, 10 parallel workers)
 make testacc        # Run Go acceptance tests (requires TF_ACC=1, 120m timeout)
 make terraform-test # Run Terraform native tests (builds provider, uses .dev.tfrc)
 make terraform-fmt-check  # terraform fmt -check -diff -recursive (offline)
-make terraform-validate   # terraform validate in all 63 example directories against the provider just built (offline)
+make terraform-validate   # terraform validate in every example directory against the provider just built (offline)
 make terraform-test-mock  # Only the native test files with a mock_provider block (offline, no credentials)
 make generate       # Regenerate docs and format examples
 make                # Default: fmt tidy-check lint test install generate
