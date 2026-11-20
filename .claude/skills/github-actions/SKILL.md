@@ -10,7 +10,7 @@ Refer to the [GitHub Actions workflow syntax](https://docs.github.com/en/actions
 
 # Action pinning
 
-Every `uses:` reference **must** be pinned to a full commit SHA. Tags and branches are mutable and can be silently redirected (supply chain attack vector). Add the version tag as a trailing comment so humans know what version is in use.
+Every `uses:` reference **must** be pinned to a full commit SHA. Tags and branches are mutable and can be silently redirected (supply chain attack vector). Add the version tag as a trailing comment so humans know what version is in use. A `docker://` step is pinned by image digest instead, after its tag (`docker://semgrep/semgrep:<tag>@sha256:<digest>`).
 
 ```yaml
 # Bad — mutable tag
@@ -163,13 +163,13 @@ jobs:
 
 ## `security.yml` workflow
 
-The project must have `.github/workflows/security.yml` with four jobs, all SHA-pinned, triggered on `pull_request` and `merge_group`:
+The project must have `.github/workflows/security.yml` with four jobs, all pinned (actions by commit SHA, the semgrep image by digest), triggered on `pull_request` and `merge_group`:
 
 | Job | Tool | What it checks |
 |-----|------|----------------|
 | `actionlint` | `rhysd/actionlint` | Syntax errors and hazardous patterns in workflow YAML |
 | `poutine` | Binary from GitHub releases | Supply-chain vulnerabilities (unpinned actions, script injections) |
-| `semgrep` | `semgrep/semgrep-action` | Anti-patterns including `pull_request_target` misuse |
+| `semgrep` | `docker://semgrep/semgrep` image, pinned by digest, run as a step with `semgrep scan --config tools/semgrep.yml` | Anti-patterns including `pull_request_target` misuse |
 | `checkov` | `bridgecrewio/checkov-action` | Bad practices (write-all permissions, unsecure commands) |
 
 ## Pre-commit hooks
