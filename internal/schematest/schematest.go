@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Package schematest provides shared test helpers for building a hand-made
-// tfsdk.State from a resource schema, which ImportState unit tests need
-// because resp.State.SetAttribute requires an existing Raw value tree.
+// tfsdk.Config, Plan or State from a resource or data source schema, for unit
+// tests that call a method directly: ImportState tests need a null state
+// because resp.State.SetAttribute requires an existing Raw value tree, and
+// Create/Read/Update tests need a plan or state with a few attributes set
+// (Value, Config, Plan, State and their data source twins in builders.go).
 package schematest
 
 import (
@@ -17,28 +20,28 @@ import (
 )
 
 // ResourceSchema returns the schema r describes.
-func ResourceSchema(t *testing.T, r resource.Resource) schema.Schema {
-	t.Helper()
+func ResourceSchema(tb testing.TB, r resource.Resource) schema.Schema {
+	tb.Helper()
 	var resp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &resp)
 	if resp.Diagnostics.HasError() {
-		t.Fatalf("schema: %v", resp.Diagnostics)
+		tb.Fatalf("schema: %v", resp.Diagnostics)
 	}
 	return resp.Schema
 }
 
 // ResourceObjectType returns the underlying tftypes.Object type of r's schema.
-func ResourceObjectType(t *testing.T, r resource.Resource) tftypes.Object {
-	t.Helper()
-	tfType, ok := ResourceSchema(t, r).Type().(interface {
+func ResourceObjectType(tb testing.TB, r resource.Resource) tftypes.Object {
+	tb.Helper()
+	tfType, ok := ResourceSchema(tb, r).Type().(interface {
 		TerraformType(context.Context) tftypes.Type
 	})
 	if !ok {
-		t.Fatal("schema type does not implement TerraformType")
+		tb.Fatal("schema type does not implement TerraformType")
 	}
 	obj, ok := tfType.TerraformType(context.Background()).(tftypes.Object)
 	if !ok {
-		t.Fatal("schema type is not a tftypes.Object")
+		tb.Fatal("schema type is not a tftypes.Object")
 	}
 	return obj
 }
@@ -46,21 +49,16 @@ func ResourceObjectType(t *testing.T, r resource.Resource) tftypes.Object {
 // NullValues returns a null tftypes.Value for every top-level attribute of r's
 // schema, ready to be passed to tftypes.NewValue(ResourceObjectType(t, r), ...)
 // after overriding the attributes a test wants to set.
-func NullValues(t *testing.T, r resource.Resource) map[string]tftypes.Value {
-	t.Helper()
-	obj := ResourceObjectType(t, r)
-	vals := make(map[string]tftypes.Value, len(obj.AttributeTypes))
-	for name, typ := range obj.AttributeTypes {
-		vals[name] = tftypes.NewValue(typ, nil)
-	}
-	return vals
+func NullValues(tb testing.TB, r resource.Resource) map[string]tftypes.Value {
+	tb.Helper()
+	return nullValues(ResourceObjectType(tb, r))
 }
 
 // NullState returns a tfsdk.State for r whose every attribute is null.
-func NullState(t *testing.T, r resource.Resource) tfsdk.State {
-	t.Helper()
+func NullState(tb testing.TB, r resource.Resource) tfsdk.State {
+	tb.Helper()
 	return tfsdk.State{
-		Raw:    tftypes.NewValue(ResourceObjectType(t, r), NullValues(t, r)),
-		Schema: ResourceSchema(t, r),
+		Raw:    tftypes.NewValue(ResourceObjectType(tb, r), NullValues(tb, r)),
+		Schema: ResourceSchema(tb, r),
 	}
 }

@@ -23,8 +23,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdktest"
 )
 
 const (
@@ -310,7 +312,7 @@ func TestTunnelResource_Create(t *testing.T) {
 		if !strings.Contains(req.Beta, "mcp-tunnels-2026-06-22") {
 			t.Errorf("%s %s: anthropic-beta = %q, want mcp-tunnels-2026-06-22", req.Method, req.Path, req.Beta)
 		}
-		if req.Auth != "Bearer test" {
+		if req.Auth != "Bearer "+sdktest.TestAuthToken {
 			t.Errorf("%s %s: Authorization = %q, want the bearer token", req.Method, req.Path, req.Auth)
 		}
 	}
