@@ -48,6 +48,10 @@ resource "anthropic_deployment" "private_repo" {
 
 Terraform cannot detect a change to a write-only value: increment `repository_authorization_tokens_wo_version` to send a new token. The provider also sends the tokens with every update that resends `resources`, since the API replaces the whole list.
 
+Keep the tokens in the configuration for as long as the repositories need them. The API replaces `resources` as a whole, so an update sent without a token removes it from the deployment, and its sessions can no longer clone the repository. The provider rejects `repository_authorization_tokens_wo_version` set without `repository_authorization_tokens_wo`; removing both removes the tokens on the next apply. A token value that is null or empty is rejected too.
+
+Error messages never show a key of `repository_authorization_tokens_wo`, since the map is sensitive: a key that matches no repository is reported by count, next to the repository URLs found in `resources`.
+
 ## Claude Platform on AWS
 
 The gateway serves `/v1/deployments`, although its [route table](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) does not list it.
