@@ -47,7 +47,11 @@ jobs:
 
       # .golangci.yml compares with origin/main; a pull request into another
       # branch (major/2.0.0) is compared with its own target instead, or the
-      # commits of that branch missing from main count as new code.
+      # commits of that branch missing from main count as new code. A sync of
+      # main into that branch then counts main's commits since the last sync
+      # as new: they pass because each was linted in its own PR, provided the
+      # branch was created after .golangci.yml reached main (RELEASE.md,
+      # "Staging branch").
       - name: Resolve the lint base branch
         id: lint-base
         env:
