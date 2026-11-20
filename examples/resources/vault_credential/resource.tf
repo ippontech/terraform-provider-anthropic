@@ -68,6 +68,12 @@ resource "anthropic_vault_credential" "env_var" {
     mode          = "limited"
     allowed_hosts = ["api.example.com", "*.internal.example.com"]
   }
+
+  # Substitute the secret in request headers only (omit the block to enable
+  # both headers and body; a field left out of the block defaults to false).
+  injection_location = {
+    header = true
+  }
 }
 
 output "vault_credential_bearer_id" {

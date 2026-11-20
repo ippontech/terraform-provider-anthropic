@@ -59,7 +59,7 @@ func (d *OrganizationMembersDataSource) Schema(_ context.Context, _ datasource.S
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists all members (Users) of the organization via the Admin API. All pages are fetched automatically. " +
 			"Results can optionally be filtered by `email`. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"email": schema.StringAttribute{
 				Optional:            true,
@@ -84,7 +84,7 @@ func (d *OrganizationMembersDataSource) Schema(_ context.Context, _ datasource.S
 						},
 						"role": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "Organization role of the user (e.g. `user`, `developer`, `billing`, `admin`, `claude_code_user`).",
+							MarkdownDescription: memberRoleReadDescription,
 						},
 						"added_at": schema.StringAttribute{
 							Computed:            true,
