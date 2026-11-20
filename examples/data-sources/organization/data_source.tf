@@ -1,4 +1,4 @@
-# Read the organization tied to the configured admin API key
+# Read the organization tied to the configured Admin API credential
 data "anthropic_organization" "current" {}
 
 output "organization_id" {

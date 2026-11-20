@@ -26,18 +26,20 @@ git log origin/main..HEAD --oneline
 git diff origin/main..HEAD --name-only
 ```
 
-Also read `CLAUDE.md` to know what is already documented.
+Also read the root `CLAUDE.md`, and the `internal/services/<service>/CLAUDE.md` of every service the branch touched, to know what is already documented.
 
 ### Step 2 — Identify gaps
 
-Cross-reference changed files against CLAUDE.md. Check each category:
+Cross-reference changed files against the CLAUDE.md files. Check each category:
 
-| If this changed | Check this in CLAUDE.md |
+| If this changed | Check this |
 |---|---|
-| New `*_resource.go` or `*_data_source.go` | "Implemented resources and data sources" list |
-| New `make` target in `GNUmakefile` | "Commands" section |
-| New Go package under `internal/` | "Architecture" section |
-| New provider-wide convention | "Provider coding conventions" section |
+| New `*_resource.go` or `*_data_source.go` | Its name on the service's line of the root "Services" list, and its load-bearing details in `internal/services/<service>/CLAUDE.md` (a new service directory gets its own file and a new line) |
+| New `make` target in `GNUmakefile` | Root "Commands" section |
+| New Go package under `internal/` | Root "Architecture" section |
+| New provider-wide convention | Root "Provider coding conventions" section |
+
+The root `CLAUDE.md` holds repo-wide rules only (its opening paragraph says so): per-resource notes go in the service's `CLAUDE.md`, never in the root file.
 
 For agent memories, check if the session revealed a pattern that agents got wrong or a non-obvious project idiom — record it in the relevant agent's memory directory.
 

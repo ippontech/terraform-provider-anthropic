@@ -1,12 +1,19 @@
 name: Acceptance Tests
 
 on:
-  # Called by semantic-release.yml on every push to main, which releases only when these jobs pass
-  # (RELEASE.md, "How a release is cut"). The caller must pass each secret by name, even one that
-  # exists only in the acctest environment of the jobs below, which then receive that environment's
-  # value (GitHub docs, "Reuse workflows"). Not `required`: that only checks that the caller passes
-  # the secret, not its value (same page), and a missing key already fails the tests
-  # (acctest.PreCheck stops on an empty key).
+  # Every push to main, except the release commit, which changes nothing the tests cover. The
+  # tests run after the merge because a pull request from a fork cannot read the keys; a push
+  # releases nothing, semantic-release.yml cuts the release once a day (RELEASE.md, "How a release
+  # is cut").
+  push:
+    branches:
+      - main
+  # Called by semantic-release.yml before each release, which is cut only when these jobs pass.
+  # The caller must pass each secret by name, even one that exists only in the acctest environment
+  # of the jobs below, which then receive that environment's value (GitHub docs, "Reuse
+  # workflows"). Not `required`: that only checks that the caller passes the secret, not its value
+  # (same page), and a missing key already fails the tests (acctest.PreCheck stops on an empty
+  # key).
   workflow_call:
     secrets:
       ANTHROPIC_API_KEY:
@@ -19,13 +26,41 @@ on:
 
 permissions: {}
 
+# On a push or a manual run, the same group as the acceptance-tests job of semantic-release.yml, so
+# one live test run exists at a time: two would collide in the test workspace. When several pushes
+# queue up, only the newest waiting run starts. A called run already sits in its caller's group: giving it the same
+# one here would queue it behind the caller that holds it (the GitHub docs warn of the
+# cancellation variant of this, "Reusing workflow configurations"), hence a group of its own, its
+# run id. The called run is told apart by `github.workflow`, which then carries the caller's name
+# (same page), where `github.event_name` is `workflow_dispatch` for a manual run and for a run
+# called by a dispatched semantic-release.yml alike.
+concurrency:
+  group: ${{ github.workflow == 'Acceptance Tests' && 'acceptance-tests-main' || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   testacc:
+    # Skipped on the push of the release commit, told apart by its subject and by its content,
+    # CHANGELOG.md alone (.releaserc, the git plugin): a squash-merged pull request titled
+    # chore(release) that changes code still gets its run. A called or manual run always goes on.
+    if: >-
+      !(github.event_name == 'push'
+        && startsWith(github.event.head_commit.message, 'chore(release):')
+        && join(github.event.head_commit.added) == ''
+        && join(github.event.head_commit.removed) == ''
+        && join(github.event.head_commit.modified) == 'CHANGELOG.md')
     runs-on: ubuntu-latest
     timeout-minutes: 130
     environment: acctest
     permissions:
       contents: read
+      # The api_federation tests exchange a GitHub OIDC token for a workspace:developer token
+      # (acctest.PreCheckAPIFederation). The rules in Ippon's organization accept the subject
+      # repo:ippontech/terraform-provider-anthropic:environment:acctest only, and the token is minted
+      # per exchange by the test's identity_token_command, never written to disk. The subject carries
+      # no ref: the acctest environment's deployment policy (branch main only) is what keeps every
+      # other branch out.
+      id-token: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -40,6 +75,7 @@ jobs:
             release-assets.githubusercontent.com:443
             releases.hashicorp.com:443
             storage.googleapis.com:443
+            *.actions.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,14 +84,40 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
+          # No cache next to the keys, as in goreleaser-release.yml: an entry restored here could
+          # have been saved by any job that ran on main, including one whose actions Renovate
+          # automerges, and Go does not re-hash extracted module sources. The modules come from
+          # proxy.golang.org instead, checked against go.sum as they download.
+          cache: false
 
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          # Pinned instead of the action's default, `latest`: the CLI runs next to the keys. Renovate's
-          # github-actions manager tracks this input, in the reviewed `release tooling` group
-          # (.github/renovate.md, "Release tooling").
-          terraform_version: 1.17.1
-          terraform_wrapper: false
+      # Installed from the HashiCorp release with a pinned checksum rather than through
+      # hashicorp/setup-terraform, which takes no digest: the CLI runs next to the keys, so a version
+      # pin alone would still run whatever bytes releases.hashicorp.com serves for it.
+      #
+      # The expected hash is pinned here, not read from the release's own SHA256SUMS: both come from
+      # the same host (see security.yml, tflint). Bump TERRAFORM_VERSION and TERRAFORM_SHA256
+      # together (value from the target release's terraform_<version>_SHA256SUMS, linux_amd64 line,
+      # after checking that file's signature against HashiCorp's release key). Renovate only bumps
+      # the version, and this workflow does not run on pull requests: the `terraform-digest` job of
+      # security.yml checks the pair there instead, so the Renovate PR is red until the hash is set.
+      # The `release tooling` group keeps the PR from automerging (.github/renovate.md, "Release
+      # tooling"). The same step is in both jobs: change both (`terraform-digest` compares them).
+      - name: Install Terraform
+        env:
+          # renovate: datasource=github-releases depName=hashicorp/terraform
+          TERRAFORM_VERSION: v1.17.1
+          TERRAFORM_SHA256: 4638628058e71a55212b1c563712eac03b902128f40740f3dc8174df12135061
+        run: |
+          set -euo pipefail
+          version="${TERRAFORM_VERSION#v}"
+          archive="terraform_${version}_linux_amd64.zip"
+          curl -fsSLO "https://releases.hashicorp.com/terraform/${version}/${archive}"
+          echo "${TERRAFORM_SHA256}  ${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/terraform"
+          mkdir -p "${install_dir}"
+          unzip -o -q "${archive}" terraform -d "${install_dir}"
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/terraform" version
 
       - name: Run acceptance tests
         run: make testacc
@@ -65,6 +127,15 @@ jobs:
           ANTHROPIC_MULTI_WORKSPACE_API_KEY: ${{ secrets.ANTHROPIC_MULTI_WORKSPACE_API_KEY }}
 
   terraform-test:
+    # Skipped on the push of the release commit, told apart by its subject and by its content,
+    # CHANGELOG.md alone (.releaserc, the git plugin): a squash-merged pull request titled
+    # chore(release) that changes code still gets its run. A called or manual run always goes on.
+    if: >-
+      !(github.event_name == 'push'
+        && startsWith(github.event.head_commit.message, 'chore(release):')
+        && join(github.event.head_commit.added) == ''
+        && join(github.event.head_commit.removed) == ''
+        && join(github.event.head_commit.modified) == 'CHANGELOG.md')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: acctest
@@ -93,14 +164,40 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
+          # No cache next to the keys, as in goreleaser-release.yml: an entry restored here could
+          # have been saved by any job that ran on main, including one whose actions Renovate
+          # automerges, and Go does not re-hash extracted module sources. The modules come from
+          # proxy.golang.org instead, checked against go.sum as they download.
+          cache: false
 
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          # Pinned instead of the action's default, `latest`: the CLI runs next to the keys. Renovate's
-          # github-actions manager tracks this input, in the reviewed `release tooling` group
-          # (.github/renovate.md, "Release tooling").
-          terraform_version: 1.17.1
-          terraform_wrapper: false
+      # Installed from the HashiCorp release with a pinned checksum rather than through
+      # hashicorp/setup-terraform, which takes no digest: the CLI runs next to the keys, so a version
+      # pin alone would still run whatever bytes releases.hashicorp.com serves for it.
+      #
+      # The expected hash is pinned here, not read from the release's own SHA256SUMS: both come from
+      # the same host (see security.yml, tflint). Bump TERRAFORM_VERSION and TERRAFORM_SHA256
+      # together (value from the target release's terraform_<version>_SHA256SUMS, linux_amd64 line,
+      # after checking that file's signature against HashiCorp's release key). Renovate only bumps
+      # the version, and this workflow does not run on pull requests: the `terraform-digest` job of
+      # security.yml checks the pair there instead, so the Renovate PR is red until the hash is set.
+      # The `release tooling` group keeps the PR from automerging (.github/renovate.md, "Release
+      # tooling"). The same step is in both jobs: change both (`terraform-digest` compares them).
+      - name: Install Terraform
+        env:
+          # renovate: datasource=github-releases depName=hashicorp/terraform
+          TERRAFORM_VERSION: v1.17.1
+          TERRAFORM_SHA256: 4638628058e71a55212b1c563712eac03b902128f40740f3dc8174df12135061
+        run: |
+          set -euo pipefail
+          version="${TERRAFORM_VERSION#v}"
+          archive="terraform_${version}_linux_amd64.zip"
+          curl -fsSLO "https://releases.hashicorp.com/terraform/${version}/${archive}"
+          echo "${TERRAFORM_SHA256}  ${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/terraform"
+          mkdir -p "${install_dir}"
+          unzip -o -q "${archive}" terraform -d "${install_dir}"
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/terraform" version
 
       - name: Run Terraform tests
         run: make terraform-test

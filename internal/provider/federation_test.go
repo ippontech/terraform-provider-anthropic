@@ -33,6 +33,9 @@ type federationServer struct {
 	mu         sync.Mutex
 	exchanges  []map[string]string
 	authorized []string
+	// requests holds the headers of every request that was not an
+	// exchange, in order, so a test with two clients can check each.
+	requests []http.Header
 }
 
 func newFederationServer(t *testing.T, expiresIn int) *federationServer {
@@ -56,10 +59,19 @@ func newFederationServer(t *testing.T, expiresIn int) *federationServer {
 			return
 		}
 		fs.authorized = append(fs.authorized, r.Header.Get("Authorization"))
+		fs.requests = append(fs.requests, r.Header.Clone())
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(fs.Close)
 	return fs
+}
+
+// requestHeaders returns the headers of every request that was not an
+// exchange, in order.
+func (fs *federationServer) requestHeaders() []http.Header {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return append([]http.Header(nil), fs.requests...)
 }
 
 func (fs *federationServer) snapshot() ([]map[string]string, []string) {
@@ -72,12 +84,19 @@ func (fs *federationServer) snapshot() ([]map[string]string, []string) {
 // attribute null.
 func federationValue(t *testing.T, attrs map[string]tftypes.Value) tftypes.Value {
 	t.Helper()
+	return nestedValue(t, "federation", attrs)
+}
+
+// nestedValue builds the provider's nested attribute name from attrs, every
+// other attribute null.
+func nestedValue(t *testing.T, name string, attrs map[string]tftypes.Value) tftypes.Value {
+	t.Helper()
 
 	ctx := context.Background()
 	p := &AnthropicProvider{}
 	schemaResp := &provider.SchemaResponse{}
 	p.Schema(ctx, provider.SchemaRequest{}, schemaResp)
-	objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object).AttributeTypes["federation"].(tftypes.Object)
+	objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object).AttributeTypes[name].(tftypes.Object)
 
 	values := make(map[string]tftypes.Value, len(objType.AttributeTypes))
 	for name, attrType := range objType.AttributeTypes {
@@ -137,8 +156,11 @@ func TestConfigureFederationExchangesAndRefreshes(t *testing.T) {
 	if pd.OAuthClient == nil || pd.OAuthClient.Client == nil {
 		t.Fatal("federation did not produce an OAuth client")
 	}
-	if pd.Client != nil || pd.AdminClient != nil {
-		t.Error("federation alone must not produce the API-key clients")
+	if pd.Client != nil {
+		t.Error("federation alone must not produce the standard client")
+	}
+	if pd.AdminClient == nil {
+		t.Fatal("federation alone did not back the admin client")
 	}
 
 	for range 2 {
@@ -166,6 +188,19 @@ func TestConfigureFederationExchangesAndRefreshes(t *testing.T) {
 	if strings.Join(authorized, ",") != strings.Join(want, ",") {
 		t.Errorf("authorization headers = %v, want %v", authorized, want)
 	}
+
+	// The admin client's request refreshes the same way: a third exchange,
+	// with the next identity token, whose access token it carries.
+	if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
+		t.Fatalf("admin request failed: %v", err)
+	}
+	exchanges, authorized = fs.snapshot()
+	if len(exchanges) != 3 || exchanges[2]["assertion"] != "jwt-3" {
+		t.Fatalf("exchanges after the admin request = %v, want a third one with a fresh identity token", exchanges)
+	}
+	if got := authorized[len(authorized)-1]; got != "Bearer sk-ant-oat01-minted-3" {
+		t.Errorf("admin request authorization = %q, want the token of the third exchange", got)
+	}
 }
 
 // TestConfigureFederationCachesTheToken checks the other side of refresh: a
@@ -184,11 +219,17 @@ func TestConfigureFederationCachesTheToken(t *testing.T) {
 			"identity_token_command": stringList(countingTokenScript(t)),
 		}),
 	}))
+	if pd.AdminClient == nil {
+		t.Fatal("federation alone did not back the admin client")
+	}
 
 	for range 3 {
 		if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
+	}
+	if _, err := pd.AdminClient.DoRequest(context.Background(), http.MethodGet, "/v1/organizations/workspaces", nil); err != nil {
+		t.Fatalf("admin request failed: %v", err)
 	}
 	if exchanges, _ := fs.snapshot(); len(exchanges) != 1 {
 		t.Errorf("exchanges = %d, want 1", len(exchanges))
@@ -314,6 +355,46 @@ func TestConfigureFederationIgnoresAuthTokenEnvironment(t *testing.T) {
 	}
 }
 
+// TestConfigureFederationLeavesAuthTokenEnvironmentToOtherBlocks covers the
+// two-block setup the docs describe: ANTHROPIC_AUTH_TOKEN exported for the
+// org:admin block, and a tunnels alias with a federation block. The alias
+// ignores the variable, but its warning must not tell the operator to unset
+// it, since the org:admin block reads it.
+func TestConfigureFederationLeavesAuthTokenEnvironmentToOtherBlocks(t *testing.T) {
+	fs := newFederationServer(t, 3600)
+
+	clearCredentialEnv(t)
+	t.Setenv("ANTHROPIC_BASE_URL", fs.URL)
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-oat01-org-admin")
+
+	tunnels := configureProvider(t, map[string]tftypes.Value{
+		"federation": federationValue(t, map[string]tftypes.Value{
+			"organization_id":    tftypes.NewValue(tftypes.String, "00000000-0000-0000-0000-000000000000"),
+			"federation_rule_id": tftypes.NewValue(tftypes.String, "fdrl_tunnels"),
+			"identity_token":     tftypes.NewValue(tftypes.String, "jwt"),
+		}),
+	})
+	w := tunnels.Diagnostics.Warnings()
+	if len(w) != 1 || w[0].Summary() != "ANTHROPIC_AUTH_TOKEN Ignored" {
+		t.Fatalf("warnings = %v, want ANTHROPIC_AUTH_TOKEN Ignored", w)
+	}
+	if detail := w[0].Detail(); !strings.Contains(detail, "keep the variable if another block relies on it") {
+		t.Errorf("detail %q does not say to keep the variable for another block", detail)
+	}
+
+	orgAdmin := configureProvider(t, nil)
+	if w := orgAdmin.Diagnostics.Warnings(); len(w) != 0 {
+		t.Errorf("org:admin block warnings = %v, want none", w)
+	}
+	pd := providerDataFrom(t, orgAdmin)
+	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if _, authorized := fs.snapshot(); len(authorized) != 1 || authorized[0] != "Bearer sk-ant-oat01-org-admin" {
+		t.Errorf("authorization headers = %v, want the exported token", authorized)
+	}
+}
+
 func TestConfigureFederationRequiresOrganizationAndRule(t *testing.T) {
 	clearCredentialEnv(t)
 
@@ -336,7 +417,7 @@ func TestConfigureFederationRequiresOrganizationAndRule(t *testing.T) {
 func TestIdentityTokenSourceRejectsTwoSources(t *testing.T) {
 	clearCredentialEnv(t)
 
-	_, err := identityTokenSource(context.Background(), federationModel{
+	_, _, err := identityTokenSource(context.Background(), federationModel{
 		IdentityToken:        types.StringValue("jwt"),
 		IdentityTokenFile:    types.StringValue("/tmp/token"),
 		IdentityTokenCommand: types.ListNull(types.StringType),
@@ -349,7 +430,7 @@ func TestIdentityTokenSourceRejectsTwoSources(t *testing.T) {
 func TestIdentityTokenSourceRequiresOne(t *testing.T) {
 	clearCredentialEnv(t)
 
-	_, err := identityTokenSource(context.Background(), federationModel{
+	_, _, err := identityTokenSource(context.Background(), federationModel{
 		IdentityTokenCommand: types.ListNull(types.StringType),
 	})
 	if err == nil || !strings.Contains(err.Error(), "no identity token") {
@@ -445,12 +526,15 @@ func TestIdentityTokenSourceConfigWinsOverEnvironment(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", "/does/not/exist")
 
-	fn, err := identityTokenSource(context.Background(), federationModel{
+	fn, source, err := identityTokenSource(context.Background(), federationModel{
 		IdentityToken:        types.StringValue("jwt-from-config"),
 		IdentityTokenCommand: types.ListNull(types.StringType),
 	})
 	if err != nil {
 		t.Fatalf("err = %v", err)
+	}
+	if source.kind != "literal" || source.value != "jwt-from-config" {
+		t.Errorf("source = %+v, want the configured literal", source)
 	}
 	if got, _ := fn(context.Background()); got != "jwt-from-config" {
 		t.Errorf("token = %q, want the configured literal", got)

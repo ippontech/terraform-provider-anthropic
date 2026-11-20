@@ -43,6 +43,7 @@ func testAccCheckSkillVersionDestroyed(s *terraform.State) error {
 		version := rs.Primary.Attributes["version"]
 		_, err := client.Beta.Skills.Versions.Get(context.Background(), version, anthropic.BetaSkillVersionGetParams{
 			SkillID: skillID,
+			Betas:   []anthropic.AnthropicBeta{anthropic.AnthropicBetaSkills2025_10_02},
 		})
 		if err != nil {
 			// Resource not found — destroyed successfully.

@@ -69,7 +69,7 @@ Read-Only:
 - `jwks_polling_disabled_at` (String) If set, Anthropic's JWKS poller has paused polling for this issuer after repeated fetch failures (RFC 3339). Null while polling is active.
 - `max_jwt_lifetime_seconds` (Number) Maximum allowed iat→exp spread for assertions from this issuer, in seconds.
 - `name` (String) Admin-chosen slug identifier.
-- `poll_status` (Attributes) Status of automatic JWKS polling for this issuer. (see [below for nested schema](#nestedatt--issuers--poll_status))
+- `poll_status` (Attributes) Status of automatic JWKS polling for this issuer. For inline-key issuers (nothing to fetch), and while the status is unavailable or polling has not started yet, `consecutive_failures` is `0` and both timestamps are null. (see [below for nested schema](#nestedatt--issuers--poll_status))
 - `updated_at` (String) When this issuer was last updated (RFC 3339).
 - `updated_by_actor_id` (String) Tagged ID (`user_`/`svac_`) of the actor that last updated this issuer.
 

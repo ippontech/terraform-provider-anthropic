@@ -1,0 +1,20 @@
+---
+page_title: "anthropic_tunnels Data Source - anthropic"
+subcategory: "Tunnels"
+description: |-
+  Lists the MCP tunnels of a workspace (research preview).
+---
+
+# anthropic_tunnels (Data Source)
+
+Lists the MCP tunnels of the workspace the credential acts on (research preview), newest first. All pages are fetched automatically. Archived tunnels are left out unless `include_archived = true`. Tunnel tokens are not exposed.
+
+> **API**: `GET /v1/tunnels` (Tunnels API).
+> **Auth**: OAuth bearer token with the `workspace:manage_tunnels` scope (`auth_token` or `federation`; see `anthropic_tunnel`). API keys are not accepted.
+> **Beta header**: `anthropic-beta: mcp-tunnels-2026-06-22`.
+
+## Example Usage
+
+{{ codefile "hcl" "examples/data-sources/tunnels/data_source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

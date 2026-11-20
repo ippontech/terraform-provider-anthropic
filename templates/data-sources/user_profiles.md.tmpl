@@ -19,4 +19,8 @@ Lists user profiles (beta). All pages are fetched automatically.
 
 {{ codefile "hcl" "examples/data-sources/user_profiles/data_source.tf" }}
 
+## Cloud platforms
+
+On Claude Platform on AWS the user profile routes are served (create, read, list, update), with the `aws` provider block; the platform reports no enforcement action on them. On Claude Models on Google Cloud (Anthropic managed) they are **unverified**: the platform's documentation does not mention them, and the SDK this provider uses sends them to the workspace endpoint, while later SDK versions send them to the organization endpoint. A gateway refusing the route fails the operation and leaves the state untouched.
+
 {{ .SchemaMarkdown | trimspace }}

@@ -87,6 +87,10 @@ resource "anthropic_federation_issuer" "test" {
 
   check_jti                = false
   max_jwt_lifetime_seconds = 900
+
+  # Inline keys are never polled, so polling is never paused: the toggle is
+  # kept in state and never sent.
+  jwks_polling_disabled = false
 }
 `
 
@@ -111,17 +115,22 @@ func TestAccFederationIssuerResource_inline(t *testing.T) {
 				),
 			},
 			{
-				// Update: rename only.
+				// Update: rename, plus jwks_polling_disabled = false (not sent,
+				// since polling is not paused).
 				Config: testAccFederationIssuerInlineConfigRenamed,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("anthropic_federation_issuer.test", "name", "tf-acc-test-issuer-renamed"),
 					resource.TestCheckResourceAttr("anthropic_federation_issuer.test", "jwks.type", "inline"),
+					resource.TestCheckResourceAttr("anthropic_federation_issuer.test", "jwks_polling_disabled", "false"),
+					resource.TestCheckNoResourceAttr("anthropic_federation_issuer.test", "jwks_polling_disabled_at"),
 				),
 			},
 			{
 				ResourceName:      "anthropic_federation_issuer.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+				// Configuration only: the API never returns it.
+				ImportStateVerifyIgnore: []string{"jwks_polling_disabled"},
 			},
 		},
 	})
