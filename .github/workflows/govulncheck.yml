@@ -62,7 +62,7 @@ jobs:
       # setup-go reads the `toolchain` directive of go.mod before the `go`
       # one, so the scan runs on the Go version releases are built with: the
       # standard-library findings are only meaningful for that version.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: 'go.mod'
 

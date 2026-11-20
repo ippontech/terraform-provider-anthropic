@@ -17,6 +17,23 @@ on:
 
 permissions: {}
 
+# The Node.js runtime of both jobs. The release job runs it next to the App token (contents, issues
+# and pull requests write; it bypasses the `main` ruleset and may create the `v*` tags that
+# goreleaser-release.yml signs), so which Node runs is a reviewed decision, never a range.
+#
+# Installed from nodejs.org instead of through actions/setup-node, which resolves a version range at
+# run time and checks no digest of what it downloads. The expected SHA-256 is pinned here, not read
+# from the release's own SHASUMS256.txt: both come from the same host, so a replaced archive would
+# carry its own checksum. Bump NODE_VERSION and NODE_SHA256 together (value from the target
+# release's SHASUMS256.txt, `node-v<version>-linux-x64.tar.gz` line). Renovate only bumps the
+# version, in the reviewed `release tooling` group: the maintainer who merges that PR updates the
+# hash in it: the `node-digest` job of security.yml fails the pull request otherwise (a pair merged
+# anyway fails the next run at "Install Node.js", before the App token is minted).
+env:
+  # renovate: datasource=node-version depName=node
+  NODE_VERSION: 26.13.1
+  NODE_SHA256: 518674de2b621728a5e4486f5fb3b7d2900bb3cc4aa97969edaa463db99f9778
+
 # Release runs wait for one another, without sharing the push runs' group (see the job below): a
 # manual or retry run started during another release would otherwise run a second live test that
 # releases nothing.
@@ -39,10 +56,7 @@ jobs:
     outputs:
       release: ${{ steps.check.outputs.release }}
     steps:
-      # release-assets.githubusercontent.com: setup-node downloads Node from the actions/node-versions
-      # release assets when the runner image does not ship that major (26 is not preinstalled).
-      # nodejs.org, its fallback when that download fails, stays blocked: the major is a range the
-      # node-versions manifest always resolves.
+      # nodejs.org: the Node.js release archive, installed by the "Install Node.js" step below.
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -50,17 +64,26 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             github.com:443
+            nodejs.org:443
             registry.npmjs.org:443
-            release-assets.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # the tags, and the commits since the newest one
           persist-credentials: false
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '26'
+      - name: Install Node.js
+        run: |
+          set -euo pipefail
+          archive="node-v${NODE_VERSION}-linux-x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
+            "https://nodejs.org/dist/v${NODE_VERSION}/${archive}"
+          echo "${NODE_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/node"
+          mkdir -p "${install_dir}"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${install_dir}" --strip-components=1
+          echo "${install_dir}/bin" >> "${GITHUB_PATH}"
+          test "$("${install_dir}/bin/node" --version)" = "v${NODE_VERSION}"
 
       # Same install as the release job below: the committed lockfile, no lifecycle script.
       - name: Install semantic-release and plugins
@@ -130,10 +153,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      # release-assets.githubusercontent.com: setup-node downloads Node from the actions/node-versions
-      # release assets when the runner image does not ship that major (26 is not preinstalled).
-      # nodejs.org, its fallback when that download fails, stays blocked: the major is a range the
-      # node-versions manifest always resolves.
+      # nodejs.org: the Node.js release archive, installed by the "Install Node.js" step below.
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -141,17 +161,26 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             github.com:443
+            nodejs.org:443
             registry.npmjs.org:443
-            release-assets.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '26'
+      - name: Install Node.js
+        run: |
+          set -euo pipefail
+          archive="node-v${NODE_VERSION}-linux-x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
+            "https://nodejs.org/dist/v${NODE_VERSION}/${archive}"
+          echo "${NODE_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          install_dir="${RUNNER_TEMP}/node"
+          mkdir -p "${install_dir}"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${install_dir}" --strip-components=1
+          echo "${install_dir}/bin" >> "${GITHUB_PATH}"
+          test "$("${install_dir}/bin/node" --version)" = "v${NODE_VERSION}"
 
       # The whole tree, transitive packages included, comes from the committed lockfile with its
       # integrity hashes, and no package lifecycle script runs (also enforced by the .npmrc there).
