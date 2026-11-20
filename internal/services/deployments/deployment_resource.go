@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -23,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -34,6 +36,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &DeploymentResource{}
 var _ resource.ResourceWithImportState = &DeploymentResource{}
+var _ resource.ResourceWithConfigValidators = &DeploymentResource{}
 
 // The production bounds of awaitDeploymentUpdateVisible's wait. They are
 // consts, and the function takes them as arguments, so the unit tests can
@@ -77,14 +80,18 @@ type DeploymentResourceModel struct {
 	InitialEvents jsontypes.Normalized `tfsdk:"initial_events"`
 	Metadata      types.Map            `tfsdk:"metadata"`
 	Resources     jsontypes.Normalized `tfsdk:"resources"`
-	Budget        jsontypes.Normalized `tfsdk:"budget"`
-	VaultIDs      types.List           `tfsdk:"vault_ids"`
-	Schedule      types.Object         `tfsdk:"schedule"`
-	Paused        types.Bool           `tfsdk:"paused"`
-	Status        types.String         `tfsdk:"status"`
-	CreatedAt     types.String         `tfsdk:"created_at"`
-	UpdatedAt     types.String         `tfsdk:"updated_at"`
-	ArchivedAt    types.String         `tfsdk:"archived_at"`
+	// RepositoryTokens is write-only: always null in the plan and state, read
+	// from req.Config only (see repositoryAuthorizationTokens).
+	RepositoryTokens        types.Map            `tfsdk:"repository_authorization_tokens_wo"`
+	RepositoryTokensVersion types.Int64          `tfsdk:"repository_authorization_tokens_wo_version"`
+	Budget                  jsontypes.Normalized `tfsdk:"budget"`
+	VaultIDs                types.List           `tfsdk:"vault_ids"`
+	Schedule                types.Object         `tfsdk:"schedule"`
+	Paused                  types.Bool           `tfsdk:"paused"`
+	Status                  types.String         `tfsdk:"status"`
+	CreatedAt               types.String         `tfsdk:"created_at"`
+	UpdatedAt               types.String         `tfsdk:"updated_at"`
+	ArchivedAt              types.String         `tfsdk:"archived_at"`
 }
 
 // DeploymentScheduleModel is the nested model backing the "schedule" object
@@ -173,6 +180,21 @@ func (r *DeploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 						"Requires replacement if resources is cleared after being set; the update API cannot clear it.",
 						"Requires replacement if `resources` is cleared after being set; the update API cannot clear it."),
 				},
+			},
+			"repository_authorization_tokens_wo": schema.MapAttribute{
+				Optional:    true,
+				WriteOnly:   true,
+				Sensitive:   true,
+				ElementType: types.StringType,
+				MarkdownDescription: "GitHub authorization tokens for the `github_repository` entries of `resources`, keyed by the " +
+					"repository `url` exactly as written in `resources`. Write-only: never stored in the plan or the state. " +
+					"`authorization_token` is rejected inside `resources`, whose value is not sensitive; set the token here. " +
+					"Requires `repository_authorization_tokens_wo_version`. Requires Terraform 1.11 or later.",
+			},
+			"repository_authorization_tokens_wo_version": schema.Int64Attribute{
+				Optional: true,
+				MarkdownDescription: "Increment this value to send changed `repository_authorization_tokens_wo` on the next " +
+					"`terraform apply`. Terraform cannot diff write-only values, so this field is the rotation mechanism.",
 			},
 			"budget": schema.StringAttribute{
 				Optional:   true,
@@ -278,6 +300,164 @@ func (r *DeploymentResource) Configure(_ context.Context, req resource.Configure
 	r.client = pd.Client
 }
 
+// --- ConfigValidators ---
+
+func (r *DeploymentResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{&deploymentRepositoryTokenValidator{}}
+}
+
+// deploymentRepositoryTokenValidator keeps repository credentials out of the
+// non-sensitive `resources` attribute: a token written there would be printed
+// in the plan, saved in plan files and state, and never converge (the API
+// does not return it). Tokens go through repository_authorization_tokens_wo.
+type deploymentRepositoryTokenValidator struct{}
+
+func (v *deploymentRepositoryTokenValidator) Description(_ context.Context) string {
+	return "rejects authorization_token in resources and checks repository_authorization_tokens_wo"
+}
+
+func (v *deploymentRepositoryTokenValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v *deploymentRepositoryTokenValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data DeploymentResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	isSet := func(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
+	isMissing := func(v attr.Value) bool { return v.IsNull() && !v.IsUnknown() }
+
+	var repoURLs map[string]bool
+	if isSet(data.Resources) {
+		urls, hasToken := inspectResources(data.Resources.ValueString())
+		if hasToken {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("resources"),
+				"Credential in resources",
+				"An element of \"resources\" sets \"authorization_token\". \"resources\" is not sensitive, so the token "+
+					"would be shown in plan output and stored in plan files and state. Remove it from \"resources\" and set it "+
+					"in \"repository_authorization_tokens_wo\", keyed by the repository URL.",
+			)
+		}
+		repoURLs = urls
+	}
+
+	if !isSet(data.RepositoryTokens) {
+		return
+	}
+
+	if isMissing(data.RepositoryTokensVersion) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("repository_authorization_tokens_wo_version"),
+			"Missing token version",
+			"\"repository_authorization_tokens_wo_version\" must be set when \"repository_authorization_tokens_wo\" is "+
+				"configured. Terraform cannot diff write-only values: increment the version to send changed tokens.",
+		)
+	}
+
+	if data.Resources.IsUnknown() {
+		return
+	}
+	for url := range data.RepositoryTokens.Elements() {
+		if !repoURLs[url] {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("repository_authorization_tokens_wo"),
+				"Token for an unknown repository",
+				fmt.Sprintf("\"repository_authorization_tokens_wo\" has a token for %q, which is not the url of any "+
+					"github_repository element of \"resources\". The token would never be sent.", url),
+			)
+		}
+	}
+}
+
+// inspectResources returns the url of every github_repository element of the
+// raw resources JSON, and whether an authorization_token key appears anywhere
+// in it, at any depth and in any letter case: whatever the SDK makes of such
+// a value, it is printed in the plan. Elements that are not objects carry no
+// URL; invalid JSON is already rejected by jsontypes.Normalized.
+func inspectResources(raw string) (map[string]bool, bool) {
+	var whole any
+	if err := json.Unmarshal([]byte(raw), &whole); err != nil {
+		return nil, false
+	}
+	hasToken := containsTokenKey(whole)
+
+	urls := map[string]bool{}
+	var elems []json.RawMessage
+	if json.Unmarshal([]byte(raw), &elems) == nil {
+		for _, elem := range elems {
+			var e map[string]json.RawMessage
+			if json.Unmarshal(elem, &e) != nil {
+				continue
+			}
+			var typ, url string
+			if json.Unmarshal(e["type"], &typ) == nil && typ == "github_repository" && json.Unmarshal(e["url"], &url) == nil {
+				urls[url] = true
+			}
+		}
+	}
+	return urls, hasToken
+}
+
+// containsTokenKey reports whether v, a decoded JSON value, holds an object
+// key equal to authorization_token, ignoring case, at any depth.
+func containsTokenKey(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			if strings.EqualFold(k, "authorization_token") || containsTokenKey(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range t {
+			if containsTokenKey(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// applyRepositoryTokens sets the authorization_token of each repository from
+// tokens (repository URL -> token). A token whose URL matches no repository
+// is an error naming the URL, never the token: the validator cannot check it
+// when resources is unknown at plan time, and dropping it silently would
+// leave the private repository uncloneable.
+func applyRepositoryTokens(repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams, tokens map[string]string) error {
+	matched := map[string]bool{}
+	for _, gh := range repos {
+		if token, ok := tokens[gh.URL]; ok {
+			gh.AuthorizationToken = token
+			matched[gh.URL] = true
+		}
+	}
+	for url := range tokens {
+		if !matched[url] {
+			return fmt.Errorf("repository_authorization_tokens_wo has a token for %q, which is not the url of any "+
+				"github_repository element of resources", url)
+		}
+	}
+	return nil
+}
+
+// repositoryAuthorizationTokens reads the write-only tokens from the
+// configuration, the only place Terraform passes them to the provider.
+func repositoryAuthorizationTokens(ctx context.Context, config tfsdk.Config) (map[string]string, diag.Diagnostics) {
+	var m types.Map
+	diags := config.GetAttribute(ctx, path.Root("repository_authorization_tokens_wo"), &m)
+	if diags.HasError() || m.IsNull() || m.IsUnknown() {
+		return nil, diags
+	}
+
+	var tokens map[string]string
+	diags.Append(m.ElementsAs(ctx, &tokens, false)...)
+	return tokens, diags
+}
+
 // --- Create ---
 
 func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -287,7 +467,13 @@ func (r *DeploymentResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	params, diags := buildDeploymentCreateParams(ctx, &data)
+	tokens, diags := repositoryAuthorizationTokens(ctx, req.Config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	params, diags := buildDeploymentCreateParams(ctx, &data, tokens)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -457,7 +643,13 @@ func (r *DeploymentResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
-	params, diags := buildDeploymentUpdateParams(ctx, &plan, &state)
+	tokens, diags := repositoryAuthorizationTokens(ctx, req.Config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	params, diags := buildDeploymentUpdateParams(ctx, &plan, &state, tokens)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -537,8 +729,9 @@ func (r *DeploymentResource) ImportState(ctx context.Context, req resource.Impor
 // ============================================================================
 
 // buildDeploymentCreateParams converts the planned config into a create
-// request.
-func buildDeploymentCreateParams(ctx context.Context, data *DeploymentResourceModel) (anthropic.BetaDeploymentNewParams, diag.Diagnostics) {
+// request. tokens (repository URL -> token) fill the authorization_token of
+// the matching github_repository resources.
+func buildDeploymentCreateParams(ctx context.Context, data *DeploymentResourceModel, tokens map[string]string) (anthropic.BetaDeploymentNewParams, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	events, err := unmarshalInitialEvents(data.InitialEvents)
@@ -573,7 +766,20 @@ func buildDeploymentCreateParams(ctx context.Context, data *DeploymentResourceMo
 			diags.AddError("Invalid resources", err.Error())
 			return anthropic.BetaDeploymentNewParams{}, diags
 		}
+		var repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams
+		for _, res := range resources {
+			if res.OfGitHubRepository != nil {
+				repos = append(repos, res.OfGitHubRepository)
+			}
+		}
+		if err := applyRepositoryTokens(repos, tokens); err != nil {
+			diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+			return anthropic.BetaDeploymentNewParams{}, diags
+		}
 		params.Resources = resources
+	} else if err := applyRepositoryTokens(nil, tokens); err != nil {
+		diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+		return anthropic.BetaDeploymentNewParams{}, diags
 	}
 
 	if !data.Budget.IsNull() && !data.Budget.IsUnknown() {
@@ -617,7 +823,9 @@ func buildDeploymentCreateParams(ctx context.Context, data *DeploymentResourceMo
 // explicit empty array through the typed `omitzero` params, so a config that
 // removes an already-set value here cannot be cleared, matching the
 // resources/vault_ids/schedule "cannot be cleared" notes in the schema.
-func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentResourceModel) (anthropic.BetaDeploymentUpdateParams, diag.Diagnostics) {
+// Since resources is a full replacement, tokens are merged in on every
+// update, as on create, or the API would drop them.
+func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentResourceModel, tokens map[string]string) (anthropic.BetaDeploymentUpdateParams, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	params := anthropic.BetaDeploymentUpdateParams{}
 
@@ -654,7 +862,20 @@ func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentRes
 			diags.AddError("Invalid resources", err.Error())
 			return anthropic.BetaDeploymentUpdateParams{}, diags
 		}
+		var repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams
+		for _, res := range resources {
+			if res.OfGitHubRepository != nil {
+				repos = append(repos, res.OfGitHubRepository)
+			}
+		}
+		if err := applyRepositoryTokens(repos, tokens); err != nil {
+			diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+			return anthropic.BetaDeploymentUpdateParams{}, diags
+		}
 		params.Resources = resources
+	} else if err := applyRepositoryTokens(nil, tokens); err != nil {
+		diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+		return anthropic.BetaDeploymentUpdateParams{}, diags
 	}
 
 	if !plan.Budget.IsNull() && !plan.Budget.IsUnknown() {

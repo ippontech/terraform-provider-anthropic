@@ -22,6 +22,32 @@ On [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claud
 
 {{ codefile "hcl" "examples/resources/deployment/resource.tf" }}
 
+## Private GitHub repositories
+
+A `github_repository` entry of `resources` needs a GitHub token to clone a private repository. Do not put it in `resources` as `authorization_token`: `resources` is not sensitive, so the token would appear in plan output and in saved plan files and state. The provider rejects that configuration. Set the token in the write-only `repository_authorization_tokens_wo` map instead, keyed by the repository `url` exactly as written in `resources`. Terraform never stores it in the plan or the state, and the API never returns it. Write-only arguments require Terraform 1.11 or later.
+
+```terraform
+resource "anthropic_deployment" "private_repo" {
+  name           = "private-repo-deployment"
+  agent_id       = anthropic_agent.assistant.id
+  environment_id = anthropic_environment.sessions.id
+  initial_events = jsonencode([
+    { type = "user.message", content = [{ type = "text", text = "Review the open pull requests." }] }
+  ])
+
+  resources = jsonencode([
+    { type = "github_repository", url = "https://github.com/example-org/private-repo" }
+  ])
+
+  repository_authorization_tokens_wo = {
+    "https://github.com/example-org/private-repo" = var.github_token
+  }
+  repository_authorization_tokens_wo_version = 1
+}
+```
+
+Terraform cannot detect a change to a write-only value: increment `repository_authorization_tokens_wo_version` to send a new token. The provider also sends the tokens with every update that resends `resources`, since the API replaces the whole list.
+
 ## Claude Platform on AWS
 
 The gateway serves `/v1/deployments`, although its [route table](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) does not list it.
