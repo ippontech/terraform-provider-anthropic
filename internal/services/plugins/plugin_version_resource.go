@@ -162,11 +162,11 @@ func (r *PluginVersionResource) Configure(_ context.Context, req resource.Config
 		return
 	}
 
-	if !providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics) {
+	if !providerrors.RequireAdminKeyResourceClient(pd.AdminKeyClient, &resp.Diagnostics) {
 		return
 	}
 
-	r.client = pd.AdminClient
+	r.client = pd.AdminKeyClient
 }
 
 func (r *PluginVersionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

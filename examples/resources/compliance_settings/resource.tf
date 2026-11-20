@@ -1,5 +1,5 @@
 # Turn on the Compliance API and its activity recording for the organization of
-# the admin key. Destroying this resource leaves the setting as it is.
+# the admin credential. Destroying this resource leaves the setting as it is.
 resource "anthropic_compliance_settings" "this" {
   state = "enabled"
 }

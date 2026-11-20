@@ -156,7 +156,7 @@ func (r *WorkspaceResource) Metadata(_ context.Context, req resource.MetadataReq
 func (r *WorkspaceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Creates and manages an Anthropic Workspace via the Admin API. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider. " +
+			providerdata.AdminCredentialNote + " " +
 			"Deleting this resource **archives** the workspace rather than permanently deleting it, " +
 			"because the Anthropic API does not expose a delete operation for workspaces.",
 		Attributes: map[string]schema.Attribute{

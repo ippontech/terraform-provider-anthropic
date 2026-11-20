@@ -224,11 +224,11 @@ func (r *PluginResource) Configure(_ context.Context, req resource.ConfigureRequ
 		return
 	}
 
-	if !providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics) {
+	if !providerrors.RequireAdminKeyResourceClient(pd.AdminKeyClient, &resp.Diagnostics) {
 		return
 	}
 
-	r.client = pd.AdminClient
+	r.client = pd.AdminKeyClient
 }
 
 // ModifyPlan does three things the attribute plan modifiers cannot:

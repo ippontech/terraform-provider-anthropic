@@ -39,10 +39,10 @@ func configurePluginsDataSource(req datasource.ConfigureRequest, resp *datasourc
 		)
 		return nil
 	}
-	if !providerrors.RequireAdminDataSourceClient(pd.AdminClient, &resp.Diagnostics) {
+	if !providerrors.RequireAdminKeyDataSourceClient(pd.AdminKeyClient, &resp.Diagnostics) {
 		return nil
 	}
-	return pd.AdminClient
+	return pd.AdminKeyClient
 }
 
 // --- Plugin ---

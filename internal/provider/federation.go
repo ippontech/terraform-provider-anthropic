@@ -61,7 +61,9 @@ func federationSchema() schema.SingleNestedAttribute {
 			"service account token, an Entra token...) for an Anthropic access token, and exchanges again before it " +
 			"expires, fetching a fresh identity token each time. Every attribute falls back to the environment " +
 			"variable the Anthropic SDKs read. Conflicts with `auth_token`; an exported ANTHROPIC_AUTH_TOKEN is " +
-			"ignored, with a warning. Give the federation rule a " +
+			"ignored, with a warning. Without an admin key (`admin_api_key` or ANTHROPIC_ADMIN_API_KEY), the org:admin " +
+			"token also serves the Claude Console organization endpoints, plugins, RBAC groups and spend limits excepted; " +
+			"with one, the key wins, with a warning when it comes from the variable. Give the federation rule a " +
 			"`token_lifetime_seconds` well above 120: the SDK refreshes within the last 120 seconds of a token's life, " +
 			"so a shorter lifetime refreshes, and fetches an identity token, on nearly every request.",
 		Attributes: federationAttributes("Workspace (`wrkspc_...`) to scope the token to at exchange time. Required only when the rule is enabled for " +

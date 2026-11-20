@@ -163,7 +163,7 @@ func (r *APIKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		MarkdownDescription: "Manages an existing Anthropic API key via the Admin API. " +
 			"API keys must be created through the Anthropic Console — use `terraform import` to bring an existing key under Terraform management. " +
 			"This resource supports renaming and deactivating existing keys. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.\n\n" +
+			providerdata.AdminCredentialNote + "\n\n" +
 			"> **Security note:** This resource manages API keys but never exposes the key material. " +
 			"The actual secret is only visible in the Anthropic Console at creation time. " +
 			"Use this resource for lifecycle management of existing keys (rename, deactivate) only.",

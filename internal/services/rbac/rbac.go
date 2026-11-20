@@ -3,7 +3,7 @@
 
 // Package rbac holds the Claude Enterprise RBAC resources and data sources:
 // groups and group members. They go through the Admin API client
-// (`pd.AdminClient`) because the pinned SDK v1.67.0 predates
+// (`pd.AdminKeyClient`) because the pinned SDK v1.67.0 predates
 // `client.Beta.Organization.RBACGroups` (added in v1.77.0).
 package rbac
 

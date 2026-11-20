@@ -10,7 +10,7 @@ model: sonnet
 
 ## Start from a sibling
 
-Before writing a resource or data source, read the closest existing one in the same service (same API family and credential), its tests, its example and its template, and copy their shape. The service package already shows the client it uses (`pd.Client`, `pd.AdminClient` or `pd.OAuthClient`), its shared test helpers and its state-mapping style; a new file that diverges from its siblings is the most common review finding.
+Before writing a resource or data source, read the closest existing one in the same service (same API family and credential), its tests, its example and its template, and copy their shape. The service package already shows the client it uses (`pd.Client`, `pd.AdminClient`, `pd.AdminKeyClient` or `pd.OAuthClient`), its shared test helpers and its state-mapping style; a new file that diverges from its siblings is the most common review finding.
 
 ## Go dependencies
 
