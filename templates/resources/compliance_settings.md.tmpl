@@ -9,10 +9,10 @@ description: |-
 
 Turns the organization's [Compliance API](https://platform.claude.com/docs/en/manage-claude/compliance-api) on or off via the Admin API: the same switch as the **Compliance API** toggle on the Claude Console's [Compliance](https://platform.claude.com/settings/security) page. While it is enabled, organization activity is recorded for the [Activity Feed](https://platform.claude.com/docs/en/manage-claude/compliance-activity-feed).
 
-The settings are an organization-wide singleton for the organization of the configured admin key. Declare the resource once per organization. The resource records that organization's ID, and a refresh or an apply fails if the configured admin key later belongs to another organization, rather than switching that organization's Compliance API.
+The settings are an organization-wide singleton for the organization of the configured admin credential: the admin key or, when `admin_api_key` is unset, the `org:admin` bearer token. Declare the resource once per organization. The resource records that organization's ID, and a refresh or an apply fails if the configured admin credential later belongs to another organization, rather than switching that organization's Compliance API.
 
 > **API**: `GET/POST /v1/organizations/compliance_settings` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); or, when `admin_api_key` is unset, an `org:admin` OAuth bearer token (`auth_token`, `federation` or `cli`).
 > **Beta header**: None.
 > **Cost**: Free.
 
@@ -32,7 +32,7 @@ The settings are an organization-wide singleton for the organization of the conf
 
 ## Import
 
-The settings are addressed through the admin key's organization, not by ID, so any import ID works; by convention, pass the organization ID. The imported `id` is always the organization ID read from the API, and an import ID that differs from it gets a warning naming the organization imported.
+The settings are addressed through the admin credential's organization, not by ID, so any import ID works; by convention, pass the organization ID. The imported `id` is always the organization ID read from the API, and an import ID that differs from it gets a warning naming the organization imported.
 
 ```shell
 terraform import anthropic_compliance_settings.this <organization_id>

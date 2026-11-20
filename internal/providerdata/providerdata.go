@@ -35,14 +35,28 @@ type ProviderData struct {
 	Platform platform.Platform
 	// Client is the Anthropic SDK client for standard API endpoints.
 	Client *anthropic.Client
-	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
-	// Nil when admin_api_key is not configured.
+	// AdminClient handles /v1/organizations/* endpoints using the Admin API key
+	// or, when admin_api_key is not configured, the bearer token of OAuthClient.
+	// Nil when neither is configured.
 	AdminClient *admin.Client
+	// AdminKeyClient is AdminClient when the Admin API key backs it, nil
+	// otherwise. The Claude Enterprise only types take it (plugins, RBAC
+	// groups), and spend limits, whose user limits are Claude Enterprise only.
+	// A gateway alias leaves it nil on purpose (ForPlatform): registry.go
+	// keeps those types off the gateways, so one declared supported there
+	// must be given this client in ForPlatform too.
+	AdminKeyClient *admin.Client
 	// OAuthClient handles endpoints that require an OAuth bearer token
 	// (org:admin, or workspace:manage_tunnels for MCP tunnels) and reject API
-	// keys. Nil when auth_token is not configured.
+	// keys, and backs AdminClient when admin_api_key is not configured. Nil
+	// when no auth_token, federation block or cli block supplies a token.
 	OAuthClient *OAuthClient
 }
+
+// AdminCredentialNote is the credential sentence shared by the schema
+// descriptions of the types that take AdminClient.
+const AdminCredentialNote = "Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, " +
+	"or, for a Claude Console organization, an `org:admin` bearer token when it is unset."
 
 // ForPlatform is the ProviderData of a provider alias configured for a cloud
 // gateway platform. The gateway authenticates every route the same way (AWS

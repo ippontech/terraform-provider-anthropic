@@ -201,8 +201,11 @@ func TestConfigureCLIUsesNamedProfile(t *testing.T) {
 	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
 		"cli": cliValue(t, map[string]string{"profile": "admin"}),
 	}))
-	if pd.Client != nil || pd.AdminClient != nil {
-		t.Error("cli alone must not produce the API-key clients")
+	if pd.Client != nil {
+		t.Error("cli alone must not produce the standard client")
+	}
+	if pd.AdminClient == nil {
+		t.Error("cli alone did not back the admin client with the profile's token")
 	}
 	if err := pd.OAuthClient.Get(context.Background(), "/v1/models", nil, nil); err != nil {
 		t.Fatalf("request failed: %v", err)

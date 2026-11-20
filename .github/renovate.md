@@ -71,22 +71,29 @@ The GoReleaser version was once visible to no built-in manager, so it was drifti
 
 | What | Where | How it is tracked |
 |---|---|---|
-| GoReleaser CLI | `version:` input of `goreleaser/goreleaser-action` in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line, and the `github-actions` manager, which now reads this input too (type `uses-with`) |
+| GoReleaser CLI | `GORELEASER_VERSION` env of the `Install GoReleaser` step in `goreleaser-check.yml` and `goreleaser-release.yml` | `# renovate:` annotation comment on the preceding line |
 
-The `github-actions` manager updates `uses:` refs (including digests of SHA-pinned actions) and a few
-well-known inputs such as `setup-node`'s `node-version` and the `version:` of `goreleaser-action`, but it
-does not read arbitrary action inputs, hence the annotation. A rule that targets such a pin matches both
-managers: the GoReleaser hold matched only `custom.regex`, so the `github-actions` manager put the check
-pin's v2.20.0 in the automerged `GitHub Actions` group, away from the release pin. To put another tool version under Renovate's control, add the same comment above it:
+No built-in manager reads a workflow `env` value, hence the annotation. To put another tool version under
+Renovate's control, add the same comment above it:
 
 ```yaml
-        with:
+        env:
           # renovate: datasource=github-releases depName=owner/repo
-          version: v1.2.3
+          TOOL_VERSION: v1.2.3
 ```
 
-It is grouped into the `CI tool versions` PR, except for the version pinned in the release workflow,
-which goes to the `release tooling` PR below.
+It is grouped into the `CI tool versions` PR, except for the GoReleaser version, which has a `GoReleaser`
+PR of its own (reviewed, never automerged): its red hash check, until the hash is updated by hand, must not
+hold back the other release tooling updates.
+
+The GoReleaser archive is also pinned by content (`GORELEASER_SHA256`, next to the version in both files),
+as `TFLINT_SHA256` is in `security.yml`. The release job runs the binary after the GPG key is imported, with
+a write token, and a version string does not bind the bytes behind it: whoever can replace an upstream
+release asset would otherwise run code with the key. The hash is checked before `Import GPG key`, and is
+copied from the target release's `checksums.txt` (`goreleaser_Linux_x86_64.tar.gz` line), never fetched at
+run time. Renovate bumps the version only, so its PR goes red in `goreleaser-check.yml` until a maintainer
+updates the hash in both files (`goreleaser-check.yml` also fails when the two files' pins differ);
+read the release notes first, since that decision is what the hash records.
 
 The semantic-release toolchain is a regular npm project under `.github/semantic-release/`
 (`package.json` with exact versions, `package-lock.json` with integrity hashes, `.npmrc` with
@@ -106,18 +113,38 @@ The actions of `testacc.yml` are in the same position. Its two jobs run in the `
 with the acceptance-test API keys in their environment, and every push to `main` starts them, the merge
 of a Renovate PR included: an automerged action update would run with those keys as soon as it lands.
 
-A `matchFileNames` rule therefore moves these updates (GoReleaser, the semantic-release packages and
-their lockfile, and the actions used by the three workflows) into their own `release tooling` group with
-`automerge: false`. A maintainer reviews the release notes and the diff of each one before merging. The
+A `matchFileNames` rule therefore moves these updates (the semantic-release packages and their lockfile,
+and the actions used by the three workflows) into their own `release tooling` group with `automerge: false`.
+GoReleaser, declared in `goreleaser-release.yml` too, has a group of its own (see "Custom managers"): a later
+rule matches it by name. A maintainer reviews the release notes and the diff of each one before merging. The
 rule matches by file, not by package, so the same action used in other workflows (`actions/checkout`,
 say) keeps its automerged `GitHub Actions` group there; only its occurrences in these three workflows
-wait for review. `testacc.yml` uses the same actions as the release workflows, `hashicorp/setup-terraform`
-aside, so a bump of one of them comes in the same reviewed PR for all three files.
+wait for review. `testacc.yml` uses the same actions as the release workflows, so a bump of one of them
+comes in the same reviewed PR for all three files.
 
-`testacc.yml` also pins the Terraform CLI that `hashicorp/setup-terraform` installs (`terraform_version`).
-The action's default is `latest`, which would run whatever release is newest next to the keys, with no
-decision at all. The `github-actions` manager tracks that input as the `terraform` dependency, and the
-same rule puts its updates in the reviewed group.
+`testacc.yml` also installs the Terraform CLI, in both jobs, from the HashiCorp release zip, checked with
+`sha256sum` against `TERRAFORM_SHA256` before anything runs (the `Install Terraform` step, the pattern of
+tflint in `security.yml`): `hashicorp/setup-terraform` takes no digest, and a version pin alone would run
+whatever bytes the release host serves for that version next to the keys. The hash is committed, not read
+from the release's `SHA256SUMS`, which comes from the same host. The `custom.regex` manager tracks
+`TERRAFORM_VERSION` as the `hashicorp/terraform` dependency and the same rule puts its updates in the
+reviewed group, but it cannot bump the hash. `testacc.yml` does not run on pull requests, so the
+`terraform-digest` job of `security.yml` checks the pins there: it fails unless both jobs carry the same
+version and hash and the downloaded archive matches, so a bump without its hash turns that check red
+instead of failing the install step on the next push to `main` (and blocking the next release, which
+calls this workflow). The maintainer sets `TERRAFORM_SHA256` in both jobs, in the PR, from the
+`linux_amd64` line of the release's `terraform_<version>_SHA256SUMS` after checking that file's
+signature against HashiCorp's release key.
+
+`semantic-release.yml` pins the Node.js runtime of its two jobs the same way: `NODE_VERSION` in the
+workflow `env`, with a `# renovate: datasource=node-version depName=node` annotation, and `NODE_SHA256`
+beside it, the digest of the `linux-x64` archive that the "Install Node.js" step checks before anything
+runs. It is not `actions/setup-node`, whose `node-version` is a range that resolves to the newest release
+at run time, with no Renovate PR and no check of the download. The custom manager reads the version and
+the file rule above puts its updates in the reviewed group; the digest is updated by hand in that PR
+(value from the release's `SHASUMS256.txt`), as for tflint in `security.yml`. The `node-digest` job of
+`security.yml` downloads the archive on every pull request and checks the pair, so a bump without its
+digest turns that check red.
 
 A new workflow whose jobs read any secret other than `GITHUB_TOKEN`, or run in a protected environment,
 joins the rule's `matchFileNames` list. Its jobs restore no Actions cache either (`RELEASE.md`, "Caches"): the

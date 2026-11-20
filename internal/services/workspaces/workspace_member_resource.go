@@ -92,7 +92,7 @@ func (r *WorkspaceMemberResource) Metadata(_ context.Context, req resource.Metad
 func (r *WorkspaceMemberResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Assigns a user to an Anthropic Workspace with a given role via the Admin API. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

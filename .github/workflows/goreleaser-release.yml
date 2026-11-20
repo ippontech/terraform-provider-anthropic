@@ -130,6 +130,31 @@ jobs:
       - name: Verify module sources
         run: go mod download && go mod verify
 
+      # GoReleaser runs with the signing key and the write token, so its bytes are pinned here,
+      # before the key is imported: a mismatch fails the job with no key material loaded. The
+      # hash is not read from the release's own checksums.txt, which an attacker who can replace
+      # the archive can replace too (same reasoning as TFLINT_SHA256 in security.yml). Bump
+      # GORELEASER_VERSION and GORELEASER_SHA256 together, here and in goreleaser-check.yml
+      # (value from the target release's checksums.txt, goreleaser_Linux_x86_64.tar.gz line).
+      # Renovate only bumps the version, so its PR goes red in goreleaser-check.yml until the
+      # hash is updated by hand, and goes red again if the two files' pins differ. The archive
+      # goes to RUNNER_TEMP: GoReleaser refuses a dirty tree.
+      - name: Install GoReleaser
+        env:
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          GORELEASER_VERSION: v2.20.0
+          GORELEASER_SHA256: d2483159e6007f814132cb56635ad30a70013dbeb813d6033a7e01adf6ae108c
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/goreleaser"
+          mkdir -p "${install_dir}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${install_dir}/goreleaser.tar.gz" \
+            "https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz"
+          echo "${GORELEASER_SHA256}  ${install_dir}/goreleaser.tar.gz" | sha256sum -c -
+          tar -xzf "${install_dir}/goreleaser.tar.gz" -C "${install_dir}" goreleaser
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/goreleaser" --version
+
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         id: import_gpg
@@ -138,11 +163,7 @@ jobs:
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Release
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          version: v2.20.0
-          args: release --clean
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

@@ -83,11 +83,11 @@ func (r *ComplianceSettingsResource) Schema(_ context.Context, _ resource.Schema
 		MarkdownDescription: "Turns the organization's Compliance API on or off via the Admin API. " +
 			"The settings are an organization-wide singleton: creating the resource adopts them, and destroying it " +
 			"only removes it from the Terraform state and leaves the Compliance API as it is. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "ID of the organization the settings belong to: the organization of the configured admin key.",
+				MarkdownDescription: "ID of the organization the settings belong to: the organization of the configured admin key or, without one, of the `org:admin` bearer token.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"state": schema.StringAttribute{
@@ -247,7 +247,7 @@ func (r *ComplianceSettingsResource) Delete(ctx context.Context, req resource.De
 // --- ImportState ---
 
 // ImportState accepts any ID, since the settings are addressed through the
-// admin key's organization rather than by ID; by convention, pass the
+// admin credential's organization rather than by ID; by convention, pass the
 // organization ID, and any other ID gets a warning naming the organization
 // imported. The state's `id` is always the organization ID resolved from the
 // API, exactly as Create sets it.
@@ -258,9 +258,9 @@ func (r *ComplianceSettingsResource) ImportState(ctx context.Context, req resour
 		return
 	}
 	if req.ID != orgID {
-		resp.Diagnostics.AddWarning("Imported the admin key's organization",
-			fmt.Sprintf("The import ID %q is not the ID of the admin key's organization: the compliance settings of organization %s were imported. "+
-				"Check that the admin key belongs to the organization you meant to manage.", req.ID, orgID))
+		resp.Diagnostics.AddWarning("Imported the admin credential's organization",
+			fmt.Sprintf("The import ID %q is not the ID of the admin credential's organization: the compliance settings of organization %s were imported. "+
+				"Check that the admin credential belongs to the organization you meant to manage.", req.ID, orgID))
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), orgID)...)
 }
@@ -269,12 +269,13 @@ func (r *ComplianceSettingsResource) ImportState(ctx context.Context, req resour
 // Helper functions
 // ============================================================================
 
-// organizationID returns the ID of the organization the admin key belongs to.
+// organizationID returns the ID of the organization the admin credential
+// belongs to: the admin key or, without one, the org:admin bearer token.
 func (r *ComplianceSettingsResource) organizationID(ctx context.Context) (string, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	respBytes, err := r.client.DoRequest(ctx, "GET", organizationPath, nil)
 	if err != nil {
-		diags.AddError("Client Error", fmt.Sprintf("Unable to read the organization of the admin key: %s", err))
+		diags.AddError("Client Error", fmt.Sprintf("Unable to read the organization of the admin credential: %s", err))
 		return "", diags
 	}
 
@@ -290,10 +291,10 @@ func (r *ComplianceSettingsResource) organizationID(ctx context.Context) (string
 	return org.ID, diags
 }
 
-// checkOrganization fails when the admin key belongs to another organization
-// than the one in state. The settings are addressed through the key alone, so
-// no 404 would reveal a key from another organization, and an apply would
-// switch that organization's Compliance API under the stored ID.
+// checkOrganization fails when the admin credential belongs to another
+// organization than the one in state. The settings are addressed through the
+// credential alone, so no 404 would reveal one from another organization, and
+// an apply would switch that organization's Compliance API under the stored ID.
 func (r *ComplianceSettingsResource) checkOrganization(ctx context.Context, stateID types.String) diag.Diagnostics {
 	if stateID.IsNull() || stateID.IsUnknown() || stateID.ValueString() == "" {
 		return nil
@@ -302,10 +303,11 @@ func (r *ComplianceSettingsResource) checkOrganization(ctx context.Context, stat
 	if diags.HasError() || orgID == stateID.ValueString() {
 		return diags
 	}
-	diags.AddError("Admin Key Of Another Organization",
-		fmt.Sprintf("The configured admin key belongs to organization %s, but this anthropic_compliance_settings manages organization %s. "+
-			"The settings are addressed through the admin key alone, so an apply would change the Compliance API of %s. "+
-			"Configure an admin key of organization %s, or remove the resource from the state and import it again to manage %s.",
+	diags.AddError("Admin Credential Of Another Organization",
+		fmt.Sprintf("The configured admin credential (the admin key or, without one, the org:admin bearer token) belongs to organization %s, "+
+			"but this anthropic_compliance_settings manages organization %s. "+
+			"The settings are addressed through the admin credential alone, so an apply would change the Compliance API of %s. "+
+			"Configure an admin credential of organization %s, or remove the resource from the state and import it again to manage %s.",
 			orgID, stateID.ValueString(), orgID, stateID.ValueString(), orgID))
 	return diags
 }

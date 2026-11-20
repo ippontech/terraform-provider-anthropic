@@ -61,7 +61,7 @@ func (d *OrganizationMemberDataSource) Schema(_ context.Context, _ datasource.Sc
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Fetches a single member (User) of the organization by user ID via the Admin API. " +
 			"Useful for resolving a user's email, name, or organization role from their ID. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Required:            true,

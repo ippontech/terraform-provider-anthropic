@@ -72,7 +72,7 @@ func (d *WorkspacesDataSource) Metadata(_ context.Context, req datasource.Metada
 func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists all Anthropic Workspaces via the Admin API. All pages are fetched automatically. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"include_archived": schema.BoolAttribute{
 				Optional:            true,

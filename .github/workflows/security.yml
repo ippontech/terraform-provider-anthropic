@@ -129,6 +129,41 @@ jobs:
       - name: Run tflint
         run: tflint --recursive --format compact
 
+  # semantic-release.yml runs only on a schedule and on dispatch, so nothing on a pull request
+  # exercises its "Install Node.js" step. Renovate bumps NODE_VERSION alone: merged without its
+  # NODE_SHA256, the pair would fail every release run. This job downloads the archive and checks
+  # the pair on the pull request instead; it holds no secret.
+  node-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            nodejs.org:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the Node.js version and digest of semantic-release.yml
+        run: |
+          set -euo pipefail
+          file=.github/workflows/semantic-release.yml
+          version=$(sed -n 's/^  NODE_VERSION: //p' "${file}")
+          sha=$(sed -n 's/^  NODE_SHA256: //p' "${file}")
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${sha}" =~ ^[0-9a-f]{64}$ ]]
+          archive="node-v${version}-linux-x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
+            "https://nodejs.org/dist/v${version}/${archive}"
+          echo "${sha}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+
   checkov:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -157,3 +192,50 @@ jobs:
           quiet: true
           compact: true
           output_format: cli
+
+  # testacc.yml runs on pushes to main, on dispatch and from the release workflow, never on a pull
+  # request, so nothing on a pull request exercises its two "Install Terraform" steps. Renovate bumps
+  # TERRAFORM_VERSION alone: merged without its TERRAFORM_SHA256, the pair would fail every run on
+  # main and block the release. This job checks on the pull request that both steps carry the same
+  # pair, downloads the archive and checks it; it holds no secret.
+  terraform-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            releases.hashicorp.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the Terraform version and digest of testacc.yml
+        run: |
+          set -euo pipefail
+          file=.github/workflows/testacc.yml
+          versions=$(sed -n 's/^ *TERRAFORM_VERSION: //p' "${file}")
+          shas=$(sed -n 's/^ *TERRAFORM_SHA256: //p' "${file}")
+          # Two install steps, one per job: each must carry the pair, and the same one.
+          if [[ "$(wc -l <<< "${versions}")" -ne 2 || "$(wc -l <<< "${shas}")" -ne 2 ]]; then
+            echo "::error file=${file}::expected TERRAFORM_VERSION and TERRAFORM_SHA256 twice each"
+            exit 1
+          fi
+          if [[ "$(sort -u <<< "${versions}" | wc -l)" -ne 1 || "$(sort -u <<< "${shas}" | wc -l)" -ne 1 ]]; then
+            echo "::error file=${file}::the two Install Terraform steps pin different versions or digests"
+            exit 1
+          fi
+          version=$(head -n 1 <<< "${versions}")
+          sha=$(head -n 1 <<< "${shas}")
+          [[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${sha}" =~ ^[0-9a-f]{64}$ ]]
+          archive="terraform_${version#v}_linux_amd64.zip"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "${RUNNER_TEMP}/${archive}" \
+            "https://releases.hashicorp.com/terraform/${version#v}/${archive}"
+          echo "${sha}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -

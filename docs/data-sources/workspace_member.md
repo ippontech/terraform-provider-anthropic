@@ -10,7 +10,7 @@ description: |-
 Fetches a single Anthropic workspace member by workspace ID and user ID.
 
 > **API**: `GET /v1/organizations/workspaces/{workspace_id}/members/{user_id}` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace. Not available to Claude Enterprise organizations.
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`): a Claude Console Admin API key, or a personal or service account key not scoped to a workspace; or, when `admin_api_key` is unset, an `org:admin` OAuth bearer token (`auth_token`, `federation` or `cli`). Not available to Claude Enterprise organizations.
 > **Beta header**: None.
 > **Cost**: Free.
 

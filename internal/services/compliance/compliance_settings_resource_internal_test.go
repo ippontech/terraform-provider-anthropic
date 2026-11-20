@@ -40,8 +40,8 @@ func newSettingsServer(t *testing.T, settingsBody string) (*httptest.Server, *[]
 	return newOrgSettingsServer(t, testOrgID, settingsBody)
 }
 
-// newOrgSettingsServer is newSettingsServer for an admin key of organization
-// orgID.
+// newOrgSettingsServer is newSettingsServer for an admin credential of
+// organization orgID.
 func newOrgSettingsServer(t *testing.T, orgID, settingsBody string) (*httptest.Server, *[]recordedRequest) {
 	t.Helper()
 	var mu sync.Mutex
@@ -308,13 +308,13 @@ func TestComplianceSettingsResource_ImportState_organizationError(t *testing.T) 
 	}
 }
 
-// --- Admin key of another organization ---
+// --- Admin credential of another organization ---
 
 const otherOrgID = "87654321-4321-8765-4321-876543218765"
 
-// Read fails, without reading the settings, when the admin key belongs to
-// another organization than the stored id: the singleton is addressed through
-// the key alone, so nothing else would notice.
+// Read fails, without reading the settings, when the admin credential belongs
+// to another organization than the stored id: the singleton is addressed
+// through the credential alone, so nothing else would notice.
 func TestComplianceSettingsResource_Read_otherOrganizationFails(t *testing.T) {
 	srv, reqs := newOrgSettingsServer(t, otherOrgID, `{"type":"compliance_settings","state":{"type":"enabled"}}`)
 	r := &ComplianceSettingsResource{client: admintest.NewClient(t, srv)}
@@ -323,8 +323,8 @@ func TestComplianceSettingsResource_Read_otherOrganizationFails(t *testing.T) {
 
 	resp := resource.ReadResponse{State: state}
 	r.Read(context.Background(), resource.ReadRequest{State: state}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected an error for an admin key of another organization")
+	if !resp.Diagnostics.HasError() || resp.Diagnostics[0].Summary() != "Admin Credential Of Another Organization" {
+		t.Fatalf("diagnostics = %v, want an Admin Credential Of Another Organization error", resp.Diagnostics)
 	}
 	for _, req := range *reqs {
 		if req.path == "/v1/organizations/compliance_settings" {
@@ -344,8 +344,8 @@ func TestComplianceSettingsResource_Update_otherOrganizationFails(t *testing.T) 
 
 	resp := resource.UpdateResponse{State: state}
 	r.Update(context.Background(), resource.UpdateRequest{Plan: plan, State: state}, &resp)
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected an error for an admin key of another organization")
+	if !resp.Diagnostics.HasError() || resp.Diagnostics[0].Summary() != "Admin Credential Of Another Organization" {
+		t.Fatalf("diagnostics = %v, want an Admin Credential Of Another Organization error", resp.Diagnostics)
 	}
 	for _, req := range *reqs {
 		if req.method == http.MethodPost {

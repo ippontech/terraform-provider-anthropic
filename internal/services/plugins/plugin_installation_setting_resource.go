@@ -126,11 +126,11 @@ func (r *PluginInstallationSettingResource) Configure(_ context.Context, req res
 		return
 	}
 
-	if !providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics) {
+	if !providerrors.RequireAdminKeyResourceClient(pd.AdminKeyClient, &resp.Diagnostics) {
 		return
 	}
 
-	r.client = pd.AdminClient
+	r.client = pd.AdminKeyClient
 }
 
 // Create sets the target's value. A setting the target already holds (one set

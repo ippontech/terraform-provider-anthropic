@@ -12,7 +12,7 @@ Registers a customer-managed encryption key (CMEK) with the organization via the
 Before you create it, CMEK must be turned on for the organization and the key must exist in your KMS with access granted to Anthropic: follow the setup guide for [AWS KMS](https://platform.claude.com/docs/en/manage-claude/cmek-aws-kms), [Google Cloud KMS](https://platform.claude.com/docs/en/manage-claude/cmek-google-cloud-kms) or [Azure Key Vault](https://platform.claude.com/docs/en/manage-claude/cmek-azure-key-vault). The [Admin API calls](https://platform.claude.com/docs/en/manage-claude/cmek-admin-api) are documented for Claude Platform; on Claude Enterprise or Claude Platform on AWS, follow your [setup page](https://platform.claude.com/docs/en/manage-claude/cmek#set-it-up).
 
 > **API**: `POST /v1/organizations/external_keys`, `GET/POST/DELETE /v1/organizations/external_keys/{id}` (Admin API).
-> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); or the provider's `aws` block on Claude Platform on AWS, or its `google_cloud` block on Claude Models on Google Cloud (with `roles/claude.admin`; `workspace_id` may be left unset).
+> **Auth**: Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); or the provider's `aws` block on Claude Platform on AWS, or its `google_cloud` block on Claude Models on Google Cloud (with `roles/claude.admin`; `workspace_id` may be left unset); or, when `admin_api_key` is unset, an `org:admin` OAuth bearer token (`auth_token`, `federation` or `cli`).
 > **Beta header**: None.
 > **Cost**: Free.
 

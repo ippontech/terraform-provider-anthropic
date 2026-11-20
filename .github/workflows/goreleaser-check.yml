@@ -26,16 +26,43 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: 'go.mod'
 
+      # Same pinned install as goreleaser-release.yml, which runs the binary next to the signing
+      # key (see the comment there): keep GORELEASER_VERSION and GORELEASER_SHA256 identical in
+      # both files. A version bump that leaves the hash stale fails here, on the PR, not at tag time;
+      # the next step fails the PR when the release workflow's pins differ from these.
       - name: Install GoReleaser
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
+        env:
           # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          version: v2.20.0
-          install-only: true
+          GORELEASER_VERSION: v2.20.0
+          GORELEASER_SHA256: d2483159e6007f814132cb56635ad30a70013dbeb813d6033a7e01adf6ae108c
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/goreleaser"
+          mkdir -p "${install_dir}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${install_dir}/goreleaser.tar.gz" \
+            "https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz"
+          echo "${GORELEASER_SHA256}  ${install_dir}/goreleaser.tar.gz" | sha256sum -c -
+          tar -xzf "${install_dir}/goreleaser.tar.gz" -C "${install_dir}" goreleaser
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/goreleaser" --version
+
+      # The release workflow's copy is only run at tag time, after the tag and the draft release
+      # exist: compare it here so that fixing one file alone cannot turn the PR green.
+      - name: Check the release workflow pins the same GoReleaser
+        run: |
+          set -euo pipefail
+          for key in GORELEASER_VERSION GORELEASER_SHA256; do
+            here=$(sed -n "s/^ *${key}: *//p" .github/workflows/goreleaser-check.yml)
+            there=$(sed -n "s/^ *${key}: *//p" .github/workflows/goreleaser-release.yml)
+            if [ -z "${here}" ] || [ "${here}" != "${there}" ]; then
+              echo "::error::${key} differs between goreleaser-check.yml (${here}) and goreleaser-release.yml (${there}); update both."
+              exit 1
+            fi
+          done
 
       - name: Check GoReleaser config
         run: goreleaser check

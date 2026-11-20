@@ -47,7 +47,7 @@ func (d *InviteDataSource) Metadata(_ context.Context, req datasource.MetadataRe
 func (d *InviteDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Fetches a single organization invite by ID via the Admin API. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Required:            true,

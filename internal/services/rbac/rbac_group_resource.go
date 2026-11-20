@@ -109,11 +109,11 @@ func (r *RBACGroupResource) Configure(_ context.Context, req resource.ConfigureR
 		return
 	}
 
-	if !providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics) {
+	if !providerrors.RequireAdminKeyResourceClient(pd.AdminKeyClient, &resp.Diagnostics) {
 		return
 	}
 
-	r.client = pd.AdminClient
+	r.client = pd.AdminKeyClient
 }
 
 // --- ModifyPlan ---

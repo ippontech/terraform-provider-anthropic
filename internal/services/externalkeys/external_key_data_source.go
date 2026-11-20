@@ -37,7 +37,7 @@ func (d *ExternalKeyDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Fetches a customer-managed encryption key (CMEK) registered with the organization, by ID, via the Admin API. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: attrs,
 	}
 }

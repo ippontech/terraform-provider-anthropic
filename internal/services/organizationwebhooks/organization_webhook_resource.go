@@ -89,7 +89,7 @@ func (r *OrganizationWebhookResource) Schema(_ context.Context, _ resource.Schem
 		MarkdownDescription: "Manages an organization webhook endpoint via the Admin API (beta, `webhooks-2026-10-07`): an HTTPS URL that " +
 			"receives events about enforcement actions on the organization's user profiles. The signing secret is returned " +
 			"only when the endpoint is created or the secret regenerated, so it is stored in Terraform state (sensitive). " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

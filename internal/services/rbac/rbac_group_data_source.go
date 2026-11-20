@@ -78,11 +78,11 @@ func (d *RBACGroupDataSource) Configure(_ context.Context, req datasource.Config
 		return
 	}
 
-	if !providerrors.RequireAdminDataSourceClient(pd.AdminClient, &resp.Diagnostics) {
+	if !providerrors.RequireAdminKeyDataSourceClient(pd.AdminKeyClient, &resp.Diagnostics) {
 		return
 	}
 
-	d.client = pd.AdminClient
+	d.client = pd.AdminKeyClient
 }
 
 func (d *RBACGroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

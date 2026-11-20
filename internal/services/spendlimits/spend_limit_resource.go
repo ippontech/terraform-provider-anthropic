@@ -179,11 +179,11 @@ func (r *SpendLimitResource) Configure(_ context.Context, req resource.Configure
 		return
 	}
 
-	if !providerrors.RequireAdminResourceClient(pd.AdminClient, &resp.Diagnostics) {
+	if !providerrors.RequireAdminKeyResourceClient(pd.AdminKeyClient, &resp.Diagnostics) {
 		return
 	}
 
-	r.client = pd.AdminClient
+	r.client = pd.AdminKeyClient
 }
 
 // --- Create / Update ---
