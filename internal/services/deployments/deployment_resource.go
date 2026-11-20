@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +31,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+
 	providerrors "github.com/ippontech/terraform-provider-anthropic/internal/errors"
 	providerdata "github.com/ippontech/terraform-provider-anthropic/internal/providerdata"
 	"github.com/ippontech/terraform-provider-anthropic/internal/tfvalue"
@@ -189,7 +193,8 @@ func (r *DeploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				MarkdownDescription: "GitHub authorization tokens for the `github_repository` entries of `resources`, keyed by the " +
 					"repository `url` exactly as written in `resources`. Write-only: never stored in the plan or the state. " +
 					"`authorization_token` is rejected inside `resources`, whose value is not sensitive; set the token here. " +
-					"Requires `repository_authorization_tokens_wo_version`. Requires Terraform 1.11 or later.",
+					"Requires `repository_authorization_tokens_wo_version`. Keep it in the configuration: `resources` is replaced " +
+					"as a whole on update, so an update sent without the tokens removes them. Requires Terraform 1.11 or later.",
 			},
 			"repository_authorization_tokens_wo_version": schema.Int64Attribute{
 				Optional: true,
@@ -332,19 +337,23 @@ func (v *deploymentRepositoryTokenValidator) ValidateResource(ctx context.Contex
 
 	var repoURLs map[string]bool
 	if isSet(data.Resources) {
-		urls, hasToken := inspectResources(data.Resources.ValueString())
-		if hasToken {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("resources"),
-				"Credential in resources",
-				"An element of \"resources\" sets \"authorization_token\". \"resources\" is not sensitive, so the token "+
-					"would be shown in plan output and stored in plan files and state. Remove it from \"resources\" and set it "+
-					"in \"repository_authorization_tokens_wo\", keyed by the repository URL.",
-			)
-		}
-		repoURLs = urls
+		repoURLs = validateResourcesHoldNoToken(data.Resources.ValueString(), &resp.Diagnostics)
 	}
 
+	// Unlike most write-only arguments, the tokens must stay in the
+	// configuration: resources is a full replacement, so an update sent
+	// without them makes the API drop the stored token. A version left behind
+	// without tokens is the trace of that mistake.
+	if isMissing(data.RepositoryTokens) && isSet(data.RepositoryTokensVersion) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("repository_authorization_tokens_wo_version"),
+			"Token version without tokens",
+			"\"repository_authorization_tokens_wo_version\" is set but \"repository_authorization_tokens_wo\" is not. "+
+				"The API replaces \"resources\" as a whole on every update, so an update sent without the tokens removes "+
+				"them from the deployment, and its sessions can no longer clone a private repository. Keep the tokens in "+
+				"the configuration, or remove the version too if the repositories no longer need a token.",
+		)
+	}
 	if !isSet(data.RepositoryTokens) {
 		return
 	}
@@ -358,48 +367,132 @@ func (v *deploymentRepositoryTokenValidator) ValidateResource(ctx context.Contex
 		)
 	}
 
-	if data.Resources.IsUnknown() {
-		return
+	validateRepositoryTokenElements(data.RepositoryTokens, repoURLs, !data.Resources.IsUnknown(), &resp.Diagnostics)
+}
+
+// validateResourcesHoldNoToken reports an authorization_token found in the
+// raw resources JSON and returns the url of its github_repository elements.
+// It fails closed: a value that cannot be decoded cannot be searched, so it
+// is an error too, whose text never quotes the value.
+func validateResourcesHoldNoToken(raw string, diags *diag.Diagnostics) map[string]bool {
+	repoURLs, hasToken, err := inspectResources(raw)
+	if err != nil {
+		diags.AddAttributeError(
+			path.Root("resources"),
+			"Unreadable resources",
+			"\"resources\" could not be decoded, so the provider cannot check that it holds no credential. "+
+				"It must be a JSON array of resource objects.",
+		)
+		return nil
 	}
-	for url := range data.RepositoryTokens.Elements() {
-		if !repoURLs[url] {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("repository_authorization_tokens_wo"),
-				"Token for an unknown repository",
-				fmt.Sprintf("\"repository_authorization_tokens_wo\" has a token for %q, which is not the url of any "+
-					"github_repository element of \"resources\". The token would never be sent.", url),
-			)
+	if hasToken {
+		diags.AddAttributeError(
+			path.Root("resources"),
+			"Credential in resources",
+			"An element of \"resources\" sets \"authorization_token\". \"resources\" is not sensitive, so the token "+
+				"would be shown in plan output and stored in plan files and state. Remove it from \"resources\" and set it "+
+				"in \"repository_authorization_tokens_wo\", keyed by the repository URL.",
+		)
+	}
+	return repoURLs
+}
+
+// validateRepositoryTokenElements checks each element of the token map at
+// plan time: its key is the url of a github_repository of resources (when
+// resources is known) and its value is a non-empty token. A key is quoted
+// only when it is one of those urls, which the plan shows anyway: any other
+// key may be the token itself, in a map written the wrong way round.
+func validateRepositoryTokenElements(tokens types.Map, repoURLs map[string]bool, resourcesKnown bool, diags *diag.Diagnostics) {
+	unmatched, blank := 0, 0
+	var blankURLs []string
+	for key, value := range tokens.Elements() {
+		if resourcesKnown && !repoURLs[key] {
+			unmatched++
+			continue
+		}
+		if token, ok := value.(types.String); ok && !token.IsUnknown() && token.ValueString() == "" {
+			blank++
+			if repoURLs[key] {
+				blankURLs = append(blankURLs, key)
+			}
 		}
 	}
+
+	if unmatched > 0 {
+		diags.AddAttributeError(
+			path.Root("repository_authorization_tokens_wo"),
+			"Token for an unknown repository",
+			unmatchedTokenKeysDetail(unmatched, repoURLs)+" The tokens would never be sent.",
+		)
+	}
+	if blank > 0 {
+		detail := fmt.Sprintf("%d value(s) of \"repository_authorization_tokens_wo\" are null or empty", blank)
+		if len(blankURLs) > 0 {
+			slices.Sort(blankURLs)
+			detail += fmt.Sprintf(" (%s)", quoteAll(blankURLs))
+		}
+		diags.AddAttributeError(
+			path.Root("repository_authorization_tokens_wo"),
+			"Empty repository token",
+			detail+". Each value must be a GitHub token; remove the entry of a repository that needs none.",
+		)
+	}
+}
+
+// unmatchedTokenKeysDetail words the error for token keys that match no
+// github_repository url. It gives their number and the urls resources holds,
+// never the keys: the attribute is sensitive, and a key that is not a
+// repository url may be a token.
+func unmatchedTokenKeysDetail(unmatched int, repoURLs map[string]bool) string {
+	detail := fmt.Sprintf("%d key(s) of \"repository_authorization_tokens_wo\" are not the url of any "+
+		"github_repository element of \"resources\" (the keys are not shown, since the attribute is sensitive). ", unmatched)
+	if len(repoURLs) == 0 {
+		return detail + "\"resources\" holds no github_repository element."
+	}
+	urls := slices.Sorted(maps.Keys(repoURLs))
+	return detail + "A key must be a repository url exactly as written in \"resources\": " + quoteAll(urls) + "."
+}
+
+// quoteAll returns the values quoted and joined with commas.
+func quoteAll(values []string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = strconv.Quote(value)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // inspectResources returns the url of every github_repository element of the
 // raw resources JSON, and whether an authorization_token key appears anywhere
 // in it, at any depth and in any letter case: whatever the SDK makes of such
 // a value, it is printed in the plan. Elements that are not objects carry no
-// URL; invalid JSON is already rejected by jsontypes.Normalized.
-func inspectResources(raw string) (map[string]bool, bool) {
+// URL. Numbers are kept as written (UseNumber), since jsontypes.Normalized
+// accepts one that no float64 holds, such as 1e400, on which a plain
+// Unmarshal fails; any remaining decode error is returned so that the caller
+// fails closed.
+func inspectResources(raw string) (map[string]bool, bool, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
 	var whole any
-	if err := json.Unmarshal([]byte(raw), &whole); err != nil {
-		return nil, false
+	if err := decoder.Decode(&whole); err != nil {
+		return nil, false, err
 	}
-	hasToken := containsTokenKey(whole)
 
 	urls := map[string]bool{}
-	var elems []json.RawMessage
-	if json.Unmarshal([]byte(raw), &elems) == nil {
-		for _, elem := range elems {
-			var e map[string]json.RawMessage
-			if json.Unmarshal(elem, &e) != nil {
-				continue
-			}
-			var typ, url string
-			if json.Unmarshal(e["type"], &typ) == nil && typ == "github_repository" && json.Unmarshal(e["url"], &url) == nil {
-				urls[url] = true
-			}
+	elems, _ := whole.([]any)
+	for _, elem := range elems {
+		object, ok := elem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := object["type"].(string); typ != "github_repository" {
+			continue
+		}
+		if url, ok := object["url"].(string); ok {
+			urls[url] = true
 		}
 	}
-	return urls, hasToken
+	return urls, containsTokenKey(whole), nil
 }
 
 // containsTokenKey reports whether v, a decoded JSON value, holds an object
@@ -413,39 +506,41 @@ func containsTokenKey(v any) bool {
 			}
 		}
 	case []any:
-		for _, child := range t {
-			if containsTokenKey(child) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(t, containsTokenKey)
 	}
 	return false
 }
 
 // applyRepositoryTokens sets the authorization_token of each repository from
 // tokens (repository URL -> token). A token whose URL matches no repository
-// is an error naming the URL, never the token: the validator cannot check it
-// when resources is unknown at plan time, and dropping it silently would
-// leave the private repository uncloneable.
+// is an error that names neither the key nor the token: the validator cannot
+// check it when resources is unknown at plan time, and dropping it silently
+// would leave the private repository uncloneable.
 func applyRepositoryTokens(repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams, tokens map[string]string) error {
-	matched := map[string]bool{}
+	repoURLs := map[string]bool{}
 	for _, gh := range repos {
+		repoURLs[gh.URL] = true
 		if token, ok := tokens[gh.URL]; ok {
 			gh.AuthorizationToken = token
-			matched[gh.URL] = true
 		}
 	}
+	unmatched := 0
 	for url := range tokens {
-		if !matched[url] {
-			return fmt.Errorf("repository_authorization_tokens_wo has a token for %q, which is not the url of any "+
-				"github_repository element of resources", url)
+		if !repoURLs[url] {
+			unmatched++
 		}
+	}
+	if unmatched > 0 {
+		return errors.New(unmatchedTokenKeysDetail(unmatched, repoURLs))
 	}
 	return nil
 }
 
 // repositoryAuthorizationTokens reads the write-only tokens from the
-// configuration, the only place Terraform passes them to the provider.
+// configuration, the only place Terraform passes them to the provider. A
+// null or empty value, which the validator cannot see while it is unknown at
+// plan time, is an error here rather than a repository sent without its
+// token.
 func repositoryAuthorizationTokens(ctx context.Context, config tfsdk.Config) (map[string]string, diag.Diagnostics) {
 	var m types.Map
 	diags := config.GetAttribute(ctx, path.Root("repository_authorization_tokens_wo"), &m)
@@ -453,8 +548,30 @@ func repositoryAuthorizationTokens(ctx context.Context, config tfsdk.Config) (ma
 		return nil, diags
 	}
 
-	var tokens map[string]string
-	diags.Append(m.ElementsAs(ctx, &tokens, false)...)
+	var values map[string]types.String
+	diags.Append(m.ElementsAs(ctx, &values, false)...)
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	tokens := make(map[string]string, len(values))
+	blank := 0
+	for url, value := range values {
+		if value.ValueString() == "" {
+			blank++
+			continue
+		}
+		tokens[url] = value.ValueString()
+	}
+	if blank > 0 {
+		diags.AddAttributeError(
+			path.Root("repository_authorization_tokens_wo"),
+			"Empty repository token",
+			fmt.Sprintf("%d value(s) of \"repository_authorization_tokens_wo\" are null or empty. Each value must be "+
+				"a GitHub token; remove the entry of a repository that needs none.", blank),
+		)
+		return nil, diags
+	}
 	return tokens, diags
 }
 
@@ -760,27 +877,12 @@ func buildDeploymentCreateParams(ctx context.Context, data *DeploymentResourceMo
 		params.Metadata = md
 	}
 
-	if !data.Resources.IsNull() && !data.Resources.IsUnknown() {
-		resources, err := unmarshalResourcesNew(data.Resources)
-		if err != nil {
-			diags.AddError("Invalid resources", err.Error())
-			return anthropic.BetaDeploymentNewParams{}, diags
-		}
-		var repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams
-		for _, res := range resources {
-			if res.OfGitHubRepository != nil {
-				repos = append(repos, res.OfGitHubRepository)
-			}
-		}
-		if err := applyRepositoryTokens(repos, tokens); err != nil {
-			diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
-			return anthropic.BetaDeploymentNewParams{}, diags
-		}
-		params.Resources = resources
-	} else if err := applyRepositoryTokens(nil, tokens); err != nil {
-		diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+	resources, d := deploymentCreateResources(data.Resources, tokens)
+	diags.Append(d...)
+	if diags.HasError() {
 		return anthropic.BetaDeploymentNewParams{}, diags
 	}
+	params.Resources = resources
 
 	if !data.Budget.IsNull() && !data.Budget.IsUnknown() {
 		budget, err := unmarshalBudget(data.Budget)
@@ -829,23 +931,7 @@ func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentRes
 	var diags diag.Diagnostics
 	params := anthropic.BetaDeploymentUpdateParams{}
 
-	if plan.Description.IsNull() {
-		params.Description = param.Null[string]()
-	} else if !plan.Description.IsUnknown() {
-		params.Description = param.NewOpt(plan.Description.ValueString())
-	}
-
-	if !plan.EnvironmentID.IsNull() && !plan.EnvironmentID.IsUnknown() {
-		params.EnvironmentID = param.NewOpt(plan.EnvironmentID.ValueString())
-	}
-
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		params.Name = param.NewOpt(plan.Name.ValueString())
-	}
-
-	if !plan.AgentID.IsNull() && !plan.AgentID.IsUnknown() {
-		params.Agent = anthropic.BetaDeploymentUpdateParamsAgentUnion{OfString: param.NewOpt(plan.AgentID.ValueString())}
-	}
+	setDeploymentUpdateScalars(&params, plan)
 
 	metaPatch, d := buildMetadataPatch(ctx, plan.Metadata, state.Metadata)
 	diags.Append(d...)
@@ -856,27 +942,12 @@ func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentRes
 		params.SetExtraFields(map[string]any{"metadata": metaPatch})
 	}
 
-	if !plan.Resources.IsNull() && !plan.Resources.IsUnknown() {
-		resources, err := unmarshalResourcesUpdate(plan.Resources)
-		if err != nil {
-			diags.AddError("Invalid resources", err.Error())
-			return anthropic.BetaDeploymentUpdateParams{}, diags
-		}
-		var repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams
-		for _, res := range resources {
-			if res.OfGitHubRepository != nil {
-				repos = append(repos, res.OfGitHubRepository)
-			}
-		}
-		if err := applyRepositoryTokens(repos, tokens); err != nil {
-			diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
-			return anthropic.BetaDeploymentUpdateParams{}, diags
-		}
-		params.Resources = resources
-	} else if err := applyRepositoryTokens(nil, tokens); err != nil {
-		diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+	resources, d := deploymentUpdateResources(plan.Resources, tokens)
+	diags.Append(d...)
+	if diags.HasError() {
 		return anthropic.BetaDeploymentUpdateParams{}, diags
 	}
+	params.Resources = resources
 
 	if !plan.Budget.IsNull() && !plan.Budget.IsUnknown() {
 		budget, err := unmarshalBudget(plan.Budget)
@@ -915,6 +986,83 @@ func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentRes
 	}
 
 	return params, diags
+}
+
+// setDeploymentUpdateScalars fills the plain string fields of an update
+// request. A null description is sent as an explicit null, which clears it.
+func setDeploymentUpdateScalars(params *anthropic.BetaDeploymentUpdateParams, plan *DeploymentResourceModel) {
+	if plan.Description.IsNull() {
+		params.Description = param.Null[string]()
+	} else if !plan.Description.IsUnknown() {
+		params.Description = param.NewOpt(plan.Description.ValueString())
+	}
+
+	if !plan.EnvironmentID.IsNull() && !plan.EnvironmentID.IsUnknown() {
+		params.EnvironmentID = param.NewOpt(plan.EnvironmentID.ValueString())
+	}
+
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		params.Name = param.NewOpt(plan.Name.ValueString())
+	}
+
+	if !plan.AgentID.IsNull() && !plan.AgentID.IsUnknown() {
+		params.Agent = anthropic.BetaDeploymentUpdateParamsAgentUnion{OfString: param.NewOpt(plan.AgentID.ValueString())}
+	}
+}
+
+// deploymentCreateResources decodes resources for a create request and sets
+// the authorization_token of its github_repository elements from tokens. A
+// null value yields no resources, and still fails on tokens left without a
+// repository.
+func deploymentCreateResources(v jsontypes.Normalized, tokens map[string]string) ([]anthropic.BetaDeploymentNewParamsResourceUnion, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	var resources []anthropic.BetaDeploymentNewParamsResourceUnion
+	if !v.IsNull() && !v.IsUnknown() {
+		var err error
+		if resources, err = unmarshalResourcesNew(v); err != nil {
+			diags.AddError("Invalid resources", err.Error())
+			return nil, diags
+		}
+	}
+
+	var repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams
+	for _, res := range resources {
+		if res.OfGitHubRepository != nil {
+			repos = append(repos, res.OfGitHubRepository)
+		}
+	}
+	if err := applyRepositoryTokens(repos, tokens); err != nil {
+		diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+		return nil, diags
+	}
+	return resources, diags
+}
+
+// deploymentUpdateResources is deploymentCreateResources for an update
+// request, whose union type is distinct. A null value yields nil, which
+// leaves the field out of the request and the stored resources untouched.
+func deploymentUpdateResources(v jsontypes.Normalized, tokens map[string]string) ([]anthropic.BetaDeploymentUpdateParamsResourceUnion, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	var resources []anthropic.BetaDeploymentUpdateParamsResourceUnion
+	if !v.IsNull() && !v.IsUnknown() {
+		var err error
+		if resources, err = unmarshalResourcesUpdate(v); err != nil {
+			diags.AddError("Invalid resources", err.Error())
+			return nil, diags
+		}
+	}
+
+	var repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams
+	for _, res := range resources {
+		if res.OfGitHubRepository != nil {
+			repos = append(repos, res.OfGitHubRepository)
+		}
+	}
+	if err := applyRepositoryTokens(repos, tokens); err != nil {
+		diags.AddError("Invalid repository_authorization_tokens_wo", err.Error())
+		return nil, diags
+	}
+	return resources, diags
 }
 
 // buildScheduleParams converts the nested "schedule" object attribute into

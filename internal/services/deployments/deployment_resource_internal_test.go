@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
 	"github.com/ippontech/terraform-provider-anthropic/internal/schematest"
 )
@@ -472,9 +474,7 @@ func deploymentValue(t *testing.T, overrides map[string]tftypes.Value) tftypes.V
 	t.Helper()
 	r := &DeploymentResource{}
 	vals := schematest.NullValues(t, r)
-	for k, v := range overrides {
-		vals[k] = v
-	}
+	maps.Copy(vals, overrides)
 	return tftypes.NewValue(schematest.ResourceObjectType(t, r), vals)
 }
 
@@ -584,6 +584,175 @@ func TestDeploymentValidator_acceptsTokensThroughWriteOnlyAttribute(t *testing.T
 				t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
 			}
 		})
+	}
+}
+
+// diagnosticsText joins the summary and detail of every diagnostic.
+func diagnosticsText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags {
+		b.WriteString(d.Summary() + ": " + d.Detail() + "\n")
+	}
+	return b.String()
+}
+
+// TestDeploymentValidator_rejectsVersionWithoutTokens covers the tokens
+// dropped from the configuration after the first apply: the next update would
+// resend resources without them and the API would drop the stored token.
+func TestDeploymentValidator_rejectsVersionWithoutTokens(t *testing.T) {
+	t.Parallel()
+
+	resources := tftypes.NewValue(tftypes.String, `[{"type":"github_repository","url":"`+testRepoURL+`"}]`)
+
+	resp := validateDeploymentConfig(t, map[string]tftypes.Value{
+		"resources": resources,
+		"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+	})
+	if text := diagnosticsText(resp.Diagnostics); !strings.Contains(text, "Token version without tokens") {
+		t.Errorf("expected a \"Token version without tokens\" error, got: %s", text)
+	}
+
+	for name, overrides := range map[string]map[string]tftypes.Value{
+		"neither tokens nor version": {"resources": resources},
+		"unknown tokens": {
+			"resources":                                  resources,
+			"repository_authorization_tokens_wo":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
+			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if resp := validateDeploymentConfig(t, overrides); resp.Diagnostics.HasError() {
+				t.Errorf("unexpected diagnostics: %s", diagnosticsText(resp.Diagnostics))
+			}
+		})
+	}
+}
+
+// TestDeploymentValidator_neverPrintsTokenMapKeys covers a map written the
+// wrong way round, token as key: the key must not reach a diagnostic.
+func TestDeploymentValidator_neverPrintsTokenMapKeys(t *testing.T) {
+	t.Parallel()
+
+	resp := validateDeploymentConfig(t, map[string]tftypes.Value{
+		"resources":                                  tftypes.NewValue(tftypes.String, `[{"type":"github_repository","url":"`+testRepoURL+`"}]`),
+		"repository_authorization_tokens_wo":         tokensValue(map[string]string{testRepoToken: testRepoURL}),
+		"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+	})
+	text := diagnosticsText(resp.Diagnostics)
+	if !strings.Contains(text, "Token for an unknown repository") {
+		t.Fatalf("expected a \"Token for an unknown repository\" error, got: %s", text)
+	}
+	if strings.Contains(text, testRepoToken) {
+		t.Errorf("diagnostic prints a key of the sensitive map: %s", text)
+	}
+	if !strings.Contains(text, testRepoURL) {
+		t.Errorf("diagnostic should list the repository urls of resources, got: %s", text)
+	}
+}
+
+// TestDeploymentValidator_rejectsNullOrEmptyToken checks that a token value
+// that is null (an unset variable) or empty fails at plan time, and that an
+// unknown one is left to apply.
+func TestDeploymentValidator_rejectsNullOrEmptyToken(t *testing.T) {
+	t.Parallel()
+
+	validate := func(resources, token tftypes.Value) resource.ValidateConfigResponse {
+		return validateDeploymentConfig(t, map[string]tftypes.Value{
+			"resources": resources,
+			"repository_authorization_tokens_wo": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String},
+				map[string]tftypes.Value{testRepoURL: token}),
+			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		})
+	}
+	known := tftypes.NewValue(tftypes.String, `[{"type":"github_repository","url":"`+testRepoURL+`"}]`)
+	unknown := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+
+	for name, token := range map[string]tftypes.Value{
+		"null":  tftypes.NewValue(tftypes.String, nil),
+		"empty": tftypes.NewValue(tftypes.String, ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := diagnosticsText(validate(known, token).Diagnostics)
+			if !strings.Contains(text, "Empty repository token") || !strings.Contains(text, testRepoURL) {
+				t.Errorf("expected an \"Empty repository token\" error naming the repository, got: %s", text)
+			}
+			// With resources unknown, the key cannot be told from a token.
+			text = diagnosticsText(validate(unknown, token).Diagnostics)
+			if !strings.Contains(text, "Empty repository token") || strings.Contains(text, testRepoURL) {
+				t.Errorf("expected an \"Empty repository token\" error without the key, got: %s", text)
+			}
+		})
+	}
+
+	if resp := validate(known, tftypes.NewValue(tftypes.String, tftypes.UnknownValue)); resp.Diagnostics.HasError() {
+		t.Errorf("unexpected diagnostics for an unknown token: %s", diagnosticsText(resp.Diagnostics))
+	}
+}
+
+// TestRepositoryAuthorizationTokens_rejectsNullOrEmptyToken covers the value
+// the validator could not see at plan time: reading the configuration at
+// apply fails with a named error instead of a value conversion error.
+func TestRepositoryAuthorizationTokens_rejectsNullOrEmptyToken(t *testing.T) {
+	t.Parallel()
+
+	for name, token := range map[string]tftypes.Value{
+		"null":  tftypes.NewValue(tftypes.String, nil),
+		"empty": tftypes.NewValue(tftypes.String, ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := tfsdk.Config{
+				Raw: deploymentValue(t, map[string]tftypes.Value{
+					"repository_authorization_tokens_wo": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String},
+						map[string]tftypes.Value{testRepoURL: token}),
+				}),
+				Schema: schematest.ResourceSchema(t, &DeploymentResource{}),
+			}
+			tokens, diags := repositoryAuthorizationTokens(context.Background(), cfg)
+			if text := diagnosticsText(diags); !strings.Contains(text, "Empty repository token") {
+				t.Errorf("expected an \"Empty repository token\" error, got: %s", text)
+			}
+			if tokens != nil {
+				t.Errorf("expected no tokens, got %d", len(tokens))
+			}
+		})
+	}
+}
+
+// TestDeploymentValidator_findsTokenBesideNumberOutOfRange covers JSON that
+// jsontypes.Normalized accepts but a plain json.Unmarshal rejects, a number
+// no float64 holds: the token beside it must still be reported.
+func TestDeploymentValidator_findsTokenBesideNumberOutOfRange(t *testing.T) {
+	t.Parallel()
+
+	raw := `[{"type":"github_repository","url":"` + testRepoURL + `","authorization_token":"` + testRepoToken + `","n":1e400}]`
+	resp := validateDeploymentConfig(t, map[string]tftypes.Value{"resources": tftypes.NewValue(tftypes.String, raw)})
+	text := diagnosticsText(resp.Diagnostics)
+	if !strings.Contains(text, "Credential in resources") {
+		t.Errorf("expected a \"Credential in resources\" error, got: %s", text)
+	}
+	if strings.Contains(text, testRepoToken) {
+		t.Errorf("diagnostic leaks the token: %s", text)
+	}
+}
+
+// TestValidateResourcesHoldNoToken_failsClosed checks that a value the
+// decoder refuses (here, nesting beyond its limit) is an error rather than a
+// value taken as free of credentials, and that the error does not quote it.
+func TestValidateResourcesHoldNoToken_failsClosed(t *testing.T) {
+	t.Parallel()
+
+	raw := `[{"authorization_token":"` + testRepoToken + `","n":` + strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + `}]`
+	var diags diag.Diagnostics
+	urls := validateResourcesHoldNoToken(raw, &diags)
+	text := diagnosticsText(diags)
+	if !strings.Contains(text, "Unreadable resources") {
+		t.Errorf("expected an \"Unreadable resources\" error, got %d diagnostics", len(diags))
+	}
+	if strings.Contains(text, testRepoToken) {
+		t.Error("diagnostic leaks the token")
+	}
+	if urls != nil {
+		t.Errorf("expected no urls, got %d", len(urls))
 	}
 }
 
@@ -750,15 +919,21 @@ func TestBuildDeploymentParams_rejectsTokenWithoutRepository(t *testing.T) {
 		VaultIDs:      types.ListNull(types.StringType),
 		Schedule:      types.ObjectNull(deploymentScheduleAttrTypes),
 	}
-	tokens := map[string]string{testRepoURL: testRepoToken}
+	otherRepo := jsontypes.NewNormalizedValue(`[{"type":"github_repository","url":"https://github.com/ippontech/other"}]`)
 
-	for name, resources := range map[string]jsontypes.Normalized{
-		"other repository": jsontypes.NewNormalizedValue(`[{"type":"github_repository","url":"https://github.com/ippontech/other"}]`),
-		"null resources":   jsontypes.NewNormalizedNull(),
+	for name, tc := range map[string]struct {
+		resources jsontypes.Normalized
+		tokens    map[string]string
+	}{
+		"other repository": {otherRepo, map[string]string{testRepoURL: testRepoToken}},
+		"null resources":   {jsontypes.NewNormalizedNull(), map[string]string{testRepoURL: testRepoToken}},
+		// A map written the wrong way round: the key is the token.
+		"token as key": {otherRepo, map[string]string{testRepoToken: testRepoURL}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			model := base
-			model.Resources = resources
+			model.Resources = tc.resources
+			tokens := tc.tokens
 
 			_, createDiags := buildDeploymentCreateParams(context.Background(), &model, tokens)
 			state := model
@@ -822,9 +997,7 @@ func TestDeploymentResource_updateResendsTokenOnVersionChange(t *testing.T) {
 			"resources":      tftypes.NewValue(tftypes.String, resourcesJSON),
 			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, version),
 		}
-		for k, val := range extra {
-			v[k] = val
-		}
+		maps.Copy(v, extra)
 		return deploymentValue(t, v)
 	}
 	computed := map[string]tftypes.Value{
