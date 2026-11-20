@@ -1,4 +1,4 @@
-default: fmt tidy-check lint test install generate
+default: fmt tidy-check lint complexity test install generate
 
 build:
 	go build -v ./...
@@ -11,6 +11,16 @@ install: build
 lint:
 	golangci-lint run
 	golangci-lint run --no-config
+
+# The complexity ratchet of the CI complexity job (tools/complexity): every
+# function in the non-test Go files under internal/ scores 20 or less, unless
+# it already scored more at the merge base with COMPLEXITY_BASE and its score
+# did not rise. Reads the working tree, committed or not.
+COMPLEXITY_BASE ?= origin/main
+complexity:
+	@go run -C tools ./complexity -base $(COMPLEXITY_BASE)
+
+.PHONY: complexity
 
 generate:
 	cd tools; go generate ./...
