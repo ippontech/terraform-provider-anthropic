@@ -16,7 +16,7 @@
 //   - Handlers run on server goroutines, so the fake reports a broken client
 //     with t.Errorf, never t.Fatal, and answers with an error the client
 //     will not retry (400), so the test ends instead of looping.
-//   - Payload shapes follow the wire format of the pinned SDK (v1.67.0) and,
+//   - Payload shapes follow the wire format of the pinned SDK and,
 //     where they differ, what the deployed API was measured to send
 //     (CLAUDE.md), not a reference page that is ahead of both.
 package sdktest

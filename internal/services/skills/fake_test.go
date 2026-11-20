@@ -42,10 +42,11 @@ var allRoutes = []string{
 
 // skillsFake is the Skills API on top of two sdktest collections.
 //
-// Payloads use the field names of SDK v1.67.0, which the deployed API was
-// measured to send (CLAUDE.md, SDK pin note): display_title, latest_version,
-// source as a string, and directory and version on a skill version. The
-// reference pages have moved ahead (display_name, latest_version_id).
+// Payloads use the beta shape, which the API keeps sending under the skills
+// beta header the provider passes (CLAUDE.md, "Skills keep the beta shape"):
+// display_title, latest_version, source as a string, and directory and version
+// on a skill version. The GA shape (display_name, latest_version_id) comes
+// with #192.
 type skillsFake struct {
 	*sdktest.Server
 	skills   *sdktest.Collection
