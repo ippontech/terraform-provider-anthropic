@@ -51,21 +51,30 @@ func newModelsFake(t *testing.T, pageSize int, models ...map[string]any) *models
 	return f
 }
 
-// modelJSON returns a model as the API sends it (SDK v1.67.0 ModelInfo).
-// Bit i of bits sets the i-th capability flag of capabilitiesCheck, so two
-// models with different bits tell every flag apart. The "supported" of the
-// parent objects and the fields the provider does not map (xhigh,
-// thinking.types) carry the opposite of a neighbouring flag, so a mapping
-// that reads the wrong level shows.
+// modelJSON returns a model as the API sends it (SDK ModelInfo). Bit i of bits
+// sets the i-th capability flag of capabilitiesCheck, so two models with
+// different bits tell every flag apart. The "supported" of the parent objects
+// and the field the provider does not map (xhigh) carry the opposite of a
+// neighbouring flag, so a mapping that reads the wrong level shows. Bit 0 also
+// picks the lifecycle: a deprecated model with its dates and line, or an active
+// one whose dates and line are null (lifecycleChecks).
 func modelJSON(id, displayName, createdAt string, maxInput, maxTokens int64, bits uint) map[string]any {
 	on := func(i int) bool { return bits&(1<<i) != 0 }
 	flag := func(i int) map[string]any { return map[string]any{"supported": on(i)} }
 	opposite := func(i int) map[string]any { return map[string]any{"supported": !on(i)} }
+	lifecycle, deprecatedAt, retiresAt, line := any("active"), any(nil), any(nil), any(nil)
+	if on(0) {
+		lifecycle, deprecatedAt, retiresAt, line = "deprecated", deprecatedAtJSON, retiresAtJSON, lineJSON
+	}
 	return map[string]any{
 		"type":             "model",
 		"id":               id,
 		"display_name":     displayName,
 		"created_at":       createdAt,
+		"lifecycle":        lifecycle,
+		"deprecated_at":    deprecatedAt,
+		"retires_at":       retiresAt,
+		"line":             line,
 		"max_input_tokens": maxInput,
 		"max_tokens":       maxTokens,
 		"capabilities": map[string]any{
@@ -77,7 +86,16 @@ func modelJSON(id, displayName, createdAt string, maxInput, maxTokens int64, bit
 			"structured_outputs": flag(5),
 			"thinking": map[string]any{
 				"supported": on(6),
-				"types":     map[string]any{"adaptive": opposite(6), "enabled": opposite(6)},
+				"types": map[string]any{
+					"adaptive":      flag(14),
+					"between_tools": flag(15),
+					"disabled":      flag(16),
+					"enabled":       flag(17),
+				},
+			},
+			"server_tools": map[string]any{
+				"code_execution": flag(18),
+				"web_search":     flag(19),
 			},
 			"context_management": map[string]any{
 				"supported":                !on(7),
@@ -120,12 +138,48 @@ func capabilitiesCheck(bits uint) knownvalue.Check {
 			"max":    b(12),
 			"medium": b(13),
 		}),
+		"thinking_types": knownvalue.ObjectExact(map[string]knownvalue.Check{
+			"adaptive":      b(14),
+			"between_tools": b(15),
+			"disabled":      b(16),
+			"enabled":       b(17),
+		}),
+		"server_tools": knownvalue.ObjectExact(map[string]knownvalue.Check{
+			"code_execution": b(18),
+			"web_search":     b(19),
+		}),
 	})
+}
+
+// The lifecycle fields of a deprecated model built by modelJSON.
+const (
+	deprecatedAtJSON = "2026-06-01T00:00:00Z"
+	retiresAtJSON    = "2027-01-15T12:00:00Z"
+	lineJSON         = "claude-opus"
+)
+
+// lifecycleChecks is the exact state value of the four lifecycle attributes
+// for a model built by modelJSON with bits.
+func lifecycleChecks(bits uint) map[string]knownvalue.Check {
+	if bits&1 == 0 {
+		return map[string]knownvalue.Check{
+			"lifecycle_stage": knownvalue.StringExact("active"),
+			"deprecated_at":   knownvalue.Null(),
+			"retires_at":      knownvalue.Null(),
+			"line":            knownvalue.Null(),
+		}
+	}
+	return map[string]knownvalue.Check{
+		"lifecycle_stage": knownvalue.StringExact("deprecated"),
+		"deprecated_at":   knownvalue.StringExact(deprecatedAtJSON),
+		"retires_at":      knownvalue.StringExact(retiresAtJSON),
+		"line":            knownvalue.StringExact(lineJSON),
+	}
 }
 
 // Two complementary bit patterns: every flag is true in one and false in the
 // other, and neighbours differ, so a swapped or constant mapping fails.
 const (
-	bitsA uint = 0b01_0101_0101_0101
-	bitsB uint = 0b10_1010_1010_1010
+	bitsA uint = 0b0101_0101_0101_0101_0101
+	bitsB uint = 0b1010_1010_1010_1010_1010
 )

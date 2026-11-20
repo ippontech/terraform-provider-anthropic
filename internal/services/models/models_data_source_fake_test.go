@@ -4,6 +4,7 @@
 package models_test
 
 import (
+	"maps"
 	"net/http"
 	"regexp"
 	"testing"
@@ -22,14 +23,16 @@ data "anthropic_models" "test" {}
 `
 
 func modelCheck(id, displayName, createdAt string, maxInput, maxTokens int64, bits uint) knownvalue.Check {
-	return knownvalue.ObjectExact(map[string]knownvalue.Check{
+	checks := map[string]knownvalue.Check{
 		"id":               knownvalue.StringExact(id),
 		"display_name":     knownvalue.StringExact(displayName),
 		"created_at":       knownvalue.StringExact(createdAt),
 		"max_input_tokens": knownvalue.Int64Exact(maxInput),
 		"max_tokens":       knownvalue.Int64Exact(maxTokens),
 		"capabilities":     capabilitiesCheck(bits),
-	})
+	}
+	maps.Copy(checks, lifecycleChecks(bits))
+	return knownvalue.ObjectExact(checks)
 }
 
 // TestModelsDataSource_pages lists five models served two per page: the data

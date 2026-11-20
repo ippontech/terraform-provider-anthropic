@@ -47,6 +47,10 @@ data "anthropic_model" "test" {
 				statecheck.ExpectKnownValue(addr, tfjsonpath.New("max_input_tokens"), knownvalue.Int64Exact(1000000)),
 				statecheck.ExpectKnownValue(addr, tfjsonpath.New("max_tokens"), knownvalue.Int64Exact(128000)),
 				statecheck.ExpectKnownValue(addr, tfjsonpath.New("capabilities"), capabilitiesCheck(bitsA)),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("lifecycle_stage"), lifecycleChecks(bitsA)["lifecycle_stage"]),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("deprecated_at"), lifecycleChecks(bitsA)["deprecated_at"]),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("retires_at"), lifecycleChecks(bitsA)["retires_at"]),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("line"), lifecycleChecks(bitsA)["line"]),
 			},
 		}},
 	})
@@ -87,6 +91,10 @@ data "anthropic_model" "test" {
 				statecheck.ExpectKnownValue(addr, tfjsonpath.New("max_input_tokens"), knownvalue.Int64Exact(200000)),
 				statecheck.ExpectKnownValue(addr, tfjsonpath.New("max_tokens"), knownvalue.Int64Exact(64000)),
 				statecheck.ExpectKnownValue(addr, tfjsonpath.New("capabilities"), capabilitiesCheck(bitsB)),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("lifecycle_stage"), lifecycleChecks(bitsB)["lifecycle_stage"]),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("deprecated_at"), lifecycleChecks(bitsB)["deprecated_at"]),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("retires_at"), lifecycleChecks(bitsB)["retires_at"]),
+				statecheck.ExpectKnownValue(addr, tfjsonpath.New("line"), lifecycleChecks(bitsB)["line"]),
 			},
 		}},
 	})

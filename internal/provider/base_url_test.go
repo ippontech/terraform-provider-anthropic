@@ -128,7 +128,7 @@ func TestNewWithoutOptionsKeepsTheDefaults(t *testing.T) {
 		t.Fatal("New does not build an *AnthropicProvider")
 	}
 	if p.baseURL != "" || p.version != "1.2.3" {
-		t.Errorf("New(\"1.2.3\") = %+v, want version 1.2.3 and no base URL", *p)
+		t.Errorf("New(\"1.2.3\"): version %q, base URL %q; want 1.2.3 and no base URL", p.version, p.baseURL)
 	}
 
 	clearCredentialEnv(t)

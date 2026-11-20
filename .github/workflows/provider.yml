@@ -14,7 +14,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: >
@@ -25,11 +25,15 @@ jobs:
             release-assets.githubusercontent.com:443
             storage.googleapis.com:443
 
+      # Full history: .golangci.yml reports only code that differs from
+      # origin/main (new-from-merge-base). Without that ref golangci-lint
+      # silently falls back to reporting every existing finding.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: 'go.mod'
 
@@ -41,8 +45,38 @@ jobs:
       - name: Check go.mod tidiness
         run: make tidy-check
 
+      # .golangci.yml compares with origin/main; a pull request into another
+      # branch (major/2.0.0) is compared with its own target instead, or the
+      # commits of that branch missing from main count as new code. A sync of
+      # main into that branch then counts main's commits since the last sync
+      # as new: they pass because each was linted in its own PR, provided the
+      # branch was created after .golangci.yml reached main (RELEASE.md,
+      # "Staging branch").
+      - name: Resolve the lint base branch
+        id: lint-base
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref }}
+        run: |
+          base="${BASE_REF#refs/heads/}"
+          echo "ref=origin/${base:-main}" >> "$GITHUB_OUTPUT"
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          args: --new-from-merge-base=${{ steps.lint-base.outputs.ref }}
+          # Keep in step with golangci-lint in mise.toml. golangci-lint refuses a
+          # module whose go.mod toolchain is a newer Go minor than the Go its
+          # binary was built with (v2.15.0: go1.27.0).
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
+          version: v2.15.0
+
+      # .golangci.yml reports only code that differs from origin/main, for
+      # every linter. The standard linters (errcheck, govet, ineffassign,
+      # staticcheck, unused) have no finding on the whole tree, so they keep
+      # running on every line, as before that file existed. The action above
+      # put golangci-lint on the PATH.
+      - name: Run the standard linters on the whole tree
+        run: golangci-lint run --no-config
 
   test:
     runs-on: ubuntu-latest
@@ -51,7 +85,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: >
@@ -67,7 +101,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: 'go.mod'
 
@@ -90,7 +124,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: block
           allowed-endpoints: >
@@ -106,7 +140,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: 'go.mod'
 
