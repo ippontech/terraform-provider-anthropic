@@ -39,4 +39,14 @@ run "vault_credential_apply" {
     condition     = anthropic_vault_credential.env_var.credential_type == "vault_credential"
     error_message = "Expected env_var credential_type == \"vault_credential\"."
   }
+
+  assert {
+    condition     = anthropic_vault_credential.env_var.injection_location.header && !anthropic_vault_credential.env_var.injection_location.body
+    error_message = "Expected env_var to substitute its secret in headers only."
+  }
+
+  assert {
+    condition     = anthropic_vault_credential.bearer.injection_location == null
+    error_message = "Expected no injection_location on a static_bearer credential."
+  }
 }

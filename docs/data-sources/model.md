@@ -14,6 +14,10 @@ Retrieves a specific Anthropic model by ID or alias.
 > **Beta header**: None.
 > **Cost**: Free.
 
+Use `lifecycle_stage` (the API's `lifecycle`, renamed because `lifecycle` is a Terraform meta-argument) as the
+retirement signal rather than `retires_at`, which can be revised and can be in the past on a model that is still
+`deprecated`.
+
 ## Example Usage
 
 ```hcl
@@ -24,6 +28,53 @@ data "anthropic_model" "example" {
 output "model" {
   description = "Information about the retrieved Anthropic model."
   value       = data.anthropic_model.example
+}
+```
+
+To be warned once the pinned model leaves `active`, add a check block. It warns on every plan and apply without stopping
+them. Under `terraform test`, though, a failed check fails the run unless the run lists it in `expect_failures`, so keep
+it out of a module that a test runs against the live API:
+
+```hcl
+data "anthropic_model" "example" {
+  model_id = "claude-sonnet-4-5"
+}
+
+# Warns on every plan and apply once the pinned model is deprecated or retired,
+# without stopping them.
+check "model_is_active" {
+  assert {
+    condition     = data.anthropic_model.example.lifecycle_stage == "active"
+    error_message = "${data.anthropic_model.example.id} is ${data.anthropic_model.example.lifecycle_stage}, retiring at ${coalesce(data.anthropic_model.example.retires_at, "a date not scheduled yet")}."
+  }
+}
+```
+
+To fail the plan instead of warning, put the condition in a postcondition. Every resource that takes its model from
+the data source then waits for it:
+
+```hcl
+data "anthropic_model" "pinned" {
+  model_id = "claude-sonnet-4-5"
+
+  lifecycle {
+    postcondition {
+      condition     = self.lifecycle_stage == "active"
+      error_message = "${self.id} is ${self.lifecycle_stage}: move to a newer model before it retires (${coalesce(self.retires_at, "date not scheduled yet")})."
+    }
+  }
+}
+
+resource "anthropic_message" "example" {
+  model      = data.anthropic_model.pinned.id
+  max_tokens = 64
+
+  messages = [
+    {
+      role    = "user"
+      content = "Hello"
+    }
+  ]
 }
 ```
 
@@ -38,10 +89,14 @@ output "model" {
 
 - `capabilities` (Attributes) Model capability flags. (see [below for nested schema](#nestedatt--capabilities))
 - `created_at` (String) RFC 3339 datetime string representing when the model was released.
+- `deprecated_at` (String) RFC 3339 datetime of the model's most recent deprecation. Set for `deprecated` and `retired` models, null while the model is `active`.
 - `display_name` (String) A human-readable name for the model.
 - `id` (String) Unique model identifier.
+- `lifecycle_stage` (String) The model's current lifecycle stage (the API's `lifecycle` field, renamed because `lifecycle` is a Terraform meta-argument). `active`: available, open to new adopters and not scheduled for retirement. `deprecated`: still callable by organizations with existing access, closed to new adopters and headed for retirement. `retired`: no longer available, requests naming it fail.
+- `line` (String) The model line the model belongs to, such as `opus`, `sonnet` or `haiku` (more lines may be added). Null when the model belongs to no line; do not infer the line from the ID.
 - `max_input_tokens` (Number) Maximum input context window size in tokens.
 - `max_tokens` (Number) Maximum value for the max_tokens parameter when using this model.
+- `retires_at` (String) RFC 3339 datetime of the model's currently scheduled retirement. Null while the model is `active` or no retirement is scheduled. The date can be revised until the retirement happens, and a past date on a `deprecated` model means the retirement is overdue, not that it happened: `lifecycle_stage` is the signal.
 
 <a id="nestedatt--capabilities"></a>
 ### Nested Schema for `capabilities`
@@ -50,13 +105,15 @@ Read-Only:
 
 - `batch` (Boolean) Whether the model supports the Batch API.
 - `citations` (Boolean) Whether the model supports citation generation.
-- `code_execution` (Boolean) Whether the model supports code execution tools.
+- `code_execution` (Boolean) Whether code the model runs in the code execution tool can call the request's other tools, as in programmatic tool calling and dynamic filtering for web search and web fetch. Support for the code execution tool itself is `server_tools.code_execution`.
 - `context_management` (Attributes) Context management strategy support. (see [below for nested schema](#nestedatt--capabilities--context_management))
 - `effort` (Attributes) Reasoning effort (reasoning_effort) level support. (see [below for nested schema](#nestedatt--capabilities--effort))
 - `image_input` (Boolean) Whether the model accepts image content blocks.
 - `pdf_input` (Boolean) Whether the model accepts PDF content blocks.
+- `server_tools` (Attributes) Web search and code execution server tool support. A supported tool can still be rejected for your organization, for example when an admin has turned web search off. (see [below for nested schema](#nestedatt--capabilities--server_tools))
 - `structured_outputs` (Boolean) Whether the model supports structured output / JSON mode.
-- `thinking` (Boolean) Whether the model supports extended thinking.
+- `thinking` (Boolean) Whether the model supports extended thinking. `thinking_types` lists the `thinking.type` values the model accepts.
+- `thinking_types` (Attributes) Which `thinking.type` values the model accepts on requests. Read each one on its own: `enabled` can be false while `disabled` is true. A value marked false is rejected with a `400`; one marked true can still be rejected for another reason, such as an effort level the model does not allow with thinking off. (see [below for nested schema](#nestedatt--capabilities--thinking_types))
 
 <a id="nestedatt--capabilities--context_management"></a>
 ### Nested Schema for `capabilities.context_management`
@@ -77,3 +134,23 @@ Read-Only:
 - `low` (Boolean) Whether the model supports `low` effort level.
 - `max` (Boolean) Whether the model supports `max` effort level.
 - `medium` (Boolean) Whether the model supports `medium` effort level.
+
+
+<a id="nestedatt--capabilities--server_tools"></a>
+### Nested Schema for `capabilities.server_tools`
+
+Read-Only:
+
+- `code_execution` (Boolean) Whether the model supports the code execution tool (at least one version of it, not necessarily every version).
+- `web_search` (Boolean) Whether the model supports the web search tool (at least one version of it, not necessarily every version).
+
+
+<a id="nestedatt--capabilities--thinking_types"></a>
+### Nested Schema for `capabilities.thinking_types`
+
+Read-Only:
+
+- `adaptive` (Boolean) Whether the model accepts `adaptive` (the model decides whether and how much to think).
+- `between_tools` (Boolean) Whether the model accepts `between_tools` (thinking off, and short progress updates the model writes between tool calls come back as thinking blocks).
+- `disabled` (Boolean) Whether the model accepts `disabled` (thinking off). True on a model that does not support thinking.
+- `enabled` (Boolean) Whether the model accepts `enabled` (extended thinking with a caller-set `budget_tokens`).

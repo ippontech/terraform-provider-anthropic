@@ -78,6 +78,18 @@ Do not export `ANTHROPIC_AUTH_TOKEN` in your shell or keep it in `.env`. Set it 
 
 A `.env` file at the project root (gitignored) can hold the two API keys and other machine-specific values, but not `ANTHROPIC_AUTH_TOKEN`. `mise.toml` declares it under `[env] _.file = ".env"`, so [mise](https://mise.jdx.dev/environments/) exports its variables automatically when you enter the directory; nothing to source by hand.
 
+### Lint
+
+```bash
+make lint
+```
+
+`.golangci.yml` reports only code that differs from `origin/main` (`new-from-merge-base`), so code you did not touch never fails your pull request. This relies on `origin` pointing at `ippontech/terraform-provider-anthropic` and being fetched recently: when `origin` is your fork, run `golangci-lint run --new-from-merge-base=upstream/main` (or whatever the upstream remote is called) instead, otherwise the comparison starts from a stale point. If the ref does not exist at all, golangci-lint silently reports every finding in the repository.
+
+`make lint` then runs `golangci-lint run --no-config`, as the CI lint job does: the standard linters (errcheck, govet, ineffassign, staticcheck, unused) on the whole tree. The tree has no finding there, so a change that causes one, even on a line it does not edit (a helper left without callers, for instance), fails.
+
+The pre-commit configuration runs `golangci-lint fmt` (gofmt, plus imports grouped with this module's packages last) on the Go files with uncommitted changes: the staged ones on commit, and with `pre-commit run -a` the ones you are editing, never a committed file (CI checks the formatting of what your branch changed). It also runs `golangci-lint run` and `go mod tidy -diff`, at the versions pinned in `mise.toml`.
+
 ### Run unit tests
 
 ```bash
@@ -154,11 +166,11 @@ To generate changelog, Pull Requests and Commit messages must follow [convention
 
 We use the `chore` prefix to generate a new release and for changelog generation (the label '[skip ci]' allows us to skip CI). It can be used for `chore: update changelog` commit message by example.
 
-We squash-merge PRs. The title of the PR is the commit title (commit type + scope + short description) and the description of the PR is the commit body.
+We squash-merge PRs. The title of the PR is the commit title (commit type + scope + short description) and the description of the PR is the commit body. A `deps` scope never cuts a major release, whatever the body says (`RELEASE.md`): give a breaking dependency migration another scope, such as `feat(sdk)!:`.
 
 ## Dependency Updates
 
-Dependencies are updated automatically by [Renovate](https://docs.renovatebot.com/), run as the Mend-hosted app at the `ippontech` organization level (nothing runs in this repository's CI). It opens grouped pull requests (one per manager: Go modules, GitHub Actions, mise tools, pre-commit hooks, and tool versions pinned in workflow inputs), and auto-merges `minor` / `patch` / `pin` / `digest` updates once required checks pass, three days after a release is published. Updates to the release tooling (anything declared in `goreleaser-release.yml` or `semantic-release.yml`) and to the actions and the Terraform CLI of `testacc.yml`, which runs with the acceptance-test keys, are the exception: they are grouped in a `release tooling` PR that a maintainer must review and merge. Updates of the root `go.mod`, which the acceptance tests compile, are not auto-merged either: a maintainer merges the `Go dependencies` PR.
+Dependencies are updated automatically by [Renovate](https://docs.renovatebot.com/), run as the Mend-hosted app at the `ippontech` organization level (nothing runs in this repository's CI). It opens grouped pull requests (one per manager: Go modules, GitHub Actions, mise tools, pre-commit hooks, and tool versions pinned in workflow inputs), and auto-merges `minor` / `patch` / `pin` / `digest` updates once required checks pass, three days after a release is published. Updates to the release tooling (anything declared in `goreleaser-release.yml` or `semantic-release.yml`, GoReleaser excepted) and to the actions and the Terraform CLI of `testacc.yml`, which runs with the acceptance-test keys, are the exception: they are grouped in a `release tooling` PR that a maintainer must review and merge (GoReleaser, whose archive hash is updated by hand, has a PR of its own). Updates of the root `go.mod`, which the acceptance tests compile, are not auto-merged either: a maintainer merges the `Go dependencies` PR.
 
 Its behaviour is driven by `renovate.json` at the repository root. See [`.github/renovate.md`](.github/renovate.md) for the full configuration reference and how to validate a change to it. Maintainers can inspect recent runs, their logs, and trigger an on-demand scan from the [Mend dashboard for this repository](https://developer.mend.io/github/ippontech/terraform-provider-anthropic) (requires access to the `ippontech` organization on Mend).
 

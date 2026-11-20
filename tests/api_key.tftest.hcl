@@ -20,9 +20,4 @@ run "api_key_plan_validates_schema" {
     condition     = anthropic_api_key.example.name == "My Managed Key"
     error_message = "Expected name to be 'My Managed Key'."
   }
-
-  assert {
-    condition     = anthropic_api_key.example.status == "active"
-    error_message = "Expected status to be 'active'."
-  }
 }

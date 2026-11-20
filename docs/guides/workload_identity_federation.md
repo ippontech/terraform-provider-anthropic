@@ -30,17 +30,18 @@ export ANTHROPIC_AUTH_TOKEN="$(ant auth print-credentials --profile admin --acce
 
 ```hcl
 provider "anthropic" {
-  # Reads ANTHROPIC_AUTH_TOKEN when unset. Keep the other credentials for
-  # the resources that need them; they are independent.
+  # Reads ANTHROPIC_AUTH_TOKEN when unset. Keep an api_key for the
+  # resources that need one; admin_api_key is optional with this token
+  # (plugins, RBAC groups and spend limits excepted).
   # auth_token = "sk-ant-oat01-..."
 }
 ```
 
 Three things to know about this token:
 
-- **It is short-lived.** A long `terraform apply` can outlive it and start failing with `401`. Re-run the `export` line immediately before every run (the CLI refreshes the token on export); the provider cannot refresh a token it was handed.
-- **A workload doesn't need it.** Once the bootstrap rule exists, the provider's `federation` block exchanges the workload's own identity token and refreshes the result, see below.
-- **`ant auth login --profile admin` also makes that profile active for the CLI.** The provider ignores profiles (every client is built from the resolved credential and nothing else), but the `ant` CLI and SDKs in the same shell do not. Switch back with `ant profile activate default` and unset the variable when you are done.
+- **It is short-lived.** A long `terraform apply` can outlive it and start failing with `401`. Re-run the `export` line immediately before every run (the CLI refreshes the token on export); the provider cannot refresh a token it was handed. To skip the export, give the provider `cli = { profile = "admin" }` instead and unset `ANTHROPIC_AUTH_TOKEN`, which would otherwise still win: the provider reads the login itself and refreshes it (see [`ant` CLI login](../#ant-cli-login-cli)).
+- **A workload doesn't need it.** Once the bootstrap rule exists, the provider's `federation` block exchanges the workload's own identity token and refreshes the result, see below. The standard credential has the same option: a workload that manages a workspace's resources (agents, skills, vaults...) rather than WIF itself mints it through `api_federation` ([section 4](#4-how-the-workload-consumes-the-rule)).
+- **`ant auth login --profile admin` also makes that profile active for the CLI.** The provider ignores profiles unless it has a `cli` block (every client is built from the resolved credential and nothing else), but the `ant` CLI and SDKs in the same shell do not. Switch back with `ant profile activate default` and unset the variable when you are done.
 
 ### Letting the provider mint the token in CI
 
@@ -66,6 +67,121 @@ provider "anthropic" {
 ```
 
 The three IDs are those of the bootstrap rule, your organization and the rule's target service account; they can also come from `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_FEDERATION_RULE_ID` and `ANTHROPIC_SERVICE_ACCOUNT_ID`, with `federation = {}` in the configuration. Other platforms only change the identity token source: `identity_token_file` for a token the platform writes to disk (a Kubernetes projected service account token), or a command that prints one (`az account get-access-token --resource <app-client-id> --query accessToken -o tsv` for an Entra application, `gcloud auth print-identity-token --audiences=...` on Google Cloud).
+
+### Identity tokens from AWS and Google Cloud workloads
+
+This section is about an organization on the Claude API (`api.anthropic.com`) whose workloads run on AWS or Google Cloud. It does not apply to an organization on Claude Platform on AWS or Claude Models on Google Cloud, whose gateways accept no Anthropic OAuth token: the provider's `aws` and `google_cloud` blocks authenticate there with the cloud's own credentials.
+
+**AWS**: the STS `GetWebIdentityToken` API returns an AWS-signed token asserting the caller's IAM role, wherever the workload has AWS credentials (Lambda, EC2, ECS, EKS, CodeBuild); see [Use WIF with AWS](https://platform.claude.com/docs/en/manage-claude/wif-providers/aws). The AWS account must enable outbound web identity federation once (`aws iam enable-outbound-web-identity-federation`), the role needs `sts:GetWebIdentityToken`, and the API is only served by regional STS endpoints, hence `--region`. The issuer URL is unique to the AWS account: `aws iam get-outbound-web-identity-federation-info` prints it.
+
+```hcl
+resource "anthropic_federation_issuer" "aws_sts" {
+  name       = "aws-sts"
+  issuer_url = "https://00000000-0000-0000-0000-000000000000.tokens.sts.global.api.aws"
+
+  jwks = {
+    type = "discovery"
+  }
+}
+
+resource "anthropic_service_account" "aws_worker" {
+  name = "aws-inference-worker"
+}
+
+resource "anthropic_federation_rule" "aws_worker" {
+  name      = "aws-inference-worker"
+  issuer_id = anthropic_federation_issuer.aws_sts.id
+
+  # sub is the calling role's ARN: match the exact role.
+  match = {
+    subject_prefix = "arn:aws:iam::123456789012:role/inference-worker"
+    audience       = "https://api.anthropic.com"
+  }
+
+  target = {
+    service_account_id = anthropic_service_account.aws_worker.id
+  }
+
+  oauth_scope            = "workspace:developer"
+  workspace_id           = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
+  token_lifetime_seconds = 900
+}
+```
+
+A Terraform run on AWS whose bootstrap rule (section 2) matches its role fetches its identity token the same way, through the AWS CLI:
+
+```hcl
+provider "anthropic" {
+  alias = "from_aws"
+
+  federation = {
+    organization_id    = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id = "fdrl_..."
+    service_account_id = "svac_..."
+    identity_token_command = [
+      "aws", "sts", "get-web-identity-token",
+      "--region", "us-east-1",
+      "--audience", "https://api.anthropic.com",
+      "--signing-algorithm", "RS256",
+      "--duration-seconds", "900",
+      "--query", "WebIdentityToken", "--output", "text",
+    ]
+  }
+}
+```
+
+**Google Cloud**: the metadata server of Cloud Run, Cloud Functions, Compute Engine, App Engine and GKE with Workload Identity returns a Google-signed identity token for the attached service account; see [Use WIF with Google Cloud](https://platform.claude.com/docs/en/manage-claude/wif-providers/gcp). One issuer, `https://accounts.google.com`, covers them all. Its `sub` is the service account's numeric unique ID, which has no stable prefix, so match it exactly with `claims` (with the `email` beside it), never with `subject_prefix`: a prefix with a trailing `*` would match service accounts of every Google Cloud project. `gcloud iam service-accounts describe <email> --format='value(uniqueId)'` prints the ID.
+
+```hcl
+resource "anthropic_federation_issuer" "google" {
+  name       = "gcp"
+  issuer_url = "https://accounts.google.com"
+
+  jwks = {
+    type = "discovery"
+  }
+}
+
+resource "anthropic_service_account" "gcp_worker" {
+  name = "gcp-inference-worker"
+}
+
+resource "anthropic_federation_rule" "gcp_worker" {
+  name      = "gcp-inference-worker"
+  issuer_id = anthropic_federation_issuer.google.id
+
+  match = {
+    audience = "https://api.anthropic.com"
+    claims = {
+      sub   = "104892101234567890123"
+      email = "inference-worker@my-project.iam.gserviceaccount.com"
+    }
+  }
+
+  target = {
+    service_account_id = anthropic_service_account.gcp_worker.id
+  }
+
+  oauth_scope            = "workspace:developer"
+  workspace_id           = "wrkspc_01HMrPGQfWoZ5LnhFhxuvNsm"
+  token_lifetime_seconds = 900
+}
+
+provider "anthropic" {
+  alias = "from_google_cloud"
+
+  federation = {
+    organization_id    = "00000000-0000-0000-0000-000000000000"
+    federation_rule_id = "fdrl_..."
+    service_account_id = "svac_..."
+    # format=full adds the email claim the rule matches.
+    identity_token_command = [
+      "sh", "-c",
+      "curl -sSf --max-time 20 -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https://api.anthropic.com&format=full'",
+    ]
+  }
+}
+```
 
 ## 2. The once-per-organization bootstrap
 
@@ -156,8 +272,8 @@ terraform {
 }
 
 provider "anthropic" {
-  # One block carries both credentials: ANTHROPIC_AUTH_TOKEN (section 1) for
-  # the WIF resources, ANTHROPIC_ADMIN_API_KEY for data.anthropic_organization.
+  # ANTHROPIC_AUTH_TOKEN (section 1) serves the WIF resources and, with no
+  # admin_api_key, data.anthropic_organization too.
 }
 
 variable "production_workspace_id" {
@@ -273,7 +389,7 @@ output "organization_id" {
 data "anthropic_organization" "current" {}
 ```
 
-`data.anthropic_organization` is an Admin API call, so the provider block above also needs the Admin API key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`); the three credentials are independent and one `provider` block can carry all of them. If you do not want a second credential in this configuration, drop the data source and pass the organization ID (Console, **Settings → Organization**) as a variable. The token exchange ignores workspace membership for `org:admin` rules only; for the workspace-scoped rule above, both the membership and the rule enablement must exist.
+`data.anthropic_organization` is an Admin API call. Without an `admin_api_key`, the provider sends it the same `org:admin` bearer token, so this configuration needs no second credential; when `admin_api_key` (`ANTHROPIC_ADMIN_API_KEY`) is set, the Admin API calls use it instead. The token exchange ignores workspace membership for `org:admin` rules only; for the workspace-scoped rule above, both the membership and the rule enablement must exist.
 
 ## 4. How the workload consumes the rule
 
@@ -317,6 +433,21 @@ jobs:
 Leave `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` unset in that job: both take precedence over federation in every SDK. The exact audience to request from GitHub, the flags equivalent to these variables and the `ant` CLI's federation profile (needed when one job runs several `ant` commands, since a GitHub token carrying `jti` is accepted once) are covered in the [GitHub Actions provider guide](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions) and the [WIF reference](https://platform.claude.com/docs/en/manage-claude/wif-reference#environment-variables).
 
 None of those three IDs is a secret: a token can only be minted by presenting a JWT from the trusted issuer whose claims match the rule. Store them as plain repository variables.
+
+**When the workload is Terraform.** A configuration that manages the workspace's resources (agents, skills, environments, vaults, memory stores, files, deployments) is a workload like any other: the `api_federation` block backs the standard client with the token the rule above mints, in place of `api_key`, and the same variables fill it, so the step `Run the workload` can be a `terraform apply` with:
+
+```hcl
+provider "anthropic" {
+  api_federation = {
+    identity_token_command = [
+      "sh", "-c",
+      "curl -sSf --max-time 20 -H \"Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com\" | jq -r .value",
+    ]
+  }
+}
+```
+
+The provider exchanges the identity token itself and exchanges again before the access token expires. The command, as in [section 1](#letting-the-provider-mint-the-token-in-ci), is required with a GitHub token rather than the file the step above writes: the token's `jti` is accepted once, and `terraform apply` exchanges at least twice, since Terraform configures the provider for the plan and again for the apply. The file would pass the plan and fail the apply with `jti_reused`; the step that writes it is then only for the SDK workload. Managing both WIF and the workspace from one configuration takes two rules, since a rule carries a single scope: `federation` against the `org:admin` bootstrap rule, `api_federation` against the workspace rule (the same rule in both is a plan-time error). The two blocks exchange separately, so with a single-use token each needs its own `identity_token_command`: a file shared by both presents the same assertion twice, and the second exchange fails with `jti_reused` (the provider warns at plan time when both blocks read the same file or literal). Leave `ANTHROPIC_API_KEY` unset too: the block ignores it, with a warning.
 
 **Other platforms.** Everything above transposes to any OIDC issuer: register its URL as an `anthropic_federation_issuer`, match its `sub` format in the rule, and give the workload its token in `ANTHROPIC_IDENTITY_TOKEN_FILE` (or `ANTHROPIC_IDENTITY_TOKEN`). On GitLab CI the job requests the token with
 
