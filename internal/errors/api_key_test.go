@@ -4,6 +4,7 @@
 package errors
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -149,6 +150,28 @@ func TestRequireAdminDataSourceClient(t *testing.T) {
 			var diags diag.Diagnostics
 			got := RequireAdminDataSourceClient(tc.client, &diags)
 			assertGuard(t, got, diags, tc.wantOk, tc.wantSummary, tc.wantDetail)
+		})
+	}
+}
+
+// --- RequireAdminKeyResourceClient / RequireAdminKeyDataSourceClient ---
+
+func TestRequireAdminKeyClient(t *testing.T) {
+	guards := map[string]func(*admin.Client, *diag.Diagnostics) bool{
+		"resource":    RequireAdminKeyResourceClient,
+		"data source": RequireAdminKeyDataSourceClient,
+	}
+	for kind, guard := range guards {
+		t.Run(kind, func(t *testing.T) {
+			var diags diag.Diagnostics
+			assertGuard(t, guard(nil, &diags), diags, false, "Missing Admin API Key", kind)
+			// Its types take no bearer token: the detail must not offer one.
+			if strings.Contains(diags[0].Detail(), "auth_token") {
+				t.Errorf("detail %q offers a bearer token", diags[0].Detail())
+			}
+
+			diags = nil
+			assertGuard(t, guard(newAdminClient(), &diags), diags, true, "", "")
 		})
 	}
 }

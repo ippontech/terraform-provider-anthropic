@@ -36,7 +36,7 @@ func multiWorkspaceProviderConfig(workspaceID string) string {
 	return cfg + "}\n"
 }
 
-func multiWorkspaceVaultConfig(providerBlock, displayName string) string {
+func providerVaultConfig(providerBlock, displayName string) string {
 	return providerBlock + fmt.Sprintf(`
 resource "anthropic_vault" "test" {
   display_name = %q
@@ -54,7 +54,8 @@ func otherTestWorkspace(workspaceID string) string {
 
 // testAccCheckVaultInWorkspace asserts the vault is readable through the
 // workspace the header names and absent (404) through the other test
-// workspace: the header routed the write, not the key's membership.
+// workspace: the workspace the write was scoped to routed it (the header, or
+// a federated token's exchange-time workspace), not the key's membership.
 func testAccCheckVaultInWorkspace(workspaceID string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources["anthropic_vault.test"]
@@ -103,7 +104,7 @@ func TestAccVaultResource_multiWorkspaceKeyRequiresWorkspaceID(t *testing.T) {
 		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:      multiWorkspaceVaultConfig(multiWorkspaceProviderConfig(""), "tf-acc-test-vault-no-workspace"),
+				Config:      providerVaultConfig(multiWorkspaceProviderConfig(""), "tf-acc-test-vault-no-workspace"),
 				ExpectError: regexp.MustCompile(`anthropic-workspace-id`),
 			},
 		},
@@ -124,7 +125,7 @@ func TestAccVaultResource_multiWorkspaceKeyRoutesToWorkspaceID(t *testing.T) {
 				CheckDestroy:             testAccCheckVaultDestroyedInWorkspace(workspaceID),
 				Steps: []resource.TestStep{
 					{
-						Config: multiWorkspaceVaultConfig(multiWorkspaceProviderConfig(workspaceID), "tf-acc-test-vault-"+name),
+						Config: providerVaultConfig(multiWorkspaceProviderConfig(workspaceID), "tf-acc-test-vault-"+name),
 						Check: resource.ComposeTestCheckFunc(
 							resource.TestCheckResourceAttrSet("anthropic_vault.test", "id"),
 							testAccCheckVaultInWorkspace(workspaceID),

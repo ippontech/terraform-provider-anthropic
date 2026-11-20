@@ -8,11 +8,11 @@ on:
 permissions: {}
 
 jobs:
-  # Runs before the approval that releases the GPG key, with no secret (only the read-only job
-  # token): it writes on the run's summary page the go.mod lines that changed since the last
-  # release users received signed, which the approver checks before approving (RELEASE.md,
-  # "Approve a release"). A maintainer merged each module update; this approval is the last human
-  # check before they ship signed, with every change since the last signed release in one list.
+  # Runs before the signing job, with no secret (only the read-only job token): it writes on the
+  # run's summary page the go.mod lines that changed since the last release users received signed,
+  # as an audit trail of what each version shipped. A maintainer reviewed each module update at
+  # its merge, the last human check before it ships signed (RELEASE.md, "Review the modules a
+  # release ships"); nothing waits for anyone here.
   dependency-changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -20,7 +20,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
           allowed-endpoints: >
@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
 
       # The baseline is the newest earlier tag whose GitHub release carries the signed checksums.
-      # A version tagged but never signed (approval rejected, signing failed, release deleted) is
+      # A version tagged but never signed (signing failed, release deleted) is
       # skipped, so its module changes are listed again here rather than shipping unseen. A failed
       # API call also counts as unsigned: it widens the comparison, never narrows it.
       - name: List the go.mod changes since the last signed release
@@ -56,7 +56,7 @@ jobs:
             if [ "${#tags[@]}" -eq 0 ]; then
               echo "No previous release tag: nothing to compare." >> "${GITHUB_STEP_SUMMARY}"
             else
-              echo "No release with signed binaries among the ${#unsigned[@]} most recent tags: compare \`go.mod\` by hand before approving." >> "${GITHUB_STEP_SUMMARY}"
+              echo "No release with signed binaries among the ${#unsigned[@]} most recent tags: compare \`go.mod\` by hand." >> "${GITHUB_STEP_SUMMARY}"
             fi
             exit 0
           fi
@@ -71,7 +71,7 @@ jobs:
             if [ -z "${changes}" ]; then
               echo "None: this release compiles the same modules as ${previous}."
             else
-              echo "\`go.mod\` lists every module compiled into the provider. Check each change before approving the signing job (RELEASE.md, \"Approve a release\")."
+              echo "\`go.mod\` lists every module compiled into the provider. Each change was reviewed at its merge (RELEASE.md, \"Review the modules a release ships\")."
               echo
               echo '```diff'
               echo "${changes}"
@@ -93,7 +93,7 @@ jobs:
       contents: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: block
           allowed-endpoints: >
@@ -130,6 +130,31 @@ jobs:
       - name: Verify module sources
         run: go mod download && go mod verify
 
+      # GoReleaser runs with the signing key and the write token, so its bytes are pinned here,
+      # before the key is imported: a mismatch fails the job with no key material loaded. The
+      # hash is not read from the release's own checksums.txt, which an attacker who can replace
+      # the archive can replace too (same reasoning as TFLINT_SHA256 in security.yml). Bump
+      # GORELEASER_VERSION and GORELEASER_SHA256 together, here and in goreleaser-check.yml
+      # (value from the target release's checksums.txt, goreleaser_Linux_x86_64.tar.gz line).
+      # Renovate only bumps the version, so its PR goes red in goreleaser-check.yml until the
+      # hash is updated by hand, and goes red again if the two files' pins differ. The archive
+      # goes to RUNNER_TEMP: GoReleaser refuses a dirty tree.
+      - name: Install GoReleaser
+        env:
+          # renovate: datasource=github-releases depName=goreleaser/goreleaser
+          GORELEASER_VERSION: v2.20.0
+          GORELEASER_SHA256: d2483159e6007f814132cb56635ad30a70013dbeb813d6033a7e01adf6ae108c
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/goreleaser"
+          mkdir -p "${install_dir}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${install_dir}/goreleaser.tar.gz" \
+            "https://github.com/goreleaser/goreleaser/releases/download/${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz"
+          echo "${GORELEASER_SHA256}  ${install_dir}/goreleaser.tar.gz" | sha256sum -c -
+          tar -xzf "${install_dir}/goreleaser.tar.gz" -C "${install_dir}" goreleaser
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/goreleaser" --version
+
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         id: import_gpg
@@ -138,11 +163,7 @@ jobs:
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Release
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          version: v2.19.0
-          args: release --clean
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

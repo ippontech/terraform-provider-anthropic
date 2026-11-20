@@ -18,7 +18,7 @@ repos:
         # Same types as the pr-title check (.github/workflows/pr-title.yml).
         args: [feat, fix, perf, revert, docs, style, chore, refactor, test, build, ci]
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.109.4
+    rev: v1.109.5
     hooks:
       - id: terraform_fmt
         args:
@@ -39,7 +39,7 @@ repos:
         pass_filenames: false
         always_run: true
   - repo: https://github.com/semgrep/semgrep
-    rev: v1.183.0
+    rev: v1.185.0
     hooks:
       - id: semgrep
         args:
@@ -47,7 +47,7 @@ repos:
           - --error
         files: ^\.github/
   - repo: https://github.com/bridgecrewio/checkov
-    rev: 3.4.0
+    rev: 3.4.4
     hooks:
       - id: checkov
         pass_filenames: false
@@ -57,3 +57,36 @@ repos:
           - --quiet
           - --compact
         files: ^\.github/workflows/
+  # Go hooks run the versions pinned in mise.toml (Go, golangci-lint), like the
+  # poutine hook above, so they match `make lint` and the CI lint job.
+  - repo: local
+    hooks:
+      # gofmt + goimports as configured in .golangci.yml, which rewrite whole
+      # files. Of the files pre-commit passes, only those with uncommitted
+      # changes (differing from HEAD) are formatted: the staged files on
+      # commit, and with `pre-commit run -a` the files being edited, never
+      # committed ones. Comparing with HEAD rather than origin/main keeps a
+      # stale or missing origin/main (a fork) from pulling in upstream files.
+      - id: golangci-lint-fmt
+        name: golangci-lint fmt
+        language: system
+        entry: >-
+          bash -c 'changed=$(git -c core.quotePath=false diff --name-only HEAD);
+          files=(); for f in "$@"; do grep -qxF -- "$f" <<<"$changed" && files+=("$f"); done;
+          [ ${#files[@]} -eq 0 ] || exec mise exec -- golangci-lint fmt "${files[@]}"' --
+        types: [go]
+      # Lints the packages, but reports only code that differs from origin/main
+      # (new-from-merge-base in .golangci.yml), as the CI lint job does.
+      - id: golangci-lint
+        name: golangci-lint run
+        language: system
+        entry: mise exec -- golangci-lint run
+        types: [go]
+        pass_filenames: false
+        require_serial: true
+      - id: go-mod-tidy
+        name: go mod tidy -diff
+        language: system
+        entry: mise exec -- go mod tidy -diff
+        files: ^go\.(mod|sum)$|\.go$
+        pass_filenames: false

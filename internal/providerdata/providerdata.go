@@ -6,12 +6,16 @@ package providerdata
 import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/ippontech/terraform-provider-anthropic/internal/admin"
+	"github.com/ippontech/terraform-provider-anthropic/internal/platform"
 )
 
 // OAuthClient is an SDK client authenticated with an org:admin OAuth bearer
-// token (Authorization: Bearer) instead of an API key. It is required by the
+// token (Authorization: Bearer) instead of an API key, or with a
+// workspace:manage_tunnels one for MCP tunnels. It is required by the
 // endpoints that reject API keys outright, such as the Workload Identity
-// Federation admin endpoints.
+// Federation admin endpoints (org:admin) and the MCP tunnels API
+// (workspace:manage_tunnels). A token carries one scope, so one provider
+// block serves one of the two.
 //
 // It is a distinct named type rather than a bare *anthropic.Client on purpose.
 // The SDK carries no notion of which credential a client holds, so two bare
@@ -24,12 +28,49 @@ type OAuthClient struct {
 
 // ProviderData is passed to every resource and data source Configure call.
 type ProviderData struct {
+	// Platform is what the clients below reach: the Claude API (first party)
+	// or a cloud gateway. The zero value means first party. Resources rarely
+	// need it: the provider already refuses, at Configure, a resource the
+	// platform does not serve (see internal/provider/registry.go).
+	Platform platform.Platform
 	// Client is the Anthropic SDK client for standard API endpoints.
 	Client *anthropic.Client
-	// AdminClient handles /v1/organizations/* endpoints using the Admin API key.
-	// Nil when admin_api_key is not configured.
+	// AdminClient handles /v1/organizations/* endpoints using the Admin API key
+	// or, when admin_api_key is not configured, the bearer token of OAuthClient.
+	// Nil when neither is configured.
 	AdminClient *admin.Client
-	// OAuthClient handles endpoints that require an org:admin OAuth bearer
-	// token and reject API keys. Nil when auth_token is not configured.
+	// AdminKeyClient is AdminClient when the Admin API key backs it, nil
+	// otherwise. The Claude Enterprise only types take it (plugins, RBAC
+	// groups), and spend limits, whose user limits are Claude Enterprise only.
+	// A gateway alias leaves it nil on purpose (ForPlatform): registry.go
+	// keeps those types off the gateways, so one declared supported there
+	// must be given this client in ForPlatform too.
+	AdminKeyClient *admin.Client
+	// OAuthClient handles endpoints that require an OAuth bearer token
+	// (org:admin, or workspace:manage_tunnels for MCP tunnels) and reject API
+	// keys, and backs AdminClient when admin_api_key is not configured. Nil
+	// when no auth_token, federation block or cli block supplies a token.
 	OAuthClient *OAuthClient
+}
+
+// AdminCredentialNote is the credential sentence shared by the schema
+// descriptions of the types that take AdminClient.
+const AdminCredentialNote = "Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, " +
+	"or, for a Claude Console organization, an `org:admin` bearer token when it is unset."
+
+// ForPlatform is the ProviderData of a provider alias configured for a cloud
+// gateway platform. The gateway authenticates every route the same way (AWS
+// SigV4 or key, Google access token), so one SDK client, built for it, serves
+// both the standard routes and, through admin.NewSDKClient, the Admin API
+// routes the gateway serves. There is no OAuth client: the gateways accept no
+// Anthropic OAuth token.
+//
+// Which Admin API resources may use AdminClient is the provider registry's
+// call, not this client's: it would send a request for any of them.
+func ForPlatform(p platform.Platform, client *anthropic.Client) *ProviderData {
+	return &ProviderData{
+		Platform:    p,
+		Client:      client,
+		AdminClient: admin.NewSDKClient(client),
+	}
 }
