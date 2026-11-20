@@ -106,7 +106,7 @@ Leave it unset with a single-workspace key: the API answers `404 Workspace not f
 
 ### Admin API Key (`admin_api_key` / `ANTHROPIC_ADMIN_API_KEY`)
 
-Used for the organization resources and data sources built on the Admin API: workspaces and their members, workspace rate limits, API keys, the organization, organization members and invites. Without it, an `org:admin` bearer token (`auth_token`, `federation` or `cli`) serves the Claude Console ones, spend limits excepted. This is a separate credential scoped to your whole organization rather than a single workspace.
+Used for the organization resources and data sources built on the Admin API: workspaces and their members, workspace rate limits, API keys, external keys, the organization, organization members and invites, organization webhooks, telemetry destinations and compliance settings. Without it, an `org:admin` bearer token (`auth_token`, `federation` or `cli`) serves the Claude Console ones, spend limits excepted. This is a separate credential scoped to your whole organization rather than a single workspace.
 
 For a Claude Console organization, generate one in the [Claude Console → Admin keys](https://platform.claude.com/settings/admin-keys) page. For a Claude Enterprise organization, the primary owner creates a key with the scopes you need in [claude.ai → Organization settings → API](https://claude.ai/admin-settings/api-access); it reaches the organization members, invites, RBAC groups, member spend limits, plugins and plugin marketplaces only. A personal or service account key that is not scoped to a workspace is accepted too. See the table above.
 

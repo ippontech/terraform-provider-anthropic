@@ -56,7 +56,7 @@ type ProviderData struct {
 // AdminCredentialNote is the credential sentence shared by the schema
 // descriptions of the types that take AdminClient.
 const AdminCredentialNote = "Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider, " +
-	"or an `org:admin` bearer token when it is unset."
+	"or, for a Claude Console organization, an `org:admin` bearer token when it is unset."
 
 // ForPlatform is the ProviderData of a provider alias configured for a cloud
 // gateway platform. The gateway authenticates every route the same way (AWS
