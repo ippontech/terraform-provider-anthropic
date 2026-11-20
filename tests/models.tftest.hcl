@@ -29,4 +29,9 @@ run "models_data_source_returns_results" {
     condition     = output.models[0].created_at != ""
     error_message = "Expected the first model's created_at to be non-empty."
   }
+
+  assert {
+    condition     = alltrue([for m in output.models : m.lifecycle_stage != "retired"])
+    error_message = "Expected the default list to exclude retired models."
+  }
 }

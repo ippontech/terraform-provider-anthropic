@@ -72,7 +72,7 @@ func (d *WorkspacesDataSource) Metadata(_ context.Context, req datasource.Metada
 func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists all Anthropic Workspaces via the Admin API. All pages are fetched automatically. " +
-			"Requires `admin_api_key` (or `ANTHROPIC_ADMIN_API_KEY`) to be configured on the provider.",
+			providerdata.AdminCredentialNote,
 		Attributes: map[string]schema.Attribute{
 			"include_archived": schema.BoolAttribute{
 				Optional:            true,
@@ -139,7 +139,7 @@ func (d *WorkspacesDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 						},
 						"external_key_id": schema.StringAttribute{
 							Computed:            true,
-							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace, or null.",
+							MarkdownDescription: "ID (`ekey_...`) of the customer-managed encryption key (CMEK) configuration attached to the workspace (on Claude Platform on AWS, the AWS KMS key ARN), or null.",
 						},
 						"compartment_id": schema.StringAttribute{
 							Computed:            true,

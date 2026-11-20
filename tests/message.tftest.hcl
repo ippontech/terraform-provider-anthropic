@@ -70,4 +70,14 @@ run "message_resource_new_parameters" {
     condition     = anthropic_message.structured.thinking_tokens == 0
     error_message = "Expected thinking_tokens to be 0 without thinking."
   }
+
+  assert {
+    condition     = anthropic_message.example.usage_speed == null || anthropic_message.example.usage_speed == "standard"
+    error_message = "Expected a request without speed to be served at standard speed."
+  }
+
+  assert {
+    condition     = anthropic_message.turn_2.diagnostics.previous_message_id == anthropic_message.turn_1.id
+    error_message = "Expected the second turn to reference the first turn's id."
+  }
 }
