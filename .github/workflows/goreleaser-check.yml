@@ -37,7 +37,7 @@ jobs:
       - name: Install GoReleaser
         env:
           # renovate: datasource=github-releases depName=goreleaser/goreleaser
-          GORELEASER_VERSION: v2.20.0
+          GORELEASER_VERSION: v2.20.2
           GORELEASER_SHA256: d2483159e6007f814132cb56635ad30a70013dbeb813d6033a7e01adf6ae108c
         run: |
           set -euo pipefail
