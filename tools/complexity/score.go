@@ -29,7 +29,8 @@ type scope struct {
 
 // includes reports whether a module-relative, slash-separated path is a
 // non-test Go file the ratchet checks. Like the go command, it skips testdata
-// directories and those whose name starts with "." or "_".
+// directories, and the directories and files whose name starts with "." or
+// "_" (a macOS "._x.go" file, say, which is not Go source).
 func (s scope) includes(name string) bool {
 	if !strings.HasPrefix(name, s.dir) || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 		return false
@@ -37,7 +38,7 @@ func (s scope) includes(name string) bool {
 	if s.exclude != nil && s.exclude.MatchString(name) {
 		return false
 	}
-	for d := range strings.SplitSeq(path.Dir(name), "/") {
+	for d := range strings.SplitSeq(name, "/") {
 		if d == "testdata" || strings.HasPrefix(d, ".") || strings.HasPrefix(d, "_") {
 			return false
 		}
