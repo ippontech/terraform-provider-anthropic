@@ -126,7 +126,7 @@ go test -run TestName -v ./internal/services/agents/  # One service
 
 Before committing a feature or a fix, run `make`, then `pre-commit run -a`.
 
-`go test -cover` needs the `covdata` tool, which the toolchains Go downloads through `GOTOOLCHAIN` (`golang.org/toolchain@v0.0.1-go1.26.10...`) lack: the run fails with `go: no such tool "covdata"` on packages without test files. The CI toolchain from `setup-go` has it. Locally, build it once into a GOROOT overlay and run that `go`:
+`go test -cover` needs the `covdata` tool, which the toolchains Go downloads through `GOTOOLCHAIN` (`golang.org/toolchain@v0.0.1-go<version>...`) lack: the run fails with `go: no such tool "covdata"` on packages without test files. The CI toolchain from `setup-go` has it. Locally, build it once into a GOROOT overlay and run that `go`:
 
     TC=$(go env GOROOT); G=$HOME/.cache/goroot-covdata/$(basename $TC)
     mkdir -p $G/pkg/tool/linux_amd64
