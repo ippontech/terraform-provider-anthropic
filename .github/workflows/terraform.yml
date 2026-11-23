@@ -42,9 +42,13 @@ jobs:
           go-version-file: 'go.mod'
 
       # The Terraform version of mise.toml, which Renovate bumps in a reviewed
-      # pull request: without terraform_version the action installs the latest
-      # release, and a new one could turn this check red on every pull request
-      # with no change in the repository.
+      # pull request together with the one of testacc.yml (the "Terraform CLI"
+      # group of renovate.json): without terraform_version the action installs
+      # the latest release, and a new one could turn this check red on every
+      # pull request with no change in the repository.
+      #
+      # No digest here, unlike testacc.yml: this job holds no secret and its
+      # token only reads a public repository.
       - name: Read the Terraform version pinned in mise.toml
         id: terraform-version
         run: |
