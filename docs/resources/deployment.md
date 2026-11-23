@@ -123,7 +123,7 @@ resource "anthropic_deployment" "repository" {
 
 Terraform cannot detect a change to a write-only value: increment `repository_authorization_tokens_wo_version` to send a new token. Like any update, a rotation also re-pins the deployment to the latest version of its agent (see `agent_id`).
 
-The provider sends the tokens with every update, since each update resends `resources` and the API requires the tokens there. Keep a token in the configuration for each repository: the provider rejects a `github_repository` without one at plan time (or at apply, when `resources` is only known then), as well as a token value that is null or empty. This also applies after `terraform import`: set the tokens before the first update.
+The provider sends the tokens with every update, since each update resends `resources` and the API requires the tokens there. Keep a token in the configuration for each repository: a plan that creates or updates the deployment fails on a `github_repository` without one (at apply, when `resources` is only known then), and a token value that is null or empty is always rejected. This also applies after `terraform import`: set the tokens before the first update. A plan without a change, a refresh and a destroy send no `resources`, so they work without the tokens.
 
 Error messages never show a key of `repository_authorization_tokens_wo`, since the map is sensitive: a key that matches no repository is reported by count, next to the repository URLs found in `resources`.
 

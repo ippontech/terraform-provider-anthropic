@@ -597,31 +597,70 @@ func diagnosticsText(diags diag.Diagnostics) string {
 	return b.String()
 }
 
-// TestDeploymentValidator_requiresTokenForEveryRepository covers the API's
+// modifyDeploymentPlan runs ModifyPlan on a configuration made of overrides,
+// planned as configured. A nil state is a create; destroy plans a null value.
+func modifyDeploymentPlan(t *testing.T, overrides map[string]tftypes.Value, state *tftypes.Value, destroy bool) diag.Diagnostics {
+	t.Helper()
+	r := &DeploymentResource{}
+	sch := schematest.ResourceSchema(t, r)
+	null := tftypes.NewValue(schematest.ResourceObjectType(t, r), nil)
+
+	// A write-only attribute is null in the plan and in the state.
+	planned := maps.Clone(overrides)
+	delete(planned, "repository_authorization_tokens_wo")
+	req := resource.ModifyPlanRequest{
+		Config: tfsdk.Config{Raw: deploymentValue(t, overrides), Schema: sch},
+		Plan:   tfsdk.Plan{Raw: deploymentValue(t, planned), Schema: sch},
+		State:  tfsdk.State{Raw: null, Schema: sch},
+	}
+	if state != nil {
+		req.State.Raw = *state
+	}
+	if destroy {
+		req.Plan.Raw = null
+	}
+	resp := resource.ModifyPlanResponse{Plan: req.Plan}
+	r.ModifyPlan(context.Background(), req, &resp)
+	return resp.Diagnostics
+}
+
+// TestDeploymentModifyPlan_requiresTokenForEveryRepository covers the API's
 // 400 on a github_repository sent without a token, public repositories
-// included (measured live on 2026-11-24): a known resources value with a
-// repository and no token for it fails at plan time.
-func TestDeploymentValidator_requiresTokenForEveryRepository(t *testing.T) {
+// included (measured live on 2026-11-24): a plan that creates or updates the
+// deployment fails when a repository of a known resources value has no token.
+func TestDeploymentModifyPlan_requiresTokenForEveryRepository(t *testing.T) {
 	t.Parallel()
 
 	const otherURL = "https://github.com/ippontech/public-repo"
 	resources := tftypes.NewValue(tftypes.String,
 		`[{"type":"github_repository","url":"`+testRepoURL+`"},{"type":"github_repository","url":"`+otherURL+`"}]`)
+	// The prior state of the update cases: the same deployment under another name.
+	renamed := deploymentValue(t, map[string]tftypes.Value{
+		"resources": resources,
+		"name":      tftypes.NewValue(tftypes.String, "before"),
+	})
 
-	for name, overrides := range map[string]map[string]tftypes.Value{
-		"no tokens": {"resources": resources},
-		"no tokens, version set": {
+	for name, tc := range map[string]struct {
+		overrides map[string]tftypes.Value
+		state     *tftypes.Value
+	}{
+		"create, no tokens": {overrides: map[string]tftypes.Value{"resources": resources}},
+		"create, no tokens, version set": {overrides: map[string]tftypes.Value{
 			"resources": resources,
 			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
-		},
-		"one repository without token": {
+		}},
+		"create, one repository without token": {overrides: map[string]tftypes.Value{
 			"resources":                                  resources,
 			"repository_authorization_tokens_wo":         tokensValue(map[string]string{testRepoURL: testRepoToken}),
 			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		}},
+		"update, no tokens": {
+			overrides: map[string]tftypes.Value{"resources": resources, "name": tftypes.NewValue(tftypes.String, "after")},
+			state:     &renamed,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			text := diagnosticsText(validateDeploymentConfig(t, overrides).Diagnostics)
+			text := diagnosticsText(modifyDeploymentPlan(t, tc.overrides, tc.state, false))
 			if !strings.Contains(text, "Missing repository token") || !strings.Contains(text, otherURL) {
 				t.Errorf("expected a \"Missing repository token\" error naming %s, got: %s", otherURL, text)
 			}
@@ -632,21 +671,50 @@ func TestDeploymentValidator_requiresTokenForEveryRepository(t *testing.T) {
 	}
 
 	for name, overrides := range map[string]map[string]tftypes.Value{
-		"no github_repository, version left behind": {
+		"every repository has a token": {
+			"resources": resources,
+			"repository_authorization_tokens_wo": tokensValue(map[string]string{
+				testRepoURL: testRepoToken, otherURL: testRepoToken,
+			}),
+		},
+		"no github_repository": {
 			"resources": tftypes.NewValue(tftypes.String, `[{"type":"memory_store","memory_store_id":"memstore_01ABC"}]`),
-			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
 		},
+		"no resources": {},
 		"unknown tokens": {
-			"resources":                                  resources,
-			"repository_authorization_tokens_wo":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
-			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+			"resources":                          resources,
+			"repository_authorization_tokens_wo": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
 		},
+		"unknown resources": {"resources": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if resp := validateDeploymentConfig(t, overrides); resp.Diagnostics.HasError() {
-				t.Errorf("unexpected diagnostics: %s", diagnosticsText(resp.Diagnostics))
+			if diags := modifyDeploymentPlan(t, overrides, nil, false); diags.HasError() {
+				t.Errorf("unexpected diagnostics: %s", diagnosticsText(diags))
 			}
 		})
+	}
+}
+
+// TestDeployment_repositoryWithoutTokenSendsNothing covers a deployment whose
+// configuration holds a github_repository and no token (imported, or managed
+// with a Terraform older than 1.11): validating it, planning it without a
+// change and destroying it send no resources, so none of them may fail.
+func TestDeployment_repositoryWithoutTokenSendsNothing(t *testing.T) {
+	t.Parallel()
+
+	overrides := map[string]tftypes.Value{
+		"resources": tftypes.NewValue(tftypes.String, `[{"type":"github_repository","url":"`+testRepoURL+`"}]`),
+	}
+	state := deploymentValue(t, overrides)
+
+	if resp := validateDeploymentConfig(t, overrides); resp.Diagnostics.HasError() {
+		t.Errorf("validate: unexpected diagnostics: %s", diagnosticsText(resp.Diagnostics))
+	}
+	if diags := modifyDeploymentPlan(t, overrides, &state, false); diags.HasError() {
+		t.Errorf("plan without a change: unexpected diagnostics: %s", diagnosticsText(diags))
+	}
+	if diags := modifyDeploymentPlan(t, overrides, &state, true); diags.HasError() {
+		t.Errorf("destroy: unexpected diagnostics: %s", diagnosticsText(diags))
 	}
 }
 

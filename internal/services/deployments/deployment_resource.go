@@ -41,6 +41,7 @@ import (
 var _ resource.Resource = &DeploymentResource{}
 var _ resource.ResourceWithImportState = &DeploymentResource{}
 var _ resource.ResourceWithConfigValidators = &DeploymentResource{}
+var _ resource.ResourceWithModifyPlan = &DeploymentResource{}
 
 // The production bounds of awaitDeploymentUpdateVisible's wait. They are
 // consts, and the function takes them as arguments, so the unit tests can
@@ -347,13 +348,8 @@ func (v *deploymentRepositoryTokenValidator) ValidateResource(ctx context.Contex
 		repoURLs, resourcesKnown = validateResourcesHoldNoToken(data.Resources.ValueString(), &resp.Diagnostics)
 	}
 
-	// The API rejects a github_repository sent without a token, public
-	// repositories included, on create and on every update that resends
-	// resources (400 "github_repository resources require an
-	// authorization_token", measured live on 2026-11-24).
-	if isMissing(data.RepositoryTokens) && len(repoURLs) > 0 {
-		addMissingRepositoryTokensError(slices.Sorted(maps.Keys(repoURLs)), &resp.Diagnostics)
-	}
+	// A github_repository without a token is not a configuration error by
+	// itself: ModifyPlan reports it, and only when a request will be sent.
 	if !isSet(data.RepositoryTokens) {
 		return
 	}
@@ -368,6 +364,52 @@ func (v *deploymentRepositoryTokenValidator) ValidateResource(ctx context.Contex
 	}
 
 	validateRepositoryTokenElements(data.RepositoryTokens, repoURLs, resourcesKnown, &resp.Diagnostics)
+}
+
+// --- ModifyPlan ---
+
+// ModifyPlan rejects a github_repository without a token when the plan creates
+// or updates the deployment: the API answers 400 to one sent without a token,
+// public repositories included, on create and on every update, since each
+// update resends resources (measured live on 2026-11-24).
+//
+// The check is here rather than in the config validator because Terraform
+// validates the configuration on every plan, refresh and destroy. A deployment
+// that holds a repository and no token in its configuration (imported, or
+// managed with a Terraform older than 1.11, which cannot set a write-only
+// attribute) must still be refreshed, planned without a change and destroyed:
+// none of these sends resources.
+func (r *DeploymentResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return // destroy
+	}
+	// The framework marks computed attributes unknown only when the plan
+	// differs from the state, so an equal plan is one that sends nothing.
+	if !req.State.Raw.IsNull() && req.Plan.Raw.Equal(req.State.Raw) {
+		return
+	}
+
+	var resources jsontypes.Normalized
+	var tokens types.Map
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("resources"), &resources)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("repository_authorization_tokens_wo"), &tokens)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Unknown values are left to applyRepositoryTokens, which checks again
+	// with the values of the apply.
+	if resources.IsNull() || resources.IsUnknown() || tokens.IsUnknown() {
+		return
+	}
+
+	// A value that cannot be decoded is the config validator's error.
+	repoURLs, _, err := inspectResources(resources.ValueString())
+	if err != nil {
+		return
+	}
+	if missing := urlsWithoutToken(repoURLs, tokens.Elements()); len(missing) > 0 {
+		addMissingRepositoryTokensError(missing, &resp.Diagnostics)
+	}
 }
 
 // addMissingRepositoryTokensError reports the github_repository urls that have
@@ -412,8 +454,9 @@ func validateResourcesHoldNoToken(raw string, diags *diag.Diagnostics) (map[stri
 }
 
 // validateRepositoryTokenElements checks the token map at plan time: each key
-// is the url of a github_repository of resources and each repository has a
-// key (when resources is known), and each value is a non-empty token. A key is quoted
+// is the url of a github_repository of resources (when resources is known)
+// and each value is a non-empty token. A repository without a key is
+// ModifyPlan's check. A key is quoted
 // only when it is one of those urls, which the plan shows anyway: any other
 // key may be the token itself, in a map written the wrong way round.
 func validateRepositoryTokenElements(tokens types.Map, repoURLs map[string]bool, resourcesKnown bool, diags *diag.Diagnostics) {
@@ -429,12 +472,6 @@ func validateRepositoryTokenElements(tokens types.Map, repoURLs map[string]bool,
 			if repoURLs[key] {
 				blankURLs = append(blankURLs, key)
 			}
-		}
-	}
-
-	if resourcesKnown {
-		if missing := urlsWithoutToken(repoURLs, tokens.Elements()); len(missing) > 0 {
-			addMissingRepositoryTokensError(missing, diags)
 		}
 	}
 
