@@ -127,8 +127,12 @@ comes in the same reviewed PR for all three files.
 tflint in `security.yml`): `hashicorp/setup-terraform` takes no digest, and a version pin alone would run
 whatever bytes the release host serves for that version next to the keys. The hash is committed, not read
 from the release's `SHA256SUMS`, which comes from the same host. The `custom.regex` manager tracks
-`TERRAFORM_VERSION` as the `hashicorp/terraform` dependency and the same rule puts its updates in the
-reviewed group, but it cannot bump the hash. `testacc.yml` does not run on pull requests, so the
+`TERRAFORM_VERSION` as the `hashicorp/terraform` dependency, but it cannot bump the hash. A later rule
+moves it, with the `terraform` line of `mise.toml` (the version `terraform.yml` installs on every pull
+request), into a `Terraform CLI` group of its own, reviewed and never automerged: in separate groups the
+two pins drifted (`mise.toml` automerged to 1.17.2 while `testacc.yml` waited at 1.17.1 for its hash), and
+the red hash check must not hold back the other release tooling updates.
+`testacc.yml` does not run on pull requests, so the
 `terraform-digest` job of `security.yml` checks the pins there: it fails unless both jobs carry the same
 version and hash and the downloaded archive matches, so a bump without its hash turns that check red
 instead of failing the install step on the next push to `main` (and blocking the next release, which
