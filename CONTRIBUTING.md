@@ -125,6 +125,16 @@ make terraform-test
 
 Requires both `ANTHROPIC_API_KEY` and `ANTHROPIC_ADMIN_API_KEY` to be set (some tests exercise Admin API resources).
 
+Three Terraform checks need no credentials and no network beyond downloading Go modules. They run on every pull request (`.github/workflows/terraform.yml`):
+
+```bash
+make terraform-fmt-check   # terraform fmt -check -diff -recursive
+make terraform-validate    # terraform validate in every example directory, against the provider just built
+make terraform-test-mock   # the native test files that use mock_provider
+```
+
+`make terraform-test-mock` selects every test file containing a `mock_provider` block, so such a file must not need credentials.
+
 ## Pull Request Process
 
 1. Create your PR and add reviewers. Owners or contributors of this repository must be added as reviewers.
