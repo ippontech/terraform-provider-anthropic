@@ -1,29 +1,11 @@
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in *_test.go) ;; *.go) make generate ;; esac; } 2>/dev/null || true",
-            "timeout": 60,
-            "statusMessage": "Regenerating docs..."
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"HEAD\" ]; then exit 0; fi; sentinel=\"/tmp/claude-pr-desc-done-$(echo \"$branch\" | tr '/' '-')\"; if [ -f \"$sentinel\" ] && [ $(( $(date +%s) - $(stat -c %Y \"$sentinel\") )) -lt 300 ]; then exit 0; fi; if gh pr view \"$branch\" --json state -q '.state' 2>/dev/null | grep -q \"OPEN\"; then jq -n --arg b \"$branch\" '{\"decision\":\"block\",\"reason\":(\"Open PR on branch \" + $b + \" — please invoke /update-pr-description to update the PR description.\")}'; fi",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); if [ -z \"$branch\" ] || [ \"$branch\" = \"main\" ] || [ \"$branch\" = \"HEAD\" ]; then exit 0; fi; sentinel=\"/tmp/claude-knowledge-done-$(echo \"$branch\" | tr '/' '-')\"; if [ -f \"$sentinel\" ] && [ $(( $(date +%s) - $(stat -c %Y \"$sentinel\") )) -lt 300 ]; then exit 0; fi; if git diff --name-only origin/main..HEAD 2>/dev/null | grep -qE \"\\.(go|tf)$\"; then jq -n '{\"decision\":\"block\",\"reason\":\"Code changes on this branch — invoke /update-project-knowledge to sync CLAUDE.md and memories.\"}'; fi",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-reminders.sh\"",
             "timeout": 15
           }
         ]
@@ -37,7 +19,6 @@
     ]
   },
   "enabledPlugins": {
-    "terraform-skill@antonbabenko": true,
     "terraform@claude-plugins-official": true
   }
 }

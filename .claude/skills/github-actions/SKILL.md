@@ -67,15 +67,25 @@ Never interpolate these directly in `run:` steps:
 
 # Harden runner
 
-Every job's **first** step must be `step-security/harden-runner`, SHA-pinned, with `egress-policy: audit`. This intercepts all outbound network calls and logs unexpected egress (e.g., a compromised action exfiltrating secrets).
+Every job's **first** step must be `step-security/harden-runner`, SHA-pinned, with `egress-policy: block` and an `allowed-endpoints` list of the hosts that job reaches, as in every workflow of this repository. Blocking, rather than only logging, stops a compromised action or dependency from sending data to a host the job never needs.
 
 ```yaml
 steps:
   - name: Harden runner
     uses: step-security/harden-runner@<full-sha> # <version tag>
     with:
-      egress-policy: audit
+      egress-policy: block
+      allowed-endpoints: >
+        api.github.com:443
+        github.com:443
+        proxy.golang.org:443
+        release-assets.githubusercontent.com:443
+        storage.googleapis.com:443
 ```
+
+- Reuse the SHA the other workflows pin, and start from the endpoint list of the most similar existing job (for example the `test` job of `provider.yml` for a Go job, whose list is the one above).
+- List one `host:port` per line, sorted, and only the hosts the job's steps reach: a Go build needs `proxy.golang.org` and `storage.googleapis.com`, a Terraform download `releases.hashicorp.com` and `checkpoint-api.hashicorp.com`, a live API test `api.anthropic.com`.
+- A step that reaches an unlisted host fails with a network error: add that host after checking why the step needs it, rather than switching the job back to `audit`.
 
 # Secret handling
 
