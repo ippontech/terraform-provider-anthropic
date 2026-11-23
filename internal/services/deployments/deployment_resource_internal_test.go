@@ -17,6 +17,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -596,24 +597,45 @@ func diagnosticsText(diags diag.Diagnostics) string {
 	return b.String()
 }
 
-// TestDeploymentValidator_rejectsVersionWithoutTokens covers the tokens
-// dropped from the configuration after the first apply: the next update would
-// resend resources without them and the API would drop the stored token.
-func TestDeploymentValidator_rejectsVersionWithoutTokens(t *testing.T) {
+// TestDeploymentValidator_requiresTokenForEveryRepository covers the API's
+// 400 on a github_repository sent without a token, public repositories
+// included (measured live on 2026-11-24): a known resources value with a
+// repository and no token for it fails at plan time.
+func TestDeploymentValidator_requiresTokenForEveryRepository(t *testing.T) {
 	t.Parallel()
 
-	resources := tftypes.NewValue(tftypes.String, `[{"type":"github_repository","url":"`+testRepoURL+`"}]`)
+	const otherURL = "https://github.com/ippontech/public-repo"
+	resources := tftypes.NewValue(tftypes.String,
+		`[{"type":"github_repository","url":"`+testRepoURL+`"},{"type":"github_repository","url":"`+otherURL+`"}]`)
 
-	resp := validateDeploymentConfig(t, map[string]tftypes.Value{
-		"resources": resources,
-		"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
-	})
-	if text := diagnosticsText(resp.Diagnostics); !strings.Contains(text, "Token version without tokens") {
-		t.Errorf("expected a \"Token version without tokens\" error, got: %s", text)
+	for name, overrides := range map[string]map[string]tftypes.Value{
+		"no tokens": {"resources": resources},
+		"no tokens, version set": {
+			"resources": resources,
+			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		},
+		"one repository without token": {
+			"resources":                                  resources,
+			"repository_authorization_tokens_wo":         tokensValue(map[string]string{testRepoURL: testRepoToken}),
+			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := diagnosticsText(validateDeploymentConfig(t, overrides).Diagnostics)
+			if !strings.Contains(text, "Missing repository token") || !strings.Contains(text, otherURL) {
+				t.Errorf("expected a \"Missing repository token\" error naming %s, got: %s", otherURL, text)
+			}
+			if strings.Contains(text, testRepoToken) {
+				t.Errorf("diagnostic leaks the token: %s", text)
+			}
+		})
 	}
 
 	for name, overrides := range map[string]map[string]tftypes.Value{
-		"neither tokens nor version": {"resources": resources},
+		"no github_repository, version left behind": {
+			"resources": tftypes.NewValue(tftypes.String, `[{"type":"memory_store","memory_store_id":"memstore_01ABC"}]`),
+			"repository_authorization_tokens_wo_version": tftypes.NewValue(tftypes.Number, 1),
+		},
 		"unknown tokens": {
 			"resources":                                  resources,
 			"repository_authorization_tokens_wo":         tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, tftypes.UnknownValue),
@@ -625,6 +647,29 @@ func TestDeploymentValidator_rejectsVersionWithoutTokens(t *testing.T) {
 				t.Errorf("unexpected diagnostics: %s", diagnosticsText(resp.Diagnostics))
 			}
 		})
+	}
+}
+
+// TestDeploymentValidator_unreadableResourcesReportedOnce checks that a
+// resources value that cannot be decoded is not also reported as holding no
+// repository for the configured tokens. jsontypes.Normalized rejects most such
+// values before the validator runs, so the two steps are called directly.
+func TestDeploymentValidator_unreadableResourcesReportedOnce(t *testing.T) {
+	t.Parallel()
+
+	var diags diag.Diagnostics
+	raw := `[` + strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + `]`
+	urls, known := validateResourcesHoldNoToken(raw, &diags)
+	validateRepositoryTokenElements(types.MapValueMust(types.StringType, map[string]attr.Value{
+		testRepoURL: types.StringValue(testRepoToken),
+	}), urls, known, &diags)
+
+	text := diagnosticsText(diags)
+	if !strings.Contains(text, "Unreadable resources") {
+		t.Errorf("expected an \"Unreadable resources\" error, got: %s", text)
+	}
+	if strings.Contains(text, "Token for an unknown repository") || strings.Contains(text, "Missing repository token") {
+		t.Errorf("unexpected token error beside the decoding error: %s", text)
 	}
 }
 
@@ -743,7 +788,7 @@ func TestValidateResourcesHoldNoToken_failsClosed(t *testing.T) {
 
 	raw := `[{"authorization_token":"` + testRepoToken + `","n":` + strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + `}]`
 	var diags diag.Diagnostics
-	urls := validateResourcesHoldNoToken(raw, &diags)
+	urls, ok := validateResourcesHoldNoToken(raw, &diags)
 	text := diagnosticsText(diags)
 	if !strings.Contains(text, "Unreadable resources") {
 		t.Errorf("expected an \"Unreadable resources\" error, got %d diagnostics", len(diags))
@@ -751,8 +796,8 @@ func TestValidateResourcesHoldNoToken_failsClosed(t *testing.T) {
 	if strings.Contains(text, testRepoToken) {
 		t.Error("diagnostic leaks the token")
 	}
-	if urls != nil {
-		t.Errorf("expected no urls, got %d", len(urls))
+	if urls != nil || ok {
+		t.Errorf("expected no urls and false, got %d urls and %v", len(urls), ok)
 	}
 }
 
@@ -761,7 +806,6 @@ func TestBuildDeploymentParams_mergesRepositoryTokens(t *testing.T) {
 
 	resources := jsontypes.NewNormalizedValue(`[` +
 		`{"type":"github_repository","url":"` + testRepoURL + `"},` +
-		`{"type":"github_repository","url":"https://github.com/ippontech/public-repo"},` +
 		`{"type":"memory_store","memory_store_id":"memstore_01ABC"}]`)
 	model := DeploymentResourceModel{
 		Name:          types.StringValue("d"),
@@ -783,11 +827,11 @@ func TestBuildDeploymentParams_mergesRepositoryTokens(t *testing.T) {
 		if err := json.Unmarshal(body, &sent); err != nil {
 			t.Fatalf("decoding params: %v", err)
 		}
-		if len(sent.Resources) != 3 {
-			t.Fatalf("resources sent = %d, want 3", len(sent.Resources))
+		if len(sent.Resources) != 2 {
+			t.Fatalf("resources sent = %d, want 2", len(sent.Resources))
 		}
 		if got := sent.Resources[0]["authorization_token"]; got != testRepoToken {
-			t.Errorf("private repository token = %v, want the configured token", got)
+			t.Errorf("repository token = %v, want the configured token", got)
 		}
 		for _, r := range sent.Resources[1:] {
 			if _, ok := r["authorization_token"]; ok {
@@ -1034,5 +1078,22 @@ func TestDeploymentResource_updateResendsTokenOnVersionChange(t *testing.T) {
 	}
 	if got.RepositoryTokensVersion.ValueInt64() != 2 {
 		t.Errorf("token version in state = %v, want 2", got.RepositoryTokensVersion)
+	}
+}
+
+// TestApplyRepositoryTokens_requiresTokenForEveryRepository covers resources
+// unknown at plan time: a repository left without a token fails before the
+// request, which the API would reject with a 400.
+func TestApplyRepositoryTokens_requiresTokenForEveryRepository(t *testing.T) {
+	t.Parallel()
+
+	const otherURL = "https://github.com/ippontech/public-repo"
+	repos := []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams{{URL: testRepoURL}, {URL: otherURL}}
+	err := applyRepositoryTokens(repos, map[string]string{testRepoURL: testRepoToken})
+	if err == nil {
+		t.Fatal("expected an error for a repository without a token")
+	}
+	if !strings.Contains(err.Error(), otherURL) || strings.Contains(err.Error(), testRepoToken) {
+		t.Errorf("error should name %s and not the token, got: %v", otherURL, err)
 	}
 }

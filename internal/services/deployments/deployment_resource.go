@@ -193,13 +193,15 @@ func (r *DeploymentResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				MarkdownDescription: "GitHub authorization tokens for the `github_repository` entries of `resources`, keyed by the " +
 					"repository `url` exactly as written in `resources`. Write-only: never stored in the plan or the state. " +
 					"`authorization_token` is rejected inside `resources`, whose value is not sensitive; set the token here. " +
-					"Requires `repository_authorization_tokens_wo_version`. Keep it in the configuration: `resources` is replaced " +
-					"as a whole on update, so an update sent without the tokens removes them. Requires Terraform 1.11 or later.",
+					"The API requires a token for every `github_repository`, public repositories included, on create and on " +
+					"every update, so keep the tokens in the configuration. Requires `repository_authorization_tokens_wo_version`. " +
+					"Requires Terraform 1.11 or later.",
 			},
 			"repository_authorization_tokens_wo_version": schema.Int64Attribute{
 				Optional: true,
 				MarkdownDescription: "Increment this value to send changed `repository_authorization_tokens_wo` on the next " +
-					"`terraform apply`. Terraform cannot diff write-only values, so this field is the rotation mechanism.",
+					"`terraform apply`. Terraform cannot diff write-only values, so this field is the rotation mechanism. " +
+					"Like any update, a rotation also re-pins the deployment to the latest version of its agent (see `agent_id`).",
 			},
 			"budget": schema.StringAttribute{
 				Optional:   true,
@@ -335,24 +337,22 @@ func (v *deploymentRepositoryTokenValidator) ValidateResource(ctx context.Contex
 	isSet := func(v attr.Value) bool { return !v.IsNull() && !v.IsUnknown() }
 	isMissing := func(v attr.Value) bool { return v.IsNull() && !v.IsUnknown() }
 
+	// resourcesKnown: the repository urls are known, so token keys can be
+	// matched against them. A value that could not be decoded has already been
+	// reported and yields no urls, which must not be reported again as tokens
+	// for unknown repositories.
 	var repoURLs map[string]bool
+	resourcesKnown := !data.Resources.IsUnknown()
 	if isSet(data.Resources) {
-		repoURLs = validateResourcesHoldNoToken(data.Resources.ValueString(), &resp.Diagnostics)
+		repoURLs, resourcesKnown = validateResourcesHoldNoToken(data.Resources.ValueString(), &resp.Diagnostics)
 	}
 
-	// Unlike most write-only arguments, the tokens must stay in the
-	// configuration: resources is a full replacement, so an update sent
-	// without them makes the API drop the stored token. A version left behind
-	// without tokens is the trace of that mistake.
-	if isMissing(data.RepositoryTokens) && isSet(data.RepositoryTokensVersion) {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("repository_authorization_tokens_wo_version"),
-			"Token version without tokens",
-			"\"repository_authorization_tokens_wo_version\" is set but \"repository_authorization_tokens_wo\" is not. "+
-				"The API replaces \"resources\" as a whole on every update, so an update sent without the tokens removes "+
-				"them from the deployment, and its sessions can no longer clone a private repository. Keep the tokens in "+
-				"the configuration, or remove the version too if the repositories no longer need a token.",
-		)
+	// The API rejects a github_repository sent without a token, public
+	// repositories included, on create and on every update that resends
+	// resources (400 "github_repository resources require an
+	// authorization_token", measured live on 2026-11-24).
+	if isMissing(data.RepositoryTokens) && len(repoURLs) > 0 {
+		addMissingRepositoryTokensError(slices.Sorted(maps.Keys(repoURLs)), &resp.Diagnostics)
 	}
 	if !isSet(data.RepositoryTokens) {
 		return
@@ -367,14 +367,28 @@ func (v *deploymentRepositoryTokenValidator) ValidateResource(ctx context.Contex
 		)
 	}
 
-	validateRepositoryTokenElements(data.RepositoryTokens, repoURLs, !data.Resources.IsUnknown(), &resp.Diagnostics)
+	validateRepositoryTokenElements(data.RepositoryTokens, repoURLs, resourcesKnown, &resp.Diagnostics)
+}
+
+// addMissingRepositoryTokensError reports the github_repository urls that have
+// no entry in repository_authorization_tokens_wo. The urls are not secret:
+// they are in resources, which the plan shows.
+func addMissingRepositoryTokensError(urls []string, diags *diag.Diagnostics) {
+	diags.AddAttributeError(
+		path.Root("repository_authorization_tokens_wo"),
+		"Missing repository token",
+		"The API requires an authorization token for every github_repository element of \"resources\", public "+
+			"repositories included, on create and on every update. Set one in \"repository_authorization_tokens_wo\" "+
+			"for: "+quoteAll(urls)+".",
+	)
 }
 
 // validateResourcesHoldNoToken reports an authorization_token found in the
-// raw resources JSON and returns the url of its github_repository elements.
-// It fails closed: a value that cannot be decoded cannot be searched, so it
-// is an error too, whose text never quotes the value.
-func validateResourcesHoldNoToken(raw string, diags *diag.Diagnostics) map[string]bool {
+// raw resources JSON and returns the url of its github_repository elements,
+// and false when the value could not be decoded. It fails closed: a value
+// that cannot be decoded cannot be searched, so it is an error too, whose
+// text never quotes the value.
+func validateResourcesHoldNoToken(raw string, diags *diag.Diagnostics) (map[string]bool, bool) {
 	repoURLs, hasToken, err := inspectResources(raw)
 	if err != nil {
 		diags.AddAttributeError(
@@ -383,7 +397,7 @@ func validateResourcesHoldNoToken(raw string, diags *diag.Diagnostics) map[strin
 			"\"resources\" could not be decoded, so the provider cannot check that it holds no credential. "+
 				"It must be a JSON array of resource objects.",
 		)
-		return nil
+		return nil, false
 	}
 	if hasToken {
 		diags.AddAttributeError(
@@ -394,12 +408,12 @@ func validateResourcesHoldNoToken(raw string, diags *diag.Diagnostics) map[strin
 				"in \"repository_authorization_tokens_wo\", keyed by the repository URL.",
 		)
 	}
-	return repoURLs
+	return repoURLs, true
 }
 
-// validateRepositoryTokenElements checks each element of the token map at
-// plan time: its key is the url of a github_repository of resources (when
-// resources is known) and its value is a non-empty token. A key is quoted
+// validateRepositoryTokenElements checks the token map at plan time: each key
+// is the url of a github_repository of resources and each repository has a
+// key (when resources is known), and each value is a non-empty token. A key is quoted
 // only when it is one of those urls, which the plan shows anyway: any other
 // key may be the token itself, in a map written the wrong way round.
 func validateRepositoryTokenElements(tokens types.Map, repoURLs map[string]bool, resourcesKnown bool, diags *diag.Diagnostics) {
@@ -415,6 +429,12 @@ func validateRepositoryTokenElements(tokens types.Map, repoURLs map[string]bool,
 			if repoURLs[key] {
 				blankURLs = append(blankURLs, key)
 			}
+		}
+	}
+
+	if resourcesKnown {
+		if missing := urlsWithoutToken(repoURLs, tokens.Elements()); len(missing) > 0 {
+			addMissingRepositoryTokensError(missing, diags)
 		}
 	}
 
@@ -437,6 +457,19 @@ func validateRepositoryTokenElements(tokens types.Map, repoURLs map[string]bool,
 			detail+". Each value must be a GitHub token; remove the entry of a repository that needs none.",
 		)
 	}
+}
+
+// urlsWithoutToken returns, sorted, the repository urls that have no entry in
+// the token map.
+func urlsWithoutToken(repoURLs map[string]bool, tokens map[string]attr.Value) []string {
+	var missing []string
+	for url := range repoURLs {
+		if _, ok := tokens[url]; !ok {
+			missing = append(missing, url)
+		}
+	}
+	slices.Sort(missing)
+	return missing
 }
 
 // unmatchedTokenKeysDetail words the error for token keys that match no
@@ -512,17 +545,26 @@ func containsTokenKey(v any) bool {
 }
 
 // applyRepositoryTokens sets the authorization_token of each repository from
-// tokens (repository URL -> token). A token whose URL matches no repository
-// is an error that names neither the key nor the token: the validator cannot
-// check it when resources is unknown at plan time, and dropping it silently
-// would leave the private repository uncloneable.
+// tokens (repository URL -> token). The validator cannot check the tokens
+// when resources is unknown at plan time, so both mismatches are errors here:
+// a repository without a token, which the API would reject with a 400, and a
+// token whose URL matches no repository, reported without its key or value.
 func applyRepositoryTokens(repos []*anthropic.BetaManagedAgentsGitHubRepositoryResourceParams, tokens map[string]string) error {
 	repoURLs := map[string]bool{}
+	var missing []string
 	for _, gh := range repos {
 		repoURLs[gh.URL] = true
 		if token, ok := tokens[gh.URL]; ok {
 			gh.AuthorizationToken = token
+		} else {
+			missing = append(missing, gh.URL)
 		}
+	}
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		missing = slices.Compact(missing)
+		return errors.New("the API requires an authorization token for every github_repository element of \"resources\", " +
+			"public repositories included; set one in \"repository_authorization_tokens_wo\" for: " + quoteAll(missing) + ".")
 	}
 	unmatched := 0
 	for url := range tokens {
@@ -925,8 +967,8 @@ func buildDeploymentCreateParams(ctx context.Context, data *DeploymentResourceMo
 // explicit empty array through the typed `omitzero` params, so a config that
 // removes an already-set value here cannot be cleared, matching the
 // resources/vault_ids/schedule "cannot be cleared" notes in the schema.
-// Since resources is a full replacement, tokens are merged in on every
-// update, as on create, or the API would drop them.
+// The API rejects a github_repository sent without its token, so tokens are
+// merged in on every update that resends resources, as on create.
 func buildDeploymentUpdateParams(ctx context.Context, plan, state *DeploymentResourceModel, tokens map[string]string) (anthropic.BetaDeploymentUpdateParams, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	params := anthropic.BetaDeploymentUpdateParams{}
