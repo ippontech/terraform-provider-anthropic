@@ -17,7 +17,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+
 	"github.com/ippontech/terraform-provider-anthropic/internal/oauthtest"
+	"github.com/ippontech/terraform-provider-anthropic/internal/sdktest"
 )
 
 const certificatesPath = "/v1/tunnels/tnl_01ABC/certificates"
@@ -133,7 +135,7 @@ func TestTunnelCertificatesDataSource_Read_paginates(t *testing.T) {
 		t.Fatalf("expected 2 requests, got %d: %+v", len(reqs), reqs)
 	}
 	for i, r := range reqs {
-		if r.Path != certificatesPath || !strings.Contains(r.Beta, "mcp-tunnels-2026-06-22") || r.Auth != "Bearer test" {
+		if r.Path != certificatesPath || !strings.Contains(r.Beta, "mcp-tunnels-2026-06-22") || r.Auth != "Bearer "+sdktest.TestAuthToken {
 			t.Errorf("request %d = %+v, want a GET on %s with the tunnels beta header and the bearer token", i, r, certificatesPath)
 		}
 	}

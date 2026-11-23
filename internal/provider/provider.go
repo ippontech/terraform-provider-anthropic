@@ -45,6 +45,27 @@ type AnthropicProvider struct {
 	// workspaceless is set for a Google Cloud alias without a workspace,
 	// which serves organization routes only (gate.go).
 	workspaceless atomic.Bool
+
+	// baseURL, when set by WithBaseURL, replaces the API host of every
+	// first-party client Configure builds. Empty in every binary users run.
+	baseURL string
+}
+
+// Option changes how New builds the provider. Options are for tests only:
+// main.go calls New without any, and none of them is reachable from a
+// Terraform configuration.
+type Option func(*AnthropicProvider)
+
+// WithBaseURL points every first-party client the provider builds at baseURL:
+// the standard API key client, the Admin API client, the OAuth client and the
+// token exchange of the federation and api_federation blocks. It wins over
+// ANTHROPIC_BASE_URL, so a test runs the provider against an httptest fake
+// without t.Setenv and can call t.Parallel (internal/providertest wraps it).
+// The aws and google_cloud blocks keep their own base_url.
+func WithBaseURL(baseURL string) Option {
+	return func(p *AnthropicProvider) {
+		p.baseURL = baseURL
+	}
 }
 
 // AnthropicProviderModel describes the provider data model.
@@ -318,20 +339,23 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		if workspaceID != "" {
 			opts = append(opts, option.WithHeader("anthropic-workspace-id", workspaceID))
 		}
-		pd.Client = newSDKClient(true, opts...)
+		pd.Client = p.sdkClient(true, opts...)
 	}
 	if adminApiKey != "" {
 		pd.AdminClient = admin.NewClient(adminApiKey)
+		if p.baseURL != "" {
+			pd.AdminClient.BaseURL = p.baseURL
+		}
 		pd.AdminKeyClient = pd.AdminClient
 	}
 	if authToken != "" {
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false, option.WithAuthToken(authToken))}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: p.sdkClient(false, option.WithAuthToken(authToken))}
 	}
 	// The SDK caches each exchanged token and exchanges again shortly before
 	// it expires, calling the identity source each time. The two blocks mint
 	// two tokens, one per rule, since a rule carries a single scope.
 	if federation != nil {
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false,
+		pd.OAuthClient = &providerdata.OAuthClient{Client: p.sdkClient(false,
 			option.WithFederationTokenProvider(federation.identity, federation.options),
 		)}
 	}
@@ -340,12 +364,12 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		// workspace-scoped, and the SDK states the header does not apply to
 		// federated tokens. The workspace was passed to the exchange above.
 		// No Basic header either: the federation middleware sets Authorization.
-		pd.Client = newSDKClient(false, option.WithFederationTokenProvider(apiFederation.identity, apiFederation.options))
+		pd.Client = p.sdkClient(false, option.WithFederationTokenProvider(apiFederation.identity, apiFederation.options))
 	}
 	if cliConfig != nil {
 		// Quiet: the provider already rejects the static credentials the
 		// SDK's shadowing warning is about.
-		pd.OAuthClient = &providerdata.OAuthClient{Client: newSDKClient(false, option.WithConfigQuiet(cliConfig))}
+		pd.OAuthClient = &providerdata.OAuthClient{Client: p.sdkClient(false, option.WithConfigQuiet(cliConfig))}
 	}
 	// Without an admin_api_key, the OAuth client's bearer backs the Admin API
 	// resources: the Admin API accepts an org:admin token (#524). An unknown
@@ -471,6 +495,18 @@ func newSDKClient(basicAuth bool, explicit ...option.RequestOption) *anthropic.C
 	return &client
 }
 
+// sdkClient is newSDKClient, unless WithBaseURL set a base URL (tests only):
+// the client then targets that URL and ANTHROPIC_BASE_URL is not read.
+func (p *AnthropicProvider) sdkClient(basicAuth bool, explicit ...option.RequestOption) *anthropic.Client {
+	if p.baseURL == "" {
+		return newSDKClient(basicAuth, explicit...)
+	}
+	opts := append([]option.RequestOption{option.WithoutEnvironmentDefaults()}, explicit...)
+	client := anthropic.NewClient(append(opts, option.WithBaseURL(p.baseURL))...)
+
+	return &client
+}
+
 // Resources and DataSources serve the registrations in registry.go, each
 // factory gated by the platform Configure resolves (gate.go).
 func (p *AnthropicProvider) Resources(ctx context.Context) []func() resource.Resource {
@@ -491,10 +527,14 @@ func (p *AnthropicProvider) DataSources(ctx context.Context) []func() datasource
 	return factories
 }
 
-func New(version string) func() provider.Provider {
+func New(version string, opts ...Option) func() provider.Provider {
 	return func() provider.Provider {
-		return &AnthropicProvider{
+		p := &AnthropicProvider{
 			version: version,
 		}
+		for _, opt := range opts {
+			opt(p)
+		}
+		return p
 	}
 }
