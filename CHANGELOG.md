@@ -1,3 +1,13 @@
+## [1.96.0](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.95.1...v1.96.0) (2026-11-21)
+
+### ✨ Features
+
+* **provider:** use the org:admin bearer for Admin API resources without admin_api_key ([#589](https://github.com/ippontech/terraform-provider-anthropic/issues/589)) ([12f1c0a](https://github.com/ippontech/terraform-provider-anthropic/commit/12f1c0aa931f5021112f41d9558629515a82e0ec))
+
+### 🐛 Bug Fixes
+
+* **deps:** update module golang.org/x/crypto to v0.59.0 [security] ([#579](https://github.com/ippontech/terraform-provider-anthropic/issues/579)) ([2d5c525](https://github.com/ippontech/terraform-provider-anthropic/commit/2d5c5257905509730a721442fe8be7ef4b190b31))
+
 ## [1.95.1](https://github.com/ippontech/terraform-provider-anthropic/compare/v1.95.0...v1.95.1) (2026-11-18)
 
 ### 🐛 Bug Fixes
