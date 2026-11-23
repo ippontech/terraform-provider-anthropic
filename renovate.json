@@ -98,6 +98,16 @@
       "fetchChangeLogs": "pr"
     },
     {
+      "description": "gocognit in tools/go.mod is the scorer of the complexity ratchet (tools/complexity), which promises the scores golangci-lint's gocognit gives: golangci-lint v2.15.0 builds with gocognit v1.3.0, the version pinned there. Out of the automerged Go tools module group and never automerged: a bump passes the complexity job on its own (base and head are scored with the same version), so move it only with the golangci-lint release that ships the same gocognit.",
+      "matchManagers": ["gomod"],
+      "matchFileNames": ["tools/go.mod"],
+      "matchDepNames": ["github.com/uudashr/gocognit"],
+      "groupName": "gocognit",
+      "groupSlug": "gocognit",
+      "automerge": false,
+      "semanticCommitType": "chore"
+    },
+    {
       "description": "Release tooling runs next to the release credentials: the semantic-release App token, which bypasses the main ruleset, and the GPG key that signs the Registry checksums. The actions of testacc.yml run next to the acctest keys, on every push to main. Their updates get their own group and are never automerged, whatever the update type, so a maintainer reviews each one. Matched by file, so it covers the semantic-release packages and their lockfile (npm) and the actions those three workflows use (github-actions); GoReleaser (custom.regex), declared in goreleaser-release.yml too, is moved out of this group by the next rule, which matches it by name and comes later; the same action in other workflows keeps its usual automerged group. A new workflow whose jobs read any secret other than GITHUB_TOKEN, or run in a protected environment, joins this list. The commit type is forced to chore: the npm manager gives the semantic-release packages the dependencies depType, which config:recommended would title fix(deps), and a fix title would publish a provider patch release for a tooling bump.",
       "matchFileNames": [
         ".github/workflows/goreleaser-release.yml",
