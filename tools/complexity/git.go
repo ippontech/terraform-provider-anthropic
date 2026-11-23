@@ -66,8 +66,9 @@ func commitTree(root, commit string, sc scope) (tree, error) {
 		if !ok || len(fields) != 3 {
 			return nil, fmt.Errorf("git ls-tree: unexpected entry %q", entry)
 		}
-		// Regular files only, as dirTree reads them: no symbolic link (120000)
-		// and no submodule.
+		// Regular files only: no submodule, and no symbolic link (120000),
+		// which dirTree refuses in the working tree, so a link at the merge
+		// base only has to go.
 		if (fields[0] != "100644" && fields[0] != "100755") || !sc.includes(name) {
 			continue
 		}
@@ -120,6 +121,11 @@ func readBatchObject(r *bufio.Reader, object string) ([]byte, error) {
 
 // dirTree reads the files of the working tree that the scope includes,
 // through an os.Root so that no symbolic link leads out of the repository.
+//
+// A symbolic link in scope is an error rather than a file left out: the go
+// command compiles a linked file, and a linked directory that is imported, so
+// skipping the link would take its functions out of the ratchet, and following
+// it would score them under a path the merge base does not have.
 func dirTree(root string, sc scope) (tree, error) {
 	r, err := os.OpenRoot(root)
 	if err != nil {
@@ -139,6 +145,9 @@ func dirTree(root string, sc scope) (tree, error) {
 			}
 			return nil
 		}
+		if d.Type()&fs.ModeSymlink != 0 && sc.includesLink(fsys, name) {
+			return fmt.Errorf("%s is a symbolic link: the ratchet does not score through links, commit the file or the directory itself", name)
+		}
 		if !d.Type().IsRegular() || !sc.includes(name) {
 			return nil
 		}
@@ -150,4 +159,15 @@ func dirTree(root string, sc scope) (tree, error) {
 		return nil
 	})
 	return t, err
+}
+
+// includesLink reports whether a symbolic link stands where the scope checks
+// code: it is named like a file the scope includes, or leads to a directory
+// whose Go files the scope would include.
+func (s scope) includesLink(fsys fs.FS, name string) bool {
+	if s.includes(name) {
+		return true
+	}
+	info, err := fs.Stat(fsys, name)
+	return err == nil && info.IsDir() && s.includes(name+"/x.go")
 }

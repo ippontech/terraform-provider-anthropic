@@ -52,26 +52,74 @@ func TestCommitTree(t *testing.T) {
 	}
 }
 
-// A symbolic link committed in scope is not followed: dirTree would not read
-// it in the working tree either.
-func TestCommitTreeSkipsSymlinks(t *testing.T) {
-	dir := gitRepo(t)
-	if err := os.Symlink("a.go", filepath.Join(dir, "internal", "a", "link.go")); err != nil {
-		t.Skipf("no symbolic links here: %v", err)
+// The go command compiles a linked file, and a linked directory that is
+// imported: a link in scope stops the run instead of hiding its functions.
+// At the merge base it is left out, so that removing it passes.
+func TestSymlinks(t *testing.T) {
+	refused := map[string]string{
+		"internal/a/link.go": "a.go",
+		"internal/linked":    "a",
+		"internal/outside":   "../cmd",
 	}
-	runGit(t, dir, "add", "-A")
-	runGit(t, dir, "commit", "-q", "-m", "link")
-	for name, read := range map[string]func() (tree, error){
-		"commitTree": func() (tree, error) { return commitTree(dir, "HEAD", fixtureScope()) },
-		"dirTree":    func() (tree, error) { return dirTree(dir, fixtureScope()) },
+	for link, target := range refused {
+		t.Run(link, func(t *testing.T) {
+			dir := gitRepo(t)
+			symlink(t, dir, target, link)
+			_, err := dirTree(dir, fixtureScope())
+			if err == nil || !strings.Contains(err.Error(), link+" is a symbolic link") {
+				t.Fatalf("dirTree: err = %v, want the link refused", err)
+			}
+			var stdout, stderr strings.Builder
+			if code := cli([]string{"-base", "HEAD", "-root", dir}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), link) {
+				t.Errorf("exit code %d, want 2 naming the link\nstderr: %s", code, stderr.String())
+			}
+
+			runGit(t, dir, "add", "-A")
+			runGit(t, dir, "commit", "-q", "-m", "link")
+			tr, err := commitTree(dir, "HEAD", fixtureScope())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name := range tr {
+				if strings.HasPrefix(name, link) {
+					t.Errorf("commitTree read %s through a link", name)
+				}
+			}
+		})
+	}
+
+	// Links the scope leaves out, as it leaves out a file or a directory of
+	// that name: not Go, a test, a test-helper package, testdata, hidden.
+	dir := gitRepo(t)
+	for link, target := range map[string]string{
+		"internal/a/notes.txt":      "a.go",
+		"internal/a/link_test.go":   "a_test.go",
+		"internal/a/_link.go":       "a.go",
+		"internal/sdktest/link.go":  "s.go",
+		"internal/a/testdata/l.go":  "x.go",
+		"internal/.hidden":          "a",
+		"internal/a/dangling":       "nowhere",
+		"internal/sdktest/linkedto": "../a",
 	} {
-		tr, err := read()
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if _, ok := tr["internal/a/link.go"]; ok {
-			t.Errorf("%s read a symbolic link", name)
-		}
+		symlink(t, dir, target, link)
+	}
+	want, err := dirTree(filepath.Join("testdata", "head"), fixtureScope())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := dirTree(dir, fixtureScope())
+	if err != nil {
+		t.Fatalf("links out of scope: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Errorf("read %d files with links out of scope, want %d", len(got), len(want))
+	}
+}
+
+func symlink(t *testing.T, dir, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, filepath.Join(dir, filepath.FromSlash(link))); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
 	}
 }
 
