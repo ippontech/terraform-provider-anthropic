@@ -55,34 +55,47 @@ type options struct {
 }
 
 func main() {
-	base := flag.String("base", "", "base branch or commit; the ratchet compares with the merge base of HEAD and it (required)")
-	root := flag.String("root", "", "repository root (default: the top level of the repository holding the current directory)")
-	limit := flag.Int("max", 20, "cognitive complexity cap")
-	dir := flag.String("dir", "internal/", "module-relative directory checked")
-	exclude := flag.String("exclude", defaultExclude, "regular expression matching the module-relative paths left out")
-	flag.Usage = func() {
-		_, _ = fmt.Fprintln(flag.CommandLine.Output(), "usage: complexity -base <ref> [-root dir] [-max n] [-dir dir/] [-exclude regexp]")
-		flag.PrintDefaults()
+	os.Exit(cli(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// cli runs the command with its arguments and returns its exit code.
+func cli(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("complexity", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	base := flags.String("base", "", "base branch or commit; the ratchet compares with the merge base of HEAD and it (required)")
+	root := flags.String("root", "", "repository root (default: the top level of the repository holding the current directory)")
+	limit := flags.Int("max", 20, "cognitive complexity cap")
+	dir := flags.String("dir", "internal/", "module-relative directory checked")
+	exclude := flags.String("exclude", defaultExclude, "regular expression matching the module-relative paths left out")
+	flags.Usage = func() {
+		_, _ = fmt.Fprintln(stderr, "usage: complexity -base <ref> [-root dir] [-max n] [-dir dir/] [-exclude regexp]")
+		flags.PrintDefaults()
 	}
-	flag.Parse()
+	switch err := flags.Parse(args); {
+	case errors.Is(err, flag.ErrHelp):
+		return 0
+	case err != nil:
+		return 2
+	}
 	re, err := regexp.Compile(*exclude)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "complexity: invalid -exclude: %v\n", err)
-		os.Exit(2)
+		_, _ = fmt.Fprintf(stderr, "complexity: invalid -exclude: %v\n", err)
+		return 2
 	}
-	if flag.NArg() != 0 || *base == "" || *limit < 1 || !strings.HasSuffix(*dir, "/") {
-		flag.Usage()
-		os.Exit(2)
+	if flags.NArg() != 0 || *base == "" || *limit < 1 || !strings.HasSuffix(*dir, "/") {
+		flags.Usage()
+		return 2
 	}
 	opts := options{base: *base, root: *root, limit: *limit, dir: *dir, exclude: re}
-	switch err := run(os.Stdout, opts); {
+	switch err := run(stdout, opts); {
 	case errors.Is(err, errRatchetFailed):
-		fmt.Fprintf(os.Stderr, "complexity: %v (details in the report)\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(stderr, "complexity: %v (details in the report)\n", err)
+		return 1
 	case err != nil:
-		fmt.Fprintf(os.Stderr, "complexity: %v\n", err)
-		os.Exit(2)
+		_, _ = fmt.Fprintf(stderr, "complexity: %v\n", err)
+		return 2
 	}
+	return 0
 }
 
 func run(w io.Writer, opts options) error {

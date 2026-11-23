@@ -5,6 +5,7 @@ package main
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,5 +129,138 @@ func TestRunInputErrors(t *testing.T) {
 		if err == nil || errors.Is(err, errRatchetFailed) {
 			t.Errorf("base %q: err = %v, want an input error", base, err)
 		}
+	}
+}
+
+// TestRunErrors covers what stops run after the merge base is found.
+func TestRunErrors(t *testing.T) {
+	const invalid = "package a\nfunc {"
+	file := filepath.Join("internal", "a", "a.go")
+	tests := map[string]struct {
+		prepare func(t *testing.T, dir string)
+		want    string
+	}{
+		"working tree without the checked directory": {
+			prepare: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.RemoveAll(filepath.Join(dir, "internal")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "internal",
+		},
+		"working tree file that does not parse": {
+			prepare: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, file), []byte(invalid), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "internal/a/a.go:2",
+		},
+		"merge base file that does not parse": {
+			prepare: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, file), []byte(invalid), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				runGit(t, dir, "commit", "-q", "-a", "-m", "invalid")
+			},
+			want: "merge base ",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := gitRepo(t)
+			tc.prepare(t, dir)
+			err := run(io.Discard, fixtureOptions(dir, "HEAD"))
+			if err == nil || errors.Is(err, errRatchetFailed) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want an input error naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+func TestRunReportsWriteError(t *testing.T) {
+	err := run(failingWriter{}, fixtureOptions(gitRepo(t), "HEAD"))
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Errorf("err = %v, want the write error", err)
+	}
+}
+
+// Without -root, the repository is the one holding the current directory,
+// from any of its subdirectories.
+func TestRunFindsTheRepositoryRoot(t *testing.T) {
+	dir := gitRepo(t)
+	opts := fixtureOptions("", "HEAD")
+
+	t.Chdir(filepath.Join(dir, "internal", "a"))
+	var out strings.Builder
+	if err := run(&out, opts); err != nil {
+		t.Fatalf("run from a subdirectory: %v", err)
+	}
+	if !strings.Contains(out.String(), "Scope: 13 functions") {
+		t.Errorf("run from a subdirectory:\n%s", out.String())
+	}
+
+	outside := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(outside))
+	t.Chdir(outside)
+	if err := run(io.Discard, opts); err == nil || !strings.Contains(err.Error(), "rev-parse") {
+		t.Errorf("run outside a repository: err = %v, want the git error", err)
+	}
+}
+
+func TestCLI(t *testing.T) {
+	dir := gitRepo(t)
+	const usage = "usage: complexity -base <ref>"
+	tests := map[string]struct {
+		args       []string
+		code       int
+		wantStdout string
+		wantStderr string
+	}{
+		"rule failed":           {args: []string{"-base", "main", "-root", dir, "-max", "3"}, code: 1, wantStdout: "**FAIL**", wantStderr: "complexity ratchet failed (details in the report)"},
+		"passes":                {args: []string{"-base", "HEAD", "-root", dir, "-max", "3"}, code: 0, wantStdout: "All rules pass."},
+		"-max is the cap":       {args: []string{"-base", "main", "-root", dir, "-max", "5"}, code: 0, wantStdout: "All rules pass."},
+		"default cap of 20":     {args: []string{"-base", "main", "-root", dir}, code: 0, wantStdout: "A new function scores 20 or less"},
+		"-dir is the scope":     {args: []string{"-base", "HEAD", "-root", dir, "-dir", "cmd/"}, code: 0, wantStdout: "Scope: 2 functions"},
+		"-exclude leaves out":   {args: []string{"-base", "HEAD", "-root", dir, "-exclude", "^internal/a/"}, code: 0, wantStdout: "Scope: 1 functions"},
+		"unknown base":          {args: []string{"-base", "no-such-branch", "-root", dir}, code: 2, wantStderr: "complexity: git merge-base"},
+		"no -base":              {args: []string{"-root", dir}, code: 2, wantStderr: usage},
+		"-max below 1":          {args: []string{"-base", "main", "-max", "0"}, code: 2, wantStderr: usage},
+		"-dir without a slash":  {args: []string{"-base", "main", "-dir", "internal"}, code: 2, wantStderr: usage},
+		"stray argument":        {args: []string{"-base", "main", "extra"}, code: 2, wantStderr: usage},
+		"unknown flag":          {args: []string{"-nope"}, code: 2, wantStderr: usage},
+		"-max not a number":     {args: []string{"-base", "main", "-max", "x"}, code: 2, wantStderr: usage},
+		"invalid -exclude":      {args: []string{"-base", "main", "-exclude", "("}, code: 2, wantStderr: "complexity: invalid -exclude"},
+		"help is not a failure": {args: []string{"-h"}, code: 0, wantStderr: usage},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			if code := cli(tc.args, &stdout, &stderr); code != tc.code {
+				t.Errorf("exit code %d, want %d\nstderr: %s", code, tc.code, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.wantStdout) {
+				t.Errorf("stdout lacks %q:\n%s", tc.wantStdout, stdout.String())
+			}
+			if !strings.Contains(stderr.String(), tc.wantStderr) {
+				t.Errorf("stderr lacks %q:\n%s", tc.wantStderr, stderr.String())
+			}
+			if tc.code == 2 && stdout.Len() != 0 {
+				t.Errorf("a usage or input error wrote to stdout:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestModuleVersion(t *testing.T) {
+	if v := moduleVersion("example.com/not/a/dependency"); v != "" {
+		t.Errorf("version %q for a module that is not compiled in", v)
 	}
 }
