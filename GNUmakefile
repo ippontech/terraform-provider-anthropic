@@ -52,7 +52,7 @@ terraform-test: install .dev.tfrc
 # Offline Terraform checks, run on every pull request (terraform.yml): no
 # credentials, no API call, no registry download (the provider comes from
 # dev_overrides, so neither validate nor init installs it).
-EXAMPLE_DIRS := $(sort $(dir $(wildcard examples/*/*.tf examples/*/*/*.tf)))
+EXAMPLE_DIRS := $(sort $(dir $(shell find examples -name '*.tf' -not -path '*/.*')))
 # A test file with a mock_provider block runs on every pull request, so it must
 # not need credentials.
 MOCK_TESTS := $(notdir $(shell grep -l '^mock_provider' tests/*.tftest.hcl))
