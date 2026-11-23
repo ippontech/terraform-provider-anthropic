@@ -163,11 +163,25 @@ func dirTree(root string, sc scope) (tree, error) {
 
 // includesLink reports whether a symbolic link stands where the scope checks
 // code: it is named like a file the scope includes, or leads to a directory
-// whose Go files the scope would include.
+// that holds such a file under the link's path, at any depth. A link to a
+// directory without Go code (fixtures, examples) hides no function. The links
+// found inside that directory are not followed in turn.
 func (s scope) includesLink(fsys fs.FS, name string) bool {
 	if s.includes(name) {
 		return true
 	}
-	info, err := fs.Stat(fsys, name)
-	return err == nil && info.IsDir() && s.includes(name+"/x.go")
+	found := false
+	// A dangling link, or one that leaves the repository, cannot be walked:
+	// the go command reads nothing through it either.
+	_ = fs.WalkDir(fsys, name, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fs.SkipDir
+		}
+		if !d.IsDir() && s.includes(p) {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
 }

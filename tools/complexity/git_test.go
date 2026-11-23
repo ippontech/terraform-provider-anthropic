@@ -60,10 +60,13 @@ func TestSymlinks(t *testing.T) {
 		"internal/a/link.go": "a.go",
 		"internal/linked":    "a",
 		"internal/outside":   "../cmd",
+		// Go code two levels down the linked directory.
+		"internal/deep": "../deep",
 	}
 	for link, target := range refused {
 		t.Run(link, func(t *testing.T) {
 			dir := gitRepo(t)
+			writeFile(t, dir, "deep/x/y/z.go", "package y\n")
 			symlink(t, dir, target, link)
 			_, err := dirTree(dir, fixtureScope())
 			if err == nil || !strings.Contains(err.Error(), link+" is a symbolic link") {
@@ -89,8 +92,17 @@ func TestSymlinks(t *testing.T) {
 	}
 
 	// Links the scope leaves out, as it leaves out a file or a directory of
-	// that name: not Go, a test, a test-helper package, testdata, hidden.
+	// that name: not Go, a test, a test-helper package, testdata, hidden. And
+	// links to a directory that holds no Go file the scope would check: the go
+	// command builds nothing through them.
 	dir := gitRepo(t)
+	writeFile(t, dir, "examples/agent/resource.tf", "# not Go\n")
+	writeFile(t, dir, "examples/agent/sub/only_test.go", "package sub\n")
+	writeFile(t, dir, "examples/agent/testdata/x.go", "package x\n")
+	writeFile(t, dir, "examples/agent/_draft/x.go", "package x\n")
+	if err := os.Mkdir(filepath.Join(dir, "empty"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	for link, target := range map[string]string{
 		"internal/a/notes.txt":      "a.go",
 		"internal/a/link_test.go":   "a_test.go",
@@ -100,6 +112,8 @@ func TestSymlinks(t *testing.T) {
 		"internal/.hidden":          "a",
 		"internal/a/dangling":       "nowhere",
 		"internal/sdktest/linkedto": "../a",
+		"internal/a/examples":       "../../examples/agent",
+		"internal/emptydir":         "../empty",
 	} {
 		symlink(t, dir, target, link)
 	}
@@ -177,5 +191,16 @@ func TestFindMergeBase(t *testing.T) {
 	}
 	if _, err := findMergeBase(dir, "--all"); err == nil || !strings.Contains(err.Error(), "is not a revision") {
 		t.Errorf("a base that reads as an option: err = %v", err)
+	}
+}
+
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
