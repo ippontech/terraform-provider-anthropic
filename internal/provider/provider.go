@@ -164,10 +164,20 @@ func (p *AnthropicProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 	if !data.AWS.IsNull() {
-		cfg, diags := resolveAWS(ctx, data)
+		cfg, source, diags := resolveAWS(ctx, data)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
+		}
+		if source != nil {
+			if err := resolveAWSCredentials(ctx, cfg, *source); err != nil {
+				summary, attribute := "Unable to Resolve AWS Credentials", "shared_config_files"
+				if source.role != nil {
+					summary, attribute = "Unable to Assume Role", "role_arn"
+				}
+				resp.Diagnostics.AddAttributeError(path.Root("aws").AtName(attribute), summary, err.Error())
+				return
+			}
 		}
 		client, err := newAWSClient(ctx, *cfg)
 		if err != nil {
