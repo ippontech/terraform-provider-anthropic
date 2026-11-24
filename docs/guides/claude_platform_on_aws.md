@@ -89,6 +89,35 @@ resource "anthropic_agent" "triage" {
 
 A resource the gateway does not serve (`anthropic_invite`, `anthropic_api_key`, the Workload Identity Federation resources, among others) fails at plan time with an error naming the platform; the "Availability by platform" table of the [provider page](https://registry.terraform.io/providers/ippontech/anthropic/latest/docs) lists them.
 
+### Authenticating with an AWS role
+
+When the identity Terraform starts with is not in the account that holds the workspace, assume a role there with `role_arn`. The provider resolves the starting credentials (the default chain, `profile`, `access_key` and `secret_key`, or `shared_config_files`), assumes the role, and signs every request with the role's temporary credentials, as the `aws` provider's `assume_role` does. The role is the principal of [section 3](#3-iam-permissions-of-the-terraform-principal): it also needs `sts:GetWebIdentityToken` and `sts:TagGetWebIdentityToken`, which the gateway calls on its behalf (a request without them fails with `not authorized to perform: sts:GetWebIdentityToken`).
+
+HCP Terraform dynamic credentials give a run its identity through a shared config file whose path only the `tfc_aws_dynamic_credentials` variable carries, never the environment, so pass that path in `shared_config_files`:
+
+```hcl
+variable "tfc_aws_dynamic_credentials" {
+  description = "Object containing AWS dynamic credentials configuration"
+  type = object({
+    default = object({
+      shared_config_file = string
+    })
+  })
+}
+
+provider "anthropic" {
+  workspace_id = var.signup_workspace_id
+
+  aws = {
+    region              = "us-west-2"
+    shared_config_files = [var.tfc_aws_dynamic_credentials.default.shared_config_file]
+    role_arn            = "arn:aws:iam::123456789012:role/terraform-claude-platform"
+  }
+}
+```
+
+`role_session_name` (default `terraform-provider-anthropic`, 2 to 64 characters), `role_external_id` and `role_duration_seconds` (900 to 43200, default 3600) refine the call. The credentials are not refreshed during a run, and AWS limits a role assumed from another role's credentials, such as one reached through an HCP Terraform run role or an SSO session, to one hour, whatever the role's maximum session duration: a longer `role_duration_seconds` is then refused by AWS. `role_arn` conflicts with `api_key`.
+
 ## 3. IAM permissions of the Terraform principal
 
 The gateway maps every route to an action of the `aws-external-anthropic` namespace ([IAM actions](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions)). Workspace creation and listing, user profiles, telemetry destinations and encryption key registrations are account-scoped and need `"Resource": "*"`; everything inside a workspace can be scoped to the workspace ARN, `arn:aws:aws-external-anthropic:<region>:<account-id>:workspace/<workspace-id>`. The managed policy `AnthropicFullAccess` grants everything. The policy below grants the actions that page maps to the routes this provider's resources call. On that page a sub-resource route maps to its parent's actions: skill versions to `GetSkill` and `UpdateSkill`, vault credentials to `GetVault` and `UpdateVault`, memories to `GetMemoryStore` and `UpdateMemoryStore`. Scheduled deployments are the exception: the gateway serves their routes, but that page lists no action for them and which one the gateway checks is not verified, so the policy does not cover `anthropic_deployment` and `anthropic_deployment_runs`. A principal that manages them needs a broader grant, such as `AnthropicFullAccess` (`aws-external-anthropic:*`).
