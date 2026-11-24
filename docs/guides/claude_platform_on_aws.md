@@ -60,7 +60,8 @@ provider "anthropic" {
 
   aws = {
     region = "us-west-2"
-    # Credentials: the AWS default chain, or profile / access_key.
+    # Credentials: the AWS default chain, or profile / access_key / shared_config_files,
+    # optionally with role_arn to assume a role in the account of the workspace.
   }
 }
 

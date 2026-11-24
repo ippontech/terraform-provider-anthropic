@@ -7,10 +7,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	anthropicaws "github.com/anthropics/anthropic-sdk-go/aws"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -34,7 +40,38 @@ type awsModel struct {
 	SecretKey    types.String `tfsdk:"secret_key"`
 	SessionToken types.String `tfsdk:"session_token"`
 	BaseURL      types.String `tfsdk:"base_url"`
+
+	SharedConfigFiles   types.List   `tfsdk:"shared_config_files"`
+	RoleARN             types.String `tfsdk:"role_arn"`
+	RoleSessionName     types.String `tfsdk:"role_session_name"`
+	RoleExternalID      types.String `tfsdk:"role_external_id"`
+	RoleDurationSeconds types.Int64  `tfsdk:"role_duration_seconds"`
 }
+
+// awsRole is the role to assume on top of the resolved AWS credentials.
+type awsRole struct {
+	arn, sessionName, externalID string
+	duration                     time.Duration
+}
+
+// awsSource says how the credentials are resolved when the block sets
+// shared_config_files or role_arn: by this provider, to static credentials the
+// SDK client then signs with, instead of by the SDK client's own chain.
+type awsSource struct {
+	region      string
+	configFiles []string
+	role        *awsRole
+}
+
+const (
+	defaultRoleSessionName = "terraform-provider-anthropic"
+	// The maximum session duration of a role is 1 to 12 hours; the API
+	// accepts 15 minutes at least. The default is long enough for a plan and
+	// an apply, because static credentials are not refreshed.
+	defaultRoleDuration = time.Hour
+	minRoleDuration     = 15 * time.Minute
+	maxRoleDuration     = 12 * time.Hour
+)
 
 func awsSchema() schema.SingleNestedAttribute {
 	return schema.SingleNestedAttribute{
@@ -90,6 +127,36 @@ func awsSchema() schema.SingleNestedAttribute {
 				Description: "AWS session token of temporary credentials, with access_key and secret_key. Static " +
 					"credentials are not refreshed: for a long apply prefer profile or the default chain.",
 			},
+			"shared_config_files": schema.ListAttribute{
+				Optional:    true,
+				ElementType: types.StringType,
+				Description: "Paths of AWS shared configuration files to take credentials from, in place of the default " +
+					"~/.aws/config, as the AWS provider's shared_config_files does (together with profile when set). " +
+					"HCP Terraform dynamic credentials reach a provider only through the file named by the " +
+					"tfc_aws_dynamic_credentials variable, so pass that path here. Conflicts with api_key and access_key.",
+			},
+			"role_arn": schema.StringAttribute{
+				Optional: true,
+				Description: "ARN of an IAM role to assume with the credentials resolved from profile, access_key/secret_key " +
+					"or the AWS default chain, as the AWS provider's assume_role does. Requests are then signed with the " +
+					"role's temporary credentials. Use it when the identity the run starts with (for instance an HCP " +
+					"Terraform workload identity role) is not the account that holds the workspace. Conflicts with api_key. " +
+					"The credentials are not refreshed.",
+			},
+			"role_session_name": schema.StringAttribute{
+				Optional:    true,
+				Description: "Session name of the assumed role, shown in CloudTrail. Defaults to terraform-provider-anthropic. Requires role_arn.",
+			},
+			"role_external_id": schema.StringAttribute{
+				Optional:    true,
+				Description: "External ID required by the trust policy of the assumed role. Requires role_arn.",
+			},
+			"role_duration_seconds": schema.Int64Attribute{
+				Optional: true,
+				Description: "Duration of the assumed role's session, from 900 to 43200 seconds and within the maximum " +
+					"session duration of the role. Defaults to 3600. AWS limits a role assumed from another role's " +
+					"credentials (role chaining) to one hour, whatever the role allows. Requires role_arn.",
+			},
 			"base_url": schema.StringAttribute{
 				Optional: true,
 				Description: "Gateway base URL, in place of the one derived from region (an AWS PrivateLink endpoint, " +
@@ -103,7 +170,7 @@ func awsSchema() schema.SingleNestedAttribute {
 // resolveAWS checks the configuration of a provider alias whose aws block is
 // set and returns the SDK's client configuration for it. data.WorkspaceID is
 // known: Configure rejects an unknown one first.
-func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws.ClientConfig, diag.Diagnostics) {
+func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws.ClientConfig, *awsSource, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	// Configured values, not resolved ones: an Anthropic credential written in
@@ -129,18 +196,18 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 		}
 	}
 	if diags.HasError() {
-		return nil, diags
+		return nil, nil, diags
 	}
 
 	if data.AWS.IsUnknown() {
 		diags.AddAttributeError(path.Root("aws"), "Unknown AWS Configuration",
 			"The aws block depends on a value that is not known until apply. Provider configuration must be known at plan time.")
-		return nil, diags
+		return nil, nil, diags
 	}
 	var m awsModel
 	diags.Append(data.AWS.As(ctx, &m, basetypes.ObjectAsOptions{})...)
 	if diags.HasError() {
-		return nil, diags
+		return nil, nil, diags
 	}
 
 	// Unknown is an error, not unset, as for the federation block: read as
@@ -158,6 +225,9 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 		{"secret_key", m.SecretKey},
 		{"session_token", m.SessionToken},
 		{"base_url", m.BaseURL},
+		{"role_arn", m.RoleARN},
+		{"role_session_name", m.RoleSessionName},
+		{"role_external_id", m.RoleExternalID},
 	}
 	for _, a := range attrs {
 		if a.value.IsUnknown() {
@@ -167,7 +237,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 	}
 	diags.Append(checkBaseURL(path.Root("aws").AtName("base_url"), "aws.base_url", m.BaseURL.ValueString(), awsBaseURLEnv)...)
 	if diags.HasError() {
-		return nil, diags
+		return nil, nil, diags
 	}
 
 	// One credential source, stated: the SDK would otherwise pick by a
@@ -189,6 +259,59 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 	if m.SessionToken.ValueString() != "" && m.AccessKey.ValueString() == "" {
 		diags.AddAttributeError(path.Root("aws").AtName("session_token"), "Incomplete AWS Credentials",
 			"aws.session_token is only used with aws.access_key and aws.secret_key.")
+	}
+
+	if m.RoleDurationSeconds.IsUnknown() {
+		diags.AddAttributeError(path.Root("aws").AtName("role_duration_seconds"), "Unknown AWS Configuration",
+			"aws.role_duration_seconds depends on a value that is not known until apply. Provider configuration must be known at plan time.")
+	}
+	var configFiles []string
+	if m.SharedConfigFiles.IsUnknown() {
+		diags.AddAttributeError(path.Root("aws").AtName("shared_config_files"), "Unknown AWS Configuration",
+			"aws.shared_config_files depends on a value that is not known until apply. Provider configuration must be known at plan time.")
+	} else if !m.SharedConfigFiles.IsNull() {
+		diags.Append(m.SharedConfigFiles.ElementsAs(ctx, &configFiles, false)...)
+		for _, p := range configFiles {
+			if p == "" {
+				diags.AddAttributeError(path.Root("aws").AtName("shared_config_files"), "Invalid AWS Configuration",
+					"aws.shared_config_files must not contain an empty path.")
+			}
+		}
+		if len(configFiles) > 0 && (m.APIKey.ValueString() != "" || m.AccessKey.ValueString() != "") {
+			diags.AddAttributeError(path.Root("aws").AtName("shared_config_files"), "Conflicting AWS Credentials",
+				"aws.shared_config_files names where credentials are read from and cannot be combined with aws.api_key or aws.access_key.")
+		}
+	}
+	roleARN := m.RoleARN.ValueString()
+	if roleARN == "" {
+		for _, a := range []struct {
+			name string
+			set  bool
+		}{
+			{"role_session_name", m.RoleSessionName.ValueString() != ""},
+			{"role_external_id", m.RoleExternalID.ValueString() != ""},
+			{"role_duration_seconds", !m.RoleDurationSeconds.IsNull()},
+		} {
+			if a.set {
+				diags.AddAttributeError(path.Root("aws").AtName(a.name), "Missing Role",
+					fmt.Sprintf("aws.%s is only used with aws.role_arn.", a.name))
+			}
+		}
+	} else if m.APIKey.ValueString() != "" {
+		diags.AddAttributeError(path.Root("aws").AtName("role_arn"), "Conflicting AWS Credentials",
+			"aws.role_arn assumes a role with AWS credentials and cannot be combined with aws.api_key.")
+	}
+	if n := len(m.RoleSessionName.ValueString()); roleARN != "" && m.RoleSessionName.ValueString() != "" && (n < 2 || n > 64) {
+		diags.AddAttributeError(path.Root("aws").AtName("role_session_name"), "Invalid Role Session Name",
+			"aws.role_session_name must be between 2 and 64 characters.")
+	}
+	duration := defaultRoleDuration
+	if !m.RoleDurationSeconds.IsNull() && !m.RoleDurationSeconds.IsUnknown() {
+		duration = time.Duration(m.RoleDurationSeconds.ValueInt64()) * time.Second
+		if duration < minRoleDuration || duration > maxRoleDuration {
+			diags.AddAttributeError(path.Root("aws").AtName("role_duration_seconds"), "Invalid Role Duration",
+				"aws.role_duration_seconds must be between 900 and 43200 seconds.")
+		}
 	}
 
 	// The gateway needs the header on every inference and resource request,
@@ -219,7 +342,7 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 	// Decided once and handed to the SDK as is, so that the region check
 	// below and the SDK agree on whether requests are signed.
 	apiKey := m.APIKey.ValueString()
-	if sources == 0 {
+	if sources == 0 && roleARN == "" && len(configFiles) == 0 {
 		apiKey = os.Getenv("ANTHROPIC_AWS_API_KEY")
 	}
 
@@ -234,7 +357,19 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 				"signing region, and a workspace is reachable only through the region it was created in.")
 	}
 	if diags.HasError() {
-		return nil, diags
+		return nil, nil, diags
+	}
+
+	var source *awsSource
+	if roleARN != "" || len(configFiles) > 0 {
+		source = &awsSource{region: region, configFiles: configFiles}
+	}
+	if roleARN != "" {
+		sessionName := m.RoleSessionName.ValueString()
+		if sessionName == "" {
+			sessionName = defaultRoleSessionName
+		}
+		source.role = &awsRole{arn: roleARN, sessionName: sessionName, externalID: m.RoleExternalID.ValueString(), duration: duration}
 	}
 
 	return &anthropicaws.ClientConfig{
@@ -246,7 +381,55 @@ func resolveAWS(ctx context.Context, data AnthropicProviderModel) (*anthropicaws
 		AWSRegion:          m.Region.ValueString(),
 		WorkspaceID:        workspaceID,
 		BaseURL:            m.BaseURL.ValueString(),
-	}, diags
+	}, source, diags
+}
+
+// resolveAWSCredentials replaces the credentials of cfg with static ones that
+// this provider resolves itself, when the block names shared_config_files or
+// role_arn: from the files, a profile, access_key/secret_key or the AWS default
+// chain, then, with role_arn, from the role assumed with them, as the AWS
+// provider's assume_role does. The SDK client takes static credentials and does
+// not refresh them. A role assumed from another role's credentials lasts at most
+// an hour, whatever role_duration_seconds says. The STS endpoint follows the
+// SDK's own AWS_ENDPOINT_URL_STS.
+func resolveAWSCredentials(ctx context.Context, cfg *anthropicaws.ClientConfig, src awsSource) error {
+	loadOpts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(src.region)}
+	if len(src.configFiles) > 0 {
+		loadOpts = append(loadOpts, awsconfig.WithSharedConfigFiles(src.configFiles))
+	}
+	if cfg.AWSProfile != "" {
+		loadOpts = append(loadOpts, awsconfig.WithSharedConfigProfile(cfg.AWSProfile))
+	}
+	if cfg.AWSAccessKey != "" {
+		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(cfg.AWSAccessKey, cfg.AWSSecretAccessKey, cfg.AWSSessionToken)))
+	}
+	base, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
+	if err != nil {
+		return fmt.Errorf("load the AWS configuration: %w", err)
+	}
+	provider := base.Credentials
+	if role := src.role; role != nil {
+		provider = stscreds.NewAssumeRoleProvider(sts.NewFromConfig(base), role.arn, func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = role.sessionName
+			o.Duration = role.duration
+			if role.externalID != "" {
+				o.ExternalID = awssdk.String(role.externalID)
+			}
+		})
+	}
+	creds, err := provider.Retrieve(ctx)
+	if err != nil {
+		if src.role != nil {
+			return fmt.Errorf("assume %s: %w", src.role.arn, err)
+		}
+		return fmt.Errorf("retrieve the AWS credentials: %w", err)
+	}
+	cfg.AWSProfile = ""
+	cfg.AWSAccessKey = creds.AccessKeyID
+	cfg.AWSSecretAccessKey = creds.SecretAccessKey
+	cfg.AWSSessionToken = creds.SessionToken
+	return nil
 }
 
 // newAWSClient builds the single SDK client of a Claude Platform on AWS alias.

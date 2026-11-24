@@ -39,6 +39,7 @@ const (
 	// AWS's documented example credentials: never valid anywhere.
 	awsTestAccessKey = "AKIAIOSFODNN7EXAMPLE"
 	awsTestSecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+	awsTestRoleARN   = "arn:aws:iam::123456789012:role/test-role"
 )
 
 // isolateAWSEnv removes every variable the AWS SDK's credential chain or the
@@ -75,7 +76,9 @@ func isolateAWSEnv(t *testing.T) {
 var awsAttrTypes = map[string]tftypes.Type{
 	"region": tftypes.String, "profile": tftypes.String, "api_key": tftypes.String,
 	"access_key": tftypes.String, "secret_key": tftypes.String, "session_token": tftypes.String,
-	"base_url": tftypes.String,
+	"base_url": tftypes.String, "role_arn": tftypes.String, "role_session_name": tftypes.String,
+	"role_external_id": tftypes.String, "role_duration_seconds": tftypes.Number,
+	"shared_config_files": tftypes.List{ElementType: tftypes.String},
 }
 
 // awsValue is an aws block holding attrs, every other attribute null.
@@ -85,7 +88,7 @@ func awsValue(attrs map[string]any) tftypes.Value {
 		values[name] = tftypes.NewValue(typ, nil)
 	}
 	for name, v := range attrs {
-		values[name] = tftypes.NewValue(tftypes.String, v)
+		values[name] = tftypes.NewValue(awsAttrTypes[name], v)
 	}
 	return tftypes.NewValue(tftypes.Object{AttributeTypes: awsAttrTypes}, values)
 }
@@ -549,6 +552,17 @@ func TestConfigureAWSRejects(t *testing.T) {
 		{"access_key alone", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "access_key": awsTestAccessKey})}, nil, "Incomplete AWS Credentials", "together"},
 		{"session_token alone", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "session_token": "t"})}, nil, "Incomplete AWS Credentials", "session_token"},
 		{"unknown profile", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "profile": "absent"})}, nil, "Unable to Configure Claude Platform on AWS", "absent"},
+		{"role_session_name without role_arn", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"role_session_name": "s"}))}, nil, "Missing Role", "aws.role_session_name"},
+		{"role_duration_seconds without role_arn", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"role_duration_seconds": 3600}))}, nil, "Missing Role", "aws.role_duration_seconds"},
+		{"role_arn and api_key", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "api_key": "k", "role_arn": awsTestRoleARN})}, nil, "Conflicting AWS Credentials", "aws.role_arn"},
+		{"role session name too short", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"role_arn": awsTestRoleARN, "role_session_name": "x"}))}, nil, "Invalid Role Session Name", "2 and 64"},
+		{"role duration too short", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"role_arn": awsTestRoleARN, "role_duration_seconds": 60}))}, nil, "Invalid Role Duration", "900 and 43200"},
+		{"role duration too long", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"role_arn": awsTestRoleARN, "role_duration_seconds": 43201}))}, nil, "Invalid Role Duration", "900 and 43200"},
+		{"unknown role_arn", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"role_arn": tftypes.UnknownValue}))}, nil, "Unknown AWS Configuration", "aws.role_arn"},
+		{"shared_config_files and access_key", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(with(map[string]any{"shared_config_files": []tftypes.Value{tfString("/x")}}))}, nil, "Conflicting AWS Credentials", "shared_config_files"},
+		{"empty shared_config_files path", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "shared_config_files": []tftypes.Value{tfString("")}})}, nil, "Invalid AWS Configuration", "empty path"},
+		{"missing shared_config_files file", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "shared_config_files": []tftypes.Value{tfString("/does/not/exist")}})}, nil, "Unable to Resolve AWS Credentials", "credentials"},
+		{"unknown shared_config_files", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion, "shared_config_files": tftypes.UnknownValue})}, nil, "Unknown AWS Configuration", "aws.shared_config_files"},
 		{"no credentials anywhere", map[string]tftypes.Value{"workspace_id": ws, "aws": awsValue(map[string]any{"region": awsTestRegion})}, nil, "Unable to Configure Claude Platform on AWS", "credentials"},
 	}
 	for _, tt := range tests {
@@ -665,5 +679,210 @@ func TestRegistryDeclaresAWSForEveryType(t *testing.T) {
 		if reg.AWS.State == platform.StateUndeclared {
 			t.Errorf("data source %s declares no AWS availability", dataSourceTypeName(reg.New()))
 		}
+	}
+}
+
+// fakeSTS answers AssumeRole with temporary credentials and records the
+// request. It is reached through AWS_ENDPOINT_URL_STS, which the AWS SDK reads.
+type fakeSTS struct {
+	srv *httptest.Server
+
+	mu   sync.Mutex
+	form url.Values
+	auth string
+}
+
+func newFakeSTS(t *testing.T, creds awssdk.Credentials) *fakeSTS {
+	t.Helper()
+	f := &fakeSTS{}
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		form, _ := url.ParseQuery(string(body))
+		f.mu.Lock()
+		f.form, f.auth = form, r.Header.Get("Authorization")
+		f.mu.Unlock()
+		if creds.AccessKeyID == "" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>not allowed to assume the role</Message></Error><RequestId>r</RequestId></ErrorResponse>`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprintf(w, `<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><Credentials>`+
+			`<AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken>`+
+			`<Expiration>2099-01-01T00:00:00Z</Expiration></Credentials><AssumedRoleUser><AssumedRoleId>AROAEXAMPLE:s</AssumedRoleId>`+
+			`<Arn>arn:aws:sts::123456789012:assumed-role/test-role/s</Arn></AssumedRoleUser></AssumeRoleResult>`+
+			`<ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></AssumeRoleResponse>`, creds.AccessKeyID, creds.SecretAccessKey, creds.SessionToken)
+	}))
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
+// TestConfigureAWSAssumesRole: with role_arn, the credentials resolved from the
+// chain, a profile or access_key/secret_key assume the role, and every request
+// to the gateway is signed with the role's temporary credentials.
+func TestConfigureAWSAssumesRole(t *testing.T) {
+	t.Setenv("TEST_TFC_CONFIG_FILE", "")
+	assumed := awssdk.Credentials{AccessKeyID: "ASIAASSUMEDEXAMPLE", SecretAccessKey: "assumedSecretKeyExample", SessionToken: "assumed-session-token"}
+	tests := []struct {
+		name      string
+		block     map[string]any
+		setup     func(t *testing.T)
+		wantForm  map[string]string
+		wantAuthK string // access key ID of the credentials that called STS
+	}{
+		{
+			name:  "default chain",
+			block: map[string]any{"role_arn": awsTestRoleARN},
+			setup: func(t *testing.T) {
+				t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
+				t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
+			},
+			wantForm:  map[string]string{"RoleArn": awsTestRoleARN, "RoleSessionName": "terraform-provider-anthropic", "DurationSeconds": "3600"},
+			wantAuthK: awsTestAccessKey,
+		},
+		{
+			name: "profile, session name, external ID and duration",
+			block: map[string]any{
+				"profile": "source", "role_arn": awsTestRoleARN, "role_session_name": "run-1",
+				"role_external_id": "ext-1", "role_duration_seconds": 7200,
+			},
+			setup: func(t *testing.T) {
+				writeFile(t, os.Getenv("AWS_SHARED_CREDENTIALS_FILE"), fmt.Sprintf(
+					"[default]\naws_access_key_id = AKIADEFAULTWRONG\naws_secret_access_key = wrong\n\n"+
+						"[source]\naws_access_key_id = %s\naws_secret_access_key = %s\n", awsTestAccessKey, awsTestSecretKey))
+			},
+			wantForm:  map[string]string{"RoleArn": awsTestRoleARN, "RoleSessionName": "run-1", "ExternalId": "ext-1", "DurationSeconds": "7200"},
+			wantAuthK: awsTestAccessKey,
+		},
+		{
+			name:      "access_key",
+			block:     map[string]any{"access_key": awsTestAccessKey, "secret_key": awsTestSecretKey, "role_arn": awsTestRoleARN},
+			wantForm:  map[string]string{"RoleArn": awsTestRoleARN},
+			wantAuthK: awsTestAccessKey,
+		},
+		{
+			// What HCP Terraform provides: the run's identity sits in a file
+			// whose path only a variable knows, not in the environment.
+			name:  "shared_config_files",
+			block: map[string]any{"role_arn": awsTestRoleARN},
+			setup: func(t *testing.T) {
+				f := filepath.Join(t.TempDir(), "tfc-config")
+				writeFile(t, f, fmt.Sprintf("[default]\naws_access_key_id = %s\naws_secret_access_key = %s\n", awsTestAccessKey, awsTestSecretKey))
+				t.Setenv("TEST_TFC_CONFIG_FILE", f)
+			},
+			wantForm:  map[string]string{"RoleArn": awsTestRoleARN},
+			wantAuthK: awsTestAccessKey,
+		},
+		{
+			// A role is a credential source of its own: an exported
+			// ANTHROPIC_AWS_API_KEY, meant for another tool, is not sent.
+			name:  "role over ANTHROPIC_AWS_API_KEY",
+			block: map[string]any{"role_arn": awsTestRoleARN},
+			setup: func(t *testing.T) {
+				t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
+				t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
+				t.Setenv("ANTHROPIC_AWS_API_KEY", "aws-console-key-env")
+			},
+			wantForm:  map[string]string{"RoleArn": awsTestRoleARN},
+			wantAuthK: awsTestAccessKey,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateAWSEnv(t)
+			exportFirstPartyEnvironment(t)
+			t.Setenv("TEST_TFC_CONFIG_FILE", "")
+			if tt.setup != nil {
+				tt.setup(t)
+			}
+			sts := newFakeSTS(t, assumed)
+			t.Setenv("AWS_ENDPOINT_URL_STS", sts.srv.URL)
+			gw := newSigV4Gateway(t, assumed, gatewayAnswers)
+			tt.block["region"] = awsTestRegion
+			tt.block["base_url"] = gw.srv.URL
+			if f := os.Getenv("TEST_TFC_CONFIG_FILE"); f != "" {
+				tt.block["shared_config_files"] = []tftypes.Value{tfString(f)}
+			}
+
+			pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
+				"workspace_id": tfString(awsTestWorkspace),
+				"aws":          awsValue(tt.block),
+			}))
+			if _, err := pd.Client.Models.Get(context.Background(), "claude-sonnet-5-5", anthropic.ModelGetParams{}); err != nil {
+				t.Fatalf("request: %v", err)
+			}
+
+			sts.mu.Lock()
+			defer sts.mu.Unlock()
+			for k, want := range tt.wantForm {
+				if got := sts.form.Get(k); got != want {
+					t.Errorf("AssumeRole %s = %q, want %q", k, got, want)
+				}
+			}
+			if !strings.Contains(sts.auth, "Credential="+tt.wantAuthK+"/") {
+				t.Errorf("AssumeRole was not signed with %s: %q", tt.wantAuthK, sts.auth)
+			}
+			r := gw.recorded()[0]
+			if r.sigErr != nil {
+				t.Errorf("gateway signature with the assumed credentials: %v", r.sigErr)
+			}
+			if got := r.header.Get("X-Amz-Security-Token"); got != assumed.SessionToken {
+				t.Errorf("x-amz-security-token = %q, want the assumed session token", got)
+			}
+			if r.header.Get("X-Api-Key") != "" {
+				t.Errorf("a role request also carried x-api-key")
+			}
+		})
+	}
+}
+
+// TestConfigureAWSAssumeRoleDenied: a refused AssumeRole fails Configure on
+// the role_arn attribute, before any client is built.
+func TestConfigureAWSAssumeRoleDenied(t *testing.T) {
+	isolateAWSEnv(t)
+	sts := newFakeSTS(t, awssdk.Credentials{})
+	t.Setenv("AWS_ENDPOINT_URL_STS", sts.srv.URL)
+	t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
+
+	p := &AnthropicProvider{version: "test"}
+	resp := configureProviderInstance(t, p, map[string]tftypes.Value{
+		"workspace_id": tfString(awsTestWorkspace),
+		"aws":          awsValue(map[string]any{"region": awsTestRegion, "role_arn": awsTestRoleARN, "base_url": "https://gateway.invalid"}),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("Configure succeeded")
+	}
+	e := resp.Diagnostics.Errors()[0]
+	if e.Summary() != "Unable to Assume Role" || !strings.Contains(e.Detail(), awsTestRoleARN) || !strings.Contains(e.Detail(), "AccessDenied") {
+		t.Errorf("error = %q: %q", e.Summary(), e.Detail())
+	}
+	if resp.ResourceData != nil {
+		t.Error("a failed Configure still served a ProviderData")
+	}
+}
+
+// TestConfigureAWSSharedConfigFilesWithoutRole: shared_config_files alone take
+// the credentials from the named files, not from ~/.aws or the environment.
+func TestConfigureAWSSharedConfigFilesWithoutRole(t *testing.T) {
+	isolateAWSEnv(t)
+	files := filepath.Join(t.TempDir(), "tfc-config")
+	writeFile(t, files, fmt.Sprintf("[default]\naws_access_key_id = %s\naws_secret_access_key = %s\n", awsTestAccessKey, awsTestSecretKey))
+	t.Setenv("ANTHROPIC_AWS_API_KEY", "aws-console-key-env")
+	gw := newSigV4Gateway(t, awssdk.Credentials{AccessKeyID: awsTestAccessKey, SecretAccessKey: awsTestSecretKey}, gatewayAnswers)
+
+	pd := providerDataFrom(t, configureProvider(t, map[string]tftypes.Value{
+		"workspace_id": tfString(awsTestWorkspace),
+		"aws": awsValue(map[string]any{
+			"region": awsTestRegion, "base_url": gw.srv.URL,
+			"shared_config_files": []tftypes.Value{tfString(files)},
+		}),
+	}))
+	if _, err := pd.Client.Models.Get(context.Background(), "claude-sonnet-5-5", anthropic.ModelGetParams{}); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	r := gw.recorded()[0]
+	if r.sigErr != nil || r.header.Get("X-Api-Key") != "" {
+		t.Errorf("signature = %v, x-api-key = %q: want a SigV4 request signed with the file's credentials", r.sigErr, r.header.Get("X-Api-Key"))
 	}
 }
