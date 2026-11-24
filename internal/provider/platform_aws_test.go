@@ -703,11 +703,11 @@ func newFakeSTS(t *testing.T, creds awssdk.Credentials) *fakeSTS {
 		f.mu.Unlock()
 		if creds.AccessKeyID == "" {
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>not allowed to assume the role</Message></Error><RequestId>r</RequestId></ErrorResponse>`)
+			_, _ = fmt.Fprint(w, `<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>not allowed to assume the role</Message></Error><RequestId>r</RequestId></ErrorResponse>`)
 			return
 		}
 		w.Header().Set("Content-Type", "text/xml")
-		fmt.Fprintf(w, `<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><Credentials>`+
+		_, _ = fmt.Fprintf(w, `<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><Credentials>`+
 			`<AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken>`+
 			`<Expiration>2099-01-01T00:00:00Z</Expiration></Credentials><AssumedRoleUser><AssumedRoleId>AROAEXAMPLE:s</AssumedRoleId>`+
 			`<Arn>arn:aws:sts::123456789012:assumed-role/test-role/s</Arn></AssumedRoleUser></AssumeRoleResult>`+
@@ -734,6 +734,7 @@ func TestConfigureAWSAssumesRole(t *testing.T) {
 			name:  "default chain",
 			block: map[string]any{"role_arn": awsTestRoleARN},
 			setup: func(t *testing.T) {
+				t.Helper()
 				t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
 				t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
 			},
@@ -747,6 +748,7 @@ func TestConfigureAWSAssumesRole(t *testing.T) {
 				"role_external_id": "ext-1", "role_duration_seconds": 7200,
 			},
 			setup: func(t *testing.T) {
+				t.Helper()
 				writeFile(t, os.Getenv("AWS_SHARED_CREDENTIALS_FILE"), fmt.Sprintf(
 					"[default]\naws_access_key_id = AKIADEFAULTWRONG\naws_secret_access_key = wrong\n\n"+
 						"[source]\naws_access_key_id = %s\naws_secret_access_key = %s\n", awsTestAccessKey, awsTestSecretKey))
@@ -766,6 +768,7 @@ func TestConfigureAWSAssumesRole(t *testing.T) {
 			name:  "shared_config_files",
 			block: map[string]any{"role_arn": awsTestRoleARN},
 			setup: func(t *testing.T) {
+				t.Helper()
 				f := filepath.Join(t.TempDir(), "tfc-config")
 				writeFile(t, f, fmt.Sprintf("[default]\naws_access_key_id = %s\naws_secret_access_key = %s\n", awsTestAccessKey, awsTestSecretKey))
 				t.Setenv("TEST_TFC_CONFIG_FILE", f)
@@ -779,6 +782,7 @@ func TestConfigureAWSAssumesRole(t *testing.T) {
 			name:  "role over ANTHROPIC_AWS_API_KEY",
 			block: map[string]any{"role_arn": awsTestRoleARN},
 			setup: func(t *testing.T) {
+				t.Helper()
 				t.Setenv("AWS_ACCESS_KEY_ID", awsTestAccessKey)
 				t.Setenv("AWS_SECRET_ACCESS_KEY", awsTestSecretKey)
 				t.Setenv("ANTHROPIC_AWS_API_KEY", "aws-console-key-env")
