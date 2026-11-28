@@ -97,6 +97,36 @@ output "deployment_status" {
 }
 ```
 
+## GitHub repositories
+
+Every `github_repository` entry of `resources` needs a GitHub token, public repositories included: the API rejects one sent without a token with a 400, on create and on every update. Do not put it in `resources` as `authorization_token`: `resources` is not sensitive, so the token would appear in plan output and in saved plan files and state. The provider rejects that configuration. Set the token in the write-only `repository_authorization_tokens_wo` map instead, keyed by the repository `url` exactly as written in `resources`. Terraform never stores it in the plan or the state, and the API never returns it. Write-only arguments require Terraform 1.11 or later.
+
+```terraform
+resource "anthropic_deployment" "repository" {
+  name           = "repository-deployment"
+  agent_id       = anthropic_agent.assistant.id
+  environment_id = anthropic_environment.sessions.id
+  initial_events = jsonencode([
+    { type = "user.message", content = [{ type = "text", text = "Review the open pull requests." }] }
+  ])
+
+  resources = jsonencode([
+    { type = "github_repository", url = "https://github.com/example-org/private-repo" }
+  ])
+
+  repository_authorization_tokens_wo = {
+    "https://github.com/example-org/private-repo" = var.github_token
+  }
+  repository_authorization_tokens_wo_version = 1
+}
+```
+
+Terraform cannot detect a change to a write-only value: increment `repository_authorization_tokens_wo_version` to send a new token. Like any update, a rotation also re-pins the deployment to the latest version of its agent (see `agent_id`).
+
+The provider sends the tokens with every update, since each update resends `resources` and the API requires the tokens there. Keep a token in the configuration for each repository: a plan that creates or updates the deployment fails on a `github_repository` without one (at apply, when `resources` is only known then), and a token value that is null or empty is always rejected. This also applies after `terraform import`: set the tokens before the first update. A plan without a change, a refresh and a destroy send no `resources`, so they work without the tokens.
+
+Error messages never show a key of `repository_authorization_tokens_wo`, since the map is sensitive: a key that matches no repository is reported by count, next to the repository URLs found in `resources`.
+
 ## Claude Platform on AWS
 
 The gateway serves `/v1/deployments`, although its [route table](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) does not list it.
@@ -115,10 +145,14 @@ There, each run creates its session as an IAM role of your AWS account ([schedul
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `budget` (String) JSON object for a hard spend ceiling: sessions stop issuing new model requests once the tracked list cost reaches `max_list_cost`, e.g. `jsonencode({max_list_cost = {amount = "2500", currency = "USD"}, type = "limit"})`. Cannot be cleared once set — clearing it in config forces replacement of the deployment.
 - `description` (String) Description of what the deployment does.
 - `metadata` (Map of String) Arbitrary key-value metadata. Maximum 16 pairs, keys up to 64 characters, values up to 512 characters.
 - `paused` (Boolean) Whether the deployment is paused. Changing this calls the dedicated pause/unpause endpoints rather than the general update endpoint. Default: `false`.
+- `repository_authorization_tokens_wo` (Map of String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) GitHub authorization tokens for the `github_repository` entries of `resources`, keyed by the repository `url` exactly as written in `resources`. Write-only: never stored in the plan or the state. `authorization_token` is rejected inside `resources`, whose value is not sensitive; set the token here. The API requires a token for every `github_repository`, public repositories included, on create and on every update, so keep the tokens in the configuration. Requires `repository_authorization_tokens_wo_version`. Requires Terraform 1.11 or later.
+- `repository_authorization_tokens_wo_version` (Number) Increment this value to send changed `repository_authorization_tokens_wo` on the next `terraform apply`. Terraform cannot diff write-only values, so this field is the rotation mechanism. Like any update, a rotation also re-pins the deployment to the latest version of its agent (see `agent_id`).
 - `resources` (String) JSON array of resources (e.g. repositories, files, memory stores) mounted into each session's container. Maximum 500. Full replacement on update; cannot be cleared once set — clearing it in config forces replacement of the deployment.
 - `schedule` (Attributes) 5-field POSIX cron schedule. A deployment without a schedule only runs when triggered manually (outside the scope of this resource). Cannot be cleared once set — the update API has no way to remove a schedule, so clearing it in config forces replacement of the deployment. (see [below for nested schema](#nestedatt--schedule))
 - `vault_ids` (List of String) Vault IDs supplying stored credentials for sessions created from this deployment. Maximum 50. Full replacement on update; cannot be cleared once set — clearing it in config forces replacement of the deployment.
