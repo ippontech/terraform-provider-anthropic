@@ -69,7 +69,7 @@ jobs:
       - name: Install govulncheck
         env:
           # renovate: datasource=go depName=golang.org/x/vuln
-          GOVULNCHECK_VERSION: v1.9.0
+          GOVULNCHECK_VERSION: v1.10.0
         run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
 
       # Exits non-zero only for vulnerabilities the code can reach; findings in
